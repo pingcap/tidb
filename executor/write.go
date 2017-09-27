@@ -643,7 +643,10 @@ type InsertValues struct {
 	batchRows    int64
 	lastInsertID uint64
 	ctx          context.Context
-	SelectExec   Executor
+
+	needFillDefaultValues bool
+
+	SelectExec Executor
 
 	Table     table.Table
 	Columns   []*ast.ColumnName
@@ -885,15 +888,16 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 	return
 }
 
+// getRow eval the insert statement. Because the value of column may calculated based on other column,
+// it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
-	// row is a eval context, so `insert t set b = 1, a = b + 1` can eval correctly.
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 
-	// Use fillDefaultValues init this row for eval.
-	// So `insert t set b = a + 1` can use the correct value of a.
-	if err := e.fillDefaultValues(row, hasValue, ignoreErr); err != nil {
-		return nil, errors.Trace(err)
+	if e.needFillDefaultValues {
+		if err := e.fillDefaultValues(row, hasValue, ignoreErr); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	for i, expr := range list {
@@ -913,15 +917,16 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 	return e.fillGenColData(cols, len(list), hasValue, row, ignoreErr)
 }
 
-// fillDefaultValues fill a row followed by these rules:
+// fillDefaultValues fills a row followed by these rules:
 //     1. for nullable and no default value column, use NULL.
 //     2. for nullable and have default value column, use it's default value.
 //     3. for not null column, use zero value even in strict mode.
+//     4. for auto_increment column, use zero value.
+//     5. for generated column, use NULL.
 func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
 	for i, c := range e.Table.Cols() {
 		var err error
 		if c.IsGenerated() {
-			// Default value of generated columns is NULL.
 			continue
 		} else if mysql.HasAutoIncrementFlag(c.Flag) {
 			row[i] = table.GetZeroValue(c.ToInfo())
@@ -1012,6 +1017,8 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 	return nil
 }
 
+// initDefaultValues fills generated columns, auto_increment column and empty column.
+// For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
 	var defaultValueCols []*table.Column
 	strictSQL := e.ctx.GetSessionVars().StrictSQLMode

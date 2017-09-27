@@ -737,6 +737,17 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
 
+	checkRefColumn := func(n ast.Node) ast.Node {
+		if insertPlan.NeedFillDefaultValue {
+			return n
+		}
+		switch n.(type) {
+		case *ast.ColumnName, *ast.ColumnNameExpr:
+			insertPlan.NeedFillDefaultValue = true
+		}
+		return n
+	}
+
 	cols := insertPlan.Table.Cols()
 	maxValuesItemLength := 0 // the max length of items in VALUES list.
 	for _, valuesItem := range insert.Lists {
@@ -756,7 +767,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 					RetType: &val.Type,
 				}
 			} else {
-				expr, _, err = b.rewrite(valueItem, mockTablePlan, nil, true)
+				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				b.err = errors.Trace(err)
@@ -803,7 +814,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
-		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil

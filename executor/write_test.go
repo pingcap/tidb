@@ -1216,7 +1216,8 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustExec("insert into t value(b + 1, a)")
 	tk.MustExec("insert into t set a = b + a, b = a + 1")
 	tk.MustExec("insert into t value(1000, a)")
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0 1", "1 1", "1000 1000"))
+	tk.MustExec("insert t set b = sqrt(a + 4), a = 10")
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0 1", "1 1", "10 2", "1000 1000"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
