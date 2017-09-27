@@ -377,7 +377,9 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
 	for _, c := range columns {
 		col := columnToProto(c)
-		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
+		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
+		// is abandoned.
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
 			col.PkHandle = true
 		} else {
 			col.PkHandle = false
