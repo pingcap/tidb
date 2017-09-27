@@ -29,18 +29,6 @@ const (
 	UnspecifiedLength int = -1
 )
 
-// TypeClass classifies field types, used for type inference.
-type TypeClass byte
-
-// TypeClass values.
-const (
-	ClassString  TypeClass = 0
-	ClassReal    TypeClass = 1
-	ClassInt     TypeClass = 2
-	ClassRow     TypeClass = 3
-	ClassDecimal TypeClass = 4
-)
-
 // FieldType records field type information.
 type FieldType struct {
 	Tp      byte
@@ -129,20 +117,6 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 	}
 }
 
-// ToClass maps the field type to a type class.
-func (ft *FieldType) ToClass() TypeClass {
-	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
-		return ClassInt
-	case mysql.TypeNewDecimal:
-		return ClassDecimal
-	case mysql.TypeFloat, mysql.TypeDouble:
-		return ClassReal
-	default:
-		return ClassString
-	}
-}
-
 // EvalType gets the type in evaluation.
 func (ft *FieldType) EvalType() EvalType {
 	switch ft.Tp {
@@ -163,37 +137,6 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETJson
 	}
 	return ETString
-}
-
-func (tc TypeClass) String() string {
-	switch tc {
-	case ClassString:
-		return "ClassString"
-	case ClassReal:
-		return "ClassReal"
-	case ClassInt:
-		return "ClassInt"
-	case ClassDecimal:
-		return "ClassDecimal"
-	default:
-		return "ClassRow"
-	}
-}
-
-// ToType maps the type class to a type.
-func (tc TypeClass) ToType() byte {
-	switch tc {
-	case ClassString:
-		return mysql.TypeVarString
-	case ClassReal:
-		return mysql.TypeDouble
-	case ClassInt:
-		return mysql.TypeLonglong
-	case ClassDecimal:
-		return mysql.TypeNewDecimal
-	default:
-		return mysql.TypeUnspecified
-	}
 }
 
 // Init initializes the FieldType data.
