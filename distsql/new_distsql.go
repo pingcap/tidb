@@ -30,7 +30,6 @@ var (
 )
 
 // NewSelectResult is an iterator of coprocessor partial results.
-// TODO: add NextRaw method to keep compatible with SelectResult.
 type NewSelectResult interface {
 	// Next gets the next partial result.
 	Next() (NewPartialResult, error)
