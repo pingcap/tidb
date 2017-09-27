@@ -887,4 +887,11 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
 	ErrInvalidJSONData:                                       "Invalid data type for JSON data",
 	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
+
+	// TiKV/PD errors.
+	ErrPDServerTimeout:    "PD server timeout",
+	ErrTiKVServerTimeout:  "TiKV server timeout",
+	ErrTiKVServerBusy:     "TiKV server is busy",
+	ErrResolveLockTimeout: "Resolve lock timeout",
+	ErrRegionUnavaiable:   "Region is unavaiable",
 }
