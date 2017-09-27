@@ -42,3 +42,14 @@ var (
 	ErrRegionUnavaiable   = terror.ClassTiKV.New(mysql.ErrRegionUnavaiable, mysql.MySQLErrName[mysql.ErrRegionUnavaiable]+txnRetryableMark)
 	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy]+txnRetryableMark)
 )
+
+func init() {
+	tikvMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrTiKVServerTimeout:  mysql.ErrTiKVServerTimeout,
+		mysql.ErrResolveLockTimeout: mysql.ErrResolveLockTimeout,
+		mysql.ErrPDServerTimeout:    mysql.ErrPDServerTimeout,
+		mysql.ErrRegionUnavaiable:   mysql.ErrRegionUnavaiable,
+		mysql.ErrTiKVServerBusy:     mysql.ErrTiKVServerBusy,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassExpression] = tikvMySQLErrCodes
+}
