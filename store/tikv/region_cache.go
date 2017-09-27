@@ -226,7 +226,7 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 			return nil, errors.Trace(err)
 		}
 		regionIDs = append(regionIDs, curRegion.Region.id)
-		if curRegion.Contains(endKey) {
+		if (startKey!=nil && curRegion.Contains(endKey)) || len(curRegion.EndKey) == 0 {
 			break
 		}
 		startKey = curRegion.EndKey
