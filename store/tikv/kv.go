@@ -24,7 +24,6 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
@@ -378,7 +377,7 @@ func (s *tikvStore) SupportDeleteRange() (supported bool) {
 }
 
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	sender := NewRegionRequestSender(s.regionCache, s.client, kvrpcpb.IsolationLevel_SI)
+	sender := NewRegionRequestSender(s.regionCache, s.client)
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 

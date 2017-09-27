@@ -29,7 +29,7 @@ import (
 func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 	log.Infof("start split_region at %q", splitKey)
 	bo := NewBackoffer(splitRegionBackoff, goctx.Background())
-	sender := NewRegionRequestSender(s.regionCache, s.client, kvrpcpb.IsolationLevel_SI)
+	sender := NewRegionRequestSender(s.regionCache, s.client)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdSplitRegion,
 		SplitRegion: &kvrpcpb.SplitRegionRequest{

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
@@ -57,6 +58,7 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testSuite{})
+var _ = Suite(&testContextOptionSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -164,8 +166,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, NotNil)
 	// different index values
 	ctx := tk.Se.(context.Context)
-	domain := sessionctx.GetDomain(ctx)
-	is := domain.InfoSchema()
+	dom := sessionctx.GetDomain(ctx)
+	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
@@ -1929,12 +1931,19 @@ func (s *testSuite) TestIssue4024(c *C) {
 	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
 }
 
+const (
+	checkRequestOff          = 0
+	checkRequestPriority     = 1
+	checkRequestNotFillCache = 2
+)
+
 type checkRequestClient struct {
 	tikv.Client
-	priority pb.CommandPri
-	mu       struct {
+	priority     pb.CommandPri
+	notFillCache bool
+	mu           struct {
 		sync.RWMutex
-		turnOn bool
+		turnOn uint32
 	}
 }
 
@@ -1943,44 +1952,58 @@ func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrp
 	c.mu.RLock()
 	turnOn := c.mu.turnOn
 	c.mu.RUnlock()
-	if turnOn {
+	if turnOn == checkRequestPriority {
 		switch req.Type {
 		case tikvrpc.CmdCop:
 			if c.priority != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
 		}
+	} else if turnOn == checkRequestNotFillCache {
+		if c.notFillCache != req.NotFillCache {
+			return nil, errors.New("fail to set not fail cache")
+		}
 	}
 	return resp, err
 }
 
-type testPrioritySuite struct{}
+type testContextOptionSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+	cli   *checkRequestClient
+}
 
-var _ = Suite(testPrioritySuite{})
-
-func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
+func (s *testContextOptionSuite) SetUpSuite(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
 	}
+	s.cli = cli
 
-	tmpStore, err := tikv.NewMockTikvStore(
+	var err error
+	s.store, err = tikv.NewMockTikvStore(
 		tikv.WithHijackClient(hijackClient),
 	)
-	defer tmpStore.Close()
 	c.Assert(err, IsNil)
-	dom, err := tidb.BootstrapSession(tmpStore)
+	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	defer dom.Close()
+}
 
-	tk := testkit.NewTestKit(c, tmpStore)
+func (s *testContextOptionSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
 	tk.MustExec("insert into t values (1)")
 
+	cli := s.cli
 	cli.mu.Lock()
-	cli.mu.turnOn = true
+	cli.mu.turnOn = checkRequestPriority
 	cli.mu.Unlock()
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
@@ -2008,6 +2031,29 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+
+	cli.mu.Lock()
+	cli.mu.turnOn = checkRequestOff
+	cli.mu.Unlock()
+	tk.MustExec("drop table t")
+}
+
+func (s *testContextOptionSuite) TestNotFillCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	cli := s.cli
+	cli.mu.Lock()
+	cli.mu.turnOn = checkRequestNotFillCache
+	cli.mu.Unlock()
+	cli.notFillCache = true
+	tk.MustQuery("select SQL_NO_CACHE * from t")
+
+	cli.notFillCache = false
+	tk.MustQuery("select SQL_CACHE * from t")
+	tk.MustQuery("select * from t")
 }
 
 func (s *testSuite) TestBit(c *C) {
