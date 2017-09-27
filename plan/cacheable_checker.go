@@ -17,8 +17,8 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
-// CheckCacheable checks whether the input ast is cacheable.
-func CheckCacheable(node ast.Node) bool {
+// Cacheable checks whether the input ast is cacheable.
+func Cacheable(node ast.Node) bool {
 	checker := cacheableChecker{
 		cacheable: true,
 	}

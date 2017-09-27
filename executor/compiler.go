@@ -39,7 +39,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		return nil, errors.Trace(err)
 	}
 
-	cacheable := plan.CheckCacheable(node)
+	cacheable := plan.Cacheable(node)
 
 	p, err := plan.Optimize(ctx, node, is)
 	if err != nil {
