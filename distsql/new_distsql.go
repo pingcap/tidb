@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -176,7 +175,8 @@ func (pr *newPartialResult) Close() error {
 // concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func NewSelectDAG(ctx context.Context, goCtx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, keepOrder bool, desc bool, isolationLevel kv.IsoLevel, priority int, colLen int) (NewSelectResult, error) {
+//func NewSelectDAG(ctx context.Context, goCtx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, keepOrder bool, desc bool, isolationLevel kv.IsoLevel, priority int, colLen int) (NewSelectResult, error) {
+func NewSelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen int) (NewSelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics.
@@ -187,21 +187,7 @@ func NewSelectDAG(ctx context.Context, goCtx goctx.Context, dag *tipb.DAGRequest
 		}
 	}()
 
-	kvReq := &kv.Request{
-		Tp:             kv.ReqTypeDAG,
-		Concurrency:    ctx.GetSessionVars().DistSQLScanConcurrency,
-		KeepOrder:      keepOrder,
-		KeyRanges:      keyRanges,
-		Desc:           desc,
-		IsolationLevel: isolationLevel,
-		Priority:       priority,
-	}
-	kvReq.Data, err = dag.Marshal()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	resp := ctx.GetClient().Send(goCtx, kvReq)
+	resp := client.Send(ctx, kvReq)
 	if resp == nil {
 		err = errors.New("client returns nil response")
 		return nil, errors.Trace(err)
@@ -209,7 +195,7 @@ func NewSelectDAG(ctx context.Context, goCtx goctx.Context, dag *tipb.DAGRequest
 	result := &newSelectResult{
 		label:   "dag",
 		resp:    resp,
-		results: make(chan newResultWithErr, ctx.GetSessionVars().DistSQLScanConcurrency),
+		results: make(chan newResultWithErr, kvReq.Concurrency),
 		closed:  make(chan struct{}),
 		rowLen:  colLen,
 	}

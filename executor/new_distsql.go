@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -120,9 +121,18 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
-	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
-	var err error
-	e.result, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+	var builder requestBuilder
+	kvReq, err := builder.SetTableRanges(e.tableID, e.ranges).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.NewSelectDAG(goctx.Background(), e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -133,9 +143,18 @@ func (e *TableReaderExecutor) Open() error {
 // doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
 func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
 	sort.Sort(int64Slice(handles))
-	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
-	var err error
-	e.result, err = distsql.NewSelectDAG(e.ctx, goCtx, e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+	var builder requestBuilder
+	kvReq, err := builder.SetTableHandles(e.tableID, handles).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.NewSelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -226,11 +245,18 @@ func (e *IndexReaderExecutor) Open() error {
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	kvRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes)
+	var builder requestBuilder
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+	e.result, err = distsql.NewSelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -240,11 +266,18 @@ func (e *IndexReaderExecutor) Open() error {
 
 // doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
 func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx goctx.Context) error {
-	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
+	var builder requestBuilder
+	kvReq, err := builder.SetIndexValues(e.tableID, e.index.ID, values).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+	e.result, err = distsql.NewSelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -289,8 +322,18 @@ type indexWorker struct {
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
-	result, err := distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges,
-		e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, 1)
+	var builder requestBuilder
+	kvReq, err := builder.SetKeyRanges(kvRanges).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	result, err := distsql.NewSelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, 1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -550,4 +593,76 @@ func (e *IndexLookUpExecutor) Next() (Row, error) {
 		}
 		e.resultCurr = nil
 	}
+}
+
+type requestBuilder struct {
+	kv.Request
+	err error
+}
+
+func (builder *requestBuilder) Build() (*kv.Request, error) {
+	return &builder.Request, errors.Trace(builder.err)
+}
+
+func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []types.IntColumnRange) *requestBuilder {
+	builder.Request.KeyRanges = tableRangesToKVRanges(tid, tableRanges)
+	return builder
+}
+
+func (builder *requestBuilder) SetIndexRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*types.IndexRange, fieldTypes []*types.FieldType) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+	builder.Request.KeyRanges, builder.err = indexRangesToKVRanges(sc, tid, idxID, ranges, fieldTypes)
+	return builder
+}
+
+func (builder *requestBuilder) SetTableHandles(tid int64, handles []int64) *requestBuilder {
+	builder.Request.KeyRanges = tableHandlesToKVRanges(tid, handles)
+	return builder
+}
+
+func (builder *requestBuilder) SetIndexValues(tid, idxID int64, values [][]types.Datum) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+	builder.Request.KeyRanges, builder.err = indexValuesToKVRanges(tid, idxID, values)
+	return builder
+}
+
+func (builder *requestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+
+	builder.Request.Tp = kv.ReqTypeDAG
+	builder.Request.StartTs = dag.StartTs
+	builder.Request.Data, builder.err = dag.Marshal()
+	return builder
+}
+
+func (builder *requestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *requestBuilder {
+	builder.Request.KeyRanges = keyRanges
+	return builder
+}
+
+func (builder *requestBuilder) SetDesc(desc bool) *requestBuilder {
+	builder.Request.Desc = desc
+	return builder
+}
+
+func (builder *requestBuilder) SetKeepOrder(order bool) *requestBuilder {
+	builder.Request.KeepOrder = order
+	return builder
+}
+
+func (builder *requestBuilder) SetFromSessionVars(sv *variable.SessionVars) *requestBuilder {
+	builder.Request.Concurrency = sv.DistSQLScanConcurrency
+	builder.Request.IsolationLevel = getIsolationLevel(sv)
+	return builder
+}
+
+func (builder *requestBuilder) SetPriority(priority int) *requestBuilder {
+	builder.Request.Priority = priority
+	return builder
 }
