@@ -463,14 +463,14 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		}
 
 		req := &tikvrpc.Request{
-			Type:     tikvrpc.CmdCop,
-			Priority: kvPriorityToCommandPri(it.req.Priority),
+			Type: tikvrpc.CmdCop,
 			Cop: &coprocessor.Request{
 				Tp:     it.req.Tp,
 				Data:   it.req.Data,
 				Ranges: task.ranges.toPBRanges(),
 			},
 		}
+		req.Context.Priority = kvPriorityToCommandPri(it.req.Priority)
 		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}

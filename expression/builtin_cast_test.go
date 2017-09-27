@@ -1089,9 +1089,9 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	for _, t := range cases {
 		// Test wrapping with CastAsInt.
 		intExpr := WrapWithCastAsInt(t.expr, ctx)
-		c.Assert(intExpr.GetTypeClass(), Equals, types.ClassInt)
+		c.Assert(intExpr.GetType().EvalType(), Equals, types.ETInt)
 		_, ok := intExpr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassInt)
+		c.Assert(ok, Equals, t.expr.GetType().EvalType() != types.ETInt)
 		intRes, isNull, err := intExpr.EvalInt(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1099,9 +1099,9 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 
 		// Test wrapping with CastAsReal.
 		realExpr := WrapWithCastAsReal(t.expr, ctx)
-		c.Assert(realExpr.GetTypeClass(), Equals, types.ClassReal)
+		c.Assert(realExpr.GetType().EvalType(), Equals, types.ETReal)
 		_, ok = realExpr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassReal)
+		c.Assert(ok, Equals, t.expr.GetType().EvalType() != types.ETReal)
 		realRes, isNull, err := realExpr.EvalReal(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1109,9 +1109,9 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 
 		// Test wrapping with CastAsDecimal.
 		decExpr := WrapWithCastAsDecimal(t.expr, ctx)
-		c.Assert(decExpr.GetTypeClass(), Equals, types.ClassDecimal)
+		c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
 		_, ok = decExpr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassDecimal)
+		c.Assert(ok, Equals, t.expr.GetType().EvalType() != types.ETDecimal)
 		decRes, isNull, err := decExpr.EvalDecimal(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1119,10 +1119,10 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(t.expr, ctx)
-		c.Assert(strExpr.GetTypeClass(), Equals, types.ClassString)
+		c.Assert(strExpr.GetType().EvalType().IsStringKind(), IsTrue)
 		_, ok = strExpr.(*ScalarFunction)
 		exprTp := t.expr.GetType().Tp
-		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassString || types.IsTypeTime(exprTp) || exprTp == mysql.TypeDuration)
+		c.Assert(ok, Equals, !t.expr.GetType().EvalType().IsStringKind() || types.IsTypeTime(exprTp) || exprTp == mysql.TypeDuration)
 		strRes, isNull, err := strExpr.EvalString(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1133,7 +1133,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 
 	// test cast unsigned int as string.
 	strExpr := WrapWithCastAsString(unsignedIntExpr, ctx)
-	c.Assert(strExpr.GetTypeClass(), Equals, types.ClassString)
+	c.Assert(strExpr.GetType().EvalType().IsStringKind(), IsTrue)
 	strRes, isNull, err := strExpr.EvalString([]types.Datum{types.NewUintDatum(math.MaxUint64)}, sc)
 	c.Assert(err, IsNil)
 	c.Assert(strRes, Equals, strconv.FormatUint(math.MaxUint64, 10))
@@ -1146,7 +1146,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 
 	// test cast unsigned int as decimal.
 	decExpr := WrapWithCastAsDecimal(unsignedIntExpr, ctx)
-	c.Assert(decExpr.GetTypeClass(), Equals, types.ClassDecimal)
+	c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
 	decRes, isNull, err := decExpr.EvalDecimal([]types.Datum{types.NewUintDatum(uint64(1234))}, sc)
 	c.Assert(err, IsNil)
 	c.Assert(isNull, Equals, false)

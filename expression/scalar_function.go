@@ -142,11 +142,6 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
 }
 
-// GetTypeClass implements Expression interface.
-func (sf *ScalarFunction) GetTypeClass() types.TypeClass {
-	return sf.RetType.ToClass()
-}
-
 // Equal implements Expression interface.
 func (sf *ScalarFunction) Equal(e Expression, ctx context.Context) bool {
 	fun, ok := e.(*ScalarFunction)
@@ -184,9 +179,8 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 		res    interface{}
 		isNull bool
 	)
-	tp := sf.GetType()
-	switch sf.GetTypeClass() {
-	case types.ClassInt:
+	switch tp, evalType := sf.GetType(), sf.GetType().EvalType(); evalType {
+	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(row, sc)
 		if mysql.HasUnsignedFlag(tp.Flag) {
@@ -194,21 +188,18 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 		} else {
 			res = intRes
 		}
-	case types.ClassReal:
+	case types.ETReal:
 		res, isNull, err = sf.EvalReal(row, sc)
-	case types.ClassDecimal:
+	case types.ETDecimal:
 		res, isNull, err = sf.EvalDecimal(row, sc)
-	case types.ClassString:
-		switch x := sf.GetType().Tp; x {
-		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeNewDate:
-			res, isNull, err = sf.EvalTime(row, sc)
-		case mysql.TypeDuration:
-			res, isNull, err = sf.EvalDuration(row, sc)
-		case mysql.TypeJSON:
-			res, isNull, err = sf.EvalJSON(row, sc)
-		default:
-			res, isNull, err = sf.EvalString(row, sc)
-		}
+	case types.ETDatetime, types.ETTimestamp:
+		res, isNull, err = sf.EvalTime(row, sc)
+	case types.ETDuration:
+		res, isNull, err = sf.EvalDuration(row, sc)
+	case types.ETJson:
+		res, isNull, err = sf.EvalJSON(row, sc)
+	case types.ETString:
+		res, isNull, err = sf.EvalString(row, sc)
 	}
 
 	if isNull || err != nil {
