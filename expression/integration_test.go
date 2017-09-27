@@ -1921,6 +1921,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	_, err = tk.Exec("insert into t values(-9223372036854775809)")
 	c.Assert(err, NotNil)
 
+	// test case decimal precision less than the scale.
+	rs, err := tk.Exec("select cast(12.1 as decimal(3, 4));")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').")
+
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
 	result.Check(testkit.Rows("MySQL"))

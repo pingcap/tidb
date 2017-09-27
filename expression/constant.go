@@ -74,11 +74,6 @@ func (c *Constant) GetType() *types.FieldType {
 	return c.RetType
 }
 
-// GetTypeClass implements Expression interface.
-func (c *Constant) GetTypeClass() types.TypeClass {
-	return c.RetType.ToClass()
-}
-
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
@@ -150,7 +145,7 @@ func (c *Constant) Equal(b Expression, ctx context.Context) bool {
 	if !ok {
 		return false
 	}
-	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, y.Value)
+	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, &y.Value)
 	if err != nil || con != 0 {
 		return false
 	}

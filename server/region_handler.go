@@ -536,8 +536,7 @@ func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb
 	}
 
 	tikvReq := &tikvrpc.Request{
-		Type:     tikvrpc.CmdMvccGetByKey,
-		Priority: kvrpcpb.CommandPri_Normal,
+		Type: tikvrpc.CmdMvccGetByKey,
 		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
 			Key: encodeKey,
 		},
@@ -560,12 +559,12 @@ func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []
 		}
 
 		tikvReq := &tikvrpc.Request{
-			Type:     tikvrpc.CmdMvccGetByStartTs,
-			Priority: kvrpcpb.CommandPri_Low,
+			Type: tikvrpc.CmdMvccGetByStartTs,
 			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
 				StartTs: startTS,
 			},
 		}
+		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.store.SendReq(t.bo, tikvReq, curRegion.Region, time.Hour)
 		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {

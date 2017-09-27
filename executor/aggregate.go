@@ -252,7 +252,7 @@ func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := v.CompareDatum(e.StmtCtx, e.curGroupKey[i])
+			c, err := v.CompareDatum(e.StmtCtx, &e.curGroupKey[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}
