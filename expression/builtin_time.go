@@ -3043,12 +3043,12 @@ func (c *timestampFunctionClass) getDefaultFsp(tp *types.FieldType) int {
 		tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeNewDate {
 		return tp.Decimal
 	}
-	switch cls := tp.ToClass(); cls {
-	case types.ClassInt:
+	switch cls := tp.EvalType(); cls {
+	case types.ETInt:
 		return types.MinFsp
-	case types.ClassReal, types.ClassString:
+	case types.ETReal, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson, types.ETString:
 		return types.MaxFsp
-	case types.ClassDecimal:
+	case types.ETDecimal:
 		if tp.Decimal < types.MaxFsp {
 			return tp.Decimal
 		}
