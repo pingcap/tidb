@@ -62,9 +62,6 @@ type Expression interface {
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
-	// GetTypeClass gets the TypeClass that the expression returns.
-	GetTypeClass() types.TypeClass
-
 	// Clone copies an expression totally.
 	Clone() Expression
 
