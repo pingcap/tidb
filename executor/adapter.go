@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 )
 
 type processinfoSetter interface {
@@ -183,7 +184,7 @@ func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi pr
 		if pi != nil {
 			pi.SetProcessInfo("")
 		}
-		e.Close()
+		terror.Log(e.Close())
 		a.logSlowQuery()
 	}()
 	for {

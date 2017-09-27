@@ -87,7 +87,11 @@ func (r *newSelectResult) fetch(ctx goctx.Context) {
 			return
 		}
 		pr := &newPartialResult{}
-		pr.unmarshal(resultSubset)
+		err = pr.unmarshal(resultSubset)
+		if err != nil {
+			r.results <- newResultWithErr{err: errors.Trace(err)}
+			return
+		}
 		pr.rowLen = r.rowLen
 
 		select {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -166,7 +167,7 @@ func (e *IndexLookUpJoin) doJoin() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer e.innerExec.Close()
+	defer terror.Call(e.innerExec.Close)
 	for {
 		innerRow, err := e.innerExec.Next()
 		if err != nil {
@@ -184,7 +185,10 @@ func (e *IndexLookUpJoin) doJoin() error {
 		}
 		joinDatums := make([]types.Datum, 0, len(e.innerJoinKeys))
 		for _, col := range e.innerJoinKeys {
-			datum, _ := col.Eval(innerRow)
+			datum, err := col.Eval(innerRow)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			joinDatums = append(joinDatums, datum)
 		}
 		joinKey, err := codec.EncodeKey(nil, joinDatums...)
