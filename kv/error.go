@@ -75,7 +75,7 @@ func init() {
 	kvMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeKeyExists:     mysql.ErrDupEntry,
 		codeEntryTooLarge: mysql.ErrTooBigRowsize,
-		codeTxnTooLarge:   mysql.ErrTooManyRows,
+		codeTxnTooLarge:   mysql.ErrTxnTooLarge,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassKV] = kvMySQLErrCodes
 }
