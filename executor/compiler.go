@@ -46,6 +46,11 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		return nil, errors.Trace(err)
 	}
 
+	_, isDual := p.(*plan.TableDual)
+	if isDual {
+		cacheable = false
+	}
+
 	// Don't take restricted SQL into account for metrics.
 	isExpensive := stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
 	stmt := &statement{

@@ -661,8 +661,8 @@ func (s *session) executeWithPlanCache(sql string) ([]ast.RecordSet, error) {
 	database := s.sessionVars.CurrentDB
 	cacheKey := cache.NewSQLCacheKey(schemaVersion, sqlMode, timeZoneOffset, snapshot, database, sql)
 
-	if s.Txn() != nil && s.Txn().IsReadOnly() == false && s.planBuildOnReadOnly {
-		s.planBuildOnReadOnly = false
+	if s.Txn() != nil && s.Txn().IsReadOnly() != s.planBuildOnReadOnly {
+		s.planBuildOnReadOnly = s.Txn().IsReadOnly()
 		s.planCache.Clear()
 	}
 
