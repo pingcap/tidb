@@ -69,8 +69,7 @@ var (
 
 // TODO: support other mode
 const (
-	aes128ecb          string = "aes-128-ecb"
-	aes128ecbBlobkSize int    = 16
+	aes128ecbBlobkSize int = 16
 )
 
 type aesDecryptFunctionClass struct {

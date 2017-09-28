@@ -2060,29 +2060,6 @@ func (b *builtinFieldStringSig) evalInt(row []types.Datum) (int64, bool, error) 
 	return 0, false, nil
 }
 
-// argsToSpecifiedType converts the type of all arguments in args into string type or double type.
-func argsToSpecifiedType(args []types.Datum, allString bool, allNumber bool, ctx context.Context) (newArgs []types.Datum, err error) {
-	if allNumber { // If all arguments are numbers, they can be compared directly without type converting.
-		return args, nil
-	}
-	sc := ctx.GetSessionVars().StmtCtx
-	newArgs = make([]types.Datum, len(args))
-	for i, arg := range args {
-		if allString {
-			str, err := arg.ToString()
-			if err != nil {
-				return newArgs, errors.Trace(err)
-			}
-			newArgs[i] = types.NewStringDatum(str)
-		} else {
-			// If error occurred when convert arg to float64, ignore it and set f as 0.
-			f, _ := arg.ToFloat64(sc)
-			newArgs[i] = types.NewFloat64Datum(f)
-		}
-	}
-	return
-}
-
 type makeSetFunctionClass struct {
 	baseFunctionClass
 }

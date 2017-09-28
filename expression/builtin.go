@@ -31,12 +31,11 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args      []Expression
-	argValues []types.Datum
-	ctx       context.Context
-	foldable  bool // Default value is true because many expressions are foldable.
-	tp        *types.FieldType
-	pbCode    tipb.ScalarFuncSig
+	args     []Expression
+	ctx      context.Context
+	foldable bool // Default value is true because many expressions are foldable.
+	tp       *types.FieldType
+	pbCode   tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
@@ -52,11 +51,10 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:      args,
-		argValues: make([]types.Datum, len(args)),
-		ctx:       ctx,
-		foldable:  true,
-		tp:        types.NewFieldType(mysql.TypeUnspecified),
+		args:     args,
+		ctx:      ctx,
+		foldable: true,
+		tp:       types.NewFieldType(mysql.TypeUnspecified),
 	}
 }
 
@@ -153,11 +151,10 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ty
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
 	return baseBuiltinFunc{
-		args:      args,
-		argValues: make([]types.Datum, len(args)),
-		ctx:       ctx,
-		foldable:  true,
-		tp:        fieldType,
+		args:     args,
+		ctx:      ctx,
+		foldable: true,
+		tp:       fieldType,
 	}
 }
 
