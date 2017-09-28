@@ -31,13 +31,13 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args   []Expression
-	ctx    context.Context
-	tp     *types.FieldType
-	self   builtinFunc
-	pbCode tipb.ScalarFuncSig
+	args []Expression
+	ctx  context.Context
+	tp   *types.FieldType
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
+	self     builtinFunc
+	pbCode   tipb.ScalarFuncSig
 	foldable bool // Default value is true because many expressions are foldable.
 }
 
