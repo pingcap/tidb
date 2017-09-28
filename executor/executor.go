@@ -154,13 +154,33 @@ type CancelDDLJobsExec struct {
 	baseExecutor
 
 	done    bool
+	cursor  int
 	JobsIDs []int64
+	errs    []error
 }
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
+	}
+
+	if e.errs == nil {
+		var err error
+		e.errs, err = inspectkv.CancelJobs(e.ctx.Txn(), e.JobsIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if e.cursor < len(e.JobsIDs) {
+		ret := "successful"
+		if e.errs[e.cursor] != nil {
+			ret := "failed"
+		}
+		row := types.MakeDatums(
+			e.JobsIDs[e.cursor],
+			ret,
+		)
 	}
 
 	return nil, nil

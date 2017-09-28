@@ -138,7 +138,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
-	// show ddl jobs test
+	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
 	row, err = r.Next()
@@ -152,6 +152,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[1].GetString(), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
+
+	// cancel DDL jobs test
 
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")

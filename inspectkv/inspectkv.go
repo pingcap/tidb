@@ -65,31 +65,39 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 }
 
 // CancelJobs cancels the DDL jobs.
-func CancelJobs(txn kv.Transaction, ids []int64) []error {
+func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	errs := make([]error, 0, len(ids))
 	jobs, err := GetDDLJobs(txn)
 	if err != nil {
-		errs[0] = errors.Trace(err)
-		return errs
+		return nil, errors.Trace(err)
 	}
+
+	errs := make([]error, len(ids))
 	t := meta.NewMeta(txn)
 	for i, job := range jobs {
 		for j, id := range ids {
 			if id != job.ID {
 				continue
 			}
+			// These states can't be cancelled.
+			if job.IsDone() {
+				errs[j] = errors.New("This job will be done, so can't be cancelled")
+				continue
+			}
+			if job.IsCancelled() {
+				continue
+			}
 			job.State = model.JobCancelled
 			err := t.UpdateDDLJob(int64(i), job)
 			if err != nil {
-				errs[j] = err
+				errs[j] = errors.Trace(err)
 			}
 		}
 	}
-	return errs
+	return errs, nil
 }
 
 // GetDDLJobs returns the DDL jobs and an error.
