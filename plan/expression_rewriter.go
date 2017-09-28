@@ -511,6 +511,10 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
 		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return v, true
+		}
 		rows, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -776,7 +780,6 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	e.RetType.Charset = er.ctx.GetSessionVars().Systems[variable.CharacterSetConnection]
 	e.RetType.Collate = er.ctx.GetSessionVars().Systems[variable.CollationConnection]
 	er.ctxStack = append(er.ctxStack, e)
-	return
 }
 
 func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
