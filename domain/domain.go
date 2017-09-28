@@ -21,6 +21,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -424,6 +426,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			cli, err = clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
+				DialOptions: []grpc.DialOption{
+					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+				},
 			})
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -534,6 +540,9 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
+// RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
+var RunAutoAnalyze = false
+
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
@@ -552,6 +561,10 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	}
 	do.wg.Add(1)
 	go do.updateStatsWorker(ctx, lease)
+	if RunAutoAnalyze {
+		do.wg.Add(1)
+		go do.autoAnalyzeWorker(lease)
+	}
 	return nil
 }
 
@@ -606,14 +619,21 @@ func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
 		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
 	}
 	statsHandle := do.StatsHandle()
+	analyzeTicker := time.NewTicker(lease)
+	defer analyzeTicker.Stop()
 	for {
-		if statsOwner.IsOwner() {
-			err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
-			if err != nil {
-				log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+		select {
+		case <-analyzeTicker.C:
+			if statsOwner.IsOwner() {
+				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
+				if err != nil {
+					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+				}
 			}
+		case <-do.exit:
+			do.wg.Done()
+			return
 		}
-		time.Sleep(lease)
 	}
 }
 

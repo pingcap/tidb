@@ -115,20 +115,20 @@ func (sf *ScalarFunction) Clone() Expression {
 		return BuildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
 	case ast.Values:
 		var offset int
-		switch fieldTp2EvalTp(sf.GetType()) {
-		case tpInt:
+		switch sf.GetType().EvalType() {
+		case types.ETInt:
 			offset = sf.Function.(*builtinValuesIntSig).offset
-		case tpReal:
+		case types.ETReal:
 			offset = sf.Function.(*builtinValuesRealSig).offset
-		case tpDecimal:
+		case types.ETDecimal:
 			offset = sf.Function.(*builtinValuesDecimalSig).offset
-		case tpString:
+		case types.ETString:
 			offset = sf.Function.(*builtinValuesStringSig).offset
-		case tpDatetime, tpTimestamp:
+		case types.ETDatetime, types.ETTimestamp:
 			offset = sf.Function.(*builtinValuesTimeSig).offset
-		case tpDuration:
+		case types.ETDuration:
 			offset = sf.Function.(*builtinValuesDurationSig).offset
-		case tpJSON:
+		case types.ETJson:
 			offset = sf.Function.(*builtinValuesJSONSig).offset
 		}
 		return NewValuesFunc(offset, sf.GetType(), sf.GetCtx())
@@ -140,11 +140,6 @@ func (sf *ScalarFunction) Clone() Expression {
 // GetType implements Expression interface.
 func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
-}
-
-// GetTypeClass implements Expression interface.
-func (sf *ScalarFunction) GetTypeClass() types.TypeClass {
-	return sf.RetType.ToClass()
 }
 
 // Equal implements Expression interface.
@@ -184,9 +179,8 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 		res    interface{}
 		isNull bool
 	)
-	tp := sf.GetType()
-	switch sf.GetTypeClass() {
-	case types.ClassInt:
+	switch tp, evalType := sf.GetType(), sf.GetType().EvalType(); evalType {
+	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(row, sc)
 		if mysql.HasUnsignedFlag(tp.Flag) {
@@ -194,21 +188,18 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 		} else {
 			res = intRes
 		}
-	case types.ClassReal:
+	case types.ETReal:
 		res, isNull, err = sf.EvalReal(row, sc)
-	case types.ClassDecimal:
+	case types.ETDecimal:
 		res, isNull, err = sf.EvalDecimal(row, sc)
-	case types.ClassString:
-		switch x := sf.GetType().Tp; x {
-		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeNewDate:
-			res, isNull, err = sf.EvalTime(row, sc)
-		case mysql.TypeDuration:
-			res, isNull, err = sf.EvalDuration(row, sc)
-		case mysql.TypeJSON:
-			res, isNull, err = sf.EvalJSON(row, sc)
-		default:
-			res, isNull, err = sf.EvalString(row, sc)
-		}
+	case types.ETDatetime, types.ETTimestamp:
+		res, isNull, err = sf.EvalTime(row, sc)
+	case types.ETDuration:
+		res, isNull, err = sf.EvalDuration(row, sc)
+	case types.ETJson:
+		res, isNull, err = sf.EvalJSON(row, sc)
+	case types.ETString:
+		res, isNull, err = sf.EvalString(row, sc)
 	}
 
 	if isNull || err != nil {

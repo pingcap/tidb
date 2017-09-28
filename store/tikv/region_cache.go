@@ -67,14 +67,15 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
 	Region RegionVerID
-	KVCtx  *kvrpcpb.Context
+	Meta   *metapb.Region
+	Peer   *metapb.Peer
 	Addr   string
 }
 
 // GetStoreID returns StoreID.
 func (c *RPCContext) GetStoreID() uint64 {
-	if c.KVCtx != nil && c.KVCtx.Peer != nil {
-		return c.KVCtx.Peer.StoreId
+	if c.Peer != nil {
+		return c.Peer.StoreId
 	}
 	return 0
 }
@@ -108,9 +109,8 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	if region == nil {
 		return nil, nil
 	}
-	kvCtx := region.GetContext()
 
-	addr, err := c.GetStoreAddr(bo, kvCtx.GetPeer().GetStoreId())
+	addr, err := c.GetStoreAddr(bo, region.peer.GetStoreId())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -121,7 +121,8 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	}
 	return &RPCContext{
 		Region: id,
-		KVCtx:  kvCtx,
+		Meta:   region.meta,
+		Peer:   region.peer,
 		Addr:   addr,
 	}, nil
 }
@@ -432,13 +433,13 @@ func (c *RegionCache) OnRequestFail(ctx *RPCContext, err error) {
 	c.mu.Lock()
 	if cachedregion, ok := c.mu.regions[regionID]; ok {
 		region := cachedregion.region
-		if !region.OnRequestFail(ctx.KVCtx.GetPeer().GetStoreId()) {
+		if !region.OnRequestFail(ctx.Peer.GetStoreId()) {
 			c.dropRegionFromCache(regionID)
 		}
 	}
 	c.mu.Unlock()
 	// Store's meta may be out of date.
-	storeID := ctx.KVCtx.GetPeer().GetStoreId()
+	storeID := ctx.Peer.GetStoreId()
 	c.storeMu.Lock()
 	delete(c.storeMu.stores, storeID)
 	c.storeMu.Unlock()
@@ -471,7 +472,7 @@ func (c *RegionCache) OnRegionStale(ctx *RPCContext, newRegions []*metapb.Region
 			meta: meta,
 			peer: meta.Peers[0],
 		}
-		region.SwitchPeer(ctx.KVCtx.GetPeer().GetStoreId())
+		region.SwitchPeer(ctx.Peer.GetStoreId())
 		c.insertRegionToCache(region)
 	}
 	return nil

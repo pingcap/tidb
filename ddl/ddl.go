@@ -105,6 +105,7 @@ var (
 	errJSONUsedAsKey = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
 	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
 	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
+	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -563,6 +564,7 @@ const (
 	codeDependentByGeneratedColumn   = 3108
 	codeJSONUsedAsKey                = 3152
 	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
+	codeErrTooLongIndexComment       = terror.ErrCode(mysql.ErrTooLongIndexComment)
 )
 
 func init() {
@@ -592,6 +594,7 @@ func init() {
 		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
 		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
 		codeTooManyFields:                mysql.ErrTooManyFields,
+		codeErrTooLongIndexComment:       mysql.ErrTooLongIndexComment,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

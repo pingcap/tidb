@@ -279,10 +279,7 @@ type slowClient struct {
 
 func (c *slowClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	for id, delay := range c.regionDelays {
-		reqCtx, err := req.GetContext()
-		if err != nil {
-			return nil, err
-		}
+		reqCtx := &req.Context
 		if reqCtx.GetRegionId() == id {
 			time.Sleep(delay)
 		}

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // Column provides meta data describing a table column.
@@ -341,7 +342,7 @@ func getColDefaultValueFromNil(ctx context.Context, col *model.ColumnInfo) (type
 		// TODO: add warning.
 		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, errNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
+	return types.Datum{}, ErrNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.
@@ -378,6 +379,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlSet(types.Set{})
 	case mysql.TypeEnum:
 		d.SetMysqlEnum(types.Enum{})
+	case mysql.TypeJSON:
+		d.SetMysqlJSON(json.CreateJSON(nil))
 	}
 	return d
 }

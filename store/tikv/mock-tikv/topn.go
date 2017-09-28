@@ -24,7 +24,6 @@ import (
 
 type sortRow struct {
 	key  []types.Datum
-	meta tipb.RowMeta
 	data [][]byte
 }
 
@@ -49,7 +48,7 @@ func (t *topNSorter) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(t.sc, v2)
+		ret, err := v1.CompareDatum(t.sc, &v2)
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -98,7 +97,7 @@ func (t *topNHeap) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(t.sc, v2)
+		ret, err := v1.CompareDatum(t.sc, &v2)
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true

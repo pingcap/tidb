@@ -205,7 +205,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(sc, ran.LowVal[i])
+		cmp, err := converted.CompareDatum(sc, &ran.LowVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -234,7 +234,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(sc, ran.HighVal[i])
+		cmp, err := converted.CompareDatum(sc, &ran.HighVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -286,6 +286,47 @@ func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64,
 			break
 		}
 		handles = append(handles, h)
+	}
+	return handles, nil
+}
+
+func extractHandlesFromNewIndexResult(idxResult distsql.NewSelectResult) (handles []int64, finish bool, err error) {
+	subResult, e0 := idxResult.Next()
+	if e0 != nil {
+		err = errors.Trace(e0)
+		return
+	}
+	if subResult == nil {
+		finish = true
+		return
+	}
+	handles, err = extractHandlesFromNewIndexSubResult(subResult)
+	if err != nil {
+		err = errors.Trace(err)
+	}
+	return
+}
+
+func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]int64, error) {
+	defer subResult.Close()
+	var (
+		handles     []int64
+		handleDatum types.Datum
+	)
+	handleType := types.NewFieldType(mysql.TypeLonglong)
+	for {
+		data, err := subResult.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if data == nil {
+			break
+		}
+		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), handleType, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		handles = append(handles, handleDatum.GetInt64())
 	}
 	return handles, nil
 }

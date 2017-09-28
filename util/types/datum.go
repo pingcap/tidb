@@ -386,9 +386,9 @@ func (d *Datum) SetValue(val interface{}) {
 
 // CompareDatum compares datum to another datum.
 // TODO: return error properly.
-func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, error) {
+func (d *Datum) CompareDatum(sc *variable.StatementContext, ad *Datum) (int, error) {
 	if d.k == KindMysqlJSON && ad.k != KindMysqlJSON {
-		cmp, err := ad.CompareDatum(sc, *d)
+		cmp, err := ad.CompareDatum(sc, d)
 		return cmp * -1, errors.Trace(err)
 	}
 	switch ad.k {
@@ -1702,7 +1702,7 @@ func EqualDatums(sc *variable.StatementContext, a []Datum, b []Datum) (bool, err
 		return false, nil
 	}
 	for i, ai := range a {
-		v, err := ai.CompareDatum(sc, b[i])
+		v, err := ai.CompareDatum(sc, &b[i])
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -1731,7 +1731,7 @@ func (ds *datumsSorter) Len() int {
 }
 
 func (ds *datumsSorter) Less(i, j int) bool {
-	cmp, err := ds.datums[i].CompareDatum(ds.sc, ds.datums[j])
+	cmp, err := ds.datums[i].CompareDatum(ds.sc, &ds.datums[j])
 	if err != nil {
 		ds.err = errors.Trace(err)
 		return true
