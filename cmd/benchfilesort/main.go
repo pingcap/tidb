@@ -305,7 +305,7 @@ func driveRunCmd() {
 	if outputRatio < 0 || outputRatio > 100 {
 		log.Fatal(errors.New("output ratio must between 0 and 100 (inclusive)"))
 	}
-	if _, err := os.Stat(tmpDir); err != nil {
+	if _, err = os.Stat(tmpDir); err != nil {
 		if os.IsNotExist(err) {
 			log.Fatal(errors.New("tmpDir does not exist"))
 		}
