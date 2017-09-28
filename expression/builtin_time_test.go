@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
@@ -935,6 +936,24 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func builtinDateFormat(ctx context.Context, args []types.Datum) (d types.Datum, err error) {
+	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if date.IsNull() {
+		return
+	}
+	t := date.GetMysqlTime()
+	str, err := t.DateFormat(args[1].GetString())
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetString(str)
+	return
+}
+
 func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 	defer testleak.AfterTest(c)()
 
@@ -945,16 +964,15 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		decimal        float64
 		format         string
 		ansLen         int
-		expect         string
 	}{
-		{false, 1451606400, 0, 0, "", 19, ""},
-		{true, 1451606400, 123456000, 1451606400.123456, "", 26, ""},
-		{true, 1451606400, 999999000, 1451606400.999999, "", 26, ""},
-		{true, 1451606400, 999999900, 1451606400.9999999, "", 19, ""},
-		{false, 1451606400, 0, 0, "%Y %D %M %h:%i:%s %x", 19, "2016 1st January 08:00:00 2015"},
-		{true, 1451606400, 123456000, 1451606400.123456, "%Y %D %M %h:%i:%s %x", 26, "2016 1st January 08:00:00 2015"},
-		{true, 1451606400, 999999000, 1451606400.999999, "%Y %D %M %h:%i:%s %x", 26, "2016 1st January 08:00:00 2015"},
-		{true, 1451606400, 999999900, 1451606400.9999999, "%Y %D %M %h:%i:%s %x", 19, "2016 1st January 08:00:01 2015"},
+		{false, 1451606400, 0, 0, "", 19},
+		{true, 1451606400, 123456000, 1451606400.123456, "", 26},
+		{true, 1451606400, 999999000, 1451606400.999999, "", 26},
+		{true, 1451606400, 999999900, 1451606400.9999999, "", 19},
+		{false, 1451606400, 0, 0, "%Y %D %M %h:%i:%s %x", 19},
+		{true, 1451606400, 123456000, 1451606400.123456, "%Y %D %M %h:%i:%s %x", 26},
+		{true, 1451606400, 999999000, 1451606400.999999, "%Y %D %M %h:%i:%s %x", 26},
+		{true, 1451606400, 999999900, 1451606400.9999999, "%Y %D %M %h:%i:%s %x", 19},
 	}
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originTZ := sc.TimeZone
@@ -985,7 +1003,9 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 			c.Assert(err, IsNil)
 			v, err := f.eval(nil)
 			c.Assert(err, IsNil)
-			c.Assert(v.GetString(), Equals, t.expect)
+			result, err := builtinDateFormat(s.ctx, []types.Datum{types.NewStringDatum(unixTime), format})
+			c.Assert(err, IsNil)
+			c.Assert(v.GetString(), Equals, result.GetString())
 		}
 	}
 
