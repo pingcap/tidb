@@ -292,12 +292,13 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:        b.ctx,
-		Columns:    v.Columns,
-		Lists:      v.Lists,
-		Setlist:    v.Setlist,
-		GenColumns: v.GenCols.Columns,
-		GenExprs:   v.GenCols.Exprs,
+		ctx:                   b.ctx,
+		Columns:               v.Columns,
+		Lists:                 v.Lists,
+		Setlist:               v.Setlist,
+		GenColumns:            v.GenCols.Columns,
+		GenExprs:              v.GenCols.Exprs,
+		needFillDefaultValues: v.NeedFillDefaultValue,
 	}
 	if len(v.Children()) > 0 {
 		ivs.SelectExec = b.build(v.Children()[0])
