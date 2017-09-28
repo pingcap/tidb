@@ -224,7 +224,7 @@ var (
 )
 
 func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
-	tr, err := types.RoundFrac(t, int(fsp))
+	tr, err := types.RoundFrac(t, fsp)
 	if err != nil {
 		return types.Time{}, errors.Trace(err)
 	}
@@ -234,56 +234,6 @@ func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
 		Type: mysql.TypeDatetime,
 		Fsp:  fsp,
 	}, nil
-}
-
-func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
-	if fsp > types.MaxFsp {
-		fsp = types.MaxFsp
-	}
-
-	f := types.NewFieldType(tp)
-	f.Decimal = fsp
-
-	d, err = arg.ConvertTo(sc, f)
-	if err != nil {
-		d.SetNull()
-		return d, errors.Trace(err)
-	}
-
-	if d.IsNull() {
-		return
-	}
-
-	if d.Kind() != types.KindMysqlTime {
-		d.SetNull()
-		return d, errors.Errorf("need time type, but got %T", d.GetValue())
-	}
-	return
-}
-
-func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
-	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
-}
-
-func convertToDuration(sc *variable.StatementContext, arg types.Datum, fsp int) (d types.Datum, err error) {
-	f := types.NewFieldType(mysql.TypeDuration)
-	f.Decimal = fsp
-
-	d, err = arg.ConvertTo(sc, f)
-	if err != nil {
-		d.SetNull()
-		return d, errors.Trace(err)
-	}
-
-	if d.IsNull() {
-		return
-	}
-
-	if d.Kind() != types.KindMysqlDuration {
-		d.SetNull()
-		return d, errors.Errorf("need duration type, but got %T", d.GetValue())
-	}
-	return
 }
 
 type dateFunctionClass struct {
@@ -365,16 +315,6 @@ func (b *builtinDateLiteralSig) evalTime(row []types.Datum) (types.Time, bool, e
 		return b.literal, true, types.ErrIncorrectDatetimeValue.GenByArgs(b.literal.String())
 	}
 	return b.literal, false, nil
-}
-
-func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.Time, err error) {
-	if d.Kind() != types.KindMysqlTime {
-		d, err = convertToTime(sc, d, mysql.TypeDatetime)
-		if err != nil {
-			return t, errors.Trace(err)
-		}
-	}
-	return d.GetMysqlTime(), nil
 }
 
 type dateDiffFunctionClass struct {
@@ -759,26 +699,6 @@ func (b *builtinDateFormatSig) evalString(row []types.Datum) (string, bool, erro
 	return res, isNull, errors.Trace(err)
 }
 
-// builtinDateFormat ...
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func builtinDateFormat(ctx context.Context, args []types.Datum) (d types.Datum, err error) {
-	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if date.IsNull() {
-		return
-	}
-	t := date.GetMysqlTime()
-	str, err := t.DateFormat(args[1].GetString())
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetString(str)
-	return
-}
-
 type fromDaysFunctionClass struct {
 	baseFunctionClass
 }
@@ -959,26 +879,6 @@ func (b *builtinMonthSig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 
 	return int64(date.Time.Month()), false, nil
-}
-
-// builtinMonth ...
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_month
-func builtinMonth(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	d, err = convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	// No need to check type here.
-	t := d.GetMysqlTime()
-	i := int64(0)
-	if t.IsZero() {
-		d.SetInt64(i)
-		return
-	}
-	i = int64(t.Time.Month())
-	d.SetInt64(i)
-	return
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
