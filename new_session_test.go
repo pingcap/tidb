@@ -25,17 +25,20 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -797,6 +800,41 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
+}
+
+func (s *testSessionSuite) TestIndexColumnLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (c1 int, c2 blob);")
+	tk.MustExec("create index idx_c1 on t(c1);")
+	tk.MustExec("create index idx_c2 on t(c2(6));")
+
+	is := s.dom.InfoSchema()
+	tab, err2 := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err2, Equals, nil)
+
+	idxC1Cols := tables.FindIndexByColName(tab, "c1").Meta().Columns
+	c.Assert(idxC1Cols[0].Length, Equals, types.UnspecifiedLength)
+
+	idxC2Cols := tables.FindIndexByColName(tab, "c2").Meta().Columns
+	c.Assert(idxC2Cols[0].Length, Equals, 6)
+}
+
+func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	sqlText := `CREATE TABLE address (
+		id bigint(20) NOT NULL AUTO_INCREMENT,
+		user_id bigint(20) NOT NULL,
+		PRIMARY KEY (id),
+		CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
+		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
+		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`
+	tk.MustExec(sqlText)
+}
+
+// TestISColumns tests information_schema.columns.
+func (s *testSessionSuite) TestISColumns(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
 }
 
 var _ = Suite(&testSchemaSuite{})
