@@ -1,5 +1,5 @@
-hash: 4d58322463463231636f143c321156804fc372344b684bf0d95bc8bc4cfc1321
-updated: 2017-09-15T19:38:09.566391259+08:00
+hash: ff6b224f81367f65611694ae9e1878316d087d5d8d92db262a61cad69e26f688
+updated: 2017-09-28T12:34:15.563409999+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -14,7 +14,7 @@ imports:
 - name: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
-  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
+  version: 9d43462d174c664f5edf313dec0de31e1ef4ed47
   subpackages:
   - auth/authpb
   - clientv3
@@ -121,7 +121,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: ef910f10e3ee568b62a12aa881f430acad2acba9
+  version: 3c5b40fb2000acb6b3441d5695cb470a23e8f1b5
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
