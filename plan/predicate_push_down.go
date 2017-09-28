@@ -117,7 +117,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
 	case SemiJoin:
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
+		_, leftPushCond, rightPushCond, _ = extractOnCondition(predicates, leftPlan, rightPlan)
 		leftCond = append(p.LeftConditions, leftPushCond...)
 		rightCond = append(p.RightConditions, rightPushCond...)
 		p.LeftConditions = nil
