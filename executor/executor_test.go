@@ -1943,23 +1943,23 @@ type checkRequestClient struct {
 	notFillCache bool
 	mu           struct {
 		sync.RWMutex
-		turnOn uint32
+		checkFlags uint32
 	}
 }
 
 func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendReq(ctx, addr, req)
 	c.mu.RLock()
-	turnOn := c.mu.turnOn
+	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
-	if turnOn == checkRequestPriority {
+	if checkFlags == checkRequestPriority {
 		switch req.Type {
 		case tikvrpc.CmdCop:
 			if c.priority != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
 		}
-	} else if turnOn == checkRequestNotFillCache {
+	} else if checkFlags == checkRequestNotFillCache {
 		if c.notFillCache != req.NotFillCache {
 			return nil, errors.New("fail to set not fail cache")
 		}
@@ -2003,7 +2003,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 
 	cli := s.cli
 	cli.mu.Lock()
-	cli.mu.turnOn = checkRequestPriority
+	cli.mu.checkFlags = checkRequestPriority
 	cli.mu.Unlock()
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
@@ -2033,7 +2033,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 
 	cli.mu.Lock()
-	cli.mu.turnOn = checkRequestOff
+	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
 	tk.MustExec("drop table t")
 }
@@ -2046,7 +2046,7 @@ func (s *testContextOptionSuite) TestNotFillCache(c *C) {
 
 	cli := s.cli
 	cli.mu.Lock()
-	cli.mu.turnOn = checkRequestNotFillCache
+	cli.mu.checkFlags = checkRequestNotFillCache
 	cli.mu.Unlock()
 	cli.notFillCache = true
 	tk.MustQuery("select SQL_NO_CACHE * from t")
