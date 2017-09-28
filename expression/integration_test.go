@@ -2914,9 +2914,26 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, NotNil)
 
 	var r *testkit.Result
-	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE';")
+	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE,ANSI,ANSI_QUOTES';")
 	r = tk.MustQuery(`select @@session.sql_mode`)
-	r.Check(testkit.Rows("NO_ZERO_DATE"))
+	r.Check(testkit.Rows("NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
+	r = tk.MustQuery(`show variables like 'SQL_MODE'`)
+	r.Check(testkit.Rows("sql_mode NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
+
+	// for invalid SQL mode.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tab0")
+	tk.MustExec("CREATE TABLE tab0(col1 time)")
+	_, err = tk.Exec("set sql_mode='STRICT_TRANS_TABLES';")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+	_, err = tk.Exec("set sql_mode=' ,';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
