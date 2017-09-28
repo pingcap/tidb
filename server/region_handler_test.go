@@ -176,6 +176,12 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	// Verify the resp body.
+	decoder := json.NewDecoder(resp.Body)
+	data := make([]interface{}, 0)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
 }
 
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
