@@ -412,6 +412,11 @@ func (m SQLMode) HasErrorForDivisionByZeroMode() bool {
 	return m&ModeErrorForDivisionByZero == ModeErrorForDivisionByZero
 }
 
+// HasStrictMode detects if 'STRICT_TRANS_TABLES' or 'STRICT_ALL_TABLES' mode is set in SQLMode
+func (m SQLMode) HasStrictMode() bool {
+	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
@@ -454,11 +459,23 @@ func FormatSQLModeStr(s string) string {
 	s = strings.ToUpper(strings.TrimRight(s, " "))
 	parts := strings.Split(s, ",")
 	var nonEmptyParts []string
-	for i := 0; i < len(parts); i++ {
-		if len(parts[i]) == 0 {
+	existParts := make(map[string]string)
+	for _, part := range parts {
+		if len(part) == 0 {
 			continue
 		}
-		nonEmptyParts = append(nonEmptyParts, parts[i])
+		if modeParts, ok := CombinationSQLMode[part]; ok {
+			for _, modePart := range modeParts {
+				if _, exist := existParts[modePart]; !exist {
+					nonEmptyParts = append(nonEmptyParts, modePart)
+					existParts[modePart] = modePart
+				}
+			}
+		}
+		if _, exist := existParts[part]; !exist {
+			nonEmptyParts = append(nonEmptyParts, part)
+			existParts[part] = part
+		}
 	}
 	return strings.Join(nonEmptyParts, ",")
 }
@@ -512,6 +529,20 @@ var Str2SQLMode = map[string]SQLMode{
 	"HIGH_NOT_PRECEDENCE":        ModeHighNotPrecedence,
 	"NO_ENGINE_SUBSTITUTION":     ModeNoEngineSubstitution,
 	"PAD_CHAR_TO_FULL_LENGTH":    ModePadCharToFullLength,
+}
+
+// CombinationSQLMode is the special modes that provided as shorthand for combinations of mode values.
+// See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-combo.
+var CombinationSQLMode = map[string][]string{
+	"ANSI":        {"REAL_AS_FLOAT", "PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "ONLY_FULL_GROUP_BY"},
+	"DB2":         {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
+	"MAXDB":       {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
+	"MSSQL":       {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
+	"MYSQL323":    {"MYSQL323", "HIGH_NOT_PRECEDENCE"},
+	"MYSQL40":     {"MYSQL40", "HIGH_NOT_PRECEDENCE"},
+	"ORACLE":      {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
+	"POSTGRESQL":  {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
+	"TRADITIONAL": {"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_IN_DATE", "NO_ZERO_DATE", "ERROR_FOR_DIVISION_BY_ZERO", "NO_AUTO_CREATE_USER", "NO_ENGINE_SUBSTITUTION"},
 }
 
 // FormatFunc is the locale format function signature.

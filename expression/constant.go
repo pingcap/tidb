@@ -81,62 +81,68 @@ func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull {
+	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return 0, true, nil
 	}
-	val, isNull, err := evalExprToInt(c, nil, sc)
-	return val, isNull, errors.Trace(err)
+	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral {
+		res, err := c.Value.ToInt64(sc)
+		return res, err != nil, errors.Trace(err)
+	}
+	return c.Value.GetInt64(), false, nil
 }
 
 // EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull {
+	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return 0, true, nil
 	}
-	val, isNull, err := evalExprToReal(c, nil, sc)
-	return val, isNull, errors.Trace(err)
+	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral {
+		res, err := c.Value.ToFloat64(sc)
+		return res, err != nil, errors.Trace(err)
+	}
+	return c.Value.GetFloat64(), false, nil
 }
 
 // EvalString returns string representation of Constant.
 func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull {
+	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return "", true, nil
 	}
-	val, isNull, err := evalExprToString(c, nil, sc)
-	return val, isNull, errors.Trace(err)
+	res, err := c.Value.ToString()
+	return res, err != nil, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull {
+	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return nil, true, nil
 	}
-	val, isNull, err := evalExprToDecimal(c, nil, sc)
-	return val, isNull, errors.Trace(err)
+	res, err := c.Value.ToDecimal(sc)
+	return res, err != nil, errors.Trace(err)
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
 func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
-	if c.GetType().Tp == mysql.TypeNull {
-		return val, true, nil
+	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+		return types.Time{}, true, nil
 	}
-	val, isNull, err = evalExprToTime(c, nil, sc)
-	return val, isNull, errors.Trace(err)
+	return c.Value.GetMysqlTime(), false, nil
 }
 
 // EvalDuration returns Duration representation of Constant.
 func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
-	if c.GetType().Tp == mysql.TypeNull {
-		return val, true, nil
+	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+		return types.Duration{}, true, nil
 	}
-	val, isNull, err = evalExprToDuration(c, nil, sc)
-	return val, isNull, errors.Trace(err)
+	return c.Value.GetMysqlDuration(), false, nil
 }
 
 // EvalJSON returns JSON representation of Constant.
 func (c *Constant) EvalJSON(_ []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
-	val, isNull, err := evalExprToJSON(c, nil, sc)
-	return val, isNull, errors.Trace(err)
+	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+		return json.JSON{}, true, nil
+	}
+	return c.Value.GetMysqlJSON(), false, nil
 }
 
 // Equal implements Expression interface.

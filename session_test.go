@@ -534,66 +534,11 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestOrderBy(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_order_by"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 varchar(20))")
-	mustExecSQL(c, se, "insert into t values (1, 2, 'abc'), (2, 1, 'bcd')")
-
-	// Fix issue https://github.com/pingcap/tidb/issues/337
-	mustExecMatch(c, se, "select c1 as a, c1 as b from t order by c1", [][]interface{}{{1, 1}, {2, 2}})
-
-	mustExecMatch(c, se, "select c1 as a, t.c1 as a from t order by a desc", [][]interface{}{{2, 2}, {1, 1}})
-	mustExecMatch(c, se, "select c1 as c2 from t order by c2", [][]interface{}{{1}, {2}})
-	mustExecMatch(c, se, "select sum(c1) from t order by sum(c1)", [][]interface{}{{3}})
-	mustExecMatch(c, se, "select c1 as c2 from t order by c2 + 1", [][]interface{}{{2}, {1}})
-
-	// Order by position
-	mustExecMatch(c, se, "select * from t order by 1", [][]interface{}{{1, 2, []byte("abc")}, {2, 1, []byte("bcd")}})
-	mustExecMatch(c, se, "select * from t order by 2", [][]interface{}{{2, 1, []byte("bcd")}, {1, 2, []byte("abc")}})
-	mustExecFailed(c, se, "select * from t order by 0")
-	mustExecFailed(c, se, "select * from t order by 4")
-
-	mustExecFailed(c, se, "select c1 as a, c2 as a from t order by a")
-
-	mustExecFailed(c, se, "(select c1 as c2, c2 from t) union (select c1, c2 from t) order by c2")
-	mustExecFailed(c, se, "(select c1 as c2, c2 from t) union (select c1, c2 from t) order by c1")
-
-	// Ordery by binary
-	mustExecMatch(c, se, "select c1, c3 from t order by binary c1 desc", [][]interface{}{{2, []byte("bcd")}, {1, []byte("abc")}})
-	mustExecMatch(c, se, "select c1, c2 from t order by binary c3", [][]interface{}{{1, 2}, {2, 1}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestHaving(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_having"
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
-	mustExecSQL(c, se, "insert into t values (1,2,3), (2, 3, 1), (3, 1, 2)")
-
-	mustExecMatch(c, se, "select c1 as c2, c3 from t having c2 = 2", [][]interface{}{{2, 1}})
-	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c2 having c2 = 2;", [][]interface{}{{1, 3}})
-	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c2 having sum(c2) = 2;", [][]interface{}{{1, 3}})
-	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c3 having sum(c2) = 2;", [][]interface{}{{1, 3}})
-	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c3 having sum(0) + c2 = 2;", [][]interface{}{{2, 1}})
-	mustExecMatch(c, se, "select c1 as a from t having c1 = 1;", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select t.c1 from t having c1 = 1;", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select a.c1 from t as a having c1 = 1;", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select c1 as a from t group by c3 having sum(a) = 1;", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select c1 as a from t group by c3 having sum(a) + a = 2;", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select a.c1 as c, a.c1 as d from t as a, t as b having c1 = 1 limit 1;", [][]interface{}{{1, 1}})
-
-	mustExecMatch(c, se, "select sum(c1) from t group by c1 having sum(c1)", [][]interface{}{{1}, {2}, {3}})
-	mustExecMatch(c, se, "select sum(c1) - 1 from t group by c1 having sum(c1) - 1", [][]interface{}{{1}, {2}})
-	mustExecMatch(c, se, "select 1 from t group by c1 having sum(abs(c2 + c3)) = c1", [][]interface{}{{1}})
-
 	mustExecFailed(c, se, "select c1 from t having c2")
 	mustExecFailed(c, se, "select c1 from t having c2 + 1")
 	mustExecFailed(c, se, "select c1 from t group by c2 + 1 having c2")

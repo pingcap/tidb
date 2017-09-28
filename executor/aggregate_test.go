@@ -348,3 +348,27 @@ func (s *testSuite) TestAggPushDown(c *C) {
 	tk.MustQuery("select max(a.b), max(b.b) from t a join tt b on a.a = b.a group by a.c").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a, count(b) from (select * from t union all select * from tt) k group by a").Check(testkit.Rows("1 2", "2 1"))
 }
+
+func (s *testSuite) TestHaving(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
+	tk.MustExec("insert into t values (1,2,3), (2, 3, 1), (3, 1, 2)")
+
+	tk.MustQuery("select c1 as c2, c3 from t having c2 = 2").Check(testkit.Rows("2 1"))
+	tk.MustQuery("select c1 as c2, c3 from t group by c2 having c2 = 2;").Check(testkit.Rows("1 3"))
+	tk.MustQuery("select c1 as c2, c3 from t group by c2 having sum(c2) = 2;").Check(testkit.Rows("1 3"))
+	tk.MustQuery("select c1 as c2, c3 from t group by c3 having sum(c2) = 2;").Check(testkit.Rows("1 3"))
+	tk.MustQuery("select c1 as c2, c3 from t group by c3 having sum(0) + c2 = 2;").Check(testkit.Rows("2 1"))
+	tk.MustQuery("select c1 as a from t having c1 = 1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select t.c1 from t having c1 = 1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select a.c1 from t as a having c1 = 1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select c1 as a from t group by c3 having sum(a) = 1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select c1 as a from t group by c3 having sum(a) + a = 2;").Check(testkit.Rows("1"))
+	tk.MustQuery("select a.c1 as c, a.c1 as d from t as a, t as b having c1 = 1 limit 1;").Check(testkit.Rows("1 1"))
+
+	tk.MustQuery("select sum(c1) from t group by c1 having sum(c1)").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select sum(c1) - 1 from t group by c1 having sum(c1) - 1").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
+}

@@ -428,7 +428,6 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		rfs = append(rfs, rf)
 	}
 	tn.SetResultFields(rfs)
-	return
 }
 
 // handleTableSources checks name duplication
@@ -479,7 +478,6 @@ func (nr *nameResolver) handleTableSource(ts *ast.TableSource) {
 		dupNames[name] = struct{}{}
 	}
 	ctx.tables = append(ctx.tables, ts)
-	return
 }
 
 // handleJoin sets result fields for join.

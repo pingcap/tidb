@@ -103,17 +103,12 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		}
 	case variable.SQLModeVar:
 		sVal = mysql.FormatSQLModeStr(sVal)
-		// TODO: Remove this latter.
-		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
-			vars.StrictSQLMode = true
-		} else {
-			vars.StrictSQLMode = false
-		}
 		// Modes is a list of different modes separated by commas.
 		sqlMode, err2 := mysql.GetSQLMode(sVal)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
+		vars.StrictSQLMode = sqlMode.HasStrictMode()
 		vars.SQLMode = sqlMode
 	case variable.TiDBSnapshot:
 		err = setSnapshotTS(vars, sVal)

@@ -33,6 +33,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	case *Column:
 		return []*Column{v}
 	case *ScalarFunction:
+		cols = make([]*Column, 0, len(v.GetArgs()))
 		for _, arg := range v.GetArgs() {
 			cols = append(cols, ExtractColumns(arg)...)
 		}
