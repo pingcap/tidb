@@ -2094,10 +2094,10 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	likeTests := []testCase{
 		{"a", "a", 1},
 		{"a", "b", 0},
-		{"aA", "Aa", 1},
+		{"aA", "Aa", 0},
 		{"aA%", "aAab", 1},
 		{"aA_", "Aaab", 0},
-		{"aA_", "Aab", 1},
+		{"Aa_", "Aab", 1},
 		{"", "", 1},
 		{"", "a", 0},
 	}
@@ -2917,7 +2917,7 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE,ANSI,ANSI_QUOTES';")
 	r = tk.MustQuery(`select @@session.sql_mode`)
 	r.Check(testkit.Rows("NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
-	r = tk.MustQuery(`show variables like 'SQL_MODE'`)
+	r = tk.MustQuery(`show variables like 'sql_mode'`)
 	r.Check(testkit.Rows("sql_mode NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
 
 	// for invalid SQL mode.
