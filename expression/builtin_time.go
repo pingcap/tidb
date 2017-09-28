@@ -224,7 +224,7 @@ var (
 )
 
 func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
-	tr, err := types.RoundFrac(t, int(fsp))
+	tr, err := types.RoundFrac(t, fsp)
 	if err != nil {
 		return types.Time{}, errors.Trace(err)
 	}
@@ -234,35 +234,6 @@ func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
 		Type: mysql.TypeDatetime,
 		Fsp:  fsp,
 	}, nil
-}
-
-func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
-	if fsp > types.MaxFsp {
-		fsp = types.MaxFsp
-	}
-
-	f := types.NewFieldType(tp)
-	f.Decimal = fsp
-
-	d, err = arg.ConvertTo(sc, f)
-	if err != nil {
-		d.SetNull()
-		return d, errors.Trace(err)
-	}
-
-	if d.IsNull() {
-		return
-	}
-
-	if d.Kind() != types.KindMysqlTime {
-		d.SetNull()
-		return d, errors.Errorf("need time type, but got %T", d.GetValue())
-	}
-	return
-}
-
-func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
-	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
 }
 
 type dateFunctionClass struct {
