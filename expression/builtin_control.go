@@ -160,7 +160,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 		decimal = 0
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
-	if fieldTp.ToClass() == types.ClassString && !isBinaryStr {
+	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
 		fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.

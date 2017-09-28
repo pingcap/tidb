@@ -639,11 +639,13 @@ func (e *LoadData) Open() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	currRow      int64
-	batchRows    int64
-	lastInsertID uint64
-	ctx          context.Context
-	SelectExec   Executor
+	currRow               int64
+	batchRows             int64
+	lastInsertID          uint64
+	ctx                   context.Context
+	needFillDefaultValues bool
+
+	SelectExec Executor
 
 	Table     table.Table
 	Columns   []*ast.ColumnName
@@ -885,16 +887,61 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 	return
 }
 
+// getRow eval the insert statement. Because the value of column may calculated based on other column,
+// it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
-	vals := make([]types.Datum, len(list))
-	for i, expr := range list {
-		val, err := expr.Eval(nil)
-		vals[i] = val
-		if err != nil {
+	row := make([]types.Datum, len(e.Table.Cols()))
+	hasValue := make([]bool, len(e.Table.Cols()))
+
+	if e.needFillDefaultValues {
+		if err := e.fillDefaultValues(row, hasValue, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	return e.fillRowData(cols, vals, ignoreErr)
+
+	for i, expr := range list {
+		val, err := expr.Eval(row)
+		if err = e.filterErr(err, ignoreErr); err != nil {
+			return nil, errors.Trace(err)
+		}
+		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
+		if err = e.filterErr(err, ignoreErr); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		offset := cols[i].Offset
+		row[offset], hasValue[offset] = val, true
+	}
+
+	return e.fillGenColData(cols, len(list), hasValue, row, ignoreErr)
+}
+
+// fillDefaultValues fills a row followed by these rules:
+//     1. for nullable and no default value column, use NULL.
+//     2. for nullable and have default value column, use it's default value.
+//     3. for not null column, use zero value even in strict mode.
+//     4. for auto_increment column, use zero value.
+//     5. for generated column, use NULL.
+func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
+	for i, c := range e.Table.Cols() {
+		var err error
+		if c.IsGenerated() {
+			continue
+		} else if mysql.HasAutoIncrementFlag(c.Flag) {
+			row[i] = table.GetZeroValue(c.ToInfo())
+		} else {
+			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			hasValue[c.Offset] = true
+			if table.ErrNoDefaultValue.Equal(err) {
+				row[i] = table.GetZeroValue(c.ToInfo())
+				hasValue[c.Offset] = false
+			} else if err = e.filterErr(err, ignoreErr); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
@@ -929,6 +976,11 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		row[offset] = v
 		hasValue[offset] = true
 	}
+
+	return e.fillGenColData(cols, len(vals), hasValue, row, ignoreErr)
+}
+
+func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row []types.Datum, ignoreErr bool) ([]types.Datum, error) {
 	err := e.initDefaultValues(row, hasValue, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -939,7 +991,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		if err = e.filterErr(err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
-		offset := cols[len(vals)+i].Offset
+		offset := cols[valLen+i].Offset
 		row[offset] = val
 	}
 	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
@@ -964,6 +1016,8 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 	return nil
 }
 
+// initDefaultValues fills generated columns, auto_increment column and empty column.
+// For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
 	var defaultValueCols []*table.Column
 	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
@@ -980,6 +1034,9 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			// Just leave generated column as null. It will be calculated later
 			// but before we check whether the column can be null or not.
 			needDefaultValue = false
+			if !hasValue[i] {
+				row[i].SetNull()
+			}
 		}
 		if needDefaultValue {
 			var err error
