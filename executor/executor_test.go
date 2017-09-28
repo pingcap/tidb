@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -70,7 +68,6 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 1)
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -97,7 +94,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
 func (s *testSuite) SetUpTest(c *C) {
@@ -639,7 +635,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows("2"))
 	r = tk.MustQuery("select b from (select a,b from t order by a,c limit 1) t")
 	r.Check(testkit.Rows("2"))
-
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("insert into t values(1, 1), (2, 2)")
@@ -662,6 +657,29 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, 10-i))
 	}
 	tk.MustQuery("select a from t use index(b) order by b").Check(testkit.Rows("9", "8", "7", "6", "5", "4", "3", "2", "1", "0"))
+}
+
+func (s *testSuite) TestOrderBy(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, c2 int, c3 varchar(20))")
+	tk.MustExec("insert into t values (1, 2, 'abc'), (2, 1, 'bcd')")
+
+	// Fix issue https://github.com/pingcap/tidb/issues/337
+	tk.MustQuery("select c1 as a, c1 as b from t order by c1").Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustQuery("select c1 as a, t.c1 as a from t order by a desc").Check(testkit.Rows("2 2", "1 1"))
+	tk.MustQuery("select c1 as c2 from t order by c2").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select sum(c1) from t order by sum(c1)").Check(testkit.Rows("3"))
+	tk.MustQuery("select c1 as c2 from t order by c2 + 1").Check(testkit.Rows("2", "1"))
+
+	// Order by position.
+	tk.MustQuery("select * from t order by 1").Check(testkit.Rows("1 2 abc", "2 1 bcd"))
+	tk.MustQuery("select * from t order by 2").Check(testkit.Rows("2 1 bcd", "1 2 abc"))
+
+	// Order by binary.
+	tk.MustQuery("select c1, c3 from t order by binary c1 desc").Check(testkit.Rows("2 bcd", "1 abc"))
+	tk.MustQuery("select c1, c2 from t order by binary c3").Check(testkit.Rows("1 2", "2 1"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
@@ -863,6 +881,15 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("SELECT a from t1 UNION select a FROM t2")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" + "  `a` date DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
+	// Move from session test.
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c double);")
+	tk.MustExec("create table t2 (c double);")
+	tk.MustExec("insert into t1 value (73);")
+	tk.MustExec("insert into t2 value (930);")
+	// If set unspecified column flen to 0, it will cause bug in union.
+	// This test is used to prevent the bug reappear.
+	tk.MustQuery("select c from t1 union (select c from t2) order by c").Check(testkit.Rows("73", "930"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1075,12 +1102,6 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 }
 
 func (s *testSuite) TestJSON(c *C) {
-	// This will be opened after implementing cast as json.
-	origin := atomic.LoadInt32(&expression.TurnOnNewExprEval)
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
-	defer func() {
-		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -1807,6 +1828,11 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	rows := tk.MustQuery("select @@tidb_current_ts").Rows()
 	tsStr := rows[0][0].(string)
 	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	tk.MustExec("begin")
+	rows = tk.MustQuery("select @@tidb_current_ts").Rows()
+	newTsStr := rows[0][0].(string)
+	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	c.Assert(newTsStr, Not(Equals), tsStr)
 	tk.MustExec("commit")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
@@ -2004,6 +2030,29 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+}
+
+func (s *testSuite) TestHandleTransfer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1), (2), (4)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = 3 where a = 4")
+	// test table scan read whose result need handle.
+	tk.MustQuery("select * from t ignore index(idx)").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("insert into t values(4)")
+	// test single read whose result need handle
+	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("update t set a = 5 where a = 3")
+	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "4", "5"))
+	tk.MustExec("commit")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("insert into t values(3, 3), (1, 1), (2, 2)")
+	// Second test double read.
+	tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1", "2 2", "3 3"))
 }
 
 func (s *testSuite) TestBit(c *C) {

@@ -319,7 +319,13 @@ func (s *session) doCommitWithRetry() error {
 }
 
 func (s *session) CommitTxn() error {
-	return s.doCommitWithRetry()
+	err := s.doCommitWithRetry()
+	label := "OK"
+	if err != nil {
+		label = "Error"
+	}
+	transactionCounter.WithLabelValues(label).Inc()
+	return errors.Trace(err)
 }
 
 func (s *session) RollbackTxn() error {
@@ -397,9 +403,8 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
-			txt := st.OriginText()
 			if infoSchemaChanged {
-				st, err = updateStatement(st, s, txt)
+				st, err = updateStatement(st, s)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -408,6 +413,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
+				txt := st.OriginText()
 				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(txt))
 			} else {
 				log.Warnf("[%d] Retry [%d] query [%d]", connID, retryCnt, i)
@@ -443,25 +449,16 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 	return err
 }
 
-func updateStatement(st ast.Statement, s *session, txt string) (ast.Statement, error) {
+func updateStatement(st ast.Statement, s *session) (ast.Statement, error) {
 	// statement maybe stale because of infoschema changed, this function will return the updated one.
-	if st.IsPrepared() {
-		// TODO: Rebuild plan if infoschema changed, reuse the statement otherwise.
-	} else {
-		// Rebuild plan if infoschema changed, reuse the statement otherwise.
-		charset, collation := s.sessionVars.GetCharsetInfo()
-		stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
-		if err != nil {
-			return st, errors.Trace(err)
-		}
-		st, err = Compile(s, stmt)
-		if err != nil {
-			// If a txn is inserting data when DDL is dropping column,
-			// it would fail to commit and retry, and run here then.
-			return st, errors.Trace(err)
-		}
+	// Rebuild plan if infoschema changed, reuse the statement otherwise.
+	resultSt, err := Compile(s, st.AstNode())
+	if err != nil {
+		// If a txn is inserting data when DDL is dropping column,
+		// it would fail to commit and retry, and run here then.
+		return resultSt, errors.Trace(err)
 	}
-	return st, nil
+	return resultSt, nil
 }
 
 func sqlForLog(sql string) string {
@@ -775,7 +772,7 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn != nil && s.txn.Valid() {
-		err := s.doCommitWithRetry()
+		err := s.CommitTxn()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -785,6 +782,7 @@ func (s *session) NewTxn() error {
 		return errors.Trace(err)
 	}
 	s.txn = txn
+	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
 	return nil
 }
 

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -279,7 +278,7 @@ func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	return is, expression.InferType(ctx.GetSessionVars().StmtCtx, node)
+	return is, nil
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -1115,12 +1114,33 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "insert into t set a = 1, b = a + 1",
-			err: ErrUnknownColumn,
+			err: nil,
 		},
 		{
 			sql: "insert into t set a = 1, b = values(a) + 1",
 			err: nil,
 		},
+		// TODO: Fix Error Code.
+		//{
+		//	sql: "select a, b, c from t order by 0",
+		//	err: ErrUnknownColumn,
+		//},
+		//{
+		//	sql: "select a, b, c from t order by 4",
+		//	err: ErrUnknownColumn,
+		//},
+		{
+			sql: "select a as c1, b as c1 from t order by c1",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "(select a as b, b from t) union (select a, b from t) order by b",
+			err: ErrAmbiguous,
+		},
+		//{
+		//	sql: "(select a as b, b from t) union (select a, b from t) order by a",
+		//	err: ErrUnknownColumn,
+		//},
 	}
 	for _, tt := range tests {
 		sql := tt.sql
@@ -1128,7 +1148,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
 		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),

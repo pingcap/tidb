@@ -57,10 +57,6 @@ type logicalOptRule interface {
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
-	// We have to infer type again because after parameter is set, the expression type may change.
-	if err := expression.InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
-		return nil, errors.Trace(err)
-	}
 	allocator := new(idAllocator)
 	builder := &planBuilder{
 		ctx:       ctx,
@@ -89,10 +85,6 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 
 // BuildLogicalPlan is exported and only used for test.
 func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
-	// We have to infer type again because after parameter is set, the expression type may change.
-	if err := expression.InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
-		return nil, errors.Trace(err)
-	}
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,

@@ -15,12 +15,10 @@ package plan
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/charset"
@@ -40,11 +38,9 @@ type testExpressionSuite struct {
 func (s *testExpressionSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 1)
 }
 
 func (s *testExpressionSuite) TearDownSuite(c *C) {
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
 func (s *testExpressionSuite) parseExpr(c *C, expr string) ast.ExprNode {

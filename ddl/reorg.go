@@ -89,7 +89,7 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	}
 }
 
-func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
+func (d *ddl) isReorgRunnable() error {
 	if d.isClosed() {
 		// worker is closed, can't run reorganization.
 		return errInvalidWorker.Gen("worker is closed")
@@ -97,7 +97,7 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
 
 	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		log.Infof("[ddl] the %s not the job owner, txnTS:%d", d.uuid, txn.StartTS())
+		log.Infof("[ddl] the %s not the job owner", d.uuid)
 		return errors.Trace(errNotOwner)
 	}
 	return nil
@@ -135,11 +135,6 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-
-	if info.Handle > 0 {
-		// we have already handled this handle, so use next
-		info.Handle++
 	}
 
 	return info, errors.Trace(err)
