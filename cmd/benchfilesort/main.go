@@ -272,7 +272,7 @@ func driveGenCmd() {
 	if scale <= 0 {
 		log.Fatal(errors.New("scale must be positive"))
 	}
-	if _, err := os.Stat(tmpDir); err != nil {
+	if _, err = os.Stat(tmpDir); err != nil {
 		if os.IsNotExist(err) {
 			log.Fatal(errors.New("tmpDir does not exist"))
 		}
@@ -386,8 +386,8 @@ func init() {
 		Level: logLevel,
 	})
 	terror.MustNil(err)
-	cwd, err := os.Getwd()
-	terror.MustNil(err)
+	cwd, err1 := os.Getwd()
+	terror.MustNil(err1)
 
 	genCmd.StringVar(&tmpDir, "dir", cwd, "where to store the generated rows")
 	genCmd.IntVar(&keySize, "keySize", 8, "the size of key")
