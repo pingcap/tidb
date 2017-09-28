@@ -590,8 +590,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	}
 
 	u.SetSchema(firstSchema)
-	var p LogicalPlan
-	p = u
+	var p LogicalPlan = u
 	if union.Distinct {
 		p = b.buildDistinct(u, u.Schema().Len())
 	}
