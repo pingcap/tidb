@@ -49,6 +49,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 		is:        is,
 		plan:      p,
 		text:      node.Text(),
+		astNode:   node,
 		expensive: isExpensive,
 	}
 	return sa, nil

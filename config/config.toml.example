@@ -24,6 +24,9 @@ run-ddl = true
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "10s"
 
+# When create table, split a separated region for it.
+# split-table = false
+
 [log]
 # Log level: info, debug, warn, error, fatal.
 level = "info"
@@ -95,6 +98,9 @@ cross-join = true
 
 # Stats lease duration, which inflences the time of analyze and stats load.
 stats-lease = "3s"
+
+# Run auto analyze worker on this tidb-server.
+run-auto-analyze = false
 
 [xprotocol]
 # Start TiDB x server.

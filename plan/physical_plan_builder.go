@@ -794,8 +794,7 @@ func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
 	if lhs.Tp != rhs.Tp {
 		return false
 	}
-	if lhs.ToClass() == types.ClassString &&
-		(lhs.Charset != rhs.Charset || lhs.Collate != rhs.Collate) {
+	if lhs.EvalType().IsStringKind() && (lhs.Charset != rhs.Charset || lhs.Collate != rhs.Collate) {
 		return false
 	}
 	return true

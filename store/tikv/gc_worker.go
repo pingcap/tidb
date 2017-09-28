@@ -588,18 +588,9 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	store.gcWorker.saveSafePoint(gcSavedSafePoint, safePoint)
-	// We want to make sure to delay enough time even if the Sleep is disrupted
-	{
-		startTime := time.Now()
-		leftTime := gcSafePointCacheInterval
-		for {
-			time.Sleep(leftTime)
-			leftTime = time.Since(startTime) - gcSafePointCacheInterval
-			if leftTime <= 0 {
-				break
-			}
-		}
-	}
+
+	// Sleep to wait for all other tidb instances update their safepoint cache.
+	time.Sleep(gcSafePointCacheInterval)
 
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
