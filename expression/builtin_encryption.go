@@ -69,8 +69,7 @@ var (
 
 // TODO: support other mode
 const (
-	aes128ecb          string = "aes-128-ecb"
-	aes128ecbBlobkSize int    = 16
+	aes128ecbBlobkSize int = 16
 )
 
 type aesDecryptFunctionClass struct {
@@ -399,7 +398,7 @@ func (b *builtinSHA2Sig) evalString(row []types.Datum) (string, bool, error) {
 func deflate(data []byte) ([]byte, error) {
 	var buffer bytes.Buffer
 	w := zlib.NewWriter(&buffer)
-	if _, err := w.Write([]byte(data)); err != nil {
+	if _, err := w.Write(data); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := w.Close(); err != nil {
