@@ -452,7 +452,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 func updateStatement(st ast.Statement, s *session) (ast.Statement, error) {
 	// statement maybe stale because of infoschema changed, this function will return the updated one.
 	// Rebuild plan if infoschema changed, reuse the statement otherwise.
-	resultSt, err := Compile(s, st.AstNodes())
+	resultSt, err := Compile(s, st.AstNode())
 	if err != nil {
 		// If a txn is inserting data when DDL is dropping column,
 		// it would fail to commit and retry, and run here then.

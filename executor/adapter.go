@@ -98,15 +98,15 @@ type statement struct {
 	plan      plan.Plan
 	startTime time.Time
 	expensive bool
-	astNodes  ast.StmtNode
+	astNode   ast.StmtNode
 }
 
 func (a *statement) OriginText() string {
 	return a.text
 }
 
-func (a *statement) AstNodes() ast.StmtNode {
-	return a.astNodes
+func (a *statement) AstNode() ast.StmtNode {
+	return a.astNode
 }
 
 // Exec implements the ast.Statement Exec interface.

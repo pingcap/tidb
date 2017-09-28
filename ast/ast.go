@@ -174,8 +174,8 @@ type Statement interface {
 	// Exec executes SQL and gets a Recordset.
 	Exec(ctx context.Context) (RecordSet, error)
 
-	// AstNodes return the ast nodes for retry.
-	AstNodes() StmtNode
+	// AstNode return the ast nodes for retry.
+	AstNode() StmtNode
 }
 
 // Visitor visits a Node.
