@@ -1145,7 +1145,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	c.Assert(strRes, Equals, strconv.FormatUint(uint64(1234), 10))
 
 	// test cast unsigned int as decimal.
-	decExpr := WrapWithCastAsDecimal(unsignedIntExpr, ctx)
+	decExpr := WrapWithCastAsDecimal(ctx, unsignedIntExpr)
 	c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
 	decRes, isNull, err := decExpr.EvalDecimal([]types.Datum{types.NewUintDatum(uint64(1234))}, sc)
 	c.Assert(err, IsNil)
