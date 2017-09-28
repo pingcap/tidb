@@ -125,7 +125,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	bf := newBaseBuiltinFuncWithTp(args, ctx, retEvalTp, fieldEvalTps...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, retEvalTp, fieldEvalTps...)
 
 	bf.tp.Flag |= resultFieldType.Flag
 	resultFieldType.Flen, resultFieldType.Decimal = 0, types.UnspecifiedLength
@@ -360,7 +360,7 @@ func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expressi
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
 	if cmpAsDatetime {
 		tp = types.ETDatetime
 	}
@@ -494,8 +494,8 @@ func (b *builtinGreatestTimeSig) evalString(row []types.Datum) (_ string, isNull
 	max := types.ZeroDatetime
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err = b.args[i].EvalString(row, sc)
-		if isNull {
-			return "", true, nil
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
 		}
 		t, err = types.ParseDatetime(v)
 		if err != nil {
@@ -528,7 +528,7 @@ func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression)
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
 	if cmpAsDatetime {
 		tp = types.ETDatetime
 	}
@@ -667,8 +667,8 @@ func (b *builtinLeastTimeSig) evalString(row []types.Datum) (res string, isNull 
 	findInvalidTime := false
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err = b.args[i].EvalString(row, sc)
-		if isNull {
-			return "", true, nil
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
 		}
 		t, err = types.ParseDatetime(v)
 		if err != nil {
@@ -712,7 +712,7 @@ func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expressi
 	for range args {
 		argTps = append(argTps, argTp)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, argTps...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
 	var sig builtinFunc
 	if allInt {
 		sig = &builtinIntervalIntSig{bf}
@@ -848,7 +848,7 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-func tryToConvertConstantInt(con *Constant, ctx context.Context) *Constant {
+func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 	if con.GetType().EvalType() == types.ETInt {
 		return con
 	}
@@ -864,7 +864,7 @@ func tryToConvertConstantInt(con *Constant, ctx context.Context) *Constant {
 }
 
 // refineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Constant {
+func refineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
 	sc := ctx.GetSessionVars().StmtCtx
 	i64, err := con.Value.ToInt64(sc)
 	if err != nil {
@@ -885,12 +885,12 @@ func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Consta
 	case opcode.LT, opcode.GE:
 		resultExpr, _ := NewFunction(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(resultCon, ctx)
+			return tryToConvertConstantInt(ctx, resultCon)
 		}
 	case opcode.LE, opcode.GT:
 		resultExpr, _ := NewFunction(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(resultCon, ctx)
+			return tryToConvertConstantInt(ctx, resultCon)
 		}
 	}
 	// TODO: argInt = 1.1 should be false forever.
@@ -899,19 +899,19 @@ func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Consta
 
 // refineArgs rewrite the arguments if one of them is int expression and another one is non-int constant.
 // Like a < 1.1 will be changed to a < 2.
-func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context) []Expression {
+func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression) []Expression {
 	arg0IsInt := args[0].GetType().EvalType() == types.ETInt
 	arg1IsInt := args[1].GetType().EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1 = refineConstantArg(arg1, c.op, ctx)
+		arg1 = refineConstantArg(ctx, arg1, c.op)
 		return []Expression{args[0], arg1}
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0 = refineConstantArg(arg0, symmetricOp[c.op], ctx)
+		arg0 = refineConstantArg(ctx, arg0, symmetricOp[c.op])
 		return []Expression{arg0, args[1]}
 	}
 	return args
@@ -922,26 +922,26 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, errors.Trace(err)
 	}
-	args := c.refineArgs(rawArgs, ctx)
+	args := c.refineArgs(ctx, rawArgs)
 	lhsFieldType, rhsFieldType := args[0].GetType(), args[1].GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getCmpType(lhsEvalType, rhsEvalType)
 	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
 		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
-		sig, err = c.generateCmpSigs(args, types.ETJson, ctx)
+		sig, err = c.generateCmpSigs(ctx, args, types.ETJson)
 	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
 		if lhsFieldType.Tp == rhsFieldType.Tp {
-			sig, err = c.generateCmpSigs(args, lhsFieldType.EvalType(), ctx)
+			sig, err = c.generateCmpSigs(ctx, args, lhsFieldType.EvalType())
 		} else {
-			sig, err = c.generateCmpSigs(args, types.ETDatetime, ctx)
+			sig, err = c.generateCmpSigs(ctx, args, types.ETDatetime)
 		}
 	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
 		// compare as duration
-		sig, err = c.generateCmpSigs(args, types.ETDuration, ctx)
+		sig, err = c.generateCmpSigs(ctx, args, types.ETDuration)
 	} else if cmpType == types.ETReal || cmpType == types.ETString {
 		_, isLHSConst := args[0].(*Constant)
 		_, isRHSConst := args[1].(*Constant)
@@ -969,9 +969,9 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 				col = args[1].(*Column)
 			}
 			if col.GetType().Tp == mysql.TypeDuration {
-				sig, err = c.generateCmpSigs(args, types.ETDuration, ctx)
+				sig, err = c.generateCmpSigs(ctx, args, types.ETDuration)
 			} else {
-				sig, err = c.generateCmpSigs(args, types.ETDatetime, ctx)
+				sig, err = c.generateCmpSigs(ctx, args, types.ETDatetime)
 			}
 		}
 	}
@@ -981,13 +981,13 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 	if sig == nil {
 		switch cmpType {
 		case types.ETString:
-			sig, err = c.generateCmpSigs(args, types.ETString, ctx)
+			sig, err = c.generateCmpSigs(ctx, args, types.ETString)
 		case types.ETInt:
-			sig, err = c.generateCmpSigs(args, types.ETInt, ctx)
+			sig, err = c.generateCmpSigs(ctx, args, types.ETInt)
 		case types.ETDecimal:
-			sig, err = c.generateCmpSigs(args, types.ETDecimal, ctx)
+			sig, err = c.generateCmpSigs(ctx, args, types.ETDecimal)
 		case types.ETReal:
-			sig, err = c.generateCmpSigs(args, types.ETReal, ctx)
+			sig, err = c.generateCmpSigs(ctx, args, types.ETReal)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -997,8 +997,8 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 }
 
 // genCmpSigs generates compare function signatures.
-func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp types.EvalType, ctx context.Context) (sig builtinFunc, err error) {
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, tp, tp)
+func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
 	bf.tp.Flen = 1
 	switch tp {
 	case types.ETInt:
