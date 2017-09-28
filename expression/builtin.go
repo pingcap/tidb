@@ -166,16 +166,6 @@ func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
 	return f
 }
 
-func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
-	for i, arg := range b.args {
-		b.argValues[i], err = arg.Eval(row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return b.argValues, nil
-}
-
 func (b *baseBuiltinFunc) canBeFolded() bool {
 	return b.foldable
 }
