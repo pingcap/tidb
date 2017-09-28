@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
@@ -50,7 +51,7 @@ type AnalyzeIndexExec struct {
 	concurrency int
 	priority    int
 	analyzePB   *tipb.AnalyzeReq
-	result      distsql.SelectResult
+	result      distsql.NewSelectResult
 }
 
 func (e *AnalyzeIndexExec) open() error {
@@ -59,11 +60,15 @@ func (e *AnalyzeIndexExec) open() error {
 		fieldTypes[i] = &(e.tblInfo.Columns[v.Offset].FieldType)
 	}
 	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
-	keyRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*types.IndexRange{idxRange}, fieldTypes)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result, err = distsql.Analyze(e.ctx.GetClient(), e.ctx.GoCtx(), e.analyzePB, keyRanges, e.concurrency, true, e.priority)
+	var builder requestBuilder
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*types.IndexRange{idxRange}, fieldTypes).
+		SetAnalyzeRequest(e.analyzePB).
+		SetKeepOrder(true).
+		SetPriority(e.priority).
+		Build()
+	kvReq.Concurrency = e.concurrency
+	kvReq.IsolationLevel = kv.RC
+	e.result, err = distsql.NewAnalyze(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -131,14 +136,23 @@ type AnalyzeColumnsExec struct {
 	priority    int
 	keepOrder   bool
 	analyzePB   *tipb.AnalyzeReq
-	result      distsql.SelectResult
+	result      distsql.NewSelectResult
 }
 
 func (e *AnalyzeColumnsExec) open() error {
 	ranges := []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
-	keyRanges := tableRangesToKVRanges(e.tblInfo.ID, ranges)
-	var err error
-	e.result, err = distsql.Analyze(e.ctx.GetClient(), e.ctx.GoCtx(), e.analyzePB, keyRanges, e.concurrency, e.keepOrder, e.priority)
+	var builder requestBuilder
+	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
+		SetAnalyzeRequest(e.analyzePB).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		Build()
+	kvReq.IsolationLevel = kv.RC
+	kvReq.Concurrency = e.concurrency
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.NewAnalyze(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
