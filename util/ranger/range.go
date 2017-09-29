@@ -437,7 +437,6 @@ func (r *builder) merge(a, b []point, union bool) []point {
 		return nil
 	}
 	var (
-		merged               []point
 		inRangeCount         int
 		requiredInRangeCount int
 	)
@@ -446,6 +445,7 @@ func (r *builder) merge(a, b []point, union bool) []point {
 	} else {
 		requiredInRangeCount = 2
 	}
+	merged := make([]point, 0, len(sorter.points))
 	for _, val := range sorter.points {
 		if val.start {
 			inRangeCount++

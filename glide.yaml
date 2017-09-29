@@ -7,7 +7,7 @@ import:
 - package: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - package: github.com/coreos/etcd
-  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
+  version: v3.2.6
   subpackages:
   - auth/authpb
   - clientv3
@@ -52,7 +52,7 @@ import:
 - package: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - package: github.com/pingcap/goleveldb
-  version: f654717c3ea2e4e33f46e6b90e9cd872ee022ccb
+  version: 1c7b975bc41078e959e38e2ecbfd28a9619fc77a
   subpackages:
   - leveldb
   - leveldb/cache
@@ -158,7 +158,7 @@ import:
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: ef910f10e3ee568b62a12aa881f430acad2acba9
+  version: 3c5b40fb2000acb6b3441d5695cb470a23e8f1b5
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
