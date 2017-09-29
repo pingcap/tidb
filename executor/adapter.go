@@ -263,10 +263,15 @@ func (a *statement) logSlowQuery() {
 		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
+	logEntry := log.WithFields(log.Fields{
+		"connectionId": connID,
+		"costTime":     costTime,
+		"sql":          sql,
+	})
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
-		log.Debugf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
+		logEntry.WithField("type", "query").Debugf("query")
 	} else {
-		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
+		logEntry.WithField("type", "slow-query").Warnf("slow-query")
 	}
 }
 
