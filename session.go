@@ -224,7 +224,7 @@ type schemaLeaseChecker struct {
 var (
 	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
 	SchemaOutOfDateRetryInterval = 500 * time.Millisecond
-	// SchemaOutOfDateRetry is upper bound of retry times when the schema is out of date.
+	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
 	SchemaOutOfDateRetryTimes = 10
 )
 
