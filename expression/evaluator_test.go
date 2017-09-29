@@ -461,9 +461,9 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"a", "", 0},
 		{"a", "a", 1},
 		{"a", "b", 0},
-		{"aA", "Aa", 1},
-		{"aAb", "Aa%", 1},
-		{"aAb", "Aa_", 1},
+		{"aA", "Aa", 0},
+		{"aAb", "Aa%", 0},
+		{"aAb", "aA_", 1},
 	}
 	for _, tt := range tests {
 		fc := funcs[ast.Like]

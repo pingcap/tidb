@@ -214,7 +214,7 @@ func (p *PhysicalMergeJoin) matchProperty(prop *requiredProperty, childPlanInfo 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalHashJoin) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
-	lCount, rCount := float64(lRes.count), float64(rRes.count)
+	lCount, rCount := lRes.count, rRes.count
 	np := p.Copy().(*PhysicalHashJoin)
 	np.SetChildren(lRes.p, rRes.p)
 	if len(prop.props) != 0 {
