@@ -92,14 +92,10 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{"_", "a", '\\', true},
 		{"_", "ab", '\\', false},
 		{"__", "b", '\\', false},
-		{"_ab", "AAB", '\\', true},
 		{"%", "abcd", '\\', true},
 		{"%", "", '\\', true},
-		{"%a", "AAA", '\\', true},
 		{"%b", "AAA", '\\', false},
-		{"b%", "BBB", '\\', true},
 		{"%a%", "BBB", '\\', false},
-		{"%a%", "BAB", '\\', true},
 		{"a%", "BBB", '\\', false},
 		{`\%a`, `%a`, '\\', true},
 		{`\%a`, `aa`, '\\', false},
@@ -114,6 +110,13 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
+		// We may reopen these test when like function go back to case insensitive.
+		/*
+			{"_ab", "AAB", '\\', true},
+			{"%a%", "BAB", '\\', true},
+			{"%a", "AAA", '\\', true},
+			{"b%", "BBB", '\\', true},
+		*/
 	}
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
