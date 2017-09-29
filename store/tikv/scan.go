@@ -131,7 +131,7 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
-	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client, pbIsolationLevel(s.snapshot.isolationLevel))
+	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
 		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
@@ -145,8 +145,12 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 			},
+			Context: pb.Context{
+				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
+				Priority:       s.snapshot.priority,
+				NotFillCache:   s.snapshot.notFillCache,
+			},
 		}
-		req.Context.Priority = s.snapshot.priority
 		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
