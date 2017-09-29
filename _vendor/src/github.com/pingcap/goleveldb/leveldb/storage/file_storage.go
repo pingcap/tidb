@@ -32,7 +32,7 @@ type fileStorageLock struct {
 	fs *fileStorage
 }
 
-func (lock *fileStorageLock) Release() {
+func (lock *fileStorageLock) Unlock() {
 	if lock.fs != nil {
 		lock.fs.mu.Lock()
 		defer lock.fs.mu.Unlock()
@@ -116,7 +116,7 @@ func OpenFile(path string, readOnly bool) (Storage, error) {
 	return fs, nil
 }
 
-func (fs *fileStorage) Lock() (Lock, error) {
+func (fs *fileStorage) Lock() (Locker, error) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	if fs.open < 0 {
@@ -234,14 +234,30 @@ func (fs *fileStorage) SetMeta(fd FileDesc) (err error) {
 		return
 	}
 	_, err = fmt.Fprintln(w, fsGenName(fd))
-	// Close the file first.
-	if cerr := w.Close(); cerr != nil {
-		fs.log(fmt.Sprintf("close CURRENT.%d: %v", fd.Num, cerr))
+	if err != nil {
+		fs.log(fmt.Sprintf("write CURRENT.%d: %v", fd.Num, err))
+		return
+	}
+	if err = w.Sync(); err != nil {
+		fs.log(fmt.Sprintf("flush CURRENT.%d: %v", fd.Num, err))
+		return
+	}
+	if err = w.Close(); err != nil {
+		fs.log(fmt.Sprintf("close CURRENT.%d: %v", fd.Num, err))
+		return
 	}
 	if err != nil {
 		return
 	}
-	return rename(path, filepath.Join(fs.path, "CURRENT"))
+	if err = rename(path, filepath.Join(fs.path, "CURRENT")); err != nil {
+		fs.log(fmt.Sprintf("rename CURRENT.%d: %v", fd.Num, err))
+		return
+	}
+	// Sync root directory.
+	if err = syncDir(fs.path); err != nil {
+		fs.log(fmt.Sprintf("syncDir: %v", err))
+	}
+	return
 }
 
 func (fs *fileStorage) GetMeta() (fd FileDesc, err error) {
@@ -323,7 +339,7 @@ func (fs *fileStorage) GetMeta() (fd FileDesc, err error) {
 		}
 	}
 	// Don't remove any files if there is no valid CURRENT file.
-	if fd.Nil() {
+	if fd.Zero() {
 		if cerr != nil {
 			err = cerr
 		} else {

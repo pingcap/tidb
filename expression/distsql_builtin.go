@@ -99,7 +99,7 @@ func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 
 func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := pbTypeToFieldType(tp)
-	base := newBaseBuiltinFunc(args, ctx)
+	base := newBaseBuiltinFunc(ctx, args)
 	base.tp = fieldTp
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:

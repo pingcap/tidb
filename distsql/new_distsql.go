@@ -30,10 +30,11 @@ var (
 )
 
 // NewSelectResult is an iterator of coprocessor partial results.
-// TODO: add NextRaw method to keep compatible with SelectResult.
 type NewSelectResult interface {
 	// Next gets the next partial result.
 	Next() (NewPartialResult, error)
+	// NextRaw gets the next raw result.
+	NextRaw() ([]byte, error)
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -62,7 +63,7 @@ type newSelectResult struct {
 }
 
 type newResultWithErr struct {
-	result NewPartialResult
+	result []byte
 	err    error
 }
 
@@ -86,12 +87,9 @@ func (r *newSelectResult) fetch(ctx goctx.Context) {
 		if resultSubset == nil {
 			return
 		}
-		pr := &newPartialResult{}
-		pr.unmarshal(resultSubset)
-		pr.rowLen = r.rowLen
 
 		select {
-		case r.results <- newResultWithErr{result: pr}:
+		case r.results <- newResultWithErr{result: resultSubset}:
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
 			return
@@ -103,6 +101,21 @@ func (r *newSelectResult) fetch(ctx goctx.Context) {
 
 // Next returns the next row.
 func (r *newSelectResult) Next() (NewPartialResult, error) {
+	re := <-r.results
+	if re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	if re.result == nil {
+		return nil, nil
+	}
+	pr := &newPartialResult{}
+	pr.rowLen = r.rowLen
+	err := pr.unmarshal(re.result)
+	return pr, errors.Trace(err)
+}
+
+// NextRaw returns the next raw partial result.
+func (r *newSelectResult) NextRaw() ([]byte, error) {
 	re := <-r.results
 	return re.result, errors.Trace(re.err)
 }
@@ -172,10 +185,7 @@ func (pr *newPartialResult) Close() error {
 }
 
 // NewSelectDAG sends a DAG request, returns SelectResult.
-// concurrency: The max concurrency for underlying coprocessor request.
-// keepOrder: If the result should returned in key order. For example if we need keep data in order by
-//            scan index, we should set keepOrder to true.
-//func NewSelectDAG(ctx context.Context, goCtx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, keepOrder bool, desc bool, isolationLevel kv.IsoLevel, priority int, colLen int) (NewSelectResult, error) {
+// In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func NewSelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen int) (NewSelectResult, error) {
 	var err error
 	defer func() {
@@ -198,6 +208,31 @@ func NewSelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen
 		results: make(chan newResultWithErr, kvReq.Concurrency),
 		closed:  make(chan struct{}),
 		rowLen:  colLen,
+	}
+	return result, nil
+}
+
+// NewAnalyze do a analyze request.
+func NewAnalyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (NewSelectResult, error) {
+	var err error
+	defer func() {
+		// Add metrics.
+		if err != nil {
+			queryCounter.WithLabelValues(queryFailed).Inc()
+		} else {
+			queryCounter.WithLabelValues(querySucc).Inc()
+		}
+	}()
+
+	resp := client.Send(ctx, kvReq)
+	if resp == nil {
+		return nil, errors.New("client returns nil response")
+	}
+	result := &newSelectResult{
+		label:   "analyze",
+		resp:    resp,
+		results: make(chan newResultWithErr, kvReq.Concurrency),
+		closed:  make(chan struct{}),
 	}
 	return result, nil
 }
