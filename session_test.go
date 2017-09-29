@@ -22,13 +22,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -888,56 +885,4 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	se1.Close()
 	se2.Close()
 	localstore.MockRemoteStore = false
-}
-
-func (s *testSessionSuite) TestIndexColumnLength(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_index_column_length"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 int, c2 blob);")
-	mustExecSQL(c, se, "create index idx_c1 on t(c1);")
-	mustExecSQL(c, se, "create index idx_c2 on t(c2(6));")
-
-	is := s.dom.InfoSchema()
-	tab, err2 := is.TableByName(model.NewCIStr(dbName), model.NewCIStr("t"))
-	c.Assert(err2, Equals, nil)
-
-	idxC1Cols := tables.FindIndexByColName(tab, "c1").Meta().Columns
-	c.Assert(idxC1Cols[0].Length, Equals, types.UnspecifiedLength)
-
-	idxC2Cols := tables.FindIndexByColName(tab, "c2").Meta().Columns
-	c.Assert(idxC2Cols[0].Length, Equals, 6)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
-	c.Skip("skip panic")
-	defer testleak.AfterTest(c)()
-	sqlText := `CREATE TABLE address (
-		id bigint(20) NOT NULL AUTO_INCREMENT,
-		user_id bigint(20) NOT NULL,
-		PRIMARY KEY (id),
-		CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
-		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
-		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`
-	dbName := "test_ignore_foreignkey"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, sqlText)
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestISColumns tests information_schema.columns.
-func (s *testSessionSuite) TestISColumns(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_is_columns"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	sql := "select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;"
-	mustExecSQL(c, se, sql)
-
-	mustExecSQL(c, se, dropDBSQL)
 }
