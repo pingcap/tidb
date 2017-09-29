@@ -1306,7 +1306,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				}
 				// Because the expression maybe return different type from
 				// the generated column, we should wrap a CAST on the result.
-				expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
+				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 				exprIsGen = true
 			}
 		}
@@ -1540,7 +1540,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				return expr
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
-			newExpr = expression.BuildCastFunction(newExpr, col.GetType(), b.ctx)
+			newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		}
 		if err != nil {
 			b.err = errors.Trace(err)

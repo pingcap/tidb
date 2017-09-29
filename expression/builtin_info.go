@@ -61,7 +61,7 @@ func (c *databaseFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
 	bf.foldable = false
 	sig := &builtinDatabaseSig{bf}
@@ -87,7 +87,7 @@ func (c *foundRowsFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	bf.foldable = false
 	sig := &builtinFoundRowsSig{bf}
@@ -117,7 +117,7 @@ func (c *currentUserFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
 	bf.foldable = false
 	sig := &builtinCurrentUserSig{bf}
@@ -148,7 +148,7 @@ func (c *userFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.foldable = false
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
@@ -178,7 +178,7 @@ func (c *connectionIDFunctionClass) getFunction(ctx context.Context, args []Expr
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	bf.foldable = false
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinConnectionIDSig{bf}
@@ -210,7 +210,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expr
 	if len(args) == 1 {
 		argsTp = append(argsTp, types.ETInt)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, argsTp...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argsTp...)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	bf.foldable = false
 
@@ -258,7 +258,7 @@ func (c *versionFunctionClass) getFunction(ctx context.Context, args []Expressio
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
 	bf.foldable = false
 	sig := &builtinVersionSig{bf}
@@ -283,7 +283,7 @@ func (c *tidbVersionFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{bf}
 	return sig.setSelf(sig), nil

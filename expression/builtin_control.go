@@ -59,20 +59,20 @@ type caseWhenFunctionClass struct {
 
 // Infer result type for builtin IF, IFNULL && NULLIF.
 func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
-	resultFieldType, evalType := &types.FieldType{}, types.ETString
+	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
-		*resultFieldType, evalType = *rhs, rhs.EvalType()
+		*resultFieldType = *rhs
 		// If both arguments are NULL, make resulting type BINARY(0).
 		if rhs.Tp == mysql.TypeNull {
-			resultFieldType.Tp, evalType = mysql.TypeString, types.ETString
+			resultFieldType.Tp = mysql.TypeString
 			resultFieldType.Flen, resultFieldType.Decimal = 0, 0
 			types.SetBinChsClnFlag(resultFieldType)
 		}
 	} else if rhs.Tp == mysql.TypeNull {
-		*resultFieldType, evalType = *lhs, lhs.EvalType()
+		*resultFieldType = *lhs
 	} else {
 		var unsignedFlag uint
-		evalType = types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &unsignedFlag)
+		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &unsignedFlag)
 		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
 		if evalType == types.ETInt {
 			resultFieldType.Decimal = 0
@@ -175,7 +175,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
 	bf.tp = fieldTp
 
 	switch tp {
@@ -400,7 +400,7 @@ func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 	}
 	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
-	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, types.ETInt, evalTps, evalTps)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
 	case types.ETInt:
@@ -580,7 +580,7 @@ func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
-	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
 	case types.ETInt:

@@ -477,6 +477,7 @@ LOOP:
 func (s *testDBSuite) TestDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("drop table if exists test_drop_index")
 	s.tk.MustExec("create table test_drop_index (c1 int, c2 int, c3 int, primary key(c1))")
 	s.tk.MustExec("create index c3_index on test_drop_index (c3)")
 	done := make(chan error, 1)
