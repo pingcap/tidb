@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -835,6 +836,94 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 func (s *testSessionSuite) TestISColumns(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
+}
+
+var _ = Suite(&testLoadSchemaSuite{})
+
+type testLoadSchemaSuite struct {
+	cluster   *mocktikv.Cluster
+	mvccStore *mocktikv.MvccStore
+	store     kv.Storage
+	dom       *domain.Domain
+}
+
+func (s *testLoadSchemaSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.mvccStore = mocktikv.NewMvccStore()
+	store, err := tikv.NewMockTikvStore(
+		tikv.WithCluster(s.cluster),
+		tikv.WithMVCCStore(s.mvccStore),
+	)
+	c.Assert(err, IsNil)
+	s.store = store
+	tidb.SetStatsLease(0)
+	s.dom, err = tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testLoadSchemaSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+func (s *testLoadSchemaSuite) TearDownTest(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+}
+
+func (s *testLoadSchemaSuite) TestLoadSchemaFailed(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	// Make sure statements can't retry.
+	tk.Se.GetSessionVars().RetryInfo.Retrying = true
+	tk1.Se.GetSessionVars().RetryInfo.Retrying = true
+	tk2.Se.GetSessionVars().RetryInfo.Retrying = true
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("create table t2 (a int);")
+
+	tk1.MustExec("begin")
+	tk2.MustExec("begin")
+
+	// Make sure loading information schema is failed and server is invalid.
+	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	err := sessionctx.GetDomain(tk.Se).Reload()
+	c.Assert(err, NotNil)
+
+	lease := sessionctx.GetDomain(tk.Se).DDL().GetLease()
+	time.Sleep(lease)
+
+	// Make sure executing insert statement is failed when server is invalid.
+	_, err = tk.Exec("insert t values (100);")
+	c.Check(err, NotNil)
+
+	tk1.MustExec("insert t1 values (100);")
+	tk2.MustExec("insert t2 values (100);")
+
+	_, err = tk1.Exec("commit")
+	c.Check(err, NotNil)
+
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	c.Assert(ver, NotNil)
+
+	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	time.Sleep(lease)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert t values (100);")
+	// Make sure insert to table t2 transaction executes.
+	tk2.MustExec("commit")
 }
 
 var _ = Suite(&testSchemaSuite{})
