@@ -68,6 +68,9 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(ctx context.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	if retType == nil {
+		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
+	}
 	if funcName == ast.Cast {
 		return NewCastFunc(retType, args[0], ctx), nil
 	}
@@ -80,9 +83,6 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if retType == nil {
-		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
 		retType = builtinRetTp
@@ -112,7 +112,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	switch sf.FuncName.L {
 	case ast.Cast:
-		return BuildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
+		return BuildCastFunction(sf.GetCtx(), sf.GetArgs()[0], sf.GetType())
 	case ast.Values:
 		var offset int
 		switch sf.GetType().EvalType() {

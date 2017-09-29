@@ -1,5 +1,5 @@
-hash: 4d58322463463231636f143c321156804fc372344b684bf0d95bc8bc4cfc1321
-updated: 2017-09-15T19:38:09.566391259+08:00
+hash: 0afdb7ba0bf27f88ec27f6d1632c86ab23ce138ec478887ab6f25346af501245
+updated: 2017-09-28T17:16:17.545832142+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -14,7 +14,7 @@ imports:
 - name: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
-  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
+  version: 9d43462d174c664f5edf313dec0de31e1ef4ed47
   subpackages:
   - auth/authpb
   - clientv3
@@ -106,7 +106,7 @@ imports:
 - name: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - name: github.com/pingcap/goleveldb
-  version: f654717c3ea2e4e33f46e6b90e9cd872ee022ccb
+  version: 1c7b975bc41078e959e38e2ecbfd28a9619fc77a
   subpackages:
   - leveldb
   - leveldb/cache
@@ -121,7 +121,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: ef910f10e3ee568b62a12aa881f430acad2acba9
+  version: 3c5b40fb2000acb6b3441d5695cb470a23e8f1b5
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -173,6 +173,10 @@ imports:
   version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/spaolacci/murmur3
   version: 0d12bf811670bf6a1a63828dfbd003eded177fce
+- name: github.com/syndtr/goleveldb
+  version: b89cc31ef7977104127d34c1bd31ebd1a9db2199
+  subpackages:
+  - leveldb/comparer
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net

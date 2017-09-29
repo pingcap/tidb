@@ -119,8 +119,6 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err           error
-	hasAgg        bool
-	obj           interface{}
 	allocator     *idAllocator
 	ctx           context.Context
 	is            infoschema.InfoSchema
@@ -616,10 +614,8 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "")
 	}
 
-	if allPrivs != nil {
-		for _, priv := range allPrivs {
-			vi = appendVisitInfo(vi, priv, dbName, tableName, "")
-		}
+	for _, priv := range allPrivs {
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "")
 	}
 
 	return vi
@@ -663,7 +659,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 			b.err = errors.Trace(err)
 			return
 		}
-		expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
+		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)

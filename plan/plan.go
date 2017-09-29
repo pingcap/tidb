@@ -461,7 +461,6 @@ func (p *basePlan) copy() *basePlan {
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
-	return
 }
 
 // MarshalJSON implements json.Marshaler interface.
