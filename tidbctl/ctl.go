@@ -45,7 +45,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(
-		command.NewTableIDCommand(),
+		command.NewTableCommand(),
 	)
 	cobra.EnablePrefixMatching = true
 }
