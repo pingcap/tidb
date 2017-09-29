@@ -43,7 +43,7 @@ func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, errors.Trace(err)
 	}
 	argTp := []types.EvalType{types.ETString, types.ETString, types.ETInt}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, argTp...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTp...)
 	bf.tp.Flen = 1
 	sig := &builtinLikeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
@@ -87,7 +87,7 @@ func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
 	bf.tp.Flen = 1
 	var sig builtinFunc
 	if types.IsBinaryStr(args[0].GetType()) {

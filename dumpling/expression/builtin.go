@@ -31,14 +31,14 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args     []Expression
-	ctx      context.Context
-	foldable bool // Default value is true because many expressions are foldable.
-	tp       *types.FieldType
-	pbCode   tipb.ScalarFuncSig
+	args []Expression
+	ctx  context.Context
+	tp   *types.FieldType
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
-	self builtinFunc
+	self     builtinFunc
+	pbCode   tipb.ScalarFuncSig
+	foldable bool // Default value is true because many expressions are foldable.
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -49,7 +49,7 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
 
-func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
+func newBaseBuiltinFunc(ctx context.Context, args []Expression) baseBuiltinFunc {
 	return baseBuiltinFunc{
 		args:     args,
 		ctx:      ctx,
@@ -61,28 +61,28 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
+func newBaseBuiltinFuncWithTp(ctx context.Context, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(args[i], ctx)
+			args[i] = WrapWithCastAsInt(ctx, args[i])
 		case types.ETReal:
-			args[i] = WrapWithCastAsReal(args[i], ctx)
+			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETDecimal:
-			args[i] = WrapWithCastAsDecimal(args[i], ctx)
+			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
-			args[i] = WrapWithCastAsString(args[i], ctx)
+			args[i] = WrapWithCastAsString(ctx, args[i])
 		case types.ETDatetime:
-			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
-			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
 		case types.ETDuration:
-			args[i] = WrapWithCastAsDuration(args[i], ctx)
+			args[i] = WrapWithCastAsDuration(ctx, args[i])
 		case types.ETJson:
-			args[i] = WrapWithCastAsJSON(args[i], ctx)
+			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
 	}
 	var fieldType *types.FieldType
