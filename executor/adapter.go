@@ -269,9 +269,9 @@ func (a *statement) logSlowQuery() {
 		"sql":          sql,
 	})
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
-		logEntry.Debugf("query")
+		logEntry.WithField("type", "query").Debugf("query")
 	} else {
-		logEntry.Warnf("slow-query")
+		logEntry.WithField("type", "slow-query").Warnf("slow-query")
 	}
 }
 
