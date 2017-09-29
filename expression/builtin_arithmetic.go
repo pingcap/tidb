@@ -141,19 +141,19 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx context.Context, args []Ex
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETReal, types.ETReal, types.ETReal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticPlusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusReal)
 		return sig.setSelf(sig), nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticPlusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETInt, types.ETInt)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
@@ -265,19 +265,19 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx context.Context, args []E
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETReal, types.ETReal, types.ETReal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticMinusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusReal)
 		return sig.setSelf(sig), nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticMinusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETInt, types.ETInt)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
@@ -386,19 +386,19 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx context.Context, args 
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETReal, types.ETReal, types.ETReal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticMultiplyRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig.setSelf(sig), nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticMultiplyDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETInt, types.ETInt)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 			setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
@@ -500,13 +500,13 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx context.Context, args []
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETReal, types.ETReal, types.ETReal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
 		c.setType4DivReal(bf.tp)
 		sig := &builtinArithmeticDivideRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_DivideReal)
 		return sig.setSelf(sig), nil
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	return sig.setSelf(sig), nil
@@ -567,14 +567,14 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx context.Context, args
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
 	if lhsEvalTp == types.ETInt && rhsEvalTp == types.ETInt {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETInt, types.ETInt)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticIntDivideIntSig{bf}
 		return sig.setSelf(sig), nil
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETDecimal, types.ETDecimal)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETDecimal, types.ETDecimal)
 	if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
@@ -686,7 +686,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx context.Context, args []Exp
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETReal, types.ETReal, types.ETReal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
 		c.setType4ModRealOrDecimal(bf.tp, lhsTp, rhsTp, false)
 		if mysql.HasUnsignedFlag(lhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
@@ -694,7 +694,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx context.Context, args []Exp
 		sig := &builtinArithmeticModRealSig{bf}
 		return sig.setSelf(sig), nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETDecimal, types.ETDecimal, types.ETDecimal)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 		c.setType4ModRealOrDecimal(bf.tp, lhsTp, rhsTp, true)
 		if mysql.HasUnsignedFlag(lhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
@@ -702,7 +702,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx context.Context, args []Exp
 		sig := &builtinArithmeticModDecimalSig{bf}
 		return sig.setSelf(sig), nil
 	} else {
-		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETInt, types.ETInt)
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 		if mysql.HasUnsignedFlag(lhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}

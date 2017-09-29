@@ -43,7 +43,7 @@ func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, errors.Trace(err)
 	}
 	argTp := []types.EvalType{types.ETString, types.ETString, types.ETInt}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, argTp...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTp...)
 	bf.tp.Flen = 1
 	sig := &builtinLikeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
@@ -56,6 +56,7 @@ type builtinLikeSig struct {
 
 // evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
+// NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 func (b *builtinLikeSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	valStr, isNull, err := b.args[0].EvalString(row, sc)
@@ -86,7 +87,7 @@ func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
 	bf.tp.Flen = 1
 	var sig builtinFunc
 	if types.IsBinaryStr(args[0].GetType()) {

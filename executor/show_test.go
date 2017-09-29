@@ -96,7 +96,7 @@ func (s *testSuite) TestShow(c *C) {
 	))
 
 	// For show like with escape
-	testSQL = `show tables like 'show\_test'`
+	testSQL = `show tables like 'SHOW\_test'`
 	result = tk.MustQuery(testSQL)
 	rows := result.Rows()
 	c.Check(rows, HasLen, 1)
