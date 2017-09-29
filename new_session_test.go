@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -874,6 +875,57 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	dom, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom = dom
+}
+
+func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
+	tidb.SchemaOutOfDateRetryTimes = 3
+	tidb.SchemaOutOfDateRetryInterval = 20 * time.Millisecond
+	defer func() {
+		tidb.SchemaOutOfDateRetryTimes = 10
+		tidb.SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("create table t2 (a int);")
+
+	tk1.MustExec("begin")
+	tk2.MustExec("begin")
+
+	// Make sure loading information schema is failed and server is invalid.
+	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	err := sessionctx.GetDomain(tk.Se).Reload()
+	c.Assert(err, NotNil)
+
+	lease := sessionctx.GetDomain(tk.Se).DDL().GetLease()
+	time.Sleep(lease * 2)
+
+	// Make sure executing insert statement is failed when server is invalid.
+	_, err = tk.Exec("insert t values (100);")
+	c.Check(err, NotNil)
+
+	tk1.MustExec("insert t1 values (100);")
+	tk2.MustExec("insert t2 values (100);")
+
+	_, err = tk1.Exec("commit")
+	c.Check(err, NotNil)
+
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	c.Assert(ver, NotNil)
+
+	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	time.Sleep(lease * 2)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert t values (100);")
+	// Make sure insert to table t2 transaction executes.
+	tk2.MustExec("commit")
 }
 
 func (s *testSchemaSuite) TearDownSuite(c *C) {
