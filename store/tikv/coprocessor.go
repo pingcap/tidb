@@ -22,6 +22,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
@@ -454,7 +455,7 @@ func (it *copIterator) Next() ([]byte, error) {
 // handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, pbIsolationLevel(it.req.IsolationLevel))
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
 	for {
 		select {
 		case <-it.finished:
@@ -469,8 +470,12 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 				Data:   it.req.Data,
 				Ranges: task.ranges.toPBRanges(),
 			},
+			Context: kvrpcpb.Context{
+				IsolationLevel: pbIsolationLevel(it.req.IsolationLevel),
+				Priority:       kvPriorityToCommandPri(it.req.Priority),
+				NotFillCache:   it.req.NotFillCache,
+			},
 		}
-		req.Context.Priority = kvPriorityToCommandPri(it.req.Priority)
 		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}
