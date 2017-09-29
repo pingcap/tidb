@@ -643,6 +643,17 @@ func (builder *requestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *requestBuild
 	return builder
 }
 
+func (builder *requestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+
+	builder.Request.Tp = kv.ReqTypeAnalyze
+	builder.Request.StartTs = ana.StartTs
+	builder.Request.Data, builder.err = ana.Marshal()
+	return builder
+}
+
 func (builder *requestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *requestBuilder {
 	builder.Request.KeyRanges = keyRanges
 	return builder
