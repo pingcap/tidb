@@ -328,8 +328,10 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			StartVersion: c.startTS,
 			LockTtl:      c.lockTTL,
 		},
+		Context: pb.Context{
+			Priority: c.priority,
+		},
 	}
-	req.Context.Priority = c.priority
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {

@@ -104,7 +104,7 @@ func init() {
 	initTokenByte('^', int('^'))
 	initTokenByte('~', int('~'))
 	initTokenByte('\\', int('\\'))
-	initTokenByte('?', placeholder)
+	initTokenByte('?', paramMarker)
 	initTokenByte('=', eq)
 
 	initTokenString("||", oror)

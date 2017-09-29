@@ -25,17 +25,21 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -799,6 +803,41 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSessionSuite) TestIndexColumnLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (c1 int, c2 blob);")
+	tk.MustExec("create index idx_c1 on t(c1);")
+	tk.MustExec("create index idx_c2 on t(c2(6));")
+
+	is := s.dom.InfoSchema()
+	tab, err2 := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err2, Equals, nil)
+
+	idxC1Cols := tables.FindIndexByColName(tab, "c1").Meta().Columns
+	c.Assert(idxC1Cols[0].Length, Equals, types.UnspecifiedLength)
+
+	idxC2Cols := tables.FindIndexByColName(tab, "c2").Meta().Columns
+	c.Assert(idxC2Cols[0].Length, Equals, 6)
+}
+
+func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	sqlText := `CREATE TABLE address (
+		id bigint(20) NOT NULL AUTO_INCREMENT,
+		user_id bigint(20) NOT NULL,
+		PRIMARY KEY (id),
+		CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
+		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
+		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`
+	tk.MustExec(sqlText)
+}
+
+// TestISColumns tests information_schema.columns.
+func (s *testSessionSuite) TestISColumns(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
+}
+
 var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
@@ -836,6 +875,57 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	dom, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom = dom
+}
+
+func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
+	tidb.SchemaOutOfDateRetryTimes = 3
+	tidb.SchemaOutOfDateRetryInterval = 20 * time.Millisecond
+	defer func() {
+		tidb.SchemaOutOfDateRetryTimes = 10
+		tidb.SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("create table t2 (a int);")
+
+	tk1.MustExec("begin")
+	tk2.MustExec("begin")
+
+	// Make sure loading information schema is failed and server is invalid.
+	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	err := sessionctx.GetDomain(tk.Se).Reload()
+	c.Assert(err, NotNil)
+
+	lease := sessionctx.GetDomain(tk.Se).DDL().GetLease()
+	time.Sleep(lease * 2)
+
+	// Make sure executing insert statement is failed when server is invalid.
+	_, err = tk.Exec("insert t values (100);")
+	c.Check(err, NotNil)
+
+	tk1.MustExec("insert t1 values (100);")
+	tk2.MustExec("insert t2 values (100);")
+
+	_, err = tk1.Exec("commit")
+	c.Check(err, NotNil)
+
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	c.Assert(ver, NotNil)
+
+	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	time.Sleep(lease * 2)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert t values (100);")
+	// Make sure insert to table t2 transaction executes.
+	tk2.MustExec("commit")
 }
 
 func (s *testSchemaSuite) TearDownSuite(c *C) {
