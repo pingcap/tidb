@@ -672,6 +672,7 @@ func (builder *requestBuilder) SetKeepOrder(order bool) *requestBuilder {
 func (builder *requestBuilder) SetFromSessionVars(sv *variable.SessionVars) *requestBuilder {
 	builder.Request.Concurrency = sv.DistSQLScanConcurrency
 	builder.Request.IsolationLevel = getIsolationLevel(sv)
+	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	return builder
 }
 
