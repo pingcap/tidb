@@ -179,9 +179,12 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
 
 	// Verify the resp body.
 	decoder := json.NewDecoder(resp.Body)
-	data := make([]interface{}, 0)
-	err = decoder.Decode(&data)
+	metas := make([]RegionMeta, 0)
+	err = decoder.Decode(&metas)
 	c.Assert(err, IsNil)
+	for _, meta := range metas {
+		c.Assert(meta.ID != 0, IsTrue)
+	}
 }
 
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
