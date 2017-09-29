@@ -3968,7 +3968,7 @@ SelectStmtCalcFoundRows:
 SelectStmtSQLCache:
 	%prec empty
 	{
-		$$ = false
+		$$ = true
 	}
 |	"SQL_CACHE"
 	{

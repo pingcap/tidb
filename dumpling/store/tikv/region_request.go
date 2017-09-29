@@ -43,18 +43,16 @@ import (
 // errors, since region range have changed, the request may need to split, so we
 // simply return the error to caller.
 type RegionRequestSender struct {
-	regionCache    *RegionCache
-	client         Client
-	isolationLevel kvrpcpb.IsolationLevel
-	storeAddr      string
+	regionCache *RegionCache
+	client      Client
+	storeAddr   string
 }
 
 // NewRegionRequestSender creates a new sender.
-func NewRegionRequestSender(regionCache *RegionCache, client Client, isolationLevel kvrpcpb.IsolationLevel) *RegionRequestSender {
+func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
 	return &RegionRequestSender{
-		regionCache:    regionCache,
-		client:         client,
-		isolationLevel: isolationLevel,
+		regionCache: regionCache,
+		client:      client,
 	}
 }
 
@@ -76,7 +74,6 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 		}
 
 		s.storeAddr = ctx.Addr
-		req.Context.IsolationLevel = s.isolationLevel
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
