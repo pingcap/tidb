@@ -62,7 +62,7 @@ func (c *rowFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	for i := range argTps {
 		argTps[i] = args[i].GetType().EvalType()
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, argTps...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
 	bf.foldable = false
 	sig = &builtinRowSig{bf}
 	return sig.setSelf(sig), nil
@@ -85,7 +85,7 @@ func (c *setVarFunctionClass) getFunction(ctx context.Context, args []Expression
 	if err = errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETString, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
 	bf.tp.Flen, bf.foldable = args[1].GetType().Flen, false
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
 	sig = &builtinSetVarSig{bf}
@@ -124,7 +124,7 @@ func (c *getVarFunctionClass) getFunction(ctx context.Context, args []Expression
 		return nil, err
 	}
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen, bf.foldable = mysql.MaxFieldVarCharLength, false
 	sig = &builtinGetVarSig{bf}
 	return sig.setSelf(sig), nil
@@ -161,7 +161,7 @@ func (c *valuesFunctionClass) getFunction(ctx context.Context, args []Expression
 	if err = errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFunc(args, ctx)
+	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	bf.foldable = false
 	switch c.tp.EvalType() {
@@ -331,7 +331,7 @@ func (c *bitCountFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETInt)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt)
 	bf.tp.Flen = 2
 	sig := &builtinBitCountSig{bf}
 	return sig.setSelf(sig), nil
