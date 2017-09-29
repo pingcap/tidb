@@ -349,8 +349,9 @@ type StatementContext struct {
 	}
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone *time.Location
-	Priority mysql.PriorityEnum
+	TimeZone     *time.Location
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
 }
 
 // AddAffectedRows adds affected rows.
