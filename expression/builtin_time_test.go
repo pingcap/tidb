@@ -22,7 +22,9 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
@@ -933,6 +935,53 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
+}
+
+func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
+	if fsp > types.MaxFsp {
+		fsp = types.MaxFsp
+	}
+
+	f := types.NewFieldType(tp)
+	f.Decimal = fsp
+
+	d, err = arg.ConvertTo(sc, f)
+	if err != nil {
+		d.SetNull()
+		return d, errors.Trace(err)
+	}
+
+	if d.IsNull() {
+		return
+	}
+
+	if d.Kind() != types.KindMysqlTime {
+		d.SetNull()
+		return d, errors.Errorf("need time type, but got %T", d.GetValue())
+	}
+	return
+}
+
+func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
+	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
+}
+
+func builtinDateFormat(ctx context.Context, args []types.Datum) (d types.Datum, err error) {
+	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if date.IsNull() {
+		return
+	}
+	t := date.GetMysqlTime()
+	str, err := t.DateFormat(args[1].GetString())
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetString(str)
+	return
 }
 
 func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {

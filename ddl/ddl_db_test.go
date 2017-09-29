@@ -46,6 +46,13 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const (
+	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
+	waitForCleanDataRound = 60
+	// waitForCleanDataInterval is a min duration between 2 check for data clean.
+	waitForCleanDataInterval = time.Millisecond * 100
+)
+
 var _ = Suite(&testDBSuite{})
 
 const defaultBatchSize = 4196
@@ -470,6 +477,7 @@ LOOP:
 func (s *testDBSuite) TestDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("drop table if exists t1")
 	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
 	s.tk.MustExec("create index c3_index on t1 (c3)")
 	done := make(chan error, 1)
@@ -555,10 +563,10 @@ LOOP:
 	}
 
 	var handles map[int64]struct{}
-	for i := 0; i < 30; i++ {
+	for i := 0; i < waitForCleanDataRound; i++ {
 		handles = f()
 		if len(handles) != 0 {
-			time.Sleep(time.Millisecond * 100)
+			time.Sleep(waitForCleanDataInterval)
 		} else {
 			break
 		}
@@ -1193,7 +1201,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
-	for i := 0; i < 30; i++ {
+	for i := 0; i < waitForCleanDataRound; i++ {
 		err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 			it, err1 := txn.Seek(tablePrefix)
 			if err1 != nil {
@@ -1211,7 +1219,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 		if !hasOldTableData {
 			break
 		}
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(waitForCleanDataInterval)
 	}
 	c.Assert(hasOldTableData, IsFalse)
 }
