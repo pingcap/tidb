@@ -38,6 +38,8 @@ const (
 	IsolationLevel
 	// Priority marks the priority of this transaction.
 	Priority
+	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
+	NotFillCache
 )
 
 // Priority value for transaction priority.
@@ -177,6 +179,8 @@ type Request struct {
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
+	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
+	NotFillCache bool
 }
 
 // Response represents the response returned from KV layer.

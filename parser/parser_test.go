@@ -1728,6 +1728,24 @@ func (s *testParserSuite) TestPriority(c *C) {
 	c.Assert(sel.SelectStmtOpts.Priority, Equals, mysql.HighPriority)
 }
 
+func (s *testParserSuite) TestSQLNoCache(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select SQL_NO_CACHE * from t`, false},
+		{`select SQL_CACHE * from t`, true},
+		{`select * from t`, true},
+	}
+
+	parser := New()
+	for _, tt := range table {
+		stmt, err := parser.Parse(tt.src, "", "")
+		c.Assert(err, IsNil)
+
+		sel := stmt[0].(*ast.SelectStmt)
+		c.Assert(sel.SelectStmtOpts.SQLCache, Equals, tt.ok)
+	}
+}
+
 func (s *testParserSuite) TestEscape(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
