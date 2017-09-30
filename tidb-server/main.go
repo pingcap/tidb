@@ -135,9 +135,12 @@ func main() {
 }
 
 func registerStores() {
-	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
-	tidb.RegisterStore("tikv", tikv.Driver{})
-	tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+	err := tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	terror.MustNil(err)
+	err = tidb.RegisterStore("tikv", tikv.Driver{})
+	terror.MustNil(err)
+	err = tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+	terror.MustNil(err)
 }
 
 func createStoreAndDomain() {
@@ -381,5 +384,6 @@ func runServer() {
 
 func cleanup() {
 	dom.Close()
-	storage.Close()
+	err := storage.Close()
+	terror.Log(err)
 }
