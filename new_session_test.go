@@ -934,6 +934,7 @@ func (s *testSessionSuite) TestDecimal(c *C) {
 func (s *testSessionSuite) TestParser(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
+	// test for https://github.com/pingcap/tidb/pull/177
 	tk.MustExec("CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
 	tk.MustExec("CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
 	tk.MustExec(`INSERT INTO t1 VALUES (1,1,1);`)
@@ -945,9 +946,10 @@ func (s *testSessionSuite) TestParser(c *C) {
 	tk.MustExec(`drop table t1,t2;`)
 }
 
-func (s *testSessionSuite) TestIssue454(c *C) {
+func (s *testSessionSuite) TestOnDuplicate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
+	// test for https://github.com/pingcap/tidb/pull/454
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -960,6 +962,7 @@ func (s *testSessionSuite) TestIssue454(c *C) {
 func (s *testSessionSuite) TestReplace(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
+	// test for https://github.com/pingcap/tidb/pull/456
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -970,6 +973,8 @@ func (s *testSessionSuite) TestReplace(c *C) {
 }
 
 func (s *testSessionSuite) TestDelete(c *C) {
+	// test for https://github.com/pingcap/tidb/pull/1135
+
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("create database test1")
