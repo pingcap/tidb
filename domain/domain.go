@@ -354,10 +354,10 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
-	do.ddl.Stop()
+	terror.Log(do.ddl.Stop())
 	close(do.exit)
 	if do.etcdClient != nil {
-		do.etcdClient.Close()
+		terror.Log(do.etcdClient.Close())
 	}
 	do.sysSessionPool.Close()
 	do.wg.Wait()

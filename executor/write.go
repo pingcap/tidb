@@ -69,7 +69,10 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			if errTI != nil {
 				return false, errors.Trace(errTI)
 			}
-			t.RebaseAutoID(val, true)
+			err := t.RebaseAutoID(val, true)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
 		}
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
@@ -1082,7 +1085,10 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		e.Table.RebaseAutoID(recordID, true)
+		err = e.Table.RebaseAutoID(recordID, true)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		e.ctx.GetSessionVars().InsertID = uint64(recordID)
 		row[i].SetInt64(recordID)
 		retryInfo.AddAutoIncrementID(recordID)
