@@ -86,7 +86,7 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	errcheck -blank $(PACKAGES)
+	GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go"
 
 clean:
 	$(GO) clean -i ./...

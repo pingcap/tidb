@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -166,30 +167,33 @@ func (e *IndexLookUpJoin) doJoin() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer e.innerExec.Close()
+	defer terror.Call(e.innerExec.Close)
 	for {
-		innerRow, err := e.innerExec.Next()
-		if err != nil {
-			return errors.Trace(err)
+		innerRow, err1 := e.innerExec.Next()
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if innerRow == nil {
 			break
 		}
-		match, err := expression.EvalBool(e.rightConditions, innerRow, e.ctx)
-		if err != nil {
-			return errors.Trace(err)
+		match, err1 := expression.EvalBool(e.rightConditions, innerRow, e.ctx)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if !match {
 			continue
 		}
 		joinDatums := make([]types.Datum, 0, len(e.innerJoinKeys))
 		for _, col := range e.innerJoinKeys {
-			datum, _ := col.Eval(innerRow)
+			datum, err2 := col.Eval(innerRow)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
 			joinDatums = append(joinDatums, datum)
 		}
-		joinKey, err := codec.EncodeKey(nil, joinDatums...)
-		if err != nil {
-			return errors.Trace(err)
+		joinKey, err1 := codec.EncodeKey(nil, joinDatums...)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		e.innerRows = append(e.innerRows, orderedRow{key: joinKey, row: innerRow})
 	}
