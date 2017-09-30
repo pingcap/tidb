@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"unicode"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -957,9 +959,6 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			if g.err != nil {
 				return inNode, false
 			}
-			if index != -1 {
-				g.fields[index].InGroupBy = true
-			}
 			if col != nil {
 				return inNode, true
 			}
@@ -970,19 +969,272 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 	case *ast.PositionExpr:
-		if v.N >= 1 && v.N <= len(g.fields) {
-			g.fields[v.N-1].InGroupBy = true
-			return g.fields[v.N-1].Expr, true
+		if v.N < 1 || v.N > len(g.fields) {
+			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
+			return inNode, false
 		}
-		g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
-		return inNode, false
+		return g.fields[v.N-1].Expr, true
 	}
 	return inNode, true
 }
 
+func tblInfoFromCol(from ast.ResultSetNode, col *expression.Column) *model.TableInfo {
+	for _, field := range from.GetResultFields() {
+		if field.Column.Name.L != col.ColName.L {
+			continue
+		}
+		if field.TableAsName.L == col.TblName.L {
+			return field.Table
+		}
+		if field.TableName.Name.L != col.TblName.L {
+			continue
+		}
+		if field.DBName.L == col.DBName.L {
+			return field.Table
+		}
+	}
+	return nil
+}
+
+func buildFuncDependCol(p LogicalPlan, cond ast.ExprNode) (*expression.Column, *expression.Column) {
+	binOpExpr, ok := cond.(*ast.BinaryOperationExpr)
+	if !ok {
+		return nil, nil
+	}
+	if binOpExpr.Op != opcode.EQ {
+		return nil, nil
+	}
+	lColExpr, ok := binOpExpr.L.(*ast.ColumnNameExpr)
+	if !ok {
+		return nil, nil
+	}
+	rColExpr, ok := binOpExpr.R.(*ast.ColumnNameExpr)
+	if !ok {
+		return nil, nil
+	}
+	lCol, _ := p.Schema().FindColumn(lColExpr.Name)
+	if lCol == nil {
+		return nil, nil
+	}
+	rCol, _ := p.Schema().FindColumn(rColExpr.Name)
+	if rCol == nil {
+		return nil, nil
+	}
+	return lCol, rCol
+}
+
+func buildWhereFuncDepend(p LogicalPlan, where ast.ExprNode) map[*expression.Column]*expression.Column {
+	whereConditions := splitWhere(where)
+	colDependMap := make(map[*expression.Column]*expression.Column, 2*len(whereConditions))
+	for _, cond := range whereConditions {
+		lCol, rCol := buildFuncDependCol(p, cond)
+		if lCol == nil || rCol == nil {
+			continue
+		}
+		colDependMap[lCol] = rCol
+		colDependMap[rCol] = lCol
+	}
+	return colDependMap
+}
+
+func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) map[*expression.Column]*expression.Column {
+	switch x := from.(type) {
+	case *ast.Join:
+		if x.On == nil {
+			return nil
+		}
+		onConditions := splitWhere(x.On.Expr)
+		colDependMap := make(map[*expression.Column]*expression.Column, len(onConditions))
+		for _, cond := range onConditions {
+			lCol, rCol := buildFuncDependCol(p, cond)
+			if lCol == nil || rCol == nil {
+				continue
+			}
+			lTbl := tblInfoFromCol(x.Left, lCol)
+			if lTbl == nil {
+				lCol, rCol = rCol, lCol
+			}
+			switch x.Tp {
+			case ast.CrossJoin:
+				colDependMap[lCol] = rCol
+				colDependMap[rCol] = lCol
+			case ast.LeftJoin:
+				colDependMap[rCol] = lCol
+			case ast.RightJoin:
+				colDependMap[lCol] = rCol
+			}
+		}
+		return colDependMap
+	default:
+		return nil
+	}
+}
+
+func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.TableInfo, gbyCols map[*expression.Column]bool, whereDepends, joinDepends map[*expression.Column]*expression.Column) bool {
+	for _, index := range tblInfo.Indices {
+		if !index.Unique {
+			continue
+		}
+		funcDepend := true
+		for _, indexCol := range index.Columns {
+			iColInfo := tblInfo.Columns[indexCol.Offset]
+			if !mysql.HasNotNullFlag(iColInfo.Flag) {
+				funcDepend = false
+				break
+			}
+			iCol, _ := p.Schema().FindColumn(&ast.ColumnName{
+				Schema: col.DBName,
+				Table:  col.TblName,
+				Name:   iColInfo.Name,
+			})
+			if _, ok := gbyCols[iCol]; ok {
+				continue
+			}
+			if wCol, ok := whereDepends[iCol]; ok {
+				if _, ok = gbyCols[wCol]; ok {
+					continue
+				}
+			}
+			if jCol, ok := joinDepends[iCol]; ok {
+				if _, ok = gbyCols[jCol]; ok {
+					continue
+				}
+			}
+			funcDepend = false
+			break
+		}
+		if funcDepend {
+			return true
+		}
+	}
+	primaryFuncDepend := true
+	hasPrimaryField := false
+	for _, colInfo := range tblInfo.Columns {
+		if !mysql.HasPriKeyFlag(colInfo.Flag) {
+			continue
+		}
+		hasPrimaryField = true
+		pCol, _ := p.Schema().FindColumn(&ast.ColumnName{
+			Schema: col.DBName,
+			Table:  col.TblName,
+			Name:   colInfo.Name,
+		})
+		if _, ok := gbyCols[pCol]; ok {
+			continue
+		}
+		if wCol, ok := whereDepends[pCol]; ok {
+			if _, ok = gbyCols[wCol]; ok {
+				continue
+			}
+		}
+		if jCol, ok := joinDepends[pCol]; ok {
+			if _, ok = gbyCols[jCol]; ok {
+				continue
+			}
+		}
+		primaryFuncDepend = false
+		break
+	}
+	return primaryFuncDepend && hasPrimaryField
+}
+
+func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectField, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
+	gbyCols := make(map[*expression.Column]bool, len(fields))
+	gbyExprs := make([]ast.ExprNode, 0, len(fields))
+	schema := p.Schema()
+	for _, byItem := range gby.Items {
+		if colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr); ok {
+			col, _ := schema.FindColumn(colExpr.Name)
+			if col == nil {
+				continue
+			}
+			gbyCols[col] = true
+		} else {
+			gbyExprs = append(gbyExprs, byItem.Expr)
+		}
+	}
+
+	notInGbyCols := make(map[*expression.Column]int, len(fields))
+	for index, field := range fields {
+		if field.Auxiliary {
+			continue
+		}
+		if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
+			continue
+		}
+		if _, ok := field.Expr.(*ast.ColumnNameExpr); !ok {
+			foundInGby := false
+			for _, expr := range gbyExprs {
+				if reflect.DeepEqual(expr, field.Expr) {
+					foundInGby = true
+					break
+				}
+			}
+			if foundInGby {
+				continue
+			}
+		}
+		colMap := make(map[*expression.Column]bool, len(schema.Columns))
+		b.allColFromExprNode(p, field, colMap)
+		for col := range colMap {
+			if _, ok := gbyCols[col]; ok {
+				continue
+			}
+			notInGbyCols[col] = index
+		}
+	}
+	if len(notInGbyCols) == 0 {
+		return
+	}
+
+	whereDepends := buildWhereFuncDepend(p, where)
+	joinDepends := buildJoinFuncDepend(p, from)
+	tblMap := make(map[*model.TableInfo]bool, len(notInGbyCols))
+	for col, index := range notInGbyCols {
+		tblInfo := tblInfoFromCol(from, col)
+		if tblInfo == nil {
+			continue
+		}
+		if _, ok := tblMap[tblInfo]; ok {
+			continue
+		}
+		if !checkColFuncDepend(p, col, tblInfo, gbyCols, whereDepends, joinDepends) {
+			b.err = ErrFieldNotInGroupBy.GenByArgs(index+1, fields[index].Text())
+			return
+		}
+		tblMap[tblInfo] = true
+	}
+
+}
+
+func (b *planBuilder) allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*expression.Column]bool) {
+	switch v := n.(type) {
+	case *ast.BinaryOperationExpr:
+		b.allColFromExprNode(p, v.L, cols)
+		b.allColFromExprNode(p, v.R, cols)
+	case *ast.SelectField:
+		b.allColFromExprNode(p, v.Expr, cols)
+	case *ast.ColumnNameExpr:
+		col, _ := p.Schema().FindColumn(v.Name)
+		if col == nil {
+			col, _ = p.Schema().FindColumn(&ast.ColumnName{
+				Schema: v.Refer.DBName,
+				Table:  v.Refer.TableName.Name,
+				Name:   v.Refer.Column.Name,
+			})
+		}
+		cols[col] = true
+	case *ast.ByItem:
+		b.allColFromExprNode(p, v.Expr, cols)
+	}
+}
+
 func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression) {
 	exprs := make([]expression.Expression, 0, len(gby.Items))
-	resolver := &gbyResolver{fields: fields, schema: p.Schema()}
+	resolver := &gbyResolver{
+		fields: fields,
+		schema: p.Schema(),
+	}
 	for _, item := range gby.Items {
 		resolver.inExpr = false
 		retExpr, _ := item.Expr.Accept(resolver)
@@ -1000,19 +1252,6 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		p = np
 	}
 
-	// When SQLMode set ONLY_FULL_GROUP_BY,
-	// we should check all the non-aggregate SelectField is in group by items
-	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-		for index, field := range fields {
-			if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
-				continue
-			}
-			if !field.InGroupBy {
-				b.err = ErrFieldNotInGroupBy.GenByArgs(index+1, field.Text())
-				return nil, nil
-			}
-		}
-	}
 	return p, exprs
 }
 
@@ -1118,6 +1357,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		p, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if b.err != nil {
 			return nil
+		}
+		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
+			b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.GroupBy, sel.From.TableRefs, sel.Where)
 		}
 	}
 	// We must resolve having and order by clause before build projection,
