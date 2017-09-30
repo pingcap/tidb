@@ -88,80 +88,154 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4Int(c *C) {
 
 func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	defer testleak.AfterTest(c)()
-	testCases := []struct {
-		args   []interface{}
-		expect interface{}
-	}{
-		{
-			args:   []interface{}{int64(12), int64(1)},
-			expect: int64(13),
-		},
-		{
-			args:   []interface{}{float64(1.01001), float64(-0.01)},
-			expect: float64(1.00001),
-		},
-		{
-			args:   []interface{}{nil, float64(-0.11101)},
-			expect: nil,
-		},
-		{
-			args:   []interface{}{float64(1.01), nil},
-			expect: nil,
-		},
-		{
-			args:   []interface{}{nil, nil},
-			expect: nil,
-		},
-	}
 
-	for _, tc := range testCases {
-		sig, err := funcs[ast.Plus].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
-		c.Assert(err, IsNil)
-		c.Assert(sig, NotNil)
-		c.Assert(sig.canBeFolded(), IsTrue)
-		val, err := sig.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
-	}
+	// case: 1
+	args := []interface{}{int64(12), int64(1)}
+
+	bf, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	intSig, ok := bf.(*builtinArithmeticPlusIntSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intSig, NotNil)
+
+	intResult, isNull, err := intSig.evalInt(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(intResult, Equals, int64(13))
+
+	// case 2
+	args = []interface{}{float64(1.01001), float64(-0.01)}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	realSig, ok := bf.(*builtinArithmeticPlusRealSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(realSig, NotNil)
+
+	realResult, isNull, err := realSig.evalReal(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(realResult, Equals, float64(1.00001))
+
+	// case 3
+	args = []interface{}{nil, float64(-0.11101)}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(realSig, NotNil)
+
+	realResult, isNull, err = realSig.evalReal(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	c.Assert(realResult, Equals, float64(0))
+
+	// case 4
+	args = []interface{}{nil, nil}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	realSig, ok = bf.(*builtinArithmeticPlusRealSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(realSig, NotNil)
+
+	realResult, isNull, err = realSig.evalReal(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	c.Assert(realResult, Equals, float64(0))
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	defer testleak.AfterTest(c)()
-	testCases := []struct {
-		args   []interface{}
-		expect interface{}
-	}{
-		{
-			args:   []interface{}{int64(12), int64(1)},
-			expect: int64(11),
-		},
-		{
-			args:   []interface{}{float64(1.01001), float64(-0.01)},
-			expect: float64(1.02001),
-		},
-		{
-			args:   []interface{}{nil, float64(-0.11101)},
-			expect: nil,
-		},
-		{
-			args:   []interface{}{float64(1.01), nil},
-			expect: nil,
-		},
-		{
-			args:   []interface{}{nil, nil},
-			expect: nil,
-		},
-	}
 
-	for _, tc := range testCases {
-		sig, err := funcs[ast.Minus].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
-		c.Assert(err, IsNil)
-		c.Assert(sig, NotNil)
-		c.Assert(sig.canBeFolded(), IsTrue)
-		val, err := sig.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
-	}
+	// case: 1
+	args := []interface{}{int64(12), int64(1)}
+
+	bf, err := funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	intSig, ok := bf.(*builtinArithmeticMinusIntSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intSig, NotNil)
+
+	intResult, isNull, err := intSig.evalInt(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(intResult, Equals, int64(11))
+
+	// case 2
+	args = []interface{}{float64(1.01001), float64(-0.01)}
+
+	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	realSig, ok := bf.(*builtinArithmeticMinusRealSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(realSig, NotNil)
+
+	realResult, isNull, err := realSig.evalReal(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(realResult, Equals, float64(1.02001))
+
+	// case 3
+	args = []interface{}{nil, float64(-0.11101)}
+
+	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(realSig, NotNil)
+
+	realResult, isNull, err = realSig.evalReal(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	c.Assert(realResult, Equals, float64(0))
+
+	// case 4
+	args = []interface{}{float64(1.01), nil}
+
+	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(realSig, NotNil)
+
+	realResult, isNull, err = realSig.evalReal(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	c.Assert(realResult, Equals, float64(0))
+
+	// case 5
+	args = []interface{}{nil, nil}
+
+	bf, err = funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	c.Assert(bf.canBeFolded(), IsTrue)
+	realSig, ok = bf.(*builtinArithmeticMinusRealSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(realSig, NotNil)
+
+	realResult, isNull, err = realSig.evalReal(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	c.Assert(realResult, Equals, float64(0))
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
@@ -198,7 +272,7 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Mul].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		sig, err := funcs[ast.Mul].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
@@ -261,7 +335,7 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Div].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		sig, err := funcs[ast.Div].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
@@ -356,7 +430,7 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.IntDiv].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		sig, err := funcs[ast.IntDiv].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
@@ -467,7 +541,7 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Mod].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		sig, err := funcs[ast.Mod].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
