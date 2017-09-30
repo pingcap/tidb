@@ -128,9 +128,6 @@ type session struct {
 
 	store kv.Storage
 
-	// unlimitedRetryCount is used for test only.
-	unlimitedRetryCount bool
-
 	parser *parser.Parser
 
 	sessionVars    *variable.SessionVars
@@ -221,13 +218,15 @@ type schemaLeaseChecker struct {
 	relatedTableIDs []int64
 }
 
-const (
-	schemaOutOfDateRetryInterval = 500 * time.Millisecond
-	schemaOutOfDateRetryTimes    = 10
+var (
+	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
+	SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
+	SchemaOutOfDateRetryTimes = 10
 )
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
-	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
+	for i := 0; i < SchemaOutOfDateRetryTimes; i++ {
 		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
 		switch result {
 		case domain.ResultSucc:
@@ -237,7 +236,7 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 			return domain.ErrInfoSchemaChanged
 		case domain.ResultUnknown:
 			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-			time.Sleep(schemaOutOfDateRetryInterval)
+			time.Sleep(SchemaOutOfDateRetryInterval)
 		}
 
 	}
@@ -403,8 +402,9 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
+			txt := st.OriginText()
 			if infoSchemaChanged {
-				st, err = updateStatement(st, s)
+				st, err = updateStatement(st, s, txt)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -413,7 +413,6 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				txt := st.OriginText()
 				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(txt))
 			} else {
 				log.Warnf("[%d] Retry [%d] query [%d]", connID, retryCnt, i)
@@ -437,7 +436,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		}
 		retryCnt++
 		infoSchemaChanged = domain.ErrInfoSchemaChanged.Equal(err)
-		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
+		if retryCnt >= maxCnt {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
@@ -449,16 +448,25 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 	return err
 }
 
-func updateStatement(st ast.Statement, s *session) (ast.Statement, error) {
+func updateStatement(st ast.Statement, s *session, txt string) (ast.Statement, error) {
 	// statement maybe stale because of infoschema changed, this function will return the updated one.
-	// Rebuild plan if infoschema changed, reuse the statement otherwise.
-	resultSt, err := Compile(s, st.AstNode())
-	if err != nil {
-		// If a txn is inserting data when DDL is dropping column,
-		// it would fail to commit and retry, and run here then.
-		return resultSt, errors.Trace(err)
+	if st.IsPrepared() {
+		// TODO: Rebuild plan if infoschema changed, reuse the statement otherwise.
+	} else {
+		// Rebuild plan if infoschema changed, reuse the statement otherwise.
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
+		if err != nil {
+			return st, errors.Trace(err)
+		}
+		st, err = Compile(s, stmt)
+		if err != nil {
+			// If a txn is inserting data when DDL is dropping column,
+			// it would fail to commit and retry, and run here then.
+			return st, errors.Trace(err)
+		}
 	}
-	return resultSt, nil
+	return st, nil
 }
 
 func sqlForLog(sql string) string {
@@ -1061,7 +1069,6 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxRowCountForINLJ + quoteCommaQuote +
-	variable.TiDBCBO + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
