@@ -168,7 +168,7 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 	case n < math.MaxInt64:
 		lval.item = int64(n)
 	default:
-		lval.item = uint64(n)
+		lval.item = n
 	}
 	return intLit
 }
@@ -190,7 +190,7 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 		return int(unicode.ReplacementChar)
 	}
 
-	lval.item = float64(n)
+	lval.item = n
 	return floatLit
 }
 
@@ -221,7 +221,7 @@ func getUint64FromNUM(num interface{}) uint64 {
 	case int64:
 		return uint64(v)
 	case uint64:
-		return uint64(v)
+		return v
 	}
 	return 0
 }

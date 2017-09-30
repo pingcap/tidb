@@ -490,7 +490,7 @@ func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 		Collate: cl,
 		Tp:      tp,
 		Flen:    size,
-		Flag:    uint(flag),
+		Flag:    flag,
 	}
 	return &expression.Column{
 		ColName: model.NewCIStr(name),
