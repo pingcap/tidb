@@ -651,6 +651,7 @@ func (builder *requestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *requestB
 	builder.Request.Tp = kv.ReqTypeAnalyze
 	builder.Request.StartTs = ana.StartTs
 	builder.Request.Data, builder.err = ana.Marshal()
+	builder.Request.NotFillCache = true
 	return builder
 }
 
