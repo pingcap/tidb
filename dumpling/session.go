@@ -128,9 +128,6 @@ type session struct {
 
 	store kv.Storage
 
-	// unlimitedRetryCount is used for test only.
-	unlimitedRetryCount bool
-
 	parser *parser.Parser
 
 	sessionVars    *variable.SessionVars
@@ -439,7 +436,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		}
 		retryCnt++
 		infoSchemaChanged = domain.ErrInfoSchemaChanged.Equal(err)
-		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
+		if retryCnt >= maxCnt {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
