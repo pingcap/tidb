@@ -15,7 +15,6 @@ package tidb
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -103,69 +102,6 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
 	c.Assert(result, Equals, domain.ResultUnknown)
-}
-
-func (s *testSessionSuite) TestIssue1118(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue1118"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	c.Assert(se.(*session).txn, IsNil)
-
-	// insert
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1))")
-	mustExecSQL(c, se, "insert into t set c2 = 11")
-	r := mustExecSQL(c, se, "select last_insert_id()")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-	mustExecSQL(c, se, "insert into t (c2) values (22), (33), (44)")
-	r = mustExecSQL(c, se, "select last_insert_id()")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 2)
-	mustExecSQL(c, se, "insert into t (c1, c2) values (10, 55)")
-	r = mustExecSQL(c, se, "select last_insert_id()")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 2)
-
-	// replace
-	mustExecSQL(c, se, "replace t (c2) values(66)")
-	r = mustExecSQL(c, se, "select * from t")
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	matches(c, rows, [][]interface{}{{1, 11}, {2, 22}, {3, 33}, {4, 44}, {10, 55}, {11, 66}})
-	r = mustExecSQL(c, se, "select last_insert_id()")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 11)
-
-	// update
-	mustExecSQL(c, se, "update t set c1=last_insert_id(c1 + 100)")
-	r = mustExecSQL(c, se, "select * from t")
-	rows, err = GetRows(r)
-	c.Assert(err, IsNil)
-	matches(c, rows, [][]interface{}{{101, 11}, {102, 22}, {103, 33}, {104, 44}, {110, 55}, {111, 66}})
-	r = mustExecSQL(c, se, "select last_insert_id()")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 111)
-	mustExecSQL(c, se, "insert into t (c2) values (77)")
-	r = mustExecSQL(c, se, "select last_insert_id()")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 112)
-
-	// drop
-	mustExecSQL(c, se, "drop table t")
-	r = mustExecSQL(c, se, "select last_insert_id()")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 112)
-
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestIssue827(c *C) {
@@ -679,105 +615,6 @@ func (s *testSessionSuite) TestIssue456(c *C) {
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int, primary key (c1));")
 	mustExecSQL(c, se, "replace into t set c1=1, c2=4;")
 	mustExecSQL(c, se, "replace into t select * from t1 limit 1;")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestIssue571 ...
-// For https://github.com/pingcap/tidb/issues/571
-func (s *testSessionSuite) TestIssue571(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue571"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "begin")
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c int)")
-	mustExecSQL(c, se, "insert t values (1), (2), (3)")
-	mustExecSQL(c, se, "commit")
-
-	se1 := newSession(c, s.store, dbName)
-	se1.(*session).unlimitedRetryCount = true
-	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
-	se2 := newSession(c, s.store, dbName)
-	se2.(*session).unlimitedRetryCount = true
-	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
-	se3 := newSession(c, s.store, dbName)
-	se3.(*session).unlimitedRetryCount = true
-	mustExecSQL(c, se3, "SET SESSION autocommit=0;")
-
-	var wg sync.WaitGroup
-	wg.Add(3)
-	f1 := func() {
-		defer wg.Done()
-		for i := 0; i < 30; i++ {
-			mustExecSQL(c, se1, "update t set c = 1;")
-		}
-	}
-	f2 := func() {
-		defer wg.Done()
-		for i := 0; i < 30; i++ {
-			mustExecSQL(c, se2, "update t set c = ?;", 1)
-		}
-	}
-	f3 := func() {
-		defer wg.Done()
-		for i := 0; i < 30; i++ {
-			mustExecSQL(c, se3, "begin")
-			mustExecSQL(c, se3, "update t set c = 1;")
-			mustExecSQL(c, se3, "commit")
-		}
-	}
-	go f1()
-	go f2()
-	go f3()
-	wg.Wait()
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue620(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue620"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t1")
-	mustExecSQL(c, se, "drop table if exists t2")
-	mustExecSQL(c, se, "drop table if exists t3")
-	mustExecSQL(c, se, "create table t1(id int primary key auto_increment, c int);")
-	mustExecSQL(c, se, "create table t2(c int);")
-	mustExecSQL(c, se, "insert into t2 values (1);")
-	mustExecSQL(c, se, "create table t3(id int, c int);")
-	mustExecSQL(c, se, "insert into t3 values (2,2);")
-	mustExecSQL(c, se, "insert into t1(c) select * from t2; insert into t1 select * from t3;")
-	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1, 1}, {2, 2}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue893(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue893"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
-	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue1265(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue1265"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a decimal unique);")
-	mustExecSQL(c, se, "insert t values ('100');")
-	mustExecFailed(c, se, "insert t values ('1e2');")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
