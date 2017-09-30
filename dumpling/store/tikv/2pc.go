@@ -170,7 +170,7 @@ func txnLockTTL(startTime monotime.Time, txnSize int) uint64 {
 	lockTTL := defaultLockTTL
 	if txnSize >= txnCommitBatchSize {
 		sizeMiB := float64(txnSize) / bytesPerMiB
-		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
+		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(sizeMiB))
 		if lockTTL < defaultLockTTL {
 			lockTTL = defaultLockTTL
 		}

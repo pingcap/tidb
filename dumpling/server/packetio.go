@@ -69,7 +69,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	sequence := uint8(header[3])
+	sequence := header[3]
 	if sequence != p.sequence {
 		return nil, errInvalidSequence.Gen("invalid sequence %d != %d", sequence, p.sequence)
 	}

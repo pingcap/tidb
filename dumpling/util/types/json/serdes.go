@@ -124,11 +124,11 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 		reader := bytes.NewReader(b[typeCodeLen:])
 		size, err = binary.ReadUvarint(reader)
 		if err == nil {
-			n = int(size) + int(reader.Size()) - int(reader.Len()) + typeCodeLen
+			n = int(size) + int(reader.Size()) - reader.Len() + typeCodeLen
 			return
 		}
 	case TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64, TypeCodeLiteral:
-		n = jsonTypeCodeLength[TypeCode(c)] + typeCodeLen
+		n = jsonTypeCodeLength[c] + typeCodeLen
 		return
 	}
 	err = errors.New("Invalid JSON bytes")
