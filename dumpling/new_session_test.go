@@ -466,6 +466,36 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	privileges.SkipWithGrant = save2
 }
 
+func (s *testSessionSuite) TestLastInsertID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// insert
+	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t set c2 = 11")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into t (c2) values (22), (33), (44)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
+
+	tk.MustExec("insert into t (c1, c2) values (10, 55)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
+
+	// replace
+	tk.MustExec("replace t (c2) values(66)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 11", "2 22", "3 33", "4 44", "10 55", "11 66"))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("11"))
+
+	// update
+	tk.MustExec("update t set c1=last_insert_id(c1 + 100)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("101 11", "102 22", "103 33", "104 44", "110 55", "111 66"))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("111"))
+	tk.MustExec("insert into t (c2) values (77)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+
+	// drop
+	tk.MustExec("drop table t")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+}
+
 func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
