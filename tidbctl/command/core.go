@@ -41,8 +41,8 @@ func Filter(vs []string, f func(string) bool) []string {
 	return vsf
 }
 
-// GetTableInfo returns the TiDB table info given the TiDB host, the dbName and the tableName
-func GetTableInfo(host, dbName, tableName string, verbose bool) (*tableInfo, error) {
+// getTableInfo returns the TiDB table info given the TiDB host, the dbName and the tableName
+func getTableInfo(host, dbName, tableName string, verbose bool) (*tableInfo, error) {
 
 	if host == "" || dbName == "" || tableName == "" {
 		errMsg := fmt.Sprintf("host, dbName and tableName are all required, but now\n "+

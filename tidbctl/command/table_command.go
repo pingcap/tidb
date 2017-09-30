@@ -27,9 +27,6 @@ func NewTableCommand() *cobra.Command {
 		// Run:   showTableIDCommandFunc,
 	}
 
-	// Add flags for command `showTableID`
-	m.Flags().BoolP("verbose", "v", false, "Print tableInfo in verbose mode")
-
 	m.AddCommand(NewTableIDCommand())
 	m.AddCommand(NewTableStoreCommand())
 
@@ -43,6 +40,9 @@ func NewTableIDCommand() *cobra.Command {
 		Short: "show the table id given the table name",
 		Run:   showTableIDCommandFunc,
 	}
+	// Add flags for command `showID`
+	m.Flags().BoolP("verbose", "v", false, "Print tableInfo in verbose mode")
+
 	return m
 }
 
@@ -66,7 +66,7 @@ func showTableIDCommandFunc(cmd *cobra.Command, args []string) {
 		verbose = false
 	}
 
-	ti, err := GetTableInfo(host, dbName, tableName, verbose)
+	ti, err := getTableInfo(host, dbName, tableName, verbose)
 	if err != nil {
 		fmt.Printf("Failed to get tableInfo via host: %s, db: %s, table: %s.\nThe error is %s\n",
 			host, dbName, tableName, err)
@@ -87,6 +87,9 @@ func NewTableStoreCommand() *cobra.Command {
 		Short: "show the table stores given the table name",
 		Run:   showTableStoreCommandFunc,
 	}
+	// Add flags for command `showStore`
+	m.Flags().BoolP("verbose", "v", false, "Print tableInfo in verbose mode")
+
 	return m
 }
 
@@ -107,10 +110,11 @@ func showTableStoreCommandFunc(cmd *cobra.Command, args []string) {
 
 	verbose, err := cmd.Flags().GetBool("verbose")
 	if err != nil {
+		fmt.Println("fail to get verbose flag, set to false. error is", err)
 		verbose = false
 	}
 
-	ti, err := GetTableInfo(host, dbName, tableName, verbose)
+	ti, err := getTableInfo(host, dbName, tableName, verbose)
 	if err != nil {
 		fmt.Printf("Failed to get tableInfo via host: %s, db: %s, table: %s.\nThe error is %s",
 			host, dbName, tableName, err)
