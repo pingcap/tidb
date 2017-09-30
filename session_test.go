@@ -15,7 +15,6 @@ package tidb
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -679,105 +678,6 @@ func (s *testSessionSuite) TestIssue456(c *C) {
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int, primary key (c1));")
 	mustExecSQL(c, se, "replace into t set c1=1, c2=4;")
 	mustExecSQL(c, se, "replace into t select * from t1 limit 1;")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestIssue571 ...
-// For https://github.com/pingcap/tidb/issues/571
-func (s *testSessionSuite) TestIssue571(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue571"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "begin")
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c int)")
-	mustExecSQL(c, se, "insert t values (1), (2), (3)")
-	mustExecSQL(c, se, "commit")
-
-	se1 := newSession(c, s.store, dbName)
-	se1.(*session).unlimitedRetryCount = true
-	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
-	se2 := newSession(c, s.store, dbName)
-	se2.(*session).unlimitedRetryCount = true
-	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
-	se3 := newSession(c, s.store, dbName)
-	se3.(*session).unlimitedRetryCount = true
-	mustExecSQL(c, se3, "SET SESSION autocommit=0;")
-
-	var wg sync.WaitGroup
-	wg.Add(3)
-	f1 := func() {
-		defer wg.Done()
-		for i := 0; i < 30; i++ {
-			mustExecSQL(c, se1, "update t set c = 1;")
-		}
-	}
-	f2 := func() {
-		defer wg.Done()
-		for i := 0; i < 30; i++ {
-			mustExecSQL(c, se2, "update t set c = ?;", 1)
-		}
-	}
-	f3 := func() {
-		defer wg.Done()
-		for i := 0; i < 30; i++ {
-			mustExecSQL(c, se3, "begin")
-			mustExecSQL(c, se3, "update t set c = 1;")
-			mustExecSQL(c, se3, "commit")
-		}
-	}
-	go f1()
-	go f2()
-	go f3()
-	wg.Wait()
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue620(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue620"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t1")
-	mustExecSQL(c, se, "drop table if exists t2")
-	mustExecSQL(c, se, "drop table if exists t3")
-	mustExecSQL(c, se, "create table t1(id int primary key auto_increment, c int);")
-	mustExecSQL(c, se, "create table t2(c int);")
-	mustExecSQL(c, se, "insert into t2 values (1);")
-	mustExecSQL(c, se, "create table t3(id int, c int);")
-	mustExecSQL(c, se, "insert into t3 values (2,2);")
-	mustExecSQL(c, se, "insert into t1(c) select * from t2; insert into t1 select * from t3;")
-	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1, 1}, {2, 2}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue893(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue893"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
-	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue1265(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue1265"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a decimal unique);")
-	mustExecSQL(c, se, "insert t values ('100');")
-	mustExecFailed(c, se, "insert t values ('1e2');")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
