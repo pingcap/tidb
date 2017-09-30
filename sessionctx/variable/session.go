@@ -219,9 +219,6 @@ type SessionVars struct {
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
-
-	// CBO indicates if we use new planner with cbo.
-	CBO bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -236,7 +233,7 @@ func NewSessionVars() *SessionVars {
 		StrictSQLMode:              true,
 		Status:                     mysql.ServerStatusAutocommit,
 		StmtCtx:                    new(StatementContext),
-		AllowAggPushDown:           true,
+		AllowAggPushDown:           false,
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
 		IndexJoinBatchSize:         DefIndexJoinBatchSize,
 		IndexLookupSize:            DefIndexLookupSize,
@@ -244,7 +241,6 @@ func NewSessionVars() *SessionVars {
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
-		CBO:                        true,
 	}
 }
 
