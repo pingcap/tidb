@@ -43,6 +43,7 @@ type tikvSnapshot struct {
 	isolationLevel kv.IsoLevel
 	priority       pb.CommandPri
 	notFillCache   bool
+	syncLog        bool
 }
 
 var snapshotGP = gp.New(time.Minute)
