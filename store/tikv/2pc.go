@@ -77,6 +77,7 @@ type twoPhaseCommitter struct {
 		undetermined bool
 	}
 	priority pb.CommandPri
+	syncLog  bool
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -151,6 +152,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 		mutations: mutations,
 		lockTTL:   txnLockTTL(txn.startTime, size),
 		priority:  getTxnPriority(txn),
+		syncLog:   getTxnSyncLog(txn),
 	}, nil
 }
 
@@ -321,13 +323,16 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 
 	req := &tikvrpc.Request{
-		Type:     tikvrpc.CmdPrewrite,
-		Priority: c.priority,
+		Type: tikvrpc.CmdPrewrite,
 		Prewrite: &pb.PrewriteRequest{
 			Mutations:    mutations,
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
 			LockTtl:      c.lockTTL,
+		},
+		Context: pb.Context{
+			Priority: c.priority,
+			SyncLog:  c.syncLog,
 		},
 	}
 	for {
@@ -396,6 +401,13 @@ func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	return pb.CommandPri_Normal
 }
 
+func getTxnSyncLog(txn *tikvTxn) bool {
+	if sync := txn.us.GetOption(kv.SyncLog); sync != nil {
+		return sync.(bool)
+	}
+	return false
+}
+
 func kvPriorityToCommandPri(pri int) pb.CommandPri {
 	switch pri {
 	case kv.PriorityLow:
@@ -408,14 +420,18 @@ func kvPriorityToCommandPri(pri int) pb.CommandPri {
 
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
-		Type:     tikvrpc.CmdCommit,
-		Priority: c.priority,
+		Type: tikvrpc.CmdCommit,
 		Commit: &pb.CommitRequest{
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,
 			CommitVersion: c.commitTS,
 		},
+		Context: pb.Context{
+			Priority: c.priority,
+			SyncLog:  c.syncLog,
+		},
 	}
+	req.Context.Priority = c.priority
 
 	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
 	// transaction has been successfully committed.
@@ -478,6 +494,10 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		BatchRollback: &pb.BatchRollbackRequest{
 			Keys:         batch.keys,
 			StartVersion: c.startTS,
+		},
+		Context: pb.Context{
+			Priority: c.priority,
+			SyncLog:  c.syncLog,
 		},
 	}
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)

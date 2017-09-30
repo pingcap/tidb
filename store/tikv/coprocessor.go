@@ -22,6 +22,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
@@ -49,7 +50,7 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 	case kv.ReqTypeDAG:
 		return c.supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeAnalyze:
-		return c.store.mock
+		return true
 	}
 	return false
 }
@@ -86,7 +87,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	case kv.ReqSubTypeDesc:
 		return true
 	case kv.ReqSubTypeSignature:
-		return c.store.mock
+		return true
 	default:
 		return false
 	}
@@ -454,7 +455,7 @@ func (it *copIterator) Next() ([]byte, error) {
 // handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, pbIsolationLevel(it.req.IsolationLevel))
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
 	for {
 		select {
 		case <-it.finished:
@@ -463,12 +464,16 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		}
 
 		req := &tikvrpc.Request{
-			Type:     tikvrpc.CmdCop,
-			Priority: kvPriorityToCommandPri(it.req.Priority),
+			Type: tikvrpc.CmdCop,
 			Cop: &coprocessor.Request{
 				Tp:     it.req.Tp,
 				Data:   it.req.Data,
 				Ranges: task.ranges.toPBRanges(),
+			},
+			Context: kvrpcpb.Context{
+				IsolationLevel: pbIsolationLevel(it.req.IsolationLevel),
+				Priority:       kvPriorityToCommandPri(it.req.Priority),
+				NotFillCache:   it.req.NotFillCache,
 			},
 		}
 		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)

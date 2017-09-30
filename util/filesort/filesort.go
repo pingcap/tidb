@@ -57,7 +57,7 @@ func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, b
 		v1 := i[k]
 		v2 := j[k]
 
-		ret, err := v1.CompareDatum(sc, v2)
+		ret, err := v1.CompareDatum(sc, &v2)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

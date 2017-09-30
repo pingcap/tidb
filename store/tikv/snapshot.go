@@ -42,6 +42,8 @@ type tikvSnapshot struct {
 	version        kv.Version
 	isolationLevel kv.IsoLevel
 	priority       pb.CommandPri
+	notFillCache   bool
+	syncLog        bool
 }
 
 var snapshotGP = gp.New(time.Minute)
@@ -128,16 +130,20 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
-	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
 	pending := batch.keys
 	for {
 		req := &tikvrpc.Request{
-			Type:     tikvrpc.CmdBatchGet,
-			Priority: s.priority,
+			Type: tikvrpc.CmdBatchGet,
 			BatchGet: &pb.BatchGetRequest{
 				Keys:    pending,
 				Version: s.version.Ver,
+			},
+			Context: pb.Context{
+				Priority:       s.priority,
+				IsolationLevel: pbIsolationLevel(s.isolationLevel),
+				NotFillCache:   s.notFillCache,
 			},
 		}
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutMedium)
@@ -208,14 +214,18 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
-	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
 
 	req := &tikvrpc.Request{
-		Type:     tikvrpc.CmdGet,
-		Priority: s.priority,
+		Type: tikvrpc.CmdGet,
 		Get: &pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
+		},
+		Context: pb.Context{
+			Priority:       s.priority,
+			IsolationLevel: pbIsolationLevel(s.isolationLevel),
+			NotFillCache:   s.notFillCache,
 		},
 	}
 	for {

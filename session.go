@@ -128,9 +128,6 @@ type session struct {
 
 	store kv.Storage
 
-	// unlimitedRetryCount is used for test only.
-	unlimitedRetryCount bool
-
 	parser *parser.Parser
 
 	sessionVars    *variable.SessionVars
@@ -221,13 +218,15 @@ type schemaLeaseChecker struct {
 	relatedTableIDs []int64
 }
 
-const (
-	schemaOutOfDateRetryInterval = 500 * time.Millisecond
-	schemaOutOfDateRetryTimes    = 10
+var (
+	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
+	SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
+	SchemaOutOfDateRetryTimes = 10
 )
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
-	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
+	for i := 0; i < SchemaOutOfDateRetryTimes; i++ {
 		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
 		switch result {
 		case domain.ResultSucc:
@@ -237,7 +236,7 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 			return domain.ErrInfoSchemaChanged
 		case domain.ResultUnknown:
 			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-			time.Sleep(schemaOutOfDateRetryInterval)
+			time.Sleep(SchemaOutOfDateRetryInterval)
 		}
 
 	}
@@ -319,7 +318,13 @@ func (s *session) doCommitWithRetry() error {
 }
 
 func (s *session) CommitTxn() error {
-	return s.doCommitWithRetry()
+	err := s.doCommitWithRetry()
+	label := "OK"
+	if err != nil {
+		label = "Error"
+	}
+	transactionCounter.WithLabelValues(label).Inc()
+	return errors.Trace(err)
 }
 
 func (s *session) RollbackTxn() error {
@@ -431,7 +436,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		}
 		retryCnt++
 		infoSchemaChanged = domain.ErrInfoSchemaChanged.Equal(err)
-		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
+		if retryCnt >= maxCnt {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
@@ -775,7 +780,7 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn != nil && s.txn.Valid() {
-		err := s.doCommitWithRetry()
+		err := s.CommitTxn()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -785,6 +790,7 @@ func (s *session) NewTxn() error {
 		return errors.Trace(err)
 	}
 	s.txn = txn
+	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
 	return nil
 }
 
@@ -1063,7 +1069,6 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxRowCountForINLJ + quoteCommaQuote +
-	variable.TiDBCBO + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.

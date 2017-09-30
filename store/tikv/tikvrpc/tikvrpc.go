@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -47,12 +48,13 @@ const (
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
+	CmdSplitRegion
 )
 
 // Request wraps all kv/coprocessor requests.
 type Request struct {
+	kvrpcpb.Context
 	Type             CmdType
-	Priority         kvrpcpb.CommandPri
 	Get              *kvrpcpb.GetRequest
 	Scan             *kvrpcpb.ScanRequest
 	Prewrite         *kvrpcpb.PrewriteRequest
@@ -71,52 +73,7 @@ type Request struct {
 	Cop              *coprocessor.Request
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs *kvrpcpb.MvccGetByStartTsRequest
-}
-
-// GetContext returns the rpc context for the underlying concrete request.
-func (req *Request) GetContext() (*kvrpcpb.Context, error) {
-	var c *kvrpcpb.Context
-	switch req.Type {
-	case CmdGet:
-		c = req.Get.GetContext()
-	case CmdScan:
-		c = req.Scan.GetContext()
-	case CmdPrewrite:
-		c = req.Prewrite.GetContext()
-	case CmdCommit:
-		c = req.Commit.GetContext()
-	case CmdCleanup:
-		c = req.Cleanup.GetContext()
-	case CmdBatchGet:
-		c = req.BatchGet.GetContext()
-	case CmdBatchRollback:
-		c = req.BatchRollback.GetContext()
-	case CmdScanLock:
-		c = req.ScanLock.GetContext()
-	case CmdResolveLock:
-		c = req.ResolveLock.GetContext()
-	case CmdGC:
-		c = req.GC.GetContext()
-	case CmdDeleteRange:
-		c = req.DeleteRange.GetContext()
-	case CmdRawGet:
-		c = req.RawGet.GetContext()
-	case CmdRawPut:
-		c = req.RawPut.GetContext()
-	case CmdRawDelete:
-		c = req.RawDelete.GetContext()
-	case CmdRawScan:
-		c = req.RawScan.GetContext()
-	case CmdCop:
-		c = req.Cop.GetContext()
-	case CmdMvccGetByKey:
-		c = req.MvccGetByKey.GetContext()
-	case CmdMvccGetByStartTs:
-		c = req.MvccGetByStartTs.GetContext()
-	default:
-		return nil, fmt.Errorf("invalid request type %v", req.Type)
-	}
-	return c, nil
+	SplitRegion      *kvrpcpb.SplitRegionRequest
 }
 
 // Response wraps all kv/coprocessor responses.
@@ -140,11 +97,16 @@ type Response struct {
 	Cop              *coprocessor.Response
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
+	SplitRegion      *kvrpcpb.SplitRegionResponse
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
-func SetContext(req *Request, ctx *kvrpcpb.Context) error {
-	ctx.Priority = req.Priority
+func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
+	ctx := &req.Context
+	ctx.RegionId = region.Id
+	ctx.RegionEpoch = region.RegionEpoch
+	ctx.Peer = peer
+
 	switch req.Type {
 	case CmdGet:
 		req.Get.Context = ctx
@@ -182,6 +144,8 @@ func SetContext(req *Request, ctx *kvrpcpb.Context) error {
 		req.MvccGetByKey.Context = ctx
 	case CmdMvccGetByStartTs:
 		req.MvccGetByStartTs.Context = ctx
+	case CmdSplitRegion:
+		req.SplitRegion.Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -266,6 +230,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.MvccGetByStartTS = &kvrpcpb.MvccGetByStartTsResponse{
 			RegionError: e,
 		}
+	case CmdSplitRegion:
+		resp.SplitRegion = &kvrpcpb.SplitRegionResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -312,6 +280,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.MvccGetByKey.GetRegionError()
 	case CmdMvccGetByStartTs:
 		e = resp.MvccGetByStartTS.GetRegionError()
+	case CmdSplitRegion:
+		e = resp.SplitRegion.GetRegionError()
 	default:
 		return nil, fmt.Errorf("invalid response type %v", resp.Type)
 	}

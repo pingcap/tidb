@@ -122,8 +122,6 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err           error
-	hasAgg        bool
-	obj           interface{}
 	allocator     *idAllocator
 	ctx           context.Context
 	is            infoschema.InfoSchema
@@ -619,10 +617,8 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "")
 	}
 
-	if allPrivs != nil {
-		for _, priv := range allPrivs {
-			vi = appendVisitInfo(vi, priv, dbName, tableName, "")
-		}
+	for _, priv := range allPrivs {
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "")
 	}
 
 	return vi
@@ -666,7 +662,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 			b.err = errors.Trace(err)
 			return
 		}
-		expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
+		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
@@ -696,7 +692,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		return nil
 	}
 	tableInfo := tn.TableInfo
-	schema := expression.TableInfo2Schema(tableInfo)
+	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
+	schema := expression.TableInfo2SchemaWithDBName(tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
@@ -736,6 +733,20 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan.SetSchema(schema)
+
+	checkRefColumn := func(n ast.Node) ast.Node {
+		if insertPlan.NeedFillDefaultValue {
+			return n
+		}
+		switch n.(type) {
+		case *ast.ColumnName, *ast.ColumnNameExpr:
+			insertPlan.NeedFillDefaultValue = true
+		}
+		return n
+	}
+
 	cols := insertPlan.Table.Cols()
 	maxValuesItemLength := 0 // the max length of items in VALUES list.
 	for _, valuesItem := range insert.Lists {
@@ -755,7 +766,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 					RetType: &val.Type,
 				}
 			} else {
-				expr, _, err = b.rewrite(valueItem, nil, nil, true)
+				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				b.err = errors.Trace(err)
@@ -787,8 +798,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
-	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
-	mockTablePlan.SetSchema(schema)
 	for _, assign := range insert.Setlist {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -804,9 +813,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
-		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
-		// It's unreasonable.
-		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil

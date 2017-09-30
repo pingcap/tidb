@@ -243,87 +243,6 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 	return result, nil
 }
 
-// SelectDAG sends a DAG request, returns SelectResult.
-// concurrency: The max concurrency for underlying coprocessor request.
-// keepOrder: If the result should returned in key order. For example if we need keep data in order by
-//            scan index, we should set keepOrder to true.
-func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, desc bool, isolationLevel kv.IsoLevel, priority int) (SelectResult, error) {
-	var err error
-	defer func() {
-		// Add metrics.
-		if err != nil {
-			queryCounter.WithLabelValues(queryFailed).Inc()
-		} else {
-			queryCounter.WithLabelValues(querySucc).Inc()
-		}
-	}()
-
-	kvReq := &kv.Request{
-		Tp:             kv.ReqTypeDAG,
-		StartTs:        dag.StartTs,
-		Concurrency:    concurrency,
-		KeepOrder:      keepOrder,
-		KeyRanges:      keyRanges,
-		Desc:           desc,
-		IsolationLevel: isolationLevel,
-		Priority:       priority,
-	}
-	kvReq.Data, err = dag.Marshal()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	resp := client.Send(ctx, kvReq)
-	if resp == nil {
-		return nil, errors.New("client returns nil response")
-	}
-	result := &selectResult{
-		label:   "dag",
-		resp:    resp,
-		results: make(chan resultWithErr, concurrency),
-		closed:  make(chan struct{}),
-	}
-	return result, nil
-}
-
-// Analyze do a analyze request.
-func Analyze(client kv.Client, ctx goctx.Context, req *tipb.AnalyzeReq, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, priority int) (SelectResult, error) {
-	var err error
-	defer func() {
-		// Add metrics.
-		if err != nil {
-			queryCounter.WithLabelValues(queryFailed).Inc()
-		} else {
-			queryCounter.WithLabelValues(querySucc).Inc()
-		}
-	}()
-	kvReq := &kv.Request{
-		Tp:             kv.ReqTypeAnalyze,
-		Concurrency:    concurrency,
-		KeepOrder:      keepOrder,
-		KeyRanges:      keyRanges,
-		Desc:           false,
-		IsolationLevel: kv.RC,
-		Priority:       priority,
-	}
-	kvReq.Data, err = req.Marshal()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	resp := client.Send(ctx, kvReq)
-	if resp == nil {
-		return nil, errors.New("client returns nil response")
-	}
-	result := &selectResult{
-		label:   "analyze",
-		resp:    resp,
-		results: make(chan resultWithErr, concurrency),
-		closed:  make(chan struct{}),
-	}
-	return result, nil
-}
-
 // Convert tipb.Request to kv.Request.
 func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel, priority int) (*kv.Request, error) {
 	kvReq := &kv.Request{
@@ -394,7 +313,9 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
 	for _, c := range columns {
 		col := columnToProto(c)
-		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
+		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
+		// is abandoned.
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
 			col.PkHandle = true
 		} else {
 			col.PkHandle = false

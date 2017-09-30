@@ -298,7 +298,7 @@ func getPseudoRowCountByColumnRanges(sc *variable.StatementContext, tableRowCoun
 		} else if ran.High.Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err1 := ran.Low.CompareDatum(sc, ran.High)
+			compare, err1 := ran.Low.CompareDatum(sc, &ran.High)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}

@@ -115,38 +115,38 @@ func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFunc(args, ctx)
+	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
 		return sig.setSelf(sig), nil
 	}
-	argTp := fieldTp2EvalTp(args[0].GetType())
+	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCastRealAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsInt)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCastDecimalAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsInt)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsInt)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCastDurationAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsInt)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsInt)
-	case tpString:
+	case types.ETString:
 		sig = &builtinCastStringAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsInt)
 	default:
-		panic("unsupported evalTp in castAsIntFunctionClass")
+		panic("unsupported types.EvalType in castAsIntFunctionClass")
 	}
 	return sig.setSelf(sig), nil
 }
@@ -161,38 +161,38 @@ func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFunc(args, ctx)
+	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 		return sig.setSelf(sig), nil
 	}
-	argTp := fieldTp2EvalTp(args[0].GetType())
+	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinCastIntAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsReal)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCastDecimalAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsReal)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsReal)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCastDurationAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsReal)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsReal)
-	case tpString:
+	case types.ETString:
 		sig = &builtinCastStringAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsReal)
 	default:
-		panic("unsupported evalTp in castAsRealFunctionClass")
+		panic("unsupported types.EvalType in castAsRealFunctionClass")
 	}
 	return sig.setSelf(sig), nil
 }
@@ -207,38 +207,38 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFunc(args, ctx)
+	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
 		return sig.setSelf(sig), nil
 	}
-	argTp := fieldTp2EvalTp(args[0].GetType())
+	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinCastIntAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsDecimal)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCastRealAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsDecimal)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsDecimal)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCastDurationAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDecimal)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsDecimal)
-	case tpString:
+	case types.ETString:
 		sig = &builtinCastStringAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsDecimal)
 	default:
-		panic("unsupported evalTp in castAsDecimalFunctionClass")
+		panic("unsupported types.EvalType in castAsDecimalFunctionClass")
 	}
 	return sig.setSelf(sig), nil
 }
@@ -253,38 +253,38 @@ func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFunc(args, ctx)
+	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig.setSelf(sig), nil
 	}
-	argTp := fieldTp2EvalTp(args[0].GetType())
+	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCastRealAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsString)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCastDecimalAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsString)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsString)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCastDurationAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsString)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
-	case tpString:
+	case types.ETString:
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
-		panic("unsupported evalTp in castAsStringFunctionClass")
+		panic("unsupported types.EvalType in castAsStringFunctionClass")
 	}
 	return sig.setSelf(sig), nil
 }
@@ -299,38 +299,38 @@ func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFunc(args, ctx)
+	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastTimeAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsTime)
 		return sig.setSelf(sig), nil
 	}
-	argTp := fieldTp2EvalTp(args[0].GetType())
+	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinCastIntAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsTime)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCastRealAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsTime)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCastDecimalAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsTime)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsTime)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCastDurationAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsTime)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsTime)
-	case tpString:
+	case types.ETString:
 		sig = &builtinCastStringAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsTime)
 	default:
-		panic("unsupported evalTp in castAsTimeFunctionClass")
+		panic("unsupported types.EvalType in castAsTimeFunctionClass")
 	}
 	return sig.setSelf(sig), nil
 }
@@ -345,38 +345,38 @@ func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFunc(args, ctx)
+	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastDurationAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDuration)
 		return sig.setSelf(sig), nil
 	}
-	argTp := fieldTp2EvalTp(args[0].GetType())
+	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinCastIntAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsDuration)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCastRealAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsDuration)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCastDecimalAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDuration)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsDuration)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCastDurationAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDuration)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsDuration)
-	case tpString:
+	case types.ETString:
 		sig = &builtinCastStringAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsDuration)
 	default:
-		panic("unsupported evalTp in castAsDurationFunctionClass")
+		panic("unsupported types.EvalType in castAsDurationFunctionClass")
 	}
 	return sig.setSelf(sig), nil
 }
@@ -391,38 +391,38 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFunc(args, ctx)
+	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastJSONAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
 		return sig.setSelf(sig), nil
 	}
-	argTp := fieldTp2EvalTp(args[0].GetType())
+	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinCastIntAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsJson)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCastRealAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsJson)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCastDecimalAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsJson)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsJson)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCastDurationAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsJson)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
-	case tpString:
+	case types.ETString:
 		sig = &builtinCastStringAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsJson)
 	default:
-		panic("unsupported evalTp in castAsJSONFunctionClass")
+		panic("unsupported types.EvalType in castAsJSONFunctionClass")
 	}
 	return sig.setSelf(sig), nil
 }
@@ -576,14 +576,17 @@ type builtinCastDecimalAsJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinCastDecimalAsJSONSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinCastDecimalAsJSONSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return json.JSON{}, true, errors.Trace(err)
+	}
 	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
 	f64, err := val.ToFloat64()
-	if err == nil {
-		return json.CreateJSON(f64), isNull, errors.Trace(err)
+	if err != nil {
+		return json.JSON{}, true, errors.Trace(err)
 	}
-	return res, isNull, errors.Trace(err)
+	return json.CreateJSON(f64), isNull, errors.Trace(err)
 }
 
 type builtinCastStringAsJSONSig struct {
@@ -696,16 +699,22 @@ type builtinCastRealAsTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinCastRealAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
+func (b *builtinCastRealAsTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	val, isNull, err := b.args[0].EvalReal(row, sc)
-	res, err = types.ParseTime(strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	res, err := types.ParseTime(strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
 	res.TimeZone = sc.TimeZone
-	return res, false, errors.Trace(err)
+	return res, false, nil
 }
 
 type builtinCastRealAsDurationSig struct {
@@ -748,7 +757,10 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 
 	// Round is needed for both unsigned and signed.
 	var to types.MyDecimal
-	val.Round(&to, 0, types.ModeHalfEven)
+	err = val.Round(&to, 0, types.ModeHalfEven)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
 
 	if mysql.HasUnsignedFlag(b.tp.Flag) {
 		var uintRes uint64
@@ -1283,25 +1295,23 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row []types.Datum) (res type
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
-func BuildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context) *ScalarFunction {
+func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType) *ScalarFunction {
 	var fc functionClass
-	switch tp.ToClass() {
-	case types.ClassInt:
+	switch tp.EvalType() {
+	case types.ETInt:
 		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ClassDecimal:
+	case types.ETDecimal:
 		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ClassReal:
+	case types.ETReal:
 		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ClassString:
-		if types.IsTypeTime(tp.Tp) {
-			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		} else if tp.Tp == mysql.TypeDuration {
-			fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		} else if tp.Tp == mysql.TypeJSON {
-			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		} else {
-			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		}
+	case types.ETDatetime, types.ETTimestamp:
+		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETDuration:
+		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETJson:
+		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETString:
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
 	f, _ := fc.getFunction(ctx, []Expression{expr})
 	return &ScalarFunction{
@@ -1314,59 +1324,59 @@ func BuildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type
 // of expr is not type int,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsInt(expr Expression, ctx context.Context) Expression {
-	if fieldTp2EvalTp(expr.GetType()) == tpInt {
+func WrapWithCastAsInt(ctx context.Context, expr Expression) Expression {
+	if expr.GetType().EvalType() == types.ETInt {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
 	types.SetBinChsClnFlag(tp)
-	return BuildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(ctx, expr, tp)
 }
 
 // WrapWithCastAsReal wraps `expr` with `cast` if the return type
 // of expr is not type real,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsReal(expr Expression, ctx context.Context) Expression {
-	if fieldTp2EvalTp(expr.GetType()) == tpReal {
+func WrapWithCastAsReal(ctx context.Context, expr Expression) Expression {
+	if expr.GetType().EvalType() == types.ETReal {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
-	return BuildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(ctx, expr, tp)
 }
 
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type
 // of expr is not type decimal,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsDecimal(expr Expression, ctx context.Context) Expression {
-	if fieldTp2EvalTp(expr.GetType()) == tpDecimal {
+func WrapWithCastAsDecimal(ctx context.Context, expr Expression) Expression {
+	if expr.GetType().EvalType() == types.ETDecimal {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
-	return BuildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(ctx, expr, tp)
 }
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type
 // of expr is not type string,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsString(expr Expression, ctx context.Context) Expression {
-	if fieldTp2EvalTp(expr.GetType()) == tpString {
+func WrapWithCastAsString(ctx context.Context, expr Expression) Expression {
+	if expr.GetType().EvalType() == types.ETString {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
 	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
-	return BuildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(ctx, expr, tp)
 }
 
 // WrapWithCastAsTime wraps `expr` with `cast` if the return type
 // of expr is not same as type of the specified `tp` ,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Context) Expression {
+func WrapWithCastAsTime(ctx context.Context, expr Expression, tp *types.FieldType) Expression {
 	exprTp := expr.GetType().Tp
 	if tp.Tp == exprTp {
 		return expr
@@ -1389,13 +1399,13 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 		}
 	}
 	types.SetBinChsClnFlag(tp)
-	return BuildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(ctx, expr, tp)
 }
 
 // WrapWithCastAsDuration wraps `expr` with `cast` if the return type
 // of expr is not type duration,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsDuration(expr Expression, ctx context.Context) Expression {
+func WrapWithCastAsDuration(ctx context.Context, expr Expression) Expression {
 	if expr.GetType().Tp == mysql.TypeDuration {
 		return expr
 	}
@@ -1410,13 +1420,13 @@ func WrapWithCastAsDuration(expr Expression, ctx context.Context) Expression {
 	if tp.Decimal > 0 {
 		tp.Flen = tp.Flen + 1 + tp.Decimal
 	}
-	return BuildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(ctx, expr, tp)
 }
 
 // WrapWithCastAsJSON wraps `expr` with `cast` if the return type
 // of expr is not type json,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsJSON(expr Expression, ctx context.Context) Expression {
+func WrapWithCastAsJSON(ctx context.Context, expr Expression) Expression {
 	if expr.GetType().Tp == mysql.TypeJSON {
 		return expr
 	}
@@ -1428,5 +1438,5 @@ func WrapWithCastAsJSON(expr Expression, ctx context.Context) Expression {
 		Collate: charset.CollationUTF8,
 		Flag:    mysql.BinaryFlag,
 	}
-	return BuildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(ctx, expr, tp)
 }

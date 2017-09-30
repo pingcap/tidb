@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -65,12 +65,10 @@ type TableReaderExecutor struct {
 	schema    *expression.Schema
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
-	// This is the column that represent the handle, we can use handleCol.Index to know its position.
-	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.SelectResult
-	partialResult distsql.PartialResult
+	result        distsql.NewSelectResult
+	partialResult distsql.NewPartialResult
 	priority      int
 }
 
@@ -103,7 +101,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		h, rowData, err := e.partialResult.Next()
+		rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -113,29 +111,28 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 			e.partialResult = nil
 			continue
 		}
-		values := make([]types.Datum, e.schema.Len())
-		if handleIsExtra(e.handleCol) {
-			err = codec.SetRawValues(rowData, values[:len(values)-1])
-			values[len(values)-1].SetInt64(h)
-		} else {
-			err = codec.SetRawValues(rowData, values)
-		}
+		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return values, nil
+		return rowData, nil
 	}
 }
 
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
-	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
-	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	var builder requestBuilder
+	kvReq, err := builder.SetTableRanges(e.tableID, e.ranges).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.NewSelectDAG(goctx.Background(), e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -146,9 +143,18 @@ func (e *TableReaderExecutor) Open() error {
 // doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
 func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
 	sort.Sort(int64Slice(handles))
-	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
-	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	var builder requestBuilder
+	kvReq, err := builder.SetTableHandles(e.tableID, handles).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.NewSelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -177,12 +183,10 @@ type IndexReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
-	// This is the column that represent the handle, we can use handleCol.Index to know its position.
-	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.SelectResult
-	partialResult distsql.PartialResult
+	result        distsql.NewSelectResult
+	partialResult distsql.NewPartialResult
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
@@ -217,7 +221,7 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		h, rowData, err := e.partialResult.Next()
+		rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -227,21 +231,11 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 			e.partialResult = nil
 			continue
 		}
-		values := make([]types.Datum, e.schema.Len())
-		if handleIsExtra(e.handleCol) {
-			err = codec.SetRawValues(rowData, values[:len(values)-1])
-			values[len(values)-1].SetInt64(h)
-		} else {
-			err = codec.SetRawValues(rowData, values)
-		}
+		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return values, nil
+		return rowData, nil
 	}
 }
 
@@ -251,11 +245,18 @@ func (e *IndexReaderExecutor) Open() error {
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	kvRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes)
+	var builder requestBuilder
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	e.result, err = distsql.NewSelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -265,11 +266,18 @@ func (e *IndexReaderExecutor) Open() error {
 
 // doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
 func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx goctx.Context) error {
-	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
+	var builder requestBuilder
+	kvReq, err := builder.SetIndexValues(e.tableID, e.index.ID, values).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	e.result, err = distsql.NewSelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -291,6 +299,10 @@ type IndexLookUpExecutor struct {
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol    *expression.Column
 	tableRequest *tipb.DAGRequest
+	// When we need to sort the data in the second read, we must use handle to do this,
+	// In this case, schema that the table reader use is different with executor's schema.
+	// TODO: store it in table plan's schema. Not store it here.
+	tableReaderSchema *expression.Schema
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
@@ -311,8 +323,19 @@ type indexWorker struct {
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
-	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges,
-		e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	var builder requestBuilder
+	kvReq, err := builder.SetKeyRanges(kvRanges).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Since the first read only need handle information. So its returned col is only 1.
+	result, err := distsql.NewSelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, 1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -336,9 +359,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.NewSelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
-		handles, finish, err := extractHandlesFromIndexResult(result)
+		handles, finish, err := extractHandlesFromNewIndexResult(result)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- errors.Trace(err)
@@ -456,30 +479,22 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Context) {
-	var (
-		err       error
-		handleCol *expression.Column
-	)
-	schema := e.schema.Clone()
+	var err error
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
-	if e.handleCol != nil {
-		handleCol = e.handleCol
-	} else if e.keepOrder {
-		handleCol = &expression.Column{
-			ID:    model.ExtraHandleID,
-			Index: e.schema.Len(),
-		}
-		schema.Append(handleCol)
+	var schema *expression.Schema
+	if e.tableReaderSchema != nil {
+		schema = e.tableReaderSchema
+	} else {
+		schema = e.schema
 	}
 	tableReader := &TableReaderExecutor{
-		table:     e.table,
-		tableID:   e.tableID,
-		dagPB:     e.tableRequest,
-		schema:    schema,
-		ctx:       e.ctx,
-		handleCol: handleCol,
+		table:   e.table,
+		tableID: e.tableID,
+		dagPB:   e.tableRequest,
+		schema:  schema,
+		ctx:     e.ctx,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {
@@ -496,9 +511,9 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 	if e.keepOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleCol.Index}
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: e.handleCol.Index}
 		sort.Sort(sorter)
-		if e.handleCol == nil {
+		if e.tableReaderSchema != nil {
 			for i, row := range task.rows {
 				task.rows[i] = row[:len(row)-1]
 			}
@@ -580,4 +595,89 @@ func (e *IndexLookUpExecutor) Next() (Row, error) {
 		}
 		e.resultCurr = nil
 	}
+}
+
+type requestBuilder struct {
+	kv.Request
+	err error
+}
+
+func (builder *requestBuilder) Build() (*kv.Request, error) {
+	return &builder.Request, errors.Trace(builder.err)
+}
+
+func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []types.IntColumnRange) *requestBuilder {
+	builder.Request.KeyRanges = tableRangesToKVRanges(tid, tableRanges)
+	return builder
+}
+
+func (builder *requestBuilder) SetIndexRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*types.IndexRange, fieldTypes []*types.FieldType) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+	builder.Request.KeyRanges, builder.err = indexRangesToKVRanges(sc, tid, idxID, ranges, fieldTypes)
+	return builder
+}
+
+func (builder *requestBuilder) SetTableHandles(tid int64, handles []int64) *requestBuilder {
+	builder.Request.KeyRanges = tableHandlesToKVRanges(tid, handles)
+	return builder
+}
+
+func (builder *requestBuilder) SetIndexValues(tid, idxID int64, values [][]types.Datum) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+	builder.Request.KeyRanges, builder.err = indexValuesToKVRanges(tid, idxID, values)
+	return builder
+}
+
+func (builder *requestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+
+	builder.Request.Tp = kv.ReqTypeDAG
+	builder.Request.StartTs = dag.StartTs
+	builder.Request.Data, builder.err = dag.Marshal()
+	return builder
+}
+
+func (builder *requestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+
+	builder.Request.Tp = kv.ReqTypeAnalyze
+	builder.Request.StartTs = ana.StartTs
+	builder.Request.Data, builder.err = ana.Marshal()
+	builder.Request.NotFillCache = true
+	return builder
+}
+
+func (builder *requestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *requestBuilder {
+	builder.Request.KeyRanges = keyRanges
+	return builder
+}
+
+func (builder *requestBuilder) SetDesc(desc bool) *requestBuilder {
+	builder.Request.Desc = desc
+	return builder
+}
+
+func (builder *requestBuilder) SetKeepOrder(order bool) *requestBuilder {
+	builder.Request.KeepOrder = order
+	return builder
+}
+
+func (builder *requestBuilder) SetFromSessionVars(sv *variable.SessionVars) *requestBuilder {
+	builder.Request.Concurrency = sv.DistSQLScanConcurrency
+	builder.Request.IsolationLevel = getIsolationLevel(sv)
+	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
+	return builder
+}
+
+func (builder *requestBuilder) SetPriority(priority int) *requestBuilder {
+	builder.Request.Priority = priority
+	return builder
 }

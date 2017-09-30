@@ -87,7 +87,7 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		panic("the second param should be datum")
 	}
 	sc := new(variable.StatementContext)
-	res, err := paramFirst.CompareDatum(sc, paramSecond)
+	res, err := paramFirst.CompareDatum(sc, &paramSecond)
 	if err != nil {
 		panic(err)
 	}
