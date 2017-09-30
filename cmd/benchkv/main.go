@@ -69,7 +69,7 @@ func Init() {
 	driver := tikv.Driver{}
 	var err error
 	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr))
-	terror.Log(err)
+	terror.MustNil(err)
 
 	prometheus.MustRegister(txnCounter)
 	prometheus.MustRegister(txnRolledbackCounter)
