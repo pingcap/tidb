@@ -154,9 +154,9 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	col := indexInfo.Columns[0]
 
 	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
-		tblInfo.Columns[col.Offset].Flag &= ^uint(mysql.UniqueKeyFlag)
+		tblInfo.Columns[col.Offset].Flag &= ^mysql.UniqueKeyFlag
 	} else {
-		tblInfo.Columns[col.Offset].Flag &= ^uint(mysql.MultipleKeyFlag)
+		tblInfo.Columns[col.Offset].Flag &= ^mysql.MultipleKeyFlag
 	}
 
 	// other index may still cover this col
@@ -569,7 +569,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		wg.Wait()
 
 		taskAddedCount, nextHandle, isEnd, err := getCountAndHandle(workers)
-		addedCount += int64(taskAddedCount)
+		addedCount += taskAddedCount
 		sub := time.Since(startTime).Seconds()
 		if err == nil {
 			err = d.isReorgRunnable()

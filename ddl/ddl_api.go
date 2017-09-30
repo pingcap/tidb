@@ -274,7 +274,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 			case ast.ColumnOptionNotNull:
 				col.Flag |= mysql.NotNullFlag
 			case ast.ColumnOptionNull:
-				col.Flag &= ^uint(mysql.NotNullFlag)
+				col.Flag &= ^mysql.NotNullFlag
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
@@ -397,7 +397,7 @@ func removeOnUpdateNowFlag(c *table.Column) {
 	// For timestamp Col, if it is set null or default value,
 	// OnUpdateNowFlag should be removed.
 	if mysql.HasTimestampFlag(c.Flag) {
-		c.Flag &= ^uint(mysql.OnUpdateNowFlag)
+		c.Flag &= ^mysql.OnUpdateNowFlag
 	}
 }
 
@@ -1035,8 +1035,8 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		msg := fmt.Sprintf("collate %s not match origin %s", to.Collate, origin.Collate)
 		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
-	toUnsigned := mysql.HasUnsignedFlag(uint(to.Flag))
-	originUnsigned := mysql.HasUnsignedFlag(uint(origin.Flag))
+	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
+	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
 		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
 		return errUnsupportedModifyColumn.GenByArgs(msg)
@@ -1109,7 +1109,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 		case ast.ColumnOptionNotNull:
 			col.Flag |= mysql.NotNullFlag
 		case ast.ColumnOptionNull:
-			col.Flag &= ^uint(mysql.NotNullFlag)
+			col.Flag &= ^mysql.NotNullFlag
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
@@ -1291,7 +1291,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	}
 
 	// Clean the NoDefaultValueFlag value.
-	col.Flag &= ^uint(mysql.NoDefaultValueFlag)
+	col.Flag &= ^mysql.NoDefaultValueFlag
 	if len(spec.NewColumn.Options) == 0 {
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)

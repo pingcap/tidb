@@ -93,8 +93,8 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 			unsigned = unsigned && mysql.HasUnsignedFlag(ft.Flag)
 		}
 	}
-	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
-	setTypeFlag(flag, uint(mysql.BinaryFlag), !aggregatedEvalType.IsStringKind() || gotBinString)
+	setTypeFlag(flag, mysql.UnsignedFlag, unsigned)
+	setTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
 	return aggregatedEvalType
 }
 
@@ -263,13 +263,13 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case int64:
 		tp.Tp = mysql.TypeLonglong
-		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Flen = len(strconv.FormatInt(x, 10))
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
-		tp.Flen = len(strconv.FormatUint(uint64(x), 10))
+		tp.Flen = len(strconv.FormatUint(x, 10))
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case string:
