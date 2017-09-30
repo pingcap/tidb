@@ -40,6 +40,8 @@ const (
 	Priority
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache
+	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
+	SyncLog
 )
 
 // Priority value for transaction priority.
@@ -181,6 +183,8 @@ type Request struct {
 	Priority int
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache bool
+	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
+	SyncLog bool
 }
 
 // Response represents the response returned from KV layer.

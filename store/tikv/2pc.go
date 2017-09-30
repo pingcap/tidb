@@ -77,6 +77,7 @@ type twoPhaseCommitter struct {
 		undetermined bool
 	}
 	priority pb.CommandPri
+	syncLog  bool
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -151,6 +152,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 		mutations: mutations,
 		lockTTL:   txnLockTTL(txn.startTime, size),
 		priority:  getTxnPriority(txn),
+		syncLog:   getTxnSyncLog(txn),
 	}, nil
 }
 
@@ -330,6 +332,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		},
 		Context: pb.Context{
 			Priority: c.priority,
+			SyncLog:  c.syncLog,
 		},
 	}
 	for {
@@ -398,6 +401,13 @@ func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	return pb.CommandPri_Normal
 }
 
+func getTxnSyncLog(txn *tikvTxn) bool {
+	if sync := txn.us.GetOption(kv.SyncLog); sync != nil {
+		return sync.(bool)
+	}
+	return false
+}
+
 func kvPriorityToCommandPri(pri int) pb.CommandPri {
 	switch pri {
 	case kv.PriorityLow:
@@ -415,6 +425,10 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,
 			CommitVersion: c.commitTS,
+		},
+		Context: pb.Context{
+			Priority: c.priority,
+			SyncLog:  c.syncLog,
 		},
 	}
 	req.Context.Priority = c.priority
@@ -480,6 +494,10 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		BatchRollback: &pb.BatchRollbackRequest{
 			Keys:         batch.keys,
 			StartVersion: c.startTS,
+		},
+		Context: pb.Context{
+			Priority: c.priority,
+			SyncLog:  c.syncLog,
 		},
 	}
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
