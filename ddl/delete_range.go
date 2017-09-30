@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -118,7 +119,8 @@ func (dr *delRange) startEmulator() {
 		case <-dr.d.quitCh:
 			return
 		}
-		dr.doDelRangeWork()
+		err := dr.doDelRangeWork()
+		terror.Log(err)
 	}
 }
 

@@ -285,7 +285,7 @@ func ComputeMod(sc *variable.StatementContext, a, b Datum) (d Datum, err error) 
 				return d, nil
 			} else if y < 0 {
 				// first is uint64, return uint64.
-				d.SetUint64(uint64(x % uint64(-y)))
+				d.SetUint64(x % uint64(-y))
 				return d, nil
 			}
 			d.SetUint64(x % uint64(y))

@@ -71,7 +71,7 @@ func mvccEncode(key []byte, ver uint64) []byte {
 // just returns the origin key.
 func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
 	// Skip DataPrefix
-	remainBytes, key, err := codec.DecodeBytes([]byte(encodedKey))
+	remainBytes, key, err := codec.DecodeBytes(encodedKey)
 	if err != nil {
 		// should never happen
 		return nil, 0, errors.Trace(err)

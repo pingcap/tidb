@@ -265,7 +265,7 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 		return types.Datum{}, errors.New("Wrong number of Recordset")
 	}
 	r := rs[0]
-	defer r.Close()
+	defer terror.Call(r.Close)
 	row, err := r.Next()
 	if err != nil || row == nil {
 		return types.Datum{}, errors.Trace(err)
@@ -277,9 +277,7 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
-	if err != nil {
-		log.Fatal(errors.Trace(err))
-	}
+	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
@@ -452,16 +450,14 @@ func upgradeToVer11(s Session) {
 }
 
 func upgradeToVer12(s Session) {
-	s.Execute("BEGIN")
+	_, err := s.Execute("BEGIN")
+	terror.MustNil(err)
 	sql := "SELECT user, host, password FROM mysql.user WHERE password != ''"
 	rs, err := s.Execute(sql)
-	if err != nil {
-		log.Fatal(err)
-		return
-	}
+	terror.MustNil(err)
 	r := rs[0]
 	sqls := make([]string, 0, 1)
-	defer r.Close()
+	defer terror.Call(r.Close)
 	row, err := r.Next()
 	for err == nil && row != nil {
 		user := row.Data[0].GetString()
@@ -469,19 +465,12 @@ func upgradeToVer12(s Session) {
 		pass := row.Data[2].GetString()
 		var newPass string
 		newPass, err = oldPasswordUpgrade(pass)
-		if err != nil {
-			log.Fatal(err)
-			return
-		}
+		terror.MustNil(err)
 		updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 		sqls = append(sqls, updateSQL)
 		row, err = r.Next()
 	}
-
-	if err != nil {
-		log.Fatal(err)
-		return
-	}
+	terror.MustNil(err)
 
 	for _, sql := range sqls {
 		mustExecute(s, sql)
