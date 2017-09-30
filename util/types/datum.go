@@ -1435,7 +1435,7 @@ func (d *Datum) ToString() (string, error) {
 	case KindFloat32:
 		return strconv.FormatFloat(float64(d.GetFloat32()), 'f', -1, 32), nil
 	case KindFloat64:
-		return strconv.FormatFloat(float64(d.GetFloat64()), 'f', -1, 64), nil
+		return strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64), nil
 	case KindString:
 		return d.GetString(), nil
 	case KindBytes:
