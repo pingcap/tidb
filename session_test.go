@@ -328,72 +328,6 @@ func (s *testSessionSuite) TestIssue1089(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestIssue1135(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue1135"
-	dropDBSQL1 := fmt.Sprintf("drop database %s;", dbName)
-	dropDBSQL2 := fmt.Sprintf("drop database %s;", dbName+"1")
-	se := newSession(c, s.store, dbName)
-	se1 := newSession(c, s.store, dbName+"1")
-
-	mustExecSQL(c, se1, "drop table if exists t")
-	mustExecSQL(c, se1, "create table t (F1 VARCHAR(30));")
-	mustExecSQL(c, se1, "insert into t (F1) values ('1'), ('4');")
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
-	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
-	mustExecSQL(c, se, "delete m1 from t m2,t m1 where m1.F1>1;")
-	r := mustExecSQL(c, se, "select * from t;")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, []interface{}{'1'})
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
-	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
-	mustExecSQL(c, se, "delete m1 from t m1,t m2 where true and m1.F1<2;")
-	r = mustExecSQL(c, se, "select * from t;")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, []interface{}{'2'})
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
-	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
-	mustExecSQL(c, se, "delete m1 from t m1,t m2 where false;")
-	r = mustExecSQL(c, se, "select * from t;")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, []interface{}{'1'})
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, []interface{}{'2'})
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
-	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
-	mustExecSQL(c, se, "delete m1, m2 from t m1,t m2 where m1.F1>m2.F1;")
-	r = mustExecSQL(c, se, "select * from t;")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
-	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
-	sql := fmt.Sprintf("delete %s.t from %s.t inner join %s.t where %s.t.F1 > %s.t.F1",
-		dbName+"1", dbName+"1", dbName, dbName+"1", dbName)
-	mustExecSQL(c, se1, sql)
-	r = mustExecSQL(c, se1, "select * from t;")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, []interface{}{'1'})
-
-	mustExecSQL(c, se, dropDBSQL1)
-	mustExecSQL(c, se, dropDBSQL2)
-}
-
 func (s *testSessionSuite) TestIssue1114(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_issue1114"
@@ -561,60 +495,6 @@ func (s *testSessionSuite) TestIssue463(c *C) {
 	mustExecFailed(c, se, "update test set val1 = 3, val2 = 2 where id = 1;")
 	mustExecSQL(c, se, "insert into test(id, val1, val2) values(3, 3, 3);")
 	mustExecSQL(c, se, "drop table test;")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue177(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue177"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, `drop table if exists t1;`)
-	mustExecSQL(c, se, `drop table if exists t2;`)
-	mustExecSQL(c, se, "CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
-	mustExecSQL(c, se, "CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
-	mustExecSQL(c, se, `INSERT INTO t1 VALUES (1,1,1);`)
-	mustExecSQL(c, se, `INSERT INTO t2 VALUES (1,1,1);`)
-	mustExecSQL(c, se, `PREPARE my_stmt FROM "SELECT t1.b, count(*) FROM t1 group by t1.b having count(*) > ALL (SELECT COUNT(*) FROM t2 WHERE t2.a=1 GROUP By t2.b)";`)
-	mustExecSQL(c, se, `EXECUTE my_stmt;`)
-	mustExecSQL(c, se, `EXECUTE my_stmt;`)
-	mustExecSQL(c, se, `deallocate prepare my_stmt;`)
-	mustExecSQL(c, se, `drop table t1,t2;`)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue454(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue454"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "drop table if exists t1")
-	mustExecSQL(c, se, "create table t1 (c1 int, c2 int, c3 int);")
-	mustExecSQL(c, se, "insert into t1 set c1=1, c2=2, c3=1;")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int, primary key (c1));")
-	mustExecSQL(c, se, "insert into t set c1=1, c2=4;")
-	mustExecSQL(c, se, "insert into t select * from t1 limit 1 on duplicate key update c3=3333;")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestIssue456(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_issue456"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "drop table if exists t1")
-	mustExecSQL(c, se, "create table t1 (c1 int, c2 int, c3 int);")
-	mustExecSQL(c, se, "replace into t1 set c1=1, c2=2, c3=1;")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int, primary key (c1));")
-	mustExecSQL(c, se, "replace into t set c1=1, c2=4;")
-	mustExecSQL(c, se, "replace into t select * from t1 limit 1;")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
