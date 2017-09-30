@@ -91,37 +91,6 @@ func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {
 	c.Assert(gotID, Equals, insertID)
 }
 
-func (s *testMainSuite) TestConcurrent(c *C) {
-	dbName := "test_concurrent_db"
-	se := newSession(c, s.store, dbName)
-	// create db
-	createDBSQL := fmt.Sprintf("create database if not exists %s;", dbName)
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	useDBSQL := fmt.Sprintf("use %s;", dbName)
-	createTableSQL := ` CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id)); `
-
-	mustExecSQL(c, se, dropDBSQL)
-	mustExecSQL(c, se, createDBSQL)
-	mustExecSQL(c, se, useDBSQL)
-	mustExecSQL(c, se, createTableSQL)
-	wg := &sync.WaitGroup{}
-	f := func(start, count int) {
-		sess := newSession(c, s.store, dbName)
-		for i := 0; i < count; i++ {
-			// insert data
-			mustExecSQL(c, sess, fmt.Sprintf(`INSERT INTO test VALUES (%d, "hello");`, start+i))
-		}
-		wg.Done()
-	}
-	step := 10
-	for i := 0; i < step; i++ {
-		wg.Add(1)
-		go f(i*step, step)
-	}
-	wg.Wait()
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testMainSuite) TestTableInfoMeta(c *C) {
 	dbName := "test_info_meta"
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
@@ -148,14 +117,6 @@ func (s *testMainSuite) TestTableInfoMeta(c *C) {
 
 	// drop db
 	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testMainSuite) TestInfoSchema(c *C) {
-	se := newSession(c, s.store, "test_info_schema")
-	rs := mustExecSQL(c, se, "SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'")
-	row, err := rs.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "utf8mb4")
 }
 
 func (s *testMainSuite) TestCaseInsensitive(c *C) {

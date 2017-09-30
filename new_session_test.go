@@ -866,6 +866,7 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 func (s *testSessionSuite) TestISColumns(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
+	tk.MustQuery("SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'").Check(testkit.Rows("utf8mb4"))
 }
 
 func (s *testSessionSuite) TestRetry(c *C) {
@@ -1010,6 +1011,97 @@ func (s *testSessionSuite) TestDelete(c *C) {
 	tk.MustExec("insert into t (F1) values ('1'), ('2');")
 	tk.MustExec("delete test1.t from test1.t inner join test.t where test1.t.F1 > test.t.F1")
 	tk1.MustQuery("select * from t;").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestUnique(c *C) {
+	// test for https://github.com/pingcap/tidb/pull/461
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec(`CREATE TABLE test ( id int(11) UNSIGNED NOT NULL AUTO_INCREMENT, val int UNIQUE, PRIMARY KEY (id)); `)
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test(id, val) values(1, 1);")
+	tk1.MustExec("begin;")
+	tk1.MustExec("insert into test(id, val) values(2, 2);")
+	tk2.MustExec("begin;")
+	tk2.MustExec("insert into test(id, val) values(1, 2);")
+	tk2.MustExec("commit;")
+	_, err := tk.Exec("commit")
+	c.Assert(err, NotNil)
+	// Check error type and error message
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'val'")
+
+	// Test for https://github.com/pingcap/tidb/issues/463
+	tk.MustExec("drop table test;")
+	tk.MustExec(`CREATE TABLE test (
+			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+			val int UNIQUE,
+			PRIMARY KEY (id)
+		);`)
+	tk.MustExec("insert into test(id, val) values(1, 1);")
+	_, err = tk.Exec("insert into test(id, val) values(2, 1);")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into test(id, val) values(2, 2);")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test(id, val) values(3, 3);")
+	_, err = tk.Exec("insert into test(id, val) values(4, 3);")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into test(id, val) values(4, 4);")
+	tk.MustExec("commit;")
+
+	tk1.MustExec("begin;")
+	tk1.MustExec("insert into test(id, val) values(5, 6);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test(id, val) values(20, 6);")
+	tk.MustExec("commit;")
+	_, err = tk1.Exec("commit")
+	tk1.MustExec("insert into test(id, val) values(5, 5);")
+
+	tk.MustExec("drop table test;")
+	tk.MustExec(`CREATE TABLE test (
+			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+			val1 int UNIQUE,
+			val2 int UNIQUE,
+			PRIMARY KEY (id)
+		);`)
+	tk.MustExec("insert into test(id, val1, val2) values(1, 1, 1);")
+	tk.MustExec("insert into test(id, val1, val2) values(2, 2, 2);")
+	_, err = tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
+	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
+}
+
+func (s *testSessionSuite) TestSet(c *C) {
+	// Test for https://github.com/pingcap/tidb/issues/1114
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @tmp = 0")
+	tk.MustExec("set @tmp := @tmp + 1")
+	tk.MustQuery("select @tmp").Check(testkit.Rows("1"))
+	tk.MustQuery("select @tmp1 = 1, @tmp2 := 2").Check(testkit.Rows("<nil> 2"))
+	tk.MustQuery("select @tmp1 := 11, @tmp2").Check(testkit.Rows("11 2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int);")
+	tk.MustExec("insert into t values (1),(2);")
+	tk.MustExec("update t set c = 3 WHERE c = @var:= 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3", "2"))
+	tk.MustQuery("select @tmp := count(*) from t").Check(testkit.Rows("2"))
+	tk.MustQuery("select @tmp := c-2 from t where c=3").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestMySQLTypes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(`select 0x01 + 1, x'4D7953514C' = "MySQL"`).Check(testkit.Rows("2 1"))
+	tk.MustQuery(`select 0b01 + 1, 0b01000001 = "A"`).Check(testkit.Rows("2 1"))
 }
 
 var _ = Suite(&testSchemaSuite{})
