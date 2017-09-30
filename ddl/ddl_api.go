@@ -775,7 +775,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first id is expected to greater than 1, we need to do rebase.
-			d.handleAutoIncID(tbInfo, schema.ID)
+			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
 	err = d.callHookOnChanged(err)
