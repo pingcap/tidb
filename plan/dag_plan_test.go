@@ -440,6 +440,22 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 			sql:  "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b limit 1",
 			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->TableReader(Table(t))}(t1.b,t2.b)->TableReader(Table(t))}(t2.b,t3.b)->Limit",
 		},
+		{
+			sql:  "select * from t where b = 1 and c = 1 order by c limit 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Limit",
+		},
+		{
+			sql:  "select * from t where c = 1 order by c limit 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Limit",
+		},
+		{
+			sql:  "select * from t order by a limit 1",
+			best: "TableReader(Table(t)->Limit)->Limit",
+		},
+		{
+			sql:  "select c from t order by c limit 1",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)->Limit",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
