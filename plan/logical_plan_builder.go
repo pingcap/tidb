@@ -226,6 +226,9 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	leftPlan := b.buildResultSetNode(join.Left)
+	if b.err != nil {
+		return nil
+	}
 	rightPlan := b.buildResultSetNode(join.Right)
 	if b.err != nil {
 		return nil
