@@ -4161,8 +4161,12 @@ UnionClauseList:
 
 UnionSelect:
 	SelectStmt
+	{
+		$$ = $1.(interface{})
+	}
 |	'(' SelectStmt ')'
 	{
+		st := $2.(*ast.SelectStmt)
 		endOffset := parser.endOffset(&yyS[yypt])
 		parser.setLastSelectFieldText(st, endOffset)
 		$$ = $2
@@ -4812,6 +4816,12 @@ Statement:
 |	UnionStmt
 |	SetStmt
 |	ShowStmt
+|	SubSelect
+	{
+		// `(select 1)`; is a valid select statement
+		// TODO: This is used to fix issue #320. There may be a better solution.
+		$$ = $1.(*ast.SubqueryExpr).Query.(ast.StmtNode)
+	}
 |	TruncateTableStmt
 |	UpdateStmt
 |	UseStmt
@@ -4831,18 +4841,6 @@ StatementList:
 	{
 		if $1 != nil {
 			s := $1
-			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(lexer.stmtText())
-			}
-			parser.result = append(parser.result, s)
-		}
-	}
-|	SubSelect
-	{
-		// `(select 1)`; is a valid select statement
-		// TODO: This is used to fix issue #320. There may be a better solution.
-		if $1 != nil {
-			s := $1.(*ast.SubqueryExpr).Query
 			if lexer, ok := yylex.(stmtTexter); ok {
 				s.SetText(lexer.stmtText())
 			}
