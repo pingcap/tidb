@@ -419,13 +419,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.Columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	case *XSelectIndexExec:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -439,7 +439,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -453,7 +453,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -467,10 +467,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return src
+	}
+	if b.err != nil {
+		return nil
 	}
 	return us
 }

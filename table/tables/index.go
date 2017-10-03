@@ -103,7 +103,7 @@ type index struct {
 
 // NewIndexWithBuffer builds a new Index object whit the buffer.
 func NewIndexWithBuffer(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
-	idxPrefix := kv.Key(tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID))
+	idxPrefix := tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID)
 	index := &index{
 		tblInfo: tableInfo,
 		idxInfo: indexInfo,
@@ -118,7 +118,7 @@ func NewIndex(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Inde
 	index := &index{
 		tblInfo: tableInfo,
 		idxInfo: indexInfo,
-		prefix:  kv.Key(tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID)),
+		prefix:  tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID),
 	}
 	return index
 }

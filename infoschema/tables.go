@@ -88,7 +88,7 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 		Collate: mCollation,
 		Tp:      col.tp,
 		Flen:    col.size,
-		Flag:    uint(mFlag),
+		Flag:    mFlag,
 	}
 	return &model.ColumnInfo{
 		Name:      model.NewCIStr(col.name),
