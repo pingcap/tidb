@@ -52,7 +52,7 @@ type SessionStatsCollector struct {
 	mapper tableDeltaMap
 	prev   *SessionStatsCollector
 	next   *SessionStatsCollector
-	// If a session is closed, it only sets this flag true. Every time we sweep the list, we will remove the useless collector.
+	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
 
