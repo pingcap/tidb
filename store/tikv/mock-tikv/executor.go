@@ -90,7 +90,7 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 	if len(val) == 0 {
 		return nil, nil
 	}
-	handle, err := tablecodec.DecodeRowKey(kv.Key(ran.StartKey))
+	handle, err := tablecodec.DecodeRowKey(ran.StartKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

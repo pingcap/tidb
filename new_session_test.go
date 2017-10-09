@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -465,6 +466,36 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	privileges.SkipWithGrant = save2
 }
 
+func (s *testSessionSuite) TestLastInsertID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// insert
+	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t set c2 = 11")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into t (c2) values (22), (33), (44)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
+
+	tk.MustExec("insert into t (c1, c2) values (10, 55)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
+
+	// replace
+	tk.MustExec("replace t (c2) values(66)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 11", "2 22", "3 33", "4 44", "10 55", "11 66"))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("11"))
+
+	// update
+	tk.MustExec("update t set c1=last_insert_id(c1 + 100)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("101 11", "102 22", "103 33", "104 44", "110 55", "111 66"))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("111"))
+	tk.MustExec("insert into t (c2) values (77)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+
+	// drop
+	tk.MustExec("drop table t")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+}
+
 func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
@@ -837,6 +868,150 @@ func (s *testSessionSuite) TestISColumns(c *C) {
 	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
 }
 
+func (s *testSessionSuite) TestRetry(c *C) {
+	// For https://github.com/pingcap/tidb/issues/571
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("begin")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int)")
+	tk.MustExec("insert t values (1), (2), (3)")
+	tk.MustExec("commit")
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk3.MustExec("SET SESSION autocommit=0;")
+
+	// retry forever
+	tidb.SetCommitRetryLimit(math.MaxInt64)
+	defer tidb.SetCommitRetryLimit(10)
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	f1 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			tk1.MustExec("update t set c = 1;")
+		}
+	}
+	f2 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			tk2.MustExec("update t set c = ?;", 1)
+		}
+	}
+	f3 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			tk3.MustExec("begin")
+			tk3.MustExec("update t set c = 1;")
+			tk3.MustExec("commit")
+		}
+	}
+	go f1()
+	go f2()
+	go f3()
+	wg.Wait()
+}
+
+func (s *testSessionSuite) TestMultiStmts(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestDecimal(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a decimal unique);")
+	tk.MustExec("insert t values ('100');")
+	_, err := tk.Exec("insert t values ('1e2');")
+	c.Check(err, NotNil)
+}
+
+func (s *testSessionSuite) TestParser(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// test for https://github.com/pingcap/tidb/pull/177
+	tk.MustExec("CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
+	tk.MustExec("CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
+	tk.MustExec(`INSERT INTO t1 VALUES (1,1,1);`)
+	tk.MustExec(`INSERT INTO t2 VALUES (1,1,1);`)
+	tk.MustExec(`PREPARE my_stmt FROM "SELECT t1.b, count(*) FROM t1 group by t1.b having count(*) > ALL (SELECT COUNT(*) FROM t2 WHERE t2.a=1 GROUP By t2.b)";`)
+	tk.MustExec(`EXECUTE my_stmt;`)
+	tk.MustExec(`EXECUTE my_stmt;`)
+	tk.MustExec(`deallocate prepare my_stmt;`)
+	tk.MustExec(`drop table t1,t2;`)
+}
+
+func (s *testSessionSuite) TestOnDuplicate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// test for https://github.com/pingcap/tidb/pull/454
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
+	tk.MustExec("insert into t1 set c1=1, c2=2, c3=1;")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int, primary key (c1));")
+	tk.MustExec("insert into t set c1=1, c2=4;")
+	tk.MustExec("insert into t select * from t1 limit 1 on duplicate key update c3=3333;")
+}
+
+func (s *testSessionSuite) TestReplace(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// test for https://github.com/pingcap/tidb/pull/456
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
+	tk.MustExec("replace into t1 set c1=1, c2=2, c3=1;")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int, primary key (c1));")
+	tk.MustExec("replace into t set c1=1, c2=4;")
+	tk.MustExec("replace into t select * from t1 limit 1;")
+}
+
+func (s *testSessionSuite) TestDelete(c *C) {
+	// test for https://github.com/pingcap/tidb/pull/1135
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("create database test1")
+	tk1.MustExec("use test1")
+	tk1.MustExec("create table t (F1 VARCHAR(30));")
+	tk1.MustExec("insert into t (F1) values ('1'), ('4');")
+
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete m1 from t m2,t m1 where m1.F1>1;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete m1 from t m1,t m2 where true and m1.F1<2;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete m1 from t m1,t m2 where false;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete m1, m2 from t m1,t m2 where m1.F1>m2.F1;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete test1.t from test1.t inner join test.t where test1.t.F1 > test.t.F1")
+	tk1.MustQuery("select * from t;").Check(testkit.Rows("1"))
+}
+
 var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
@@ -874,6 +1049,57 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	dom, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom = dom
+}
+
+func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
+	tidb.SchemaOutOfDateRetryTimes = 3
+	tidb.SchemaOutOfDateRetryInterval = 20 * time.Millisecond
+	defer func() {
+		tidb.SchemaOutOfDateRetryTimes = 10
+		tidb.SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("create table t2 (a int);")
+
+	tk1.MustExec("begin")
+	tk2.MustExec("begin")
+
+	// Make sure loading information schema is failed and server is invalid.
+	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	err := sessionctx.GetDomain(tk.Se).Reload()
+	c.Assert(err, NotNil)
+
+	lease := sessionctx.GetDomain(tk.Se).DDL().GetLease()
+	time.Sleep(lease * 2)
+
+	// Make sure executing insert statement is failed when server is invalid.
+	_, err = tk.Exec("insert t values (100);")
+	c.Check(err, NotNil)
+
+	tk1.MustExec("insert t1 values (100);")
+	tk2.MustExec("insert t2 values (100);")
+
+	_, err = tk1.Exec("commit")
+	c.Check(err, NotNil)
+
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	c.Assert(ver, NotNil)
+
+	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	time.Sleep(lease * 2)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert t values (100);")
+	// Make sure insert to table t2 transaction executes.
+	tk2.MustExec("commit")
 }
 
 func (s *testSchemaSuite) TearDownSuite(c *C) {

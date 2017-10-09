@@ -231,7 +231,7 @@ func uniformValue(value interface{}) interface{} {
 	case int32:
 		return int64(v)
 	case int64:
-		return int64(v)
+		return v
 	case uint8:
 		return uint64(v)
 	case uint16:
@@ -239,7 +239,7 @@ func uniformValue(value interface{}) interface{} {
 	case uint32:
 		return uint64(v)
 	case uint64:
-		return uint64(v)
+		return v
 	default:
 		return value
 	}
@@ -285,7 +285,7 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 			case mysql.TypeInt24, mysql.TypeLong:
 				data = append(data, dumpUint32(uint32(v))...)
 			case mysql.TypeLonglong:
-				data = append(data, dumpUint64(uint64(v))...)
+				data = append(data, dumpUint64(v)...)
 			}
 		case types.KindFloat32:
 			floatBits := math.Float32bits(val.GetFloat32())

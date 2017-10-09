@@ -348,7 +348,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname, tlsStatePtr)
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -558,8 +558,8 @@ func (cc *clientConn) flush() error {
 func (cc *clientConn) writeOK() error {
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
-	data = append(data, dumpLengthEncodedInt(uint64(cc.ctx.AffectedRows()))...)
-	data = append(data, dumpLengthEncodedInt(uint64(cc.ctx.LastInsertID()))...)
+	data = append(data, dumpLengthEncodedInt(cc.ctx.AffectedRows())...)
+	data = append(data, dumpLengthEncodedInt(cc.ctx.LastInsertID())...)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = append(data, dumpUint16(cc.ctx.Status())...)
 		data = append(data, dumpUint16(cc.ctx.WarningCount())...)

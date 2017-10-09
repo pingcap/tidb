@@ -116,13 +116,16 @@ func (b *builtinSleepSig) evalInt(row []types.Datum) (int64, bool, error) {
 		return 0, false, nil
 	}
 
-	// TODO: consider it's interrupted using KILL QUERY from other session, or
-	// interrupted by time out.
 	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
 		return 0, false, errIncorrectArgs.GenByArgs("sleep")
 	}
 	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
-	time.Sleep(dur)
+	select {
+	case <-time.After(dur):
+	case <-b.ctx.GoCtx().Done(): // TODO: the channel returned by ctx.Done() is not closed when Ctrl-C is pressed in `mysql` client.
+		// return 1 when SLEEP() is KILLed
+		return 1, false, nil
+	}
 	return 0, false, nil
 }
 

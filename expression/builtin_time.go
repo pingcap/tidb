@@ -2869,17 +2869,20 @@ func (c *unixTimestampFunctionClass) getFunction(ctx context.Context, args []Exp
 
 // goTimeToMysqlUnixTimestamp converts go time into MySQL's Unix timestamp.
 // MySQL's Unix timestamp ranges in int32. Values out of range should be rewritten to 0.
-func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) *types.MyDecimal {
+func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) (*types.MyDecimal, error) {
 	nanoSeconds := t.UnixNano()
 	if nanoSeconds < 0 || (nanoSeconds/1e3) >= (math.MaxInt32+1)*1e6 {
-		return new(types.MyDecimal)
+		return new(types.MyDecimal), nil
 	}
 	dec := new(types.MyDecimal)
 	// Here we don't use float to prevent precision lose.
 	dec.FromInt(nanoSeconds)
-	dec.Shift(-9)
-	dec.Round(dec, decimal, types.ModeHalfEven)
-	return dec
+	err := dec.Shift(-9)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dec.Round(dec, decimal, types.ModeHalfEven)
+	return dec, errors.Trace(err)
 }
 
 type builtinUnixTimestampCurrentSig struct {
@@ -2889,7 +2892,10 @@ type builtinUnixTimestampCurrentSig struct {
 // evalInt evals a UNIX_TIMESTAMP().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampCurrentSig) evalInt(row []types.Datum) (int64, bool, error) {
-	dec := goTimeToMysqlUnixTimestamp(time.Now(), 1)
+	dec, err := goTimeToMysqlUnixTimestamp(time.Now(), 1)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
 	intVal, _ := dec.ToInt() // Ignore truncate errors.
 	return intVal, false, nil
 }
@@ -2910,7 +2916,10 @@ func (b *builtinUnixTimestampIntSig) evalInt(row []types.Datum) (int64, bool, er
 	if err != nil {
 		return 0, false, nil
 	}
-	dec := goTimeToMysqlUnixTimestamp(t, 1)
+	dec, err := goTimeToMysqlUnixTimestamp(t, 1)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
 	intVal, _ := dec.ToInt() // Ignore truncate errors.
 	return intVal, false, nil
 }
@@ -2931,7 +2940,8 @@ func (b *builtinUnixTimestampDecSig) evalDecimal(row []types.Datum) (*types.MyDe
 	if err != nil {
 		return new(types.MyDecimal), false, nil
 	}
-	return goTimeToMysqlUnixTimestamp(t, b.tp.Decimal), false, nil
+	result, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+	return result, err != nil, errors.Trace(err)
 }
 
 type timestampFunctionClass struct {

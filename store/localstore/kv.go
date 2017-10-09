@@ -176,7 +176,7 @@ func (s *dbStore) doCommit(txn *dbTxn) error {
 	}
 	b := s.db.NewBatch()
 	txn.us.WalkBuffer(func(k kv.Key, value []byte) error {
-		mvccKey := MvccEncodeVersionKey(kv.Key(k), commitVer)
+		mvccKey := MvccEncodeVersionKey(k, commitVer)
 		if len(value) == 0 { // Deleted marker
 			b.Put(mvccKey, nil)
 			s.compactor.OnDelete(k)
