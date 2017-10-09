@@ -48,7 +48,8 @@ func normalize(in interface{}) (j JSON, err error) {
 			j.TypeCode = TypeCodeInt64
 			j.I64 = i64
 		} else {
-			f64, _ := t.Float64()
+			var f64 float64
+			f64, err = t.Float64()
 			j.TypeCode = TypeCodeFloat64
 			*(*float64)(unsafe.Pointer(&j.I64)) = f64
 		}

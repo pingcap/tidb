@@ -60,7 +60,7 @@ func (column *ColumnInfo) Dump(alloc arena.Allocator) []byte {
 
 	if column.DefaultValue != nil {
 		data = append(data, dumpUint64(uint64(len(column.DefaultValue)))...)
-		data = append(data, []byte(column.DefaultValue)...)
+		data = append(data, column.DefaultValue...)
 	}
 
 	return data

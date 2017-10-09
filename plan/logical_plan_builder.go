@@ -177,7 +177,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 					continue
 				}
 				if left.Schema().Contains(rn) && right.Schema().Contains(ln) {
-					cond, _ := expression.NewFunction(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+					cond := expression.NewFunctionInternal(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
 				}
@@ -590,8 +590,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	}
 
 	u.SetSchema(firstSchema)
-	var p LogicalPlan
-	p = u
+	var p LogicalPlan = u
 	if union.Distinct {
 		p = b.buildDistinct(u, u.Schema().Len())
 	}
@@ -841,7 +840,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 		} else {
 			// We should ignore the err when resolving from schema. Because we could resolve successfully
 			// when considering select fields.
-			index, _ = a.resolveFromSchema(v, a.p.Schema())
+			var err error
+			index, err = a.resolveFromSchema(v, a.p.Schema())
+			_ = err
 			if index == -1 {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			}
@@ -852,7 +853,12 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 		if index == -1 {
 			// If we can't find it any where, it may be a correlated columns.
 			for _, schema := range a.outerSchemas {
-				if col, _ := schema.FindColumn(v.Name); col != nil {
+				col, err1 := schema.FindColumn(v.Name)
+				if err1 != nil {
+					a.err = errors.Trace(err1)
+					return node, false
+				}
+				if col != nil {
 					return n, true
 				}
 			}
@@ -1307,7 +1313,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				}
 				// Because the expression maybe return different type from
 				// the generated column, we should wrap a CAST on the result.
-				expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
+				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 				exprIsGen = true
 			}
 		}
@@ -1541,7 +1547,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				return expr
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
-			newExpr = expression.BuildCastFunction(newExpr, col.GetType(), b.ctx)
+			newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		}
 		if err != nil {
 			b.err = errors.Trace(err)

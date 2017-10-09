@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 )
 
 type processinfoSetter interface {
@@ -183,7 +184,7 @@ func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi pr
 		if pi != nil {
 			pi.SetProcessInfo("")
 		}
-		e.Close()
+		terror.Log(e.Close())
 		a.logSlowQuery()
 	}()
 	for {
@@ -263,10 +264,15 @@ func (a *statement) logSlowQuery() {
 		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
+	logEntry := log.WithFields(log.Fields{
+		"connectionId": connID,
+		"costTime":     costTime,
+		"sql":          sql,
+	})
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
-		log.Debugf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
+		logEntry.WithField("type", "query").Debugf("query")
 	} else {
-		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
+		logEntry.WithField("type", "slow-query").Warnf("slow-query")
 	}
 }
 
