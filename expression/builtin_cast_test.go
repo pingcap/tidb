@@ -45,14 +45,14 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	// cast(str as char(N)), N < len([]rune(str)).
 	// cast("你好world" as char(5))
 	tp.Charset = charset.CharsetUTF8
-	f := NewCastFunc(tp, &Constant{Value: types.NewDatum("你好world"), RetType: tp}, ctx)
+	f := BuildCastFunction(ctx, &Constant{Value: types.NewDatum("你好world"), RetType: tp}, tp)
 	res, err := f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(res.GetString(), Equals, "你好wor")
 
 	// cast(str as char(N)), N > len([]rune(str)).
 	// cast("a" as char(5))
-	f = NewCastFunc(tp, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, tp)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 1)
@@ -64,14 +64,14 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	tp.Flag |= mysql.BinaryFlag
 	tp.Charset = charset.CharsetBin
 	tp.Collate = charset.CollationBin
-	f = NewCastFunc(tp, &Constant{Value: types.NewDatum(str), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(str), RetType: types.NewFieldType(mysql.TypeString)}, tp)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(res.GetString(), Equals, str[:5])
 
 	// cast(str as binary(N)), N > len([]byte(str)).
 	// cast("a" as binary(5))
-	f = NewCastFunc(tp, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, tp)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 5)
@@ -89,7 +89,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 		Collate: charset.CollationBin,
 		Flen:    mysql.MaxIntWidth,
 	}
-	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(res.GetUint64() == math.MaxUint64, IsTrue)
@@ -98,7 +98,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	lastWarn := warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
 
-	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(res.GetUint64() == 18446744073709551615, IsTrue)
@@ -107,7 +107,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn), IsTrue)
 
-	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	t := math.MinInt64
@@ -121,7 +121,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	// cast('18446744073709551616' as signed);
 	mask := ^mysql.UnsignedFlag
 	tp1.Flag &= uint(mask)
-	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Check(res.GetInt64(), Equals, int64(-1))
@@ -131,7 +131,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
 
 	// cast('18446744073709551614' as signed);
-	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551614"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551614"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Check(res.GetInt64(), Equals, int64(-2))
@@ -151,7 +151,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 		Flen:    7,
 		Decimal: 2,
 	}
-	f = NewCastFunc(ft, &Constant{Value: timeDatum, RetType: types.NewFieldType(mysql.TypeDatetime)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: timeDatum, RetType: types.NewFieldType(mysql.TypeDatetime)}, ft)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	resDecimal := new(types.MyDecimal)
@@ -165,7 +165,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	// cast(bad_string as decimal)
 	for _, s := range []string{"hello", ""} {
-		f = NewCastFunc(tp, &Constant{Value: types.NewDatum(s), RetType: types.NewFieldType(mysql.TypeDecimal)}, ctx)
+		f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(s), RetType: types.NewFieldType(mysql.TypeDecimal)}, tp)
 		res, err = f.Eval(nil)
 		c.Assert(err, IsNil)
 	}
@@ -173,7 +173,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	// cast(1234 as char(0))
 	tp.Flen = 0
 	tp.Charset = charset.CharsetUTF8
-	f = NewCastFunc(tp, &Constant{Value: types.NewDatum(1234), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(1234), RetType: types.NewFieldType(mysql.TypeString)}, tp)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 0)
@@ -1090,8 +1090,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsInt.
 		intExpr := WrapWithCastAsInt(ctx, t.expr)
 		c.Assert(intExpr.GetType().EvalType(), Equals, types.ETInt)
-		_, ok := intExpr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetType().EvalType() != types.ETInt)
 		intRes, isNull, err := intExpr.EvalInt(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1100,8 +1098,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsReal.
 		realExpr := WrapWithCastAsReal(ctx, t.expr)
 		c.Assert(realExpr.GetType().EvalType(), Equals, types.ETReal)
-		_, ok = realExpr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetType().EvalType() != types.ETReal)
 		realRes, isNull, err := realExpr.EvalReal(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1110,8 +1106,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsDecimal.
 		decExpr := WrapWithCastAsDecimal(ctx, t.expr)
 		c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
-		_, ok = decExpr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetType().EvalType() != types.ETDecimal)
 		decRes, isNull, err := decExpr.EvalDecimal(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1120,9 +1114,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(ctx, t.expr)
 		c.Assert(strExpr.GetType().EvalType().IsStringKind(), IsTrue)
-		_, ok = strExpr.(*ScalarFunction)
-		exprTp := t.expr.GetType().Tp
-		c.Assert(ok, Equals, !t.expr.GetType().EvalType().IsStringKind() || types.IsTypeTime(exprTp) || exprTp == mysql.TypeDuration)
 		strRes, isNull, err := strExpr.EvalString(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1201,8 +1192,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 	}
 	for _, t := range cases {
 		expr := WrapWithCastAsTime(s.ctx, t.expr, t.tp)
-		_, ok := expr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetType().Tp != t.tp.Tp)
 		res, isNull, err := expr.EvalTime(nil, s.ctx.GetSessionVars().StmtCtx)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
@@ -1237,8 +1226,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
 	}
 	for _, t := range cases {
 		expr := WrapWithCastAsDuration(s.ctx, t.expr)
-		_, ok := expr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetType().Tp != mysql.TypeDuration)
 		res, isNull, err := expr.EvalDuration(nil, s.ctx.GetSessionVars().StmtCtx)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
