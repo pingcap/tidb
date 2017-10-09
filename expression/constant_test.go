@@ -119,7 +119,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 		ctx := mock.NewContext()
 		conds := make([]Expression, 0, len(tt.conditions))
 		for _, cd := range tt.conditions {
-			conds = append(conds, FoldConstant(cd))
+			conds = append(conds, FoldConstant(cd, true))
 		}
 		newConds := PropagateConstant(ctx, conds)
 		var result []string
@@ -163,7 +163,7 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		newConds := FoldConstant(tt.condition)
+		newConds := FoldConstant(tt.condition, true)
 		c.Assert(newConds.String(), Equals, tt.result, Commentf("different for expr %s", tt.condition))
 	}
 }

@@ -92,7 +92,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 		RetType:  retType,
 		Function: f,
 	}
-	return FoldConstant(sf), nil
+	return FoldConstant(sf, false), nil
 }
 
 // ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
