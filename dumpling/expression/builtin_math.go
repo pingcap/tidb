@@ -474,10 +474,16 @@ func (b *builtinCeilDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecima
 		return nil, isNull, errors.Trace(err)
 	}
 	if val.GetDigitsFrac() > 0 && !val.IsNegative() {
-		types.DecimalAdd(val, types.NewDecFromInt(1), val)
+		err = types.DecimalAdd(val, types.NewDecFromInt(1), val)
+		if err != nil {
+			return nil, true, errors.Trace(err)
+		}
 	}
 	res := new(types.MyDecimal)
-	val.Round(res, 0, types.ModeTruncate)
+	err = val.Round(res, 0, types.ModeTruncate)
+	if err != nil {
+		return nil, true, errors.Trace(err)
+	}
 	return res, false, errors.Trace(err)
 }
 
@@ -612,10 +618,16 @@ func (b *builtinFloorDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecim
 		return nil, isNull, errors.Trace(err)
 	}
 	if val.GetDigitsFrac() > 0 && val.IsNegative() {
-		types.DecimalSub(val, types.NewDecFromInt(1), val)
+		err = types.DecimalSub(val, types.NewDecFromInt(1), val)
+		if err != nil {
+			return nil, true, errors.Trace(err)
+		}
 	}
 	res := new(types.MyDecimal)
-	val.Round(res, 0, types.ModeTruncate)
+	err = val.Round(res, 0, types.ModeTruncate)
+	if err != nil {
+		return nil, true, errors.Trace(err)
+	}
 	return res, false, errors.Trace(err)
 }
 
