@@ -177,7 +177,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 					continue
 				}
 				if left.Schema().Contains(rn) && right.Schema().Contains(ln) {
-					cond, _ := expression.NewFunction(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+					cond := expression.NewFunctionInternal(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
 				}
@@ -840,7 +840,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 		} else {
 			// We should ignore the err when resolving from schema. Because we could resolve successfully
 			// when considering select fields.
-			index, _ = a.resolveFromSchema(v, a.p.Schema())
+			var err error
+			index, err = a.resolveFromSchema(v, a.p.Schema())
+			_ = err
 			if index == -1 {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			}
@@ -851,7 +853,12 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 		if index == -1 {
 			// If we can't find it any where, it may be a correlated columns.
 			for _, schema := range a.outerSchemas {
-				if col, _ := schema.FindColumn(v.Name); col != nil {
+				col, err1 := schema.FindColumn(v.Name)
+				if err1 != nil {
+					a.err = errors.Trace(err1)
+					return node, false
+				}
+				if col != nil {
 					return n, true
 				}
 			}

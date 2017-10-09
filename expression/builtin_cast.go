@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
@@ -1313,7 +1314,8 @@ func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType
 	case types.ETString:
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
-	f, _ := fc.getFunction(ctx, []Expression{expr})
+	f, err := fc.getFunction(ctx, []Expression{expr})
+	terror.Log(err)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
