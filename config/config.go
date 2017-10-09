@@ -123,7 +123,7 @@ var defaultConf = Config{
 		JoinConcurrency: 5,
 		CrossJoin:       true,
 		StatsLease:      "3s",
-		RunAutoAnalyze:  false,
+		RunAutoAnalyze:  true,
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",

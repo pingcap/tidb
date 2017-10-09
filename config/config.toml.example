@@ -100,7 +100,7 @@ cross-join = true
 stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
-run-auto-analyze = false
+run-auto-analyze = true
 
 [xprotocol]
 # Start TiDB x server.

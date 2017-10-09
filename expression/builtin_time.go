@@ -2896,7 +2896,8 @@ func (b *builtinUnixTimestampCurrentSig) evalInt(row []types.Datum) (int64, bool
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
-	intVal, _ := dec.ToInt() // Ignore truncate errors.
+	intVal, err := dec.ToInt()
+	terror.Log(err)
 	return intVal, false, nil
 }
 
@@ -2920,7 +2921,8 @@ func (b *builtinUnixTimestampIntSig) evalInt(row []types.Datum) (int64, bool, er
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
-	intVal, _ := dec.ToInt() // Ignore truncate errors.
+	intVal, err := dec.ToInt()
+	terror.Log(err)
 	return intVal, false, nil
 }
 
@@ -4596,9 +4598,8 @@ type builtinUTCTimeWithoutArgSig struct {
 // evalDuration evals a builtinUTCTimeWithoutArgSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithoutArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	// the types.ParseDuration here would never fail, so the err returned can be ignored.
-	v, _ := types.ParseDuration(time.Now().UTC().Format(types.TimeFormat), 0)
-	return v, false, nil
+	v, err := types.ParseDuration(time.Now().UTC().Format(types.TimeFormat), 0)
+	return v, false, err
 }
 
 type builtinUTCTimeWithArgSig struct {
@@ -4618,9 +4619,8 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(row []types.Datum) (types.Durati
 	if fsp < int64(types.MinFsp) {
 		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 	}
-	// the types.ParseDuration here would never fail, so the err returned can be ignored.
-	v, _ := types.ParseDuration(time.Now().UTC().Format(types.TimeFSPFormat), int(fsp))
-	return v, false, nil
+	v, err := types.ParseDuration(time.Now().UTC().Format(types.TimeFSPFormat), int(fsp))
+	return v, false, err
 }
 
 type lastDayFunctionClass struct {
