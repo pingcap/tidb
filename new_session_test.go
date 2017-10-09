@@ -511,7 +511,7 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	c.Assert(lastInsertID+2, Equals, currLastInsertID)
 }
 
-func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
+func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL, name varchar(255) UNIQUE NOT NULL, status int)")
@@ -571,6 +571,99 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 
 	tk.MustQuery("select last_insert_id(20)").Check(testkit.Rows(fmt.Sprint(20)))
 	tk.MustQuery("select last_insert_id()").Check(testkit.Rows(fmt.Sprint(20)))
+}
+
+func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
+	// test for https://github.com/pingcap/tidb/issues/827
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t (c2 int, c1 int not null auto_increment, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t (c2) values (1), (2), (3), (4), (5)")
+
+	// insert values
+	lastInsertID := tk.Se.LastInsertID()
+	tk.MustExec("begin")
+	tk.MustExec("insert into t (c2) values (11), (12), (13)")
+	tk.MustQuery("select c1 from t where c2 = 11").Check(testkit.Rows("6"))
+	tk.MustExec("update t set c2 = 33 where c2 = 1")
+
+	tk1.MustExec("update t set c2 = 22 where c2 = 1")
+
+	tk.MustExec("commit")
+
+	tk.MustQuery("select c1 from t where c2 = 11").Check(testkit.Rows("6"))
+	currLastInsertID := tk.Se.GetSessionVars().PrevLastInsertID
+	c.Assert(lastInsertID+5, Equals, currLastInsertID)
+
+	// insert set
+	lastInsertID = currLastInsertID
+	tk.MustExec("begin")
+	tk.MustExec("insert into t set c2 = 31")
+	tk.MustQuery("select c1 from t where c2 = 31").Check(testkit.Rows("9"))
+	tk.MustExec("update t set c2 = 44 where c2 = 2")
+
+	tk1.MustExec("update t set c2 = 55 where c2 = 2")
+
+	tk.MustExec("commit")
+
+	tk.MustQuery("select c1 from t where c2 = 31").Check(testkit.Rows("9"))
+	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	c.Assert(lastInsertID+3, Equals, currLastInsertID)
+
+	// replace
+	lastInsertID = currLastInsertID
+	tk.MustExec("begin")
+	tk.MustExec("insert into t (c2) values (21), (22), (23)")
+	tk.MustQuery("select c1 from t where c2 = 21").Check(testkit.Rows("10"))
+	tk.MustExec("update t set c2 = 66 where c2 = 3")
+
+	tk1.MustExec("update t set c2 = 77 where c2 = 3")
+
+	tk.MustExec("commit")
+
+	tk.MustQuery("select c1 from t where c2 = 21").Check(testkit.Rows("10"))
+	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	c.Assert(lastInsertID+1, Equals, currLastInsertID)
+
+	// update
+	lastInsertID = currLastInsertID
+	tk.MustExec("begin")
+	tk.MustExec("insert into t set c2 = 41")
+	tk.MustExec("update t set c1 = 0 where c2 = 41")
+	tk.MustQuery("select c1 from t where c2 = 41").Check(testkit.Rows("0"))
+	tk.MustExec("update t set c2 = 88 where c2 = 4")
+
+	tk1.MustExec("update t set c2 = 99 where c2 = 4")
+
+	tk.MustExec("commit")
+
+	tk.MustQuery("select c1 from t where c2 = 41").Check(testkit.Rows("0"))
+	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	c.Assert(lastInsertID+3, Equals, currLastInsertID)
+
+	// prepare
+	lastInsertID = currLastInsertID
+	tk.MustExec("begin")
+	tk.MustExec("prepare stmt from 'insert into t (c2) values (?)'")
+	tk.MustExec("set @v1=100")
+	tk.MustExec("set @v2=200")
+	tk.MustExec("set @v3=300")
+	tk.MustExec("execute stmt using @v1")
+	tk.MustExec("execute stmt using @v2")
+	tk.MustExec("execute stmt using @v3")
+	tk.MustExec("deallocate prepare stmt")
+	tk.MustQuery("select c1 from t where c2 = 12").Check(testkit.Rows("7"))
+	tk.MustExec("update t set c2 = 111 where c2 = 5")
+
+	tk1.MustExec("update t set c2 = 222 where c2 = 5")
+
+	tk.MustExec("commit")
+
+	tk.MustQuery("select c1 from t where c2 = 12").Check(testkit.Rows("7"))
+	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
