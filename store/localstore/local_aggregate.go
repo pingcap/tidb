@@ -67,15 +67,15 @@ func (rs *localRegion) aggregate(ctx *selectContext, h int64, row map[int64][]by
 		args := make([]types.Datum, 0, len(agg.expr.Children))
 		// Evaluate arguments.
 		for _, x := range agg.expr.Children {
-			cv, err := ctx.eval.Eval(x)
-			if err != nil {
-				return errors.Trace(err)
+			cv, err1 := ctx.eval.Eval(x)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 			args = append(args, cv)
 		}
-		err = agg.update(ctx, args)
-		if err != nil {
-			return errors.Trace(err)
+		err1 = agg.update(ctx, args)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 	}
 	return nil
