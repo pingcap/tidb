@@ -138,7 +138,7 @@ type session struct {
 	statsCollector *statistics.SessionStatsCollector
 
 	// for plan cache
-	planCache           *cache.SimpleLRUCache
+	planCache           *cache.ShardedLRUCache
 	planBuildOnReadOnly bool
 }
 
@@ -1099,10 +1099,9 @@ func createSession(store kv.Storage) (*session, error) {
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
-		planCache:   cache.NewSimpleLRUCache(1000),
 	}
 	if cache.EnablePlanCache {
-		s.planCache = cache.NewSimpleLRUCache(cache.PlanCacheCapacity)
+		s.planCache = cache.NewShardedLRUCache(100, 1000)
 		s.planBuildOnReadOnly = true
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
@@ -1122,10 +1121,9 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
-		planCache:   cache.NewSimpleLRUCache(1000),
 	}
 	if cache.EnablePlanCache {
-		s.planCache = cache.NewSimpleLRUCache(cache.PlanCacheCapacity)
+		s.planCache = cache.NewShardedLRUCache(100, 1000)
 		s.planBuildOnReadOnly = true
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
