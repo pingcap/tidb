@@ -131,7 +131,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		}
 		var newSf Expression
 		if x.FuncName.L == ast.Cast {
-			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+			newSf = BuildCastFunction(x.GetCtx(), newArgs[0], x.RetType)
 		} else {
 			newSf = NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
@@ -155,7 +155,7 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 		}
 		var newSf Expression
 		if x.FuncName.L == ast.Cast {
-			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+			newSf = BuildCastFunction(x.GetCtx(), newArgs[0], x.RetType)
 		} else {
 			newSf = NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
