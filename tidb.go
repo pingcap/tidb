@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -165,7 +166,8 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			se.RollbackTxn()
+			err1 := se.RollbackTxn()
+			terror.Log(err1)
 		} else {
 			err = se.CommitTxn()
 		}
@@ -190,7 +192,7 @@ func GetRows(rs ast.RecordSet) ([][]types.Datum, error) {
 		return nil, nil
 	}
 	var rows [][]types.Datum
-	defer rs.Close()
+	defer terror.Call(rs.Close)
 	// Negative limit means no limit.
 	for {
 		row, err := rs.Next()
@@ -249,11 +251,11 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	var s kv.Storage
-	util.RunWithRetry(maxRetries, retryInterval, func() (bool, error) {
+	err1 := util.RunWithRetry(maxRetries, retryInterval, func() (bool, error) {
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
-	return s, errors.Trace(err)
+	return s, errors.Trace(err1)
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
@@ -290,6 +292,8 @@ func IsQuery(sql string) bool {
 
 func init() {
 	// Register default memory and goleveldb storage
-	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
-	RegisterLocalStore("goleveldb", goleveldb.Driver{})
+	err := RegisterLocalStore("memory", goleveldb.MemoryDriver{})
+	terror.Log(err)
+	err = RegisterLocalStore("goleveldb", goleveldb.Driver{})
+	terror.Log(err)
 }

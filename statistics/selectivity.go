@@ -32,9 +32,9 @@ const selectionFactor = 0.8
 type exprSet struct {
 	tp int
 	ID int64
-	// The ith bit of `mask` will tell whether the ith expression is covered by this index/column.
+	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
 	mask int64
-	// This stores ranges we get.
+	// ranges contains all the ranges we got.
 	ranges []types.Range
 }
 

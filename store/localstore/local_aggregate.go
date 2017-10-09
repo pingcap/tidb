@@ -73,7 +73,10 @@ func (rs *localRegion) aggregate(ctx *selectContext, h int64, row map[int64][]by
 			}
 			args = append(args, cv)
 		}
-		agg.update(ctx, args)
+		err = agg.update(ctx, args)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }

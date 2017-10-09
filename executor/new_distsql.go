@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -107,7 +108,8 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 		}
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
-			e.partialResult.Close()
+			err = e.partialResult.Close()
+			terror.Log(err)
 			e.partialResult = nil
 			continue
 		}
@@ -227,7 +229,8 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 		}
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
-			e.partialResult.Close()
+			err = e.partialResult.Close()
+			terror.Log(err)
 			e.partialResult = nil
 			continue
 		}
@@ -500,7 +503,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	if err != nil {
 		return
 	}
-	defer tableReader.Close()
+	defer terror.Call(tableReader.Close)
 	for {
 		var row Row
 		row, err = tableReader.Next()
@@ -651,6 +654,7 @@ func (builder *requestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *requestB
 	builder.Request.Tp = kv.ReqTypeAnalyze
 	builder.Request.StartTs = ana.StartTs
 	builder.Request.Data, builder.err = ana.Marshal()
+	builder.Request.NotFillCache = true
 	return builder
 }
 
@@ -672,6 +676,7 @@ func (builder *requestBuilder) SetKeepOrder(order bool) *requestBuilder {
 func (builder *requestBuilder) SetFromSessionVars(sv *variable.SessionVars) *requestBuilder {
 	builder.Request.Concurrency = sv.DistSQLScanConcurrency
 	builder.Request.IsolationLevel = getIsolationLevel(sv)
+	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	return builder
 }
 

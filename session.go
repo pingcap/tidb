@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
@@ -128,9 +129,6 @@ type session struct {
 	}
 
 	store kv.Storage
-
-	// unlimitedRetryCount is used for test only.
-	unlimitedRetryCount bool
 
 	parser *parser.Parser
 
@@ -226,13 +224,15 @@ type schemaLeaseChecker struct {
 	relatedTableIDs []int64
 }
 
-const (
-	schemaOutOfDateRetryInterval = 500 * time.Millisecond
-	schemaOutOfDateRetryTimes    = 10
+var (
+	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
+	SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
+	SchemaOutOfDateRetryTimes = 10
 )
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
-	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
+	for i := 0; i < SchemaOutOfDateRetryTimes; i++ {
 		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
 		switch result {
 		case domain.ResultSucc:
@@ -242,7 +242,7 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 			return domain.ErrInfoSchemaChanged
 		case domain.ResultUnknown:
 			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-			time.Sleep(schemaOutOfDateRetryInterval)
+			time.Sleep(SchemaOutOfDateRetryInterval)
 		}
 
 	}
@@ -372,7 +372,8 @@ func (s *session) String() string {
 	if len(sessVars.PreparedStmts) > 0 {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
 	}
-	b, _ := json.MarshalIndent(data, "", "  ")
+	b, err := json.MarshalIndent(data, "", "  ")
+	terror.Log(err)
 	return string(b)
 }
 
@@ -442,7 +443,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		}
 		retryCnt++
 		infoSchemaChanged = domain.ErrInfoSchemaChanged.Equal(err)
-		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
+		if retryCnt >= maxCnt {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
@@ -535,7 +536,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -548,7 +552,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -766,7 +773,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		stmt, err1 := Compile(s, stmtNode)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
-			s.RollbackTxn()
+			err2 := s.RollbackTxn()
+			terror.Log(err2)
 			return nil, errors.Trace(err1)
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -977,7 +985,8 @@ func getHostByIP(ip string) []string {
 	if ip == "127.0.0.1" {
 		return []string{"localhost"}
 	}
-	addrs, _ := net.LookupAddr(ip)
+	addrs, err := net.LookupAddr(ip)
+	terror.Log(err)
 	return addrs
 }
 
@@ -1184,7 +1193,6 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxRowCountForINLJ + quoteCommaQuote +
-	variable.TiDBCBO + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -1208,7 +1216,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	for _, row := range rows {
 		varName := row.Data[0].GetString()
 		if _, ok := vars.Systems[varName]; !ok {
-			varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
+			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	vars.CommonGlobalLoaded = true

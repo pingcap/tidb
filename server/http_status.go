@@ -22,6 +22,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -83,6 +84,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Error("Encode json error", err)
 	} else {
-		w.Write(js)
+		_, err = w.Write(js)
+		terror.Log(err)
 	}
 }

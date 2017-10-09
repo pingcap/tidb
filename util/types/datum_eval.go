@@ -38,7 +38,10 @@ func CoerceArithmetic(sc *variable.StatementContext, a Datum) (d Datum, err erro
 		t := a.GetMysqlTime()
 		de := t.ToNumber()
 		if t.Fsp == 0 {
-			iVal, _ := de.ToInt()
+			iVal, err := de.ToInt()
+			if err != nil {
+				return d, errors.Trace(err)
+			}
 			d.SetInt64(iVal)
 			return d, nil
 		}
@@ -49,7 +52,10 @@ func CoerceArithmetic(sc *variable.StatementContext, a Datum) (d Datum, err erro
 		du := a.GetMysqlDuration()
 		de := du.ToNumber()
 		if du.Fsp == 0 {
-			iVal, _ := de.ToInt()
+			iVal, err := de.ToInt()
+			if err != nil {
+				return d, errors.Trace(err)
+			}
 			d.SetInt64(iVal)
 			return d, nil
 		}
@@ -285,7 +291,7 @@ func ComputeMod(sc *variable.StatementContext, a, b Datum) (d Datum, err error) 
 				return d, nil
 			} else if y < 0 {
 				// first is uint64, return uint64.
-				d.SetUint64(uint64(x % uint64(-y)))
+				d.SetUint64(x % uint64(-y))
 				return d, nil
 			}
 			d.SetUint64(x % uint64(y))
@@ -399,11 +405,11 @@ func ComputeIntDiv(sc *variable.StatementContext, a, b Datum) (d Datum, err erro
 // decimal2RoundUint converts a MyDecimal to an uint64 after rounding.
 func decimal2RoundUint(x *MyDecimal) (uint64, error) {
 	roundX := new(MyDecimal)
-	x.Round(roundX, 0, ModeHalfEven)
-	var (
-		uintX uint64
-		err   error
-	)
+	err := x.Round(roundX, 0, ModeHalfEven)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	var uintX uint64
 	if roundX.IsNegative() {
 		var intX int64
 		intX, err = roundX.ToInt()
