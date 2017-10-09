@@ -172,9 +172,8 @@ func (txn *tikvTxn) Commit() error {
 	return nil
 }
 
-func (txn *tikvTxn) close() error {
+func (txn *tikvTxn) close() {
 	txn.valid = false
-	return nil
 }
 
 func (txn *tikvTxn) Rollback() error {
