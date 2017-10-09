@@ -1016,7 +1016,11 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		schema.Append(buildColumn("", "Json", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "ParentID", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
-		p.prepareExplainInfo(p.StmtPlan, nil)
+		err := p.prepareExplainInfo(p.StmtPlan, nil)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
 	}
 	return p
 }
