@@ -23,7 +23,6 @@ imports:
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
-  - pkg/monotime
   - pkg/tlsutil
 - name: github.com/coreos/go-systemd
   version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
@@ -132,7 +131,7 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/pd
-  version: 38eb8a2e70dd39668a62d24a79f30596f204df14
+  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
   subpackages:
   - pd-client
   - pkg/logutil

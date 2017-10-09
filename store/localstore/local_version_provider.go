@@ -49,7 +49,7 @@ func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 			continue
 		}
 
-		if l.lastTimestamp == uint64(ts) {
+		if l.lastTimestamp == ts {
 			l.logical++
 			if l.logical >= 1<<timePrecisionOffset {
 				return kv.Version{}, ErrOverflow

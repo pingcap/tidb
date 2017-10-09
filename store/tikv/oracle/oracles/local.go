@@ -45,11 +45,11 @@ func (l *localOracle) GetTimestamp(goctx.Context) (uint64, error) {
 	ts := oracle.ComposeTS(physical, 0)
 	if l.lastTimeStampTS == ts {
 		l.n++
-		return uint64(ts + l.n), nil
+		return ts + l.n, nil
 	}
 	l.lastTimeStampTS = ts
 	l.n = 0
-	return uint64(ts), nil
+	return ts, nil
 }
 
 func (l *localOracle) GetTimestampAsync(ctx goctx.Context) oracle.Future {

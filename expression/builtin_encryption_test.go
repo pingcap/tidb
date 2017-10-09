@@ -43,7 +43,7 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 	for _, tt := range aesTests {
 		str := types.NewDatum(tt.origin)
 		key := types.NewDatum(tt.key)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{str, key}))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, key}))
 		crypt, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
@@ -57,7 +57,7 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 	for _, test := range aesTests {
 		cryptStr := fromHex(test.crypt)
 		key := types.NewDatum(test.key)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{cryptStr, key}))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, key}))
 		str, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
@@ -69,12 +69,12 @@ func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
-	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{arg, argNull}))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, argNull}))
 	crypt, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
 
-	f, err = fc.getFunction(s.ctx, datumsToConstants([]types.Datum{argNull, arg}))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull, arg}))
 	crypt, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
@@ -117,7 +117,7 @@ func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
 		in := types.NewDatum(tt.origin)
-		f, _ := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{in}))
+		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
 		crypt, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		res, err := crypt.ToString()
@@ -126,7 +126,7 @@ func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
 	}
 	// test NULL input for sha
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
 	crypt, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
@@ -159,7 +159,7 @@ func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 	for _, tt := range sha2Tests {
 		str := types.NewDatum(tt.origin)
 		hashLength := types.NewDatum(tt.hashLength)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{str, hashLength}))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, hashLength}))
 		crypt, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if tt.validCase {
@@ -191,7 +191,7 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 		{nil, "", true, false},
 	}
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.MD5, primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.MD5, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
 		if t.getErr {
@@ -214,26 +214,26 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RandomBytes]
-	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{types.NewDatum(32)}))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(32)}))
 	c.Assert(err, IsNil)
 	out, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(out.GetBytes()), Equals, 32)
 
-	f, err = fc.getFunction(s.ctx, datumsToConstants([]types.Datum{types.NewDatum(1025)}))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(1025)}))
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
-	f, err = fc.getFunction(s.ctx, datumsToConstants([]types.Datum{types.NewDatum(-32)}))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(-32)}))
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
-	f, err = fc.getFunction(s.ctx, datumsToConstants([]types.Datum{types.NewDatum(0)}))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(0)}))
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
 
-	f, err = fc.getFunction(s.ctx, datumsToConstants([]types.Datum{types.NewDatum(nil)}))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(nil)}))
 	c.Assert(err, IsNil)
 	out, err = f.eval(nil)
 	c.Assert(err, IsNil)
@@ -262,7 +262,7 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 	fc := funcs[ast.Compress]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := f.eval(nil)
 		c.Assert(err, IsNil, Commentf("%v", test))
@@ -292,7 +292,7 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 	fc := funcs[ast.Uncompress]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := f.eval(nil)
 		c.Assert(err, IsNil, Commentf("%v", test))
@@ -322,7 +322,7 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 	fc := funcs[ast.UncompressedLength]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{arg}))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := f.eval(nil)
 		c.Assert(err, IsNil, Commentf("%v", test))
@@ -347,7 +347,7 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
 		c.Assert(err, IsNil)

@@ -263,7 +263,7 @@ func buildUsualColumnInfo(offset int, name string, tp byte, size int, flag uint,
 		Collate: mCollation,
 		Tp:      tp,
 		Flen:    size,
-		Flag:    uint(flag),
+		Flag:    flag,
 	}
 	colInfo := &model.ColumnInfo{
 		Name:         model.NewCIStr(name),
@@ -285,7 +285,7 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 		Charset: mCharset,
 		Collate: mCollation,
 		Tp:      mysql.TypeEnum,
-		Flag:    uint(flag),
+		Flag:    flag,
 		Elems:   elems,
 	}
 	colInfo := &model.ColumnInfo{

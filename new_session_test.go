@@ -466,6 +466,51 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	privileges.SkipWithGrant = save2
 }
 
+func (s *testSessionSuite) TestLastInsertID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// insert
+	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t set c2 = 11")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into t (c2) values (22), (33), (44)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
+
+	tk.MustExec("insert into t (c1, c2) values (10, 55)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
+
+	// replace
+	tk.MustExec("replace t (c2) values(66)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 11", "2 22", "3 33", "4 44", "10 55", "11 66"))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("11"))
+
+	// update
+	tk.MustExec("update t set c1=last_insert_id(c1 + 100)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("101 11", "102 22", "103 33", "104 44", "110 55", "111 66"))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("111"))
+	tk.MustExec("insert into t (c2) values (77)")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+
+	// drop
+	tk.MustExec("drop table t")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+
+	tk.MustExec("create table t (c2 int, c3 int, c1 int not null auto_increment, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t set c2 = 30")
+
+	// insert values
+	lastInsertID := tk.Se.LastInsertID()
+	tk.MustExec("prepare stmt1 from 'insert into t (c2) values (?)'")
+	tk.MustExec("set @v1=10")
+	tk.MustExec("set @v2=20")
+	tk.MustExec("execute stmt1 using @v1")
+	tk.MustExec("execute stmt1 using @v2")
+	tk.MustExec("deallocate prepare stmt1")
+	currLastInsertID := tk.Se.GetSessionVars().PrevLastInsertID
+	tk.MustQuery("select c1 from t where c2 = 20").Check(testkit.Rows(fmt.Sprint(currLastInsertID)))
+	c.Assert(lastInsertID+2, Equals, currLastInsertID)
+}
+
 func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
@@ -836,6 +881,7 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 func (s *testSessionSuite) TestISColumns(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
+	tk.MustQuery("SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'").Check(testkit.Rows("utf8mb4"))
 }
 
 func (s *testSessionSuite) TestRetry(c *C) {
@@ -899,6 +945,257 @@ func (s *testSessionSuite) TestDecimal(c *C) {
 	tk.MustExec("insert t values ('100');")
 	_, err := tk.Exec("insert t values ('1e2');")
 	c.Check(err, NotNil)
+}
+
+func (s *testSessionSuite) TestParser(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// test for https://github.com/pingcap/tidb/pull/177
+	tk.MustExec("CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
+	tk.MustExec("CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
+	tk.MustExec(`INSERT INTO t1 VALUES (1,1,1);`)
+	tk.MustExec(`INSERT INTO t2 VALUES (1,1,1);`)
+	tk.MustExec(`PREPARE my_stmt FROM "SELECT t1.b, count(*) FROM t1 group by t1.b having count(*) > ALL (SELECT COUNT(*) FROM t2 WHERE t2.a=1 GROUP By t2.b)";`)
+	tk.MustExec(`EXECUTE my_stmt;`)
+	tk.MustExec(`EXECUTE my_stmt;`)
+	tk.MustExec(`deallocate prepare my_stmt;`)
+	tk.MustExec(`drop table t1,t2;`)
+}
+
+func (s *testSessionSuite) TestOnDuplicate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// test for https://github.com/pingcap/tidb/pull/454
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
+	tk.MustExec("insert into t1 set c1=1, c2=2, c3=1;")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int, primary key (c1));")
+	tk.MustExec("insert into t set c1=1, c2=4;")
+	tk.MustExec("insert into t select * from t1 limit 1 on duplicate key update c3=3333;")
+}
+
+func (s *testSessionSuite) TestReplace(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// test for https://github.com/pingcap/tidb/pull/456
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
+	tk.MustExec("replace into t1 set c1=1, c2=2, c3=1;")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int, primary key (c1));")
+	tk.MustExec("replace into t set c1=1, c2=4;")
+	tk.MustExec("replace into t select * from t1 limit 1;")
+}
+
+func (s *testSessionSuite) TestDelete(c *C) {
+	// test for https://github.com/pingcap/tidb/pull/1135
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("create database test1")
+	tk1.MustExec("use test1")
+	tk1.MustExec("create table t (F1 VARCHAR(30));")
+	tk1.MustExec("insert into t (F1) values ('1'), ('4');")
+
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete m1 from t m2,t m1 where m1.F1>1;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete m1 from t m1,t m2 where true and m1.F1<2;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete m1 from t m1,t m2 where false;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete m1, m2 from t m1,t m2 where m1.F1>m2.F1;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (F1 VARCHAR(30));")
+	tk.MustExec("insert into t (F1) values ('1'), ('2');")
+	tk.MustExec("delete test1.t from test1.t inner join test.t where test1.t.F1 > test.t.F1")
+	tk1.MustQuery("select * from t;").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestUnique(c *C) {
+	// test for https://github.com/pingcap/tidb/pull/461
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec(`CREATE TABLE test ( id int(11) UNSIGNED NOT NULL AUTO_INCREMENT, val int UNIQUE, PRIMARY KEY (id)); `)
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test(id, val) values(1, 1);")
+	tk1.MustExec("begin;")
+	tk1.MustExec("insert into test(id, val) values(2, 2);")
+	tk2.MustExec("begin;")
+	tk2.MustExec("insert into test(id, val) values(1, 2);")
+	tk2.MustExec("commit;")
+	_, err := tk.Exec("commit")
+	c.Assert(err, NotNil)
+	// Check error type and error message
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'val'")
+
+	// Test for https://github.com/pingcap/tidb/issues/463
+	tk.MustExec("drop table test;")
+	tk.MustExec(`CREATE TABLE test (
+			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+			val int UNIQUE,
+			PRIMARY KEY (id)
+		);`)
+	tk.MustExec("insert into test(id, val) values(1, 1);")
+	_, err = tk.Exec("insert into test(id, val) values(2, 1);")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into test(id, val) values(2, 2);")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test(id, val) values(3, 3);")
+	_, err = tk.Exec("insert into test(id, val) values(4, 3);")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into test(id, val) values(4, 4);")
+	tk.MustExec("commit;")
+
+	tk1.MustExec("begin;")
+	tk1.MustExec("insert into test(id, val) values(5, 6);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test(id, val) values(20, 6);")
+	tk.MustExec("commit;")
+	_, err = tk1.Exec("commit")
+	tk1.MustExec("insert into test(id, val) values(5, 5);")
+
+	tk.MustExec("drop table test;")
+	tk.MustExec(`CREATE TABLE test (
+			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+			val1 int UNIQUE,
+			val2 int UNIQUE,
+			PRIMARY KEY (id)
+		);`)
+	tk.MustExec("insert into test(id, val1, val2) values(1, 1, 1);")
+	tk.MustExec("insert into test(id, val1, val2) values(2, 2, 2);")
+	_, err = tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
+	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
+}
+
+func (s *testSessionSuite) TestSet(c *C) {
+	// Test for https://github.com/pingcap/tidb/issues/1114
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @tmp = 0")
+	tk.MustExec("set @tmp := @tmp + 1")
+	tk.MustQuery("select @tmp").Check(testkit.Rows("1"))
+	tk.MustQuery("select @tmp1 = 1, @tmp2 := 2").Check(testkit.Rows("<nil> 2"))
+	tk.MustQuery("select @tmp1 := 11, @tmp2").Check(testkit.Rows("11 2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int);")
+	tk.MustExec("insert into t values (1),(2);")
+	tk.MustExec("update t set c = 3 WHERE c = @var:= 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3", "2"))
+	tk.MustQuery("select @tmp := count(*) from t").Check(testkit.Rows("2"))
+	tk.MustQuery("select @tmp := c-2 from t where c=3").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestMySQLTypes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(`select 0x01 + 1, x'4D7953514C' = "MySQL"`).Check(testkit.Rows("2 1"))
+	tk.MustQuery(`select 0b01 + 1, 0b01000001 = "A"`).Check(testkit.Rows("2 1"))
+}
+
+func (s *testSessionSuite) TestIssue986(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	sqlText := `CREATE TABLE address (
+ 		id bigint(20) NOT NULL AUTO_INCREMENT,
+ 		PRIMARY KEY (id));`
+	tk.MustExec(sqlText)
+	tk.MustExec(`insert into address values ('10')`)
+}
+
+func (s *testSessionSuite) TestIssue1089(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("select cast(0.5 as unsigned)")
+	tk.MustQuery("select cast(-0.5 as signed)")
+}
+
+func (s *testSessionSuite) TestTableInfoMeta(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	checkResult := func(affectedRows uint64, insertID uint64) {
+		gotRows := tk.Se.AffectedRows()
+		c.Assert(gotRows, Equals, affectedRows)
+
+		gotID := tk.Se.LastInsertID()
+		c.Assert(gotID, Equals, insertID)
+	}
+
+	// create table
+	tk.MustExec("CREATE TABLE tbl_test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+
+	// insert data
+	tk.MustExec(`INSERT INTO tbl_test VALUES (1, "hello");`)
+	checkResult(1, 0)
+
+	tk.MustExec(`INSERT INTO tbl_test VALUES (2, "hello");`)
+	checkResult(1, 0)
+
+	tk.MustExec(`UPDATE tbl_test SET name = "abc" where id = 2;`)
+	checkResult(1, 0)
+
+	tk.MustExec(`DELETE from tbl_test where id = 2;`)
+	checkResult(1, 0)
+
+	// select data
+	tk.MustQuery("select * from tbl_test").Check(testkit.Rows("1 hello"))
+}
+
+func (s *testSessionSuite) TestCaseInsensitive(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table T (a text, B int)")
+	tk.MustExec("insert t (A, b) values ('aaa', 1)")
+	rs, _ := tk.Exec("select * from t")
+	fields, err := rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fields[0].ColumnAsName.O, Equals, "a")
+	c.Assert(fields[1].ColumnAsName.O, Equals, "B")
+	rs, _ = tk.Exec("select A, b from t")
+	fields, err = rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
+	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
+	rs, _ = tk.Exec("select a as A from t where A > 0")
+	fields, err = rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
+	tk.MustExec("update T set b = B + 1")
+	tk.MustExec("update T set B = b + 1")
+	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
+}
+
+// Testcase for delete panic
+func (s *testSessionSuite) TestDeletePanic(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (c int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("delete from `t` where `c` = ?", 1)
+	tk.MustExec("delete from `t` where `c` = ?", 2)
 }
 
 var _ = Suite(&testSchemaSuite{})

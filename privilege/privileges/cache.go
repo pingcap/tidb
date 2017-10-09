@@ -174,7 +174,7 @@ func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 		return errors.Trace(err)
 	}
 	rs := tmp[0]
-	defer rs.Close()
+	defer terror.Call(rs.Close)
 
 	fs, err := rs.Fields()
 	if err != nil {
@@ -294,7 +294,11 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row *ast.Row, fs []*ast.Resul
 		case f.ColumnAsName.L == "column_name":
 			value.ColumnName = d.GetString()
 		case f.ColumnAsName.L == "timestamp":
-			value.Timestamp, _ = d.GetMysqlTime().Time.GoTime(time.Local)
+			var err error
+			value.Timestamp, err = d.GetMysqlTime().Time.GoTime(time.Local)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		case f.ColumnAsName.L == "column_priv":
 			value.ColumnPriv = decodeSetToPrivilege(d.GetMysqlSet())
 		}
