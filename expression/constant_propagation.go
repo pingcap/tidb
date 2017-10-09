@@ -118,7 +118,7 @@ func (s *propagateConstantSolver) propagateEQ() {
 	visited := make([]bool, len(s.conditions))
 	for i := 0; i < MaxPropagateColsCnt; i++ {
 		mapper := s.pickNewEQConds(visited)
-		if mapper == nil || len(mapper) == 0 {
+		if len(mapper) == 0 {
 			return
 		}
 		cols := make([]*Column, 0, len(mapper))
