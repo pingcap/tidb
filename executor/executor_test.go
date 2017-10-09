@@ -1964,10 +1964,10 @@ type checkRequestClient struct {
 	tikv.Client
 	priority     pb.CommandPri
 	notFillCache bool
-	syncLog      bool
 	mu           struct {
 		sync.RWMutex
 		checkFlags uint32
+		syncLog    bool
 	}
 }
 
@@ -1990,7 +1990,10 @@ func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrp
 	} else if checkFlags == checkRequestSyncLog {
 		switch req.Type {
 		case tikvrpc.CmdPrewrite, tikvrpc.CmdCommit:
-			if c.syncLog != req.SyncLog {
+			c.mu.RLock()
+			syncLog := c.mu.syncLog
+			c.mu.RUnlock()
+			if syncLog != req.SyncLog {
 				return nil, errors.New("fail to set sync log")
 			}
 		}
@@ -2099,10 +2102,12 @@ func (s *testContextOptionSuite) TestSyncLog(c *C) {
 	cli := s.cli
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestSyncLog
+	cli.mu.syncLog = true
 	cli.mu.Unlock()
-	cli.syncLog = true
 	tk.MustExec("create table t (id int primary key)")
-	cli.syncLog = false
+	cli.mu.Lock()
+	cli.mu.syncLog = false
+	cli.mu.Unlock()
 	tk.MustExec("insert into t values (1)")
 
 	cli.mu.Lock()
