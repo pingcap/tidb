@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
@@ -170,8 +171,8 @@ func (c *Constant) Decorrelate(_ *Schema) Expression {
 
 // HashCode implements Expression interface.
 func (c *Constant) HashCode() []byte {
-	var bytes []byte
-	bytes, _ = codec.EncodeValue(bytes, c.Value)
+	bytes, err := codec.EncodeValue(nil, c.Value)
+	terror.Log(err)
 	return bytes
 }
 

@@ -400,7 +400,10 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 			return datum, errors.Trace(err)
 		}
 		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
-			t.ConvertTimeZone(time.UTC, loc)
+			err = t.ConvertTimeZone(time.UTC, loc)
+			if err != nil {
+				return datum, errors.Trace(err)
+			}
 		}
 		datum.SetMysqlTime(t)
 		return datum, nil

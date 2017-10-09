@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -61,7 +62,7 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
 		}
-		fun, _ := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
+		fun := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
 		return fun
 	}
 	return expr
@@ -133,7 +134,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		if x.FuncName.L == ast.Cast {
 			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
 		} else {
-			newSf, _ = NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+			newSf = NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
 		return newSf, nil
 	case *CorrelatedColumn:
@@ -157,7 +158,7 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 		if x.FuncName.L == ast.Cast {
 			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
 		} else {
-			newSf, _ = NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+			newSf = NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
 		return newSf
 	case *Column:
@@ -177,8 +178,10 @@ func timeZone2Duration(tz string) time.Duration {
 	}
 
 	i := strings.Index(tz, ":")
-	h, _ := strconv.Atoi(tz[1:i])
-	m, _ := strconv.Atoi(tz[i+1:])
+	h, err := strconv.Atoi(tz[1:i])
+	terror.Log(err)
+	m, err := strconv.Atoi(tz[i+1:])
+	terror.Log(err)
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
@@ -210,7 +213,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 			return PushDownNot(f.GetArgs()[0], !not, f.GetCtx())
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				nf, _ := NewFunction(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
+				nf := NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
@@ -223,7 +226,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
+				nf := NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
@@ -236,7 +239,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
+				nf := NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
@@ -246,7 +249,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 		}
 	}
 	if not {
-		expr, _ = NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr
 }
