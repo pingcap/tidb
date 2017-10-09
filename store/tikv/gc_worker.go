@@ -26,7 +26,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
@@ -432,7 +432,7 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("delete_range").Inc()
 
 	session := createSession(w.store)
-	ranges, err := ddl.LoadDeleteRanges(session, safePoint)
+	ranges, err := util.LoadDeleteRanges(session, safePoint)
 	session.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -498,7 +498,7 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 			startKey = endKey
 		}
 		session := createSession(w.store)
-		err := ddl.CompleteDeleteRange(session, r)
+		err := util.CompleteDeleteRange(session, r)
 		session.Close()
 		if err != nil {
 			return errors.Trace(err)
