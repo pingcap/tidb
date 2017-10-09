@@ -14,10 +14,11 @@
 package types
 
 import (
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/terror"
 	"math"
 	"strconv"
+
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/terror"
 )
 
 // RoundMode is the type for round mode.
