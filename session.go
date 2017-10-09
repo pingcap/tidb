@@ -704,7 +704,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			stmt, err1 := Compile(s, stmtNode)
 			if err1 != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
-				s.RollbackTxn()
+				err2 := s.RollbackTxn()
+				terror.Log(err2)
 				return nil, errors.Trace(err1)
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
