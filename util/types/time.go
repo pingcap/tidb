@@ -217,11 +217,13 @@ func (t *Time) IsNegative() bool {
 func (t Time) String() string {
 	if t.Type == mysql.TypeDate {
 		// We control the format, so no error would occur.
-		str, _ := t.DateFormat("%Y-%m-%d")
+		str, err := t.DateFormat("%Y-%m-%d")
+		terror.Log(err)
 		return str
 	}
 
-	str, _ := t.DateFormat("%Y-%m-%d %H:%i:%s")
+	str, err := t.DateFormat("%Y-%m-%d %H:%i:%s")
+	terror.Log(err)
 	if t.Fsp > 0 {
 		tmp := fmt.Sprintf(".%06d", t.Time.Microsecond())
 		str = str + tmp[:1+t.Fsp]
@@ -274,7 +276,8 @@ func (t Time) ToNumber() *MyDecimal {
 
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
-	dec.FromString([]byte(s))
+	err = dec.FromString([]byte(s))
+	terror.Log(err)
 	return dec
 }
 
@@ -495,8 +498,10 @@ func (t *Time) Sub(t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
 		// TODO: Consider time_zone variable.
-		a, _ := t.Time.GoTime(gotime.Local)
-		b, _ := t1.Time.GoTime(gotime.Local)
+		a, err := t.Time.GoTime(gotime.Local)
+		terror.Log(err)
+		b, err := t1.Time.GoTime(gotime.Local)
+		terror.Log(err)
 		duration = a.Sub(b)
 	} else {
 		seconds, microseconds, neg := calcTimeDiff(t.Time, t1.Time, 1)
@@ -854,7 +859,8 @@ func (d Duration) ToNumber() *MyDecimal {
 
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
-	dec.FromString([]byte(s))
+	err := dec.FromString([]byte(s))
+	terror.Log(err)
 	return dec
 }
 

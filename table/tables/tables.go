@@ -272,7 +272,10 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
-		t.addUpdateBinlog(ctx, binlogOldRow, binlogNewRow, binlogColIDs)
+		err = t.addUpdateBinlog(ctx, binlogOldRow, binlogNewRow, binlogColIDs)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -287,7 +290,7 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched []bool, 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if t.removeRowIndex(rm, h, oldVs, idx); err != nil {
+			if err = t.removeRowIndex(rm, h, oldVs, idx); err != nil {
 				return errors.Trace(err)
 			}
 			break
@@ -379,7 +382,10 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		// For insert, TiDB and Binlog can use same row and schema.
 		binlogRow = row
 		binlogColIDs = colIDs
-		t.addInsertBinlog(ctx, recordID, binlogRow, binlogColIDs)
+		err = t.addInsertBinlog(ctx, recordID, binlogRow, binlogColIDs)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 	}
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
