@@ -1101,7 +1101,7 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	if cache.EnablePlanCache {
-		s.planCache = cache.NewShardedLRUCache(100, 1000)
+		s.planCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity/10, cache.PlanCacheCapacity)
 		s.planBuildOnReadOnly = true
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
@@ -1123,7 +1123,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionVars: variable.NewSessionVars(),
 	}
 	if cache.EnablePlanCache {
-		s.planCache = cache.NewShardedLRUCache(100, 1000)
+		s.planCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity/10, cache.PlanCacheCapacity)
 		s.planBuildOnReadOnly = true
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
