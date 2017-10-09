@@ -62,8 +62,7 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
 		}
-		fun := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
-		return fun
+		return NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
 	}
 	return expr
 }
@@ -213,8 +212,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 			return PushDownNot(f.GetArgs()[0], !not, f.GetCtx())
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				nf := NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
-				return nf
+				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
@@ -226,8 +224,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf := NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
-				return nf
+				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
@@ -239,8 +236,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf := NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
-				return nf
+				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
