@@ -14,8 +14,6 @@
 package cache
 
 import (
-	"fmt"
-	"hash"
 	"runtime/debug"
 	"sync"
 
@@ -25,19 +23,16 @@ import (
 
 // ShardedLRUCache is a sharded LRU Cache.
 type ShardedLRUCache struct {
-	shards   []*SimpleLRUCache
-	locks    []sync.RWMutex
-	hashFunc hash.Hash32
+	shards []*SimpleLRUCache
+	locks  []sync.RWMutex
 }
 
 // NewShardedLRUCache creates a ShardedLRUCache.
 func NewShardedLRUCache(shardCount, capacity int64) *ShardedLRUCache {
-	fmt.Printf("NewShardedLRUCache: shardCount=%v, capacity=%v\n", shardCount, capacity)
 	debug.PrintStack()
 	shardedLRUCache := &ShardedLRUCache{
-		shards:   make([]*SimpleLRUCache, 0, shardCount),
-		locks:    make([]sync.RWMutex, shardCount),
-		hashFunc: murmur3.New32(),
+		shards: make([]*SimpleLRUCache, 0, shardCount),
+		locks:  make([]sync.RWMutex, shardCount),
 	}
 	for i := int64(0); i < shardCount; i++ {
 		shardedLRUCache.shards = append(shardedLRUCache.shards, NewSimpleLRUCache(capacity/shardCount))
@@ -45,15 +40,20 @@ func NewShardedLRUCache(shardCount, capacity int64) *ShardedLRUCache {
 	return shardedLRUCache
 }
 
-// Get gets a value from a ShardedLRUCache.
-func (s *ShardedLRUCache) Get(key Key) (Value, bool) {
-	s.hashFunc.Reset()
+func (s *ShardedLRUCache) hash(key Key) int {
+	hashFunc := murmur3.New32()
 
 	// hash.Hash32.Write() should never returns an error
-	if _, err := s.hashFunc.Write(key.Hash()); err != nil {
+	if _, err := hashFunc.Write(key.Hash()); err != nil {
 		terror.Log(err)
 	}
-	id := s.hashFunc.Sum32() % uint32(len(s.shards))
+
+	return int(hashFunc.Sum32() % uint32(len(s.shards)))
+}
+
+// Get gets a value from a ShardedLRUCache.
+func (s *ShardedLRUCache) Get(key Key) (Value, bool) {
+	id := s.hash(key)
 
 	s.locks[id].Lock()
 	value, ok := s.shards[id].Get(key)
@@ -64,13 +64,7 @@ func (s *ShardedLRUCache) Get(key Key) (Value, bool) {
 
 // Put puts a (key, value) pair to a ShardedLRUCache.
 func (s *ShardedLRUCache) Put(key Key, value Value) {
-	s.hashFunc.Reset()
-
-	// hash.Hash32.Write() should never returns an error
-	if _, err := s.hashFunc.Write(key.Hash()); err != nil {
-		terror.Log(err)
-	}
-	id := s.hashFunc.Sum32() % uint32(len(s.shards))
+	id := s.hash(key)
 
 	s.locks[id].Lock()
 	s.shards[id].Put(key, value)

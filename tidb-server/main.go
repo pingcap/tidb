@@ -319,6 +319,7 @@ func setGlobalVars() {
 
 	cache.EnablePlanCache = cfg.PlanCache.Enabled
 	cache.PlanCacheCapacity = cfg.PlanCache.Capacity
+	tidb.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity/10, cache.PlanCacheCapacity)
 }
 
 func setupLog() {

@@ -114,7 +114,7 @@ func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.Sta
 	h.history = append(h.history, s)
 }
 
-var globalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity/10, cache.PlanCacheCapacity)
+var GlobalPlanCache *cache.ShardedLRUCache
 
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
@@ -670,7 +670,6 @@ func (s *session) executeWithPlanCache(sql string) ([]ast.RecordSet, error) {
 	cacheKey := cache.NewSQLCacheKey(schemaVersion, sqlMode, timeZoneOffset, snapshot, s.Txn() == nil || s.Txn().IsReadOnly(), database, sql)
 
 	if cacheValue, exists := s.planCache.Get(cacheKey); exists {
-		fmt.Printf("session[%p] use plan cache[%p] for sql: \"%s\"\n", s, s.planCache, sql)
 		stmt := cacheValue.(*cache.SQLCacheValue).Stmt
 		stmtNode := cacheValue.(*cache.SQLCacheValue).Ast
 		s.PrepareTxnCtx()
@@ -690,7 +689,6 @@ func (s *session) executeWithPlanCache(sql string) ([]ast.RecordSet, error) {
 			recordSets = append(recordSets, recordSet)
 		}
 	} else {
-		fmt.Printf("cache miss: \"%s\"\n", sql)
 		charset, collation := s.sessionVars.GetCharsetInfo()
 		startTS := time.Now()
 		stmtNodes, err := s.ParseSQL(sql, charset, collation)
@@ -1099,7 +1097,7 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	if cache.EnablePlanCache {
-		s.planCache = globalPlanCache
+		s.planCache = GlobalPlanCache
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
@@ -1120,7 +1118,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionVars: variable.NewSessionVars(),
 	}
 	if cache.EnablePlanCache {
-		s.planCache = globalPlanCache
+		s.planCache = GlobalPlanCache
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, dom)
