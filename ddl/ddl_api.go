@@ -206,7 +206,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	if tp.Flen == types.UnspecifiedLength {
 		tp.Flen = defaultFlen
 		if mysql.HasUnsignedFlag(tp.Flag) && tp.Tp != mysql.TypeLonglong && mysql.IsIntegerType(tp.Tp) {
-			// Issue #4684: unsigned integer(except bigint) is one fewer flen than signed integer
+			// Issue #4684: the flen of unsigned integer(except bigint) is 1 digit shorter than signed integer
 			// because it has no prefix "+" or "-" character.
 			tp.Flen--
 		}
