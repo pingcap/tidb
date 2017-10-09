@@ -140,7 +140,10 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 	}
 	aggCtxs := e.getContexts(groupKey)
 	for i, af := range e.AggFuncs {
-		af.Update(aggCtxs[i], e.sc, srcRow)
+		err = af.Update(aggCtxs[i], e.sc, srcRow)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 	}
 	return true, nil
 }

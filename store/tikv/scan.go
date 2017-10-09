@@ -141,7 +141,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
-				StartKey: []byte(s.nextStartKey),
+				StartKey: s.nextStartKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 			},

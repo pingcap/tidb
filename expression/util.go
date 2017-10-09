@@ -67,66 +67,6 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 	return expr
 }
 
-func datumsToConstants(datums []types.Datum) []Expression {
-	constants := make([]Expression, 0, len(datums))
-	for _, d := range datums {
-		ft := kindToFieldType(d.Kind())
-		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
-		constants = append(constants, &Constant{Value: d, RetType: &ft})
-	}
-	return constants
-}
-
-func primitiveValsToConstants(args []interface{}) []Expression {
-	cons := datumsToConstants(types.MakeDatums(args...))
-	for i, arg := range args {
-		types.DefaultTypeForValue(arg, cons[i].GetType())
-	}
-	return cons
-}
-
-func kindToFieldType(kind byte) types.FieldType {
-	ft := types.FieldType{}
-	switch kind {
-	case types.KindNull:
-		ft.Tp = mysql.TypeNull
-	case types.KindInt64:
-		ft.Tp = mysql.TypeLonglong
-	case types.KindUint64:
-		ft.Tp = mysql.TypeLonglong
-		ft.Flag |= mysql.UnsignedFlag
-	case types.KindMinNotNull:
-		ft.Tp = mysql.TypeLonglong
-	case types.KindMaxValue:
-		ft.Tp = mysql.TypeLonglong
-	case types.KindFloat32:
-		ft.Tp = mysql.TypeDouble
-	case types.KindFloat64:
-		ft.Tp = mysql.TypeDouble
-	case types.KindString:
-		ft.Tp = mysql.TypeVarString
-	case types.KindBytes:
-		ft.Tp = mysql.TypeVarString
-	case types.KindMysqlEnum:
-		ft.Tp = mysql.TypeEnum
-	case types.KindMysqlSet:
-		ft.Tp = mysql.TypeSet
-	case types.KindInterface:
-		ft.Tp = mysql.TypeVarString
-	case types.KindMysqlDecimal:
-		ft.Tp = mysql.TypeNewDecimal
-	case types.KindMysqlDuration:
-		ft.Tp = mysql.TypeDuration
-	case types.KindMysqlTime:
-		ft.Tp = mysql.TypeDatetime
-	case types.KindBinaryLiteral:
-		ft.Tp = mysql.TypeVarString
-	case types.KindMysqlBit:
-		ft.Tp = mysql.TypeBit
-	}
-	return ft
-}
-
 // getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.
 func getValidPrefix(s string, base int64) string {
 	var (

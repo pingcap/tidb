@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -37,7 +38,8 @@ func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	c.NullCount += rc.NullCount
 	c.Sketch.mergeFMSketch(rc.Sketch)
 	for _, val := range rc.Samples {
-		c.collect(val, false)
+		err := c.collect(val, false)
+		terror.Log(err)
 	}
 }
 
