@@ -178,7 +178,8 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 			expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		}
-		l, err := popRowArg(er.ctx, l)
+		var err error
+		l, err = popRowArg(er.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
