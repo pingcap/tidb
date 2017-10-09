@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
@@ -95,6 +96,13 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	return FoldConstant(sf), nil
 }
 
+// NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
+func NewFunctionInternal(ctx context.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
+	expr, err := NewFunction(ctx, funcName, retType, args...)
+	terror.Log(err)
+	return expr
+}
+
 // ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
 func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 	result := make([]Expression, 0, len(funcs))
@@ -133,7 +141,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		}
 		return NewValuesFunc(offset, sf.GetType(), sf.GetCtx())
 	}
-	newFunc, _ := NewFunction(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
+	newFunc := NewFunctionInternal(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
 	return newFunc
 }
 
@@ -247,15 +255,16 @@ func (sf *ScalarFunction) EvalJSON(row []types.Datum, sc *variable.StatementCont
 
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode() []byte {
-	var bytes []byte
 	v := make([]types.Datum, 0, len(sf.GetArgs())+1)
-	bytes, _ = codec.EncodeValue(bytes, types.NewStringDatum(sf.FuncName.L))
+	bytes, err := codec.EncodeValue(nil, types.NewStringDatum(sf.FuncName.L))
+	terror.Log(err)
 	v = append(v, types.NewBytesDatum(bytes))
 	for _, arg := range sf.GetArgs() {
 		v = append(v, types.NewBytesDatum(arg.HashCode()))
 	}
 	bytes = bytes[:0]
-	bytes, _ = codec.EncodeValue(bytes, v...)
+	bytes, err = codec.EncodeValue(bytes, v...)
+	terror.Log(err)
 	return bytes
 }
 

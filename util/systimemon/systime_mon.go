@@ -25,13 +25,11 @@ func StartMonitor(now func() time.Time, systimeErrHandler func()) {
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		last := now()
-		select {
-		case <-tick.C:
-			if now().Sub(last) < 0 {
-				log.Errorf("system time jump backward, last:%v", last)
-				systimeErrHandler()
-			}
+		last := now().UnixNano()
+		<-tick.C
+		if now().UnixNano() < last {
+			log.Errorf("system time jump backward, last:%v", last)
+			systimeErrHandler()
 		}
 	}
 }

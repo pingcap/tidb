@@ -392,15 +392,27 @@ func decodeJSONArray(a *[]JSON, data []byte) (err error) {
 	var reader = bytes.NewReader(data)
 
 	var countAndSize = make([]uint32, 2)
-	binary.Read(reader, binary.LittleEndian, &countAndSize[0])
-	binary.Read(reader, binary.LittleEndian, &countAndSize[1])
+	err = binary.Read(reader, binary.LittleEndian, &countAndSize[0])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = binary.Read(reader, binary.LittleEndian, &countAndSize[1])
+	if err != nil {
+		return errors.Trace(err)
+	}
 	*a = make([]JSON, countAndSize[0])
 
 	var valueTypes = make([]byte, countAndSize[0])
 	var valueOffsets = make([]uint32, countAndSize[0])
 	for i := 0; i < int(countAndSize[0]); i++ {
-		binary.Read(reader, binary.LittleEndian, &valueTypes[i])
-		binary.Read(reader, binary.LittleEndian, &valueOffsets[i])
+		err = binary.Read(reader, binary.LittleEndian, &valueTypes[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = binary.Read(reader, binary.LittleEndian, &valueOffsets[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for i := 0; i < int(countAndSize[0]); i++ {

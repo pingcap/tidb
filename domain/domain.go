@@ -541,7 +541,7 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 }
 
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
-var RunAutoAnalyze = false
+var RunAutoAnalyze = true
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.

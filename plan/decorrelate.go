@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -129,7 +130,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				proj.SetParents(apply.Parents()...)
-				np, _ := s.optimize(p, nil, nil)
+				np, err := s.optimize(p, nil, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				proj.SetChildren(np)
 				np.SetParents(proj)
 				return proj, nil
@@ -152,7 +156,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				agg.SetParents(apply.Parents()...)
-				np, _ := s.optimize(p, nil, nil)
+				np, err := s.optimize(p, nil, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				agg.SetChildren(np)
 				np.SetParents(agg)
 				agg.collectGroupByColumns()
@@ -162,7 +169,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
+		np, err := s.optimize(child.(LogicalPlan), nil, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		newChildren = append(newChildren, np)
 		np.SetParents(p)
 	}

@@ -445,11 +445,11 @@ func (a *aggregationOptimizer) rewriteCount(exprs []expression.Expression) expre
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
-		isNullExpr, _ := expression.NewFunction(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
+		isNullExpr := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
 		isNullExprs = append(isNullExprs, isNullExpr)
 	}
 	innerExpr := expression.ComposeDNFCondition(a.ctx, isNullExprs...)
-	newExpr, _ := expression.NewFunction(a.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
+	newExpr := expression.NewFunctionInternal(a.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
 	return newExpr
 }
 
