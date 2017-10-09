@@ -211,7 +211,10 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		ctx.eval = xeval.NewEvaluator(ctx.sc, loc)
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
-			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
+			err = collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		if len(sel.OrderBy) > 0 {
 			if sel.OrderBy[0].Expr == nil {
@@ -230,7 +233,10 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 				}
 				ctx.topnColumns = make(map[int64]*tipb.ColumnInfo)
 				for _, item := range sel.OrderBy {
-					collectColumnsInExpr(item.Expr, ctx, ctx.topnColumns)
+					err = collectColumnsInExpr(item.Expr, ctx, ctx.topnColumns)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 				}
 				for k := range ctx.whereColumns {
 					// It will be handled in where.
@@ -246,12 +252,18 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			for _, agg := range sel.Aggregates {
 				aggExpr := &aggregateFuncExpr{expr: agg}
 				ctx.aggregates = append(ctx.aggregates, aggExpr)
-				collectColumnsInExpr(agg, ctx, ctx.aggColumns)
+				err = collectColumnsInExpr(agg, ctx, ctx.aggColumns)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			ctx.groups = make(map[string]bool)
 			ctx.groupKeys = make([][]byte, 0)
 			for _, item := range ctx.sel.GetGroupBy() {
-				collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
+				err = collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			for k := range ctx.whereColumns {
 				// It will be handled in where.

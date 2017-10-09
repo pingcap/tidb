@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
@@ -366,7 +367,8 @@ func (s *session) String() string {
 	if len(sessVars.PreparedStmts) > 0 {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
 	}
-	b, _ := json.MarshalIndent(data, "", "  ")
+	b, err := json.MarshalIndent(data, "", "  ")
+	terror.Log(err)
 	return string(b)
 }
 
@@ -529,7 +531,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -542,7 +547,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -661,7 +669,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
-			s.RollbackTxn()
+			err2 := s.RollbackTxn()
+			terror.Log(err2)
 			return nil, errors.Trace(err1)
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -872,7 +881,8 @@ func getHostByIP(ip string) []string {
 	if ip == "127.0.0.1" {
 		return []string{"localhost"}
 	}
-	addrs, _ := net.LookupAddr(ip)
+	addrs, err := net.LookupAddr(ip)
+	terror.Log(err)
 	return addrs
 }
 
@@ -1092,7 +1102,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	for _, row := range rows {
 		varName := row.Data[0].GetString()
 		if _, ok := vars.Systems[varName]; !ok {
-			varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
+			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	vars.CommonGlobalLoaded = true
