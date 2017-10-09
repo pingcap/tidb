@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -64,7 +65,8 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 				}
 			}
 		} else if upperX == types.ZeroDatetimeStr {
-			value, _ = types.ParseTimeFromNum(0, tp, fsp)
+			value, err = types.ParseTimeFromNum(0, tp, fsp)
+			terror.Log(err)
 		} else {
 			value, err = types.ParseTime(x, tp, fsp)
 			if err != nil {
