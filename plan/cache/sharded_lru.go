@@ -14,22 +14,31 @@
 package cache
 
 import (
-	"runtime/debug"
 	"sync"
 
 	"github.com/pingcap/tidb/terror"
 	"github.com/spaolacci/murmur3"
 )
 
-// ShardedLRUCache is a sharded LRU Cache.
+var (
+	// EnablePlanCache stores the global config "enable-plan-cache".
+	EnablePlanCache bool
+	// PlanCacheShards stores the global config "plan-cache-shards".
+	PlanCacheShards int64 = 200
+	// PlanCacheCapacity stores the global config "plan-cache-capacity".
+	PlanCacheCapacity int64 = 1000
+	// GlobalPlanCache stores the global plan cache for every session in a tidb-server
+	GlobalPlanCache *ShardedLRUCache
+)
+
+// ShardedLRUCache is a sharded LRU Cache, thread safe.
 type ShardedLRUCache struct {
 	shards []*SimpleLRUCache
 	locks  []sync.RWMutex
 }
 
 // NewShardedLRUCache creates a ShardedLRUCache.
-func NewShardedLRUCache(shardCount, capacity int64) *ShardedLRUCache {
-	debug.PrintStack()
+func NewShardedLRUCache(capacity, shardCount int64) *ShardedLRUCache {
 	shardedLRUCache := &ShardedLRUCache{
 		shards: make([]*SimpleLRUCache, 0, shardCount),
 		locks:  make([]sync.RWMutex, shardCount),

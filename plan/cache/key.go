@@ -14,76 +14,80 @@
 package cache
 
 import (
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
+	"time"
 )
 
-var (
-	// EnablePlanCache stores the global config "enable-plan-cache".
-	EnablePlanCache bool
-	// PlanCacheCapacity stores the global config "plan-cache-capacity".
-	PlanCacheCapacity int64 = 1000
-)
+// Key is the interface that every key in LRU Cache should implement.
+type Key interface {
+	Hash() []byte
+}
 
 type sqlCacheKey struct {
+	user           string
+	host           string
+	database       string
+	sql            string
+	snapshot       uint64
 	schemaVersion  int64
 	sqlMode        mysql.SQLMode
 	timeZoneOffset int
-	snapshot       uint64
 	readOnly       bool
-	database       string
-	sql            string
-	hash           []byte
+
+	hash []byte
 }
 
 // Hash implements Key interface.
-func (sck *sqlCacheKey) Hash() []byte {
-	if sck.hash == nil {
-		dbBytes := []byte(sck.database)
-		sqlBytes := []byte(sck.sql)
+func (key *sqlCacheKey) Hash() []byte {
+	if key.hash == nil {
+		var (
+			userBytes  = []byte(key.user)
+			hostBytes  = []byte(key.host)
+			dbBytes    = []byte(key.database)
+			sqlBytes   = []byte(key.sql)
+			bufferSize = len(userBytes) + len(hostBytes) + len(dbBytes) + len(sqlBytes) + 8*4 + 1
+		)
 
-		bufferSize := 8*4 + len(dbBytes) + len(sqlBytes) + 1
-		sck.hash = make([]byte, 0, bufferSize)
-
-		sck.hash = codec.EncodeInt(sck.hash, sck.schemaVersion)
-		sck.hash = codec.EncodeInt(sck.hash, int64(sck.sqlMode))
-		sck.hash = codec.EncodeInt(sck.hash, int64(sck.timeZoneOffset))
-		sck.hash = codec.EncodeInt(sck.hash, int64(sck.snapshot))
-		if sck.readOnly {
-			sck.hash = append(sck.hash, '1')
+		key.hash = make([]byte, 0, bufferSize)
+		key.hash = append(key.hash, userBytes...)
+		key.hash = append(key.hash, hostBytes...)
+		key.hash = append(key.hash, dbBytes...)
+		key.hash = append(key.hash, sqlBytes...)
+		key.hash = codec.EncodeInt(key.hash, int64(key.snapshot))
+		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
+		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
+		key.hash = codec.EncodeInt(key.hash, int64(key.timeZoneOffset))
+		if key.readOnly {
+			key.hash = append(key.hash, '1')
 		} else {
-			sck.hash = append(sck.hash, '0')
+			key.hash = append(key.hash, '0')
 		}
-		sck.hash = append(sck.hash, dbBytes...)
-		sck.hash = append(sck.hash, sqlBytes...)
 	}
-	return sck.hash
+	return key.hash
 }
 
 // NewSQLCacheKey creates a new sqlCacheKey object.
-func NewSQLCacheKey(schemaVersion int64, sqlMode mysql.SQLMode, timeZoneOffset int, snapshot uint64, readOnly bool, database, sql string) Key {
-	return &sqlCacheKey{
-		schemaVersion:  schemaVersion,
-		sqlMode:        sqlMode,
-		timeZoneOffset: timeZoneOffset,
-		snapshot:       snapshot,
-		readOnly:       readOnly,
-		database:       database,
-		sql:            sql,
+func NewSQLCacheKey(sessionVars *variable.SessionVars, sql string, schemaVersion int64, readOnly bool) Key {
+	timeZoneOffset, user, host := 0, "", ""
+	if sessionVars.TimeZone != nil {
+		_, timeZoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
-}
+	if sessionVars.User != nil {
+		user = sessionVars.User.Username
+		host = sessionVars.User.Hostname
+	}
 
-// SQLCacheValue stores the cached Statement and StmtNode.
-type SQLCacheValue struct {
-	Stmt ast.Statement
-	Ast  ast.StmtNode
-}
-
-// NewSQLCacheValue creates a SQLCacheValue.
-func NewSQLCacheValue(stmt ast.Statement, ast ast.StmtNode) *SQLCacheValue {
-	return &SQLCacheValue{
-		Stmt: stmt,
-		Ast:  ast,
+	return &sqlCacheKey{
+		user:           user,
+		host:           host,
+		database:       sessionVars.CurrentDB,
+		sql:            sql,
+		snapshot:       sessionVars.SnapshotTS,
+		schemaVersion:  schemaVersion,
+		sqlMode:        sessionVars.SQLMode,
+		timeZoneOffset: timeZoneOffset,
+		readOnly:       readOnly,
 	}
 }

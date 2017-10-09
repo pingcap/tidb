@@ -93,6 +93,7 @@ type XProtocol struct {
 type PlanCache struct {
 	Enabled  bool  `toml:"enable-plan-cache" json:"enable-plan-cache"`
 	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`
+	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
 }
 
 var defaultConf = Config{
@@ -131,6 +132,7 @@ var defaultConf = Config{
 	PlanCache: PlanCache{
 		Enabled:  true,
 		Capacity: 1000,
+		Shards:   200,
 	},
 }
 

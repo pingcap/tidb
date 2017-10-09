@@ -17,15 +17,6 @@ import (
 	"container/list"
 )
 
-// Key is the interface that every key in LRU Cache should implement.
-type Key interface {
-	Hash() []byte
-}
-
-// Value is the interface that every value in LRU Cache should implement.
-type Value interface {
-}
-
 // cacheEntry wraps Key and Value. It's the value of list.Element.
 type cacheEntry struct {
 	key   Key
@@ -60,8 +51,7 @@ func (l *SimpleLRUCache) moveToFront(element *list.Element) {
 
 // Get trys to find the corresponding value according to the given key.
 func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
-	hash := string(key.Hash())
-	element, exists := l.elements[hash]
+	element, exists := l.elements[string(key.Hash())]
 	if !exists {
 		return nil, false
 	}
@@ -89,11 +79,8 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 
 	for l.size > l.capacity {
 		lru := l.cache.Back()
-		lruEntry := lru.Value.(*cacheEntry)
-		lruKey := lruEntry.key
-		lruHash := string(lruKey.Hash())
 		l.cache.Remove(lru)
-		delete(l.elements, lruHash)
+		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
 	}
 }
