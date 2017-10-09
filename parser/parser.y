@@ -478,11 +478,11 @@ import (
 	ShowStmt			"Show engines/databases/tables/columns/warnings/status statement"
 	Statement			"statement"
 	ExplainableStmt			"explainable statement"
-	TruncateTableStmt	"TRANSACTION TABLE statement"
-	UnlockTablesStmt	"Unlock tables statement"
-	UpdateStmt		"UPDATE statement"
-	UnionStmt		"Union select state ment"
-	UseStmt			"USE statement"
+	TruncateTableStmt		"TRANSACTION TABLE statement"
+	UnlockTablesStmt		"Unlock tables statement"
+	UpdateStmt			"UPDATE statement"
+	UnionStmt			"Union select state ment"
+	UseStmt				"USE statement"
 
 %type   <item>
 	AlterTableSpec			"Alter table specification"
