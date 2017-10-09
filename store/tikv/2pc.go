@@ -21,7 +21,6 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -162,7 +161,7 @@ func (c *twoPhaseCommitter) primary() []byte {
 
 const bytesPerMiB = 1024 * 1024
 
-func txnLockTTL(startTime monotime.Time, txnSize int) uint64 {
+func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	// Increase lockTTL for large transactions.
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
 	// When writeSize is less than 256KB, the base ttl is defaultTTL (3s);
@@ -182,7 +181,7 @@ func txnLockTTL(startTime monotime.Time, txnSize int) uint64 {
 	// Increase lockTTL by the transaction's read time.
 	// When resolving a lock, we compare current ts and startTS+lockTTL to decide whether to clean up. If a txn
 	// takes a long time to read, increasing its TTL will help to prevent it from been aborted soon after prewrite.
-	elapsed := time.Duration(monotime.Now()-startTime) / time.Millisecond
+	elapsed := time.Since(startTime) / time.Millisecond
 	return lockTTL + uint64(elapsed)
 }
 

@@ -16,7 +16,6 @@ import:
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
-  - pkg/monotime
   - contrib/recipes
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
