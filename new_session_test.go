@@ -494,6 +494,21 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	// drop
 	tk.MustExec("drop table t")
 	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
+
+	tk.MustExec("create table t (c2 int, c3 int, c1 int not null auto_increment, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t set c2 = 30")
+
+	// insert values
+	lastInsertID := tk.Se.LastInsertID()
+	tk.MustExec("prepare stmt1 from 'insert into t (c2) values (?)'")
+	tk.MustExec("set @v1=10")
+	tk.MustExec("set @v2=20")
+	tk.MustExec("execute stmt1 using @v1")
+	tk.MustExec("execute stmt1 using @v2")
+	tk.MustExec("deallocate prepare stmt1")
+	currLastInsertID := tk.Se.GetSessionVars().PrevLastInsertID
+	tk.MustQuery("select c1 from t where c2 = 20").Check(testkit.Rows(fmt.Sprint(currLastInsertID)))
+	c.Assert(lastInsertID+2, Equals, currLastInsertID)
 }
 
 func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
@@ -1102,6 +1117,85 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery(`select 0x01 + 1, x'4D7953514C' = "MySQL"`).Check(testkit.Rows("2 1"))
 	tk.MustQuery(`select 0b01 + 1, 0b01000001 = "A"`).Check(testkit.Rows("2 1"))
+}
+
+func (s *testSessionSuite) TestIssue986(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	sqlText := `CREATE TABLE address (
+ 		id bigint(20) NOT NULL AUTO_INCREMENT,
+ 		PRIMARY KEY (id));`
+	tk.MustExec(sqlText)
+	tk.MustExec(`insert into address values ('10')`)
+}
+
+func (s *testSessionSuite) TestIssue1089(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("select cast(0.5 as unsigned)")
+	tk.MustQuery("select cast(-0.5 as signed)")
+}
+
+func (s *testSessionSuite) TestTableInfoMeta(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	checkResult := func(affectedRows uint64, insertID uint64) {
+		gotRows := tk.Se.AffectedRows()
+		c.Assert(gotRows, Equals, affectedRows)
+
+		gotID := tk.Se.LastInsertID()
+		c.Assert(gotID, Equals, insertID)
+	}
+
+	// create table
+	tk.MustExec("CREATE TABLE tbl_test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+
+	// insert data
+	tk.MustExec(`INSERT INTO tbl_test VALUES (1, "hello");`)
+	checkResult(1, 0)
+
+	tk.MustExec(`INSERT INTO tbl_test VALUES (2, "hello");`)
+	checkResult(1, 0)
+
+	tk.MustExec(`UPDATE tbl_test SET name = "abc" where id = 2;`)
+	checkResult(1, 0)
+
+	tk.MustExec(`DELETE from tbl_test where id = 2;`)
+	checkResult(1, 0)
+
+	// select data
+	tk.MustQuery("select * from tbl_test").Check(testkit.Rows("1 hello"))
+}
+
+func (s *testSessionSuite) TestCaseInsensitive(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table T (a text, B int)")
+	tk.MustExec("insert t (A, b) values ('aaa', 1)")
+	rs, _ := tk.Exec("select * from t")
+	fields, err := rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fields[0].ColumnAsName.O, Equals, "a")
+	c.Assert(fields[1].ColumnAsName.O, Equals, "B")
+	rs, _ = tk.Exec("select A, b from t")
+	fields, err = rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
+	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
+	rs, _ = tk.Exec("select a as A from t where A > 0")
+	fields, err = rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
+	tk.MustExec("update T set b = B + 1")
+	tk.MustExec("update T set B = b + 1")
+	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
+}
+
+// Testcase for delete panic
+func (s *testSessionSuite) TestDeletePanic(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (c int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("delete from `t` where `c` = ?", 1)
+	tk.MustExec("delete from `t` where `c` = ?", 2)
 }
 
 var _ = Suite(&testSchemaSuite{})
