@@ -261,14 +261,18 @@ func (w *GCWorker) tick(ctx goctx.Context) {
 	isLeader, err := w.checkLeader()
 	if err != nil {
 		log.Warnf("[gc worker] check leader err: %v", err)
+		log.Infof("[gc worker] check leader err: %v", err)
 		return
 	}
 	if isLeader {
+		log.Info("This is leader")
 		err = w.leaderTick(ctx)
 		if err != nil {
 			log.Warnf("[gc worker] leader tick err: %v", err)
+			log.Infof("[gc worker] leader tick err: %v", err)
 		}
 	} else {
+		log.Info("Not Leader, Return")
 		// Config metrics should always be updated by leader, set them to 0 when current instance is not leader.
 		gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
 		gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
@@ -295,17 +299,21 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 // Leader of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 	if w.gcIsRunning {
+		log.Infof("There is another gc worker running")
 		return nil
 	}
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
+		log.Info("prepare ok:", ok)
+		log.Info("prepare err:", err)
 		w.gcIsRunning = false
 		return errors.Trace(err)
 	}
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
 	if time.Since(w.lastFinish) < gcWaitTime {
+		log.Infof("last Finish:(%v), now: (%v)", w.lastFinish, time.Now())
 		w.gcIsRunning = false
 		return nil
 	}
@@ -364,6 +372,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	}
 
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
+		log.Infof("lastRun (%v) + (%v) shoule be less than now (%v)", lastRun, *runInterval, time.Now())
 		return false, nil
 	}
 
@@ -406,6 +415,8 @@ func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier 
 }
 
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
+	log.Info("we can resolve lock")
+	return
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
 	if err != nil {

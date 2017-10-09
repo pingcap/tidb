@@ -37,6 +37,8 @@ type LockResolver struct {
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}
+	cntTxnStatus int
+	costTxnStatus time.Duration
 }
 
 func newLockResolver(store *tikvStore) *LockResolver {
