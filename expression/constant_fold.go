@@ -20,7 +20,6 @@ import (
 // FoldConstant does constant folding optimization on an expression.
 // isRecursive indicates whether folding constant in current layer or recursively.
 func FoldConstant(expr Expression, isRecursive bool) Expression {
-	isRecursive = isRecursiveGlobal
 	scalarFunc, ok := expr.(*ScalarFunction)
 	if !ok || !scalarFunc.Function.canBeFolded() {
 		return expr

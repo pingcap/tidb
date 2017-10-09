@@ -30,8 +30,6 @@ import (
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
-var isRecursiveGlobal = true
-
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
