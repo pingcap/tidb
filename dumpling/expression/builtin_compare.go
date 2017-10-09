@@ -883,12 +883,12 @@ func refineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Consta
 	}
 	switch op {
 	case opcode.LT, opcode.GE:
-		resultExpr, _ := NewFunction(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
+		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
 			return tryToConvertConstantInt(ctx, resultCon)
 		}
 	case opcode.LE, opcode.GT:
-		resultExpr, _ := NewFunction(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
+		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
 			return tryToConvertConstantInt(ctx, resultCon)
 		}

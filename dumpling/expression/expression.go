@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 )
@@ -127,7 +128,7 @@ func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, 
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(ctx, funcName,
+	expr := NewFunctionInternal(ctx, funcName,
 		types.NewFieldType(mysql.TypeTiny),
 		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
 		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
@@ -296,7 +297,8 @@ func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) Expre
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
-	bt, _ := fc.getFunction(ctx, nil)
+	bt, err := fc.getFunction(ctx, nil)
+	terror.Log(err)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,

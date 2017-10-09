@@ -842,18 +842,20 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 		ret.SetUint64(val)
 	case KindMysqlTime:
 		dec := d.GetMysqlTime().ToNumber()
-		dec.Round(dec, 0, ModeHalfEven)
+		err = dec.Round(dec, 0, ModeHalfEven)
 		ival, err1 := dec.ToInt()
-		val, err = ConvertIntToUint(ival, upperBound, tp)
+		if err == nil {
+			err = err1
+		}
+		val, err1 = ConvertIntToUint(ival, upperBound, tp)
 		if err == nil {
 			err = err1
 		}
 	case KindMysqlDuration:
 		dec := d.GetMysqlDuration().ToNumber()
-		dec.Round(dec, 0, ModeHalfEven)
-		var ival int64
-		ival, err = dec.ToInt()
-		if err == nil {
+		err = dec.Round(dec, 0, ModeHalfEven)
+		ival, err1 := dec.ToInt()
+		if err1 == nil {
 			val, err = ConvertIntToUint(ival, upperBound, tp)
 		}
 	case KindMysqlDecimal:
@@ -1381,8 +1383,11 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		return ival, err
 	case KindMysqlDecimal:
 		var to MyDecimal
-		d.GetMysqlDecimal().Round(&to, 0, ModeHalfEven)
-		ival, err := to.ToInt()
+		err := d.GetMysqlDecimal().Round(&to, 0, ModeHalfEven)
+		ival, err1 := to.ToInt()
+		if err == nil {
+			err = err1
+		}
 		ival, err2 := ConvertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
 			err = err2
