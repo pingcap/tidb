@@ -288,11 +288,10 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			cond: "eq(test.t.a, if(eq(test.t.a, 1), <nil>, test.t.a))",
 		},
 		// ifnull
-		// TODO: ifnull(null, a) will be wrapped with cast which can not be pushed down.
-		//{
-		//	sql:  "a = ifnull(null, a)",
-		//	cond: "eq(test.t.a, ifnull(<nil>, test.t.a))",
-		//},
+		{
+			sql:  "a = ifnull(null, a)",
+			cond: "eq(test.t.a, ifnull(<nil>, test.t.a))",
+		},
 		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",

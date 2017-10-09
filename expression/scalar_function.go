@@ -73,7 +73,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
 	if funcName == ast.Cast {
-		return NewCastFunc(retType, args[0], ctx), nil
+		return BuildCastFunction(ctx, args[0], retType), nil
 	}
 	fc, ok := funcs[funcName]
 	if !ok {

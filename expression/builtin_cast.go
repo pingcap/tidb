@@ -1296,7 +1296,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row []types.Datum) (res type
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
-func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType) *ScalarFunction {
+func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
@@ -1316,11 +1316,18 @@ func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)
-	return &ScalarFunction{
+	res = &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
 	}
+	// We do not fold CAST if the eval type of this scalar function is ETJson
+	// since we may reset the flag of the field type of CastAsJson later which would
+	// affect the evaluation of it.
+	if tp.EvalType() != types.ETJson {
+		res = FoldConstant(res)
+	}
+	return res
 }
 
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type
