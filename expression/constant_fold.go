@@ -18,26 +18,16 @@ import (
 )
 
 // FoldConstant does constant folding optimization on an expression.
-// isRecursive indicates whether folding constant in current layer or recursively.
-func FoldConstant(expr Expression, isRecursive bool) Expression {
+func FoldConstant(expr Expression) Expression {
 	scalarFunc, ok := expr.(*ScalarFunction)
 	if !ok || !scalarFunc.Function.canBeFolded() {
 		return expr
 	}
 	args := scalarFunc.GetArgs()
-	canFold := true
 	for i := 0; i < len(args); i++ {
-		foldedArg := args[i]
-		if isRecursive {
-			foldedArg = FoldConstant(args[i], true)
-			scalarFunc.GetArgs()[i] = foldedArg
+		if _, ok := args[i].(*Constant); !ok {
+			return expr
 		}
-		if _, ok := foldedArg.(*Constant); !ok {
-			canFold = false
-		}
-	}
-	if !canFold {
-		return expr
 	}
 	value, err := scalarFunc.Eval(nil)
 	if err != nil {

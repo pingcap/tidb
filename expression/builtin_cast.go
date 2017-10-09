@@ -1323,7 +1323,7 @@ func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType
 	// since we may reset the flag of the field type of CastAsJson later which would
 	// affect the evaluation of it.
 	if tp.EvalType() != types.ETJson {
-		res = FoldConstant(res, false)
+		res = FoldConstant(res)
 	}
 	return res
 }
