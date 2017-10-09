@@ -1957,6 +1957,7 @@ const (
 	checkRequestOff          = 0
 	checkRequestPriority     = 1
 	checkRequestNotFillCache = 2
+	checkRequestSyncLog      = 3
 )
 
 type checkRequestClient struct {
@@ -1966,6 +1967,7 @@ type checkRequestClient struct {
 	mu           struct {
 		sync.RWMutex
 		checkFlags uint32
+		syncLog    bool
 	}
 }
 
@@ -1984,6 +1986,16 @@ func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrp
 	} else if checkFlags == checkRequestNotFillCache {
 		if c.notFillCache != req.NotFillCache {
 			return nil, errors.New("fail to set not fail cache")
+		}
+	} else if checkFlags == checkRequestSyncLog {
+		switch req.Type {
+		case tikvrpc.CmdPrewrite, tikvrpc.CmdCommit:
+			c.mu.RLock()
+			syncLog := c.mu.syncLog
+			c.mu.RUnlock()
+			if syncLog != req.SyncLog {
+				return nil, errors.New("fail to set sync log")
+			}
 		}
 	}
 	return resp, err
@@ -2021,6 +2033,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
+	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1)")
 
 	cli := s.cli
@@ -2057,13 +2070,13 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
-	tk.MustExec("drop table t")
 }
 
 func (s *testContextOptionSuite) TestNotFillCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
+	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1)")
 
 	cli := s.cli
@@ -2076,6 +2089,30 @@ func (s *testContextOptionSuite) TestNotFillCache(c *C) {
 	cli.notFillCache = false
 	tk.MustQuery("select SQL_CACHE * from t")
 	tk.MustQuery("select * from t")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+}
+
+func (s *testContextOptionSuite) TestSyncLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	cli := s.cli
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestSyncLog
+	cli.mu.syncLog = true
+	cli.mu.Unlock()
+	tk.MustExec("create table t (id int primary key)")
+	cli.mu.Lock()
+	cli.mu.syncLog = false
+	cli.mu.Unlock()
+	tk.MustExec("insert into t values (1)")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
 }
 
 func (s *testSuite) TestHandleTransfer(c *C) {

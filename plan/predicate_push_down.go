@@ -80,7 +80,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		if len(p.parents) > 0 {
 			parent := p.parents[0]
 			newJoin.SetParents(parent)
-			parent.ReplaceChild(p, newJoin)
+			err = parent.ReplaceChild(p, newJoin)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
 		}
 		return newJoin.PredicatePushDown(predicates)
 	}
@@ -188,7 +191,7 @@ func (p *LogicalJoin) updateEQCond() {
 		for i := range lKeys {
 			lKey := lProj.appendExpr(lKeys[i])
 			rKey := rProj.appendExpr(rKeys[i])
-			eqCond, _ := expression.NewFunction(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
 		}
 	}
@@ -368,7 +371,10 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 			return nil, nil, errors.Trace(err)
 		}
 		if len(retCond) != 0 {
-			addSelection(p, proj.(LogicalPlan), retCond, p.allocator)
+			err = addSelection(p, proj.(LogicalPlan), retCond, p.allocator)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
 		}
 	}
 	return
@@ -414,8 +420,8 @@ func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expressio
 			ret = append(ret, cond)
 		}
 	}
-	p.baseLogicalPlan.PredicatePushDown(condsToPush)
-	return
+	_, _, err = p.baseLogicalPlan.PredicatePushDown(condsToPush)
+	return ret, retPlan, errors.Trace(err)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

@@ -145,8 +145,6 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.BatchDelete = tidbOptOn(sVal)
 	case variable.TiDBMaxRowCountForINLJ:
 		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
-	case variable.TiDBCBO:
-		vars.CBO = tidbOptOn(sVal)
 	case variable.TiDBCurrentTS:
 		return variable.ErrReadOnly
 	}

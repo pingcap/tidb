@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -1235,7 +1236,8 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		for _, col := range corCols {
 			*col.Data = expression.One.Value
 		}
-		newCond, _ := expression.SubstituteCorCol2Constant(cond)
+		newCond, err := expression.SubstituteCorCol2Constant(cond)
+		terror.Log(err)
 		corColConds = append(corColConds, newCond)
 	}
 	if p.controllerStatus == controlTableScan {
