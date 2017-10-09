@@ -43,14 +43,26 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
+		if !checker.canExprBeCached(node.Where) {
+			checker.cacheable = false
+			return in, true
+		}
+	case *ast.ExistsSubqueryExpr:
+		checker.cacheable = false
+		return in, true
 	}
 	return in, false
 }
 
 func (checker *cacheableChecker) canExprBeCached(exprNode ast.ExprNode) bool {
-	switch exprNode.(type) {
-	case *ast.VariableExpr:
+	switch expr := exprNode.(type) {
+	case *ast.VariableExpr, *ast.ExistsSubqueryExpr:
 		return false
+	case *ast.UnaryOperationExpr:
+		_, isExistsSubQuery := expr.V.(*ast.ExistsSubqueryExpr)
+		if isExistsSubQuery {
+			return false
+		}
 	}
 	return true
 }
