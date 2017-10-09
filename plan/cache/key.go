@@ -23,7 +23,7 @@ var (
 	// EnablePlanCache stores the global config "enable-plan-cache".
 	EnablePlanCache bool
 	// PlanCacheCapacity stores the global config "plan-cache-capacity".
-	PlanCacheCapacity int64
+	PlanCacheCapacity int64 = 1000
 )
 
 type sqlCacheKey struct {
@@ -31,6 +31,7 @@ type sqlCacheKey struct {
 	sqlMode        mysql.SQLMode
 	timeZoneOffset int
 	snapshot       uint64
+	readOnly       bool
 	database       string
 	sql            string
 	hash           []byte
@@ -42,13 +43,18 @@ func (sck *sqlCacheKey) Hash() []byte {
 		dbBytes := []byte(sck.database)
 		sqlBytes := []byte(sck.sql)
 
-		bufferSize := 8*4 + len(dbBytes) + len(sqlBytes)
+		bufferSize := 8*4 + len(dbBytes) + len(sqlBytes) + 1
 		sck.hash = make([]byte, 0, bufferSize)
 
 		sck.hash = codec.EncodeInt(sck.hash, sck.schemaVersion)
 		sck.hash = codec.EncodeInt(sck.hash, int64(sck.sqlMode))
 		sck.hash = codec.EncodeInt(sck.hash, int64(sck.timeZoneOffset))
 		sck.hash = codec.EncodeInt(sck.hash, int64(sck.snapshot))
+		if sck.readOnly {
+			sck.hash = append(sck.hash, '1')
+		} else {
+			sck.hash = append(sck.hash, '0')
+		}
 		sck.hash = append(sck.hash, dbBytes...)
 		sck.hash = append(sck.hash, sqlBytes...)
 	}
@@ -56,12 +62,13 @@ func (sck *sqlCacheKey) Hash() []byte {
 }
 
 // NewSQLCacheKey creates a new sqlCacheKey object.
-func NewSQLCacheKey(schemaVersion int64, sqlMode mysql.SQLMode, timeZoneOffset int, snapshot uint64, database, sql string) Key {
+func NewSQLCacheKey(schemaVersion int64, sqlMode mysql.SQLMode, timeZoneOffset int, snapshot uint64, readOnly bool, database, sql string) Key {
 	return &sqlCacheKey{
 		schemaVersion:  schemaVersion,
 		sqlMode:        sqlMode,
 		timeZoneOffset: timeZoneOffset,
 		snapshot:       snapshot,
+		readOnly:       readOnly,
 		database:       database,
 		sql:            sql,
 	}

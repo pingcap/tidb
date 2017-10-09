@@ -114,6 +114,8 @@ func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.Sta
 	h.history = append(h.history, s)
 }
 
+var globalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity/10, cache.PlanCacheCapacity)
+
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
@@ -138,8 +140,7 @@ type session struct {
 	statsCollector *statistics.SessionStatsCollector
 
 	// for plan cache
-	planCache           *cache.ShardedLRUCache
-	planBuildOnReadOnly bool
+	planCache *cache.ShardedLRUCache
 }
 
 // Cancel cancels the execution of current transaction.
@@ -666,14 +667,10 @@ func (s *session) executeWithPlanCache(sql string) ([]ast.RecordSet, error) {
 	}
 	snapshot := s.sessionVars.SnapshotTS
 	database := s.sessionVars.CurrentDB
-	cacheKey := cache.NewSQLCacheKey(schemaVersion, sqlMode, timeZoneOffset, snapshot, database, sql)
-
-	if s.Txn() != nil && s.Txn().IsReadOnly() != s.planBuildOnReadOnly {
-		s.planBuildOnReadOnly = s.Txn().IsReadOnly()
-		s.planCache.Clear()
-	}
+	cacheKey := cache.NewSQLCacheKey(schemaVersion, sqlMode, timeZoneOffset, snapshot, s.Txn() == nil || s.Txn().IsReadOnly(), database, sql)
 
 	if cacheValue, exists := s.planCache.Get(cacheKey); exists {
+		fmt.Printf("session[%p] use plan cache[%p] for sql: \"%s\"\n", s, s.planCache, sql)
 		stmt := cacheValue.(*cache.SQLCacheValue).Stmt
 		stmtNode := cacheValue.(*cache.SQLCacheValue).Ast
 		s.PrepareTxnCtx()
@@ -693,6 +690,7 @@ func (s *session) executeWithPlanCache(sql string) ([]ast.RecordSet, error) {
 			recordSets = append(recordSets, recordSet)
 		}
 	} else {
+		fmt.Printf("cache miss: \"%s\"\n", sql)
 		charset, collation := s.sessionVars.GetCharsetInfo()
 		startTS := time.Now()
 		stmtNodes, err := s.ParseSQL(sql, charset, collation)
@@ -1101,8 +1099,7 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	if cache.EnablePlanCache {
-		s.planCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity/10, cache.PlanCacheCapacity)
-		s.planBuildOnReadOnly = true
+		s.planCache = globalPlanCache
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
@@ -1123,8 +1120,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionVars: variable.NewSessionVars(),
 	}
 	if cache.EnablePlanCache {
-		s.planCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity/10, cache.PlanCacheCapacity)
-		s.planBuildOnReadOnly = true
+		s.planCache = globalPlanCache
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, dom)

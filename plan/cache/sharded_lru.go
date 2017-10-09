@@ -14,20 +14,26 @@
 package cache
 
 import (
+	"fmt"
 	"hash"
+	"runtime/debug"
 	"sync"
 
 	"github.com/pingcap/tidb/terror"
 	"github.com/spaolacci/murmur3"
 )
 
+// ShardedLRUCache is a sharded LRU Cache.
 type ShardedLRUCache struct {
 	shards   []*SimpleLRUCache
 	locks    []sync.RWMutex
 	hashFunc hash.Hash32
 }
 
+// NewShardedLRUCache creates a ShardedLRUCache.
 func NewShardedLRUCache(shardCount, capacity int64) *ShardedLRUCache {
+	fmt.Printf("NewShardedLRUCache: shardCount=%v, capacity=%v\n", shardCount, capacity)
+	debug.PrintStack()
 	shardedLRUCache := &ShardedLRUCache{
 		shards:   make([]*SimpleLRUCache, 0, shardCount),
 		locks:    make([]sync.RWMutex, shardCount),
@@ -39,6 +45,7 @@ func NewShardedLRUCache(shardCount, capacity int64) *ShardedLRUCache {
 	return shardedLRUCache
 }
 
+// Get gets a value from a ShardedLRUCache.
 func (s *ShardedLRUCache) Get(key Key) (Value, bool) {
 	s.hashFunc.Reset()
 
@@ -55,6 +62,7 @@ func (s *ShardedLRUCache) Get(key Key) (Value, bool) {
 	return value, ok
 }
 
+// Put puts a (key, value) pair to a ShardedLRUCache.
 func (s *ShardedLRUCache) Put(key Key, value Value) {
 	s.hashFunc.Reset()
 
@@ -69,6 +77,7 @@ func (s *ShardedLRUCache) Put(key Key, value Value) {
 	s.locks[id].Unlock()
 }
 
+// Clear clears a ShardedLRUCache.
 func (s *ShardedLRUCache) Clear() {
 	for i, length := 0, len(s.shards); i < length; i++ {
 		s.locks[i].Lock()
