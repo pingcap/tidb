@@ -68,7 +68,7 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check:
+check: errcheck
 	go get github.com/golang/lint/golint
 
 	@echo "vet"
@@ -86,7 +86,7 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	errcheck -blank $(PACKAGES)
+	@ GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
@@ -120,10 +120,7 @@ race: parserlib
 
 leak: parserlib
 	@export log_level=debug; \
-	for dir in $(PACKAGES); do \
-		echo $$dir; \
-		$(GOTEST) -tags leak $$dir | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1; \
-	done;
+	$(GOTEST) -tags leak $(PACKAGES)
 
 tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true

@@ -1,4 +1,4 @@
-// Copyright 2016 The etcd Authors
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,19 +8,23 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build leak
 
-package monotime
+package gp
 
-import (
-	"time"
-)
+import "time"
 
-// Time represents a point in monotonic time
-type Time uint64
+type Pool struct{}
 
-func (t Time) Add(d time.Duration) Time {
-	return Time(uint64(t) + uint64(d.Nanoseconds()))
+// New returns a new *Pool object.
+// When compile with leak flag, goroutine will not be reusing.
+func New(idleTimeout time.Duration) *Pool {
+	return &Pool{}
+}
+
+// Go run f() in a new goroutine.
+func (pool *Pool) Go(f func()) {
+	go f()
 }

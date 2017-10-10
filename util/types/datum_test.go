@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 var _ = Suite(&testDatumSuite{})
@@ -142,6 +143,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, NewBinaryLiteralFromUint(100, -1), int64(100))
 	testDatumToInt64(c, Enum{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(c, json.CreateJSON(int64(3)), int64(3))
 
 	t, err := ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	c.Assert(err, IsNil)
@@ -223,7 +225,7 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 			c.Assert(err, IsNil)
 
 			var cmp int
-			cmp, err = obtain.CompareDatum(sc, expected)
+			cmp, err = obtain.CompareDatum(sc, &expected)
 			c.Assert(err, IsNil)
 			c.Assert(cmp, Equals, 0)
 		} else {
@@ -401,7 +403,7 @@ func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 	for _, tt := range tests {
 		got, err := CoerceArithmetic(sc, tt.input)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("got:%#v, expect:%#v", got, tt.expect))
 	}
@@ -429,13 +431,13 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputePlus(tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.plus)
+		v, err := got.CompareDatum(sc, &tt.plus)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.plus))
 
 		got, err = ComputeMinus(tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err = got.CompareDatum(sc, tt.minus)
+		v, err = got.CompareDatum(sc, &tt.minus)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.minus))
 	}
@@ -462,7 +464,7 @@ func (ts *testDatumSuite) TestComputeMul(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputeMul(tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
@@ -491,7 +493,7 @@ func (ts *testDatumSuite) TestComputeDiv(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputeDiv(sc, tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
@@ -525,7 +527,7 @@ func (ts *testDatumSuite) TestComputeMod(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputeMod(sc, tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
@@ -554,7 +556,7 @@ func (ts *testDatumSuite) TestComputeIntDiv(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputeIntDiv(sc, tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
@@ -576,7 +578,7 @@ func (ts *testDatumSuite) TestCopyDatum(c *C) {
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		tt1 := CopyDatum(tt)
-		res, err := tt.CompareDatum(sc, tt1)
+		res, err := tt.CompareDatum(sc, &tt1)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, 0)
 		if tt.b != nil {

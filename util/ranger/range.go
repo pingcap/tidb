@@ -92,7 +92,7 @@ func (r *pointSorter) Less(i, j int) bool {
 }
 
 func rangePointLess(sc *variable.StatementContext, a, b point) (bool, error) {
-	cmp, err := a.value.CompareDatum(sc, b.value)
+	cmp, err := a.value.CompareDatum(sc, &b.value)
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
@@ -437,7 +437,6 @@ func (r *builder) merge(a, b []point, union bool) []point {
 		return nil
 	}
 	var (
-		merged               []point
 		inRangeCount         int
 		requiredInRangeCount int
 	)
@@ -446,6 +445,7 @@ func (r *builder) merge(a, b []point, union bool) []point {
 	} else {
 		requiredInRangeCount = 2
 	}
+	merged := make([]point, 0, len(sorter.points))
 	for _, val := range sorter.points {
 		if val.start {
 			inRangeCount++
@@ -499,7 +499,7 @@ func (r *builder) convertPoint(point point, tp *types.FieldType) point {
 	if err != nil {
 		r.err = errors.Trace(err)
 	}
-	valCmpCasted, err := point.value.CompareDatum(r.sc, casted)
+	valCmpCasted, err := point.value.CompareDatum(r.sc, &casted)
 	if err != nil {
 		r.err = errors.Trace(err)
 	}
@@ -598,7 +598,7 @@ func (r *builder) buildTableRanges(rangePoints []point) []types.IntColumnRange {
 			return tableRanges
 		}
 		startDatum := types.NewDatum(startInt)
-		cmp, err := startDatum.CompareDatum(r.sc, startPoint.value)
+		cmp, err := startDatum.CompareDatum(r.sc, &startPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
@@ -618,7 +618,7 @@ func (r *builder) buildTableRanges(rangePoints []point) []types.IntColumnRange {
 			return tableRanges
 		}
 		endDatum := types.NewDatum(endInt)
-		cmp, err = endDatum.CompareDatum(r.sc, endPoint.value)
+		cmp, err = endDatum.CompareDatum(r.sc, &endPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges

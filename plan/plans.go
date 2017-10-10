@@ -143,6 +143,9 @@ type Insert struct {
 	Priority  mysql.PriorityEnum
 	IgnoreErr bool
 
+	// NeedFillDefaultValue is true when expr in value list reference other column.
+	NeedFillDefaultValue bool
+
 	GenCols InsertGeneratedColumns
 }
 

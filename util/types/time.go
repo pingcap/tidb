@@ -56,8 +56,8 @@ const (
 	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// MaxTime is the maximum for mysql time type.
 	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
-
-	zeroDatetimeStr = "0000-00-00 00:00:00"
+	// ZeroDatetimeStr is the string representation of a zero datetime.
+	ZeroDatetimeStr = "0000-00-00 00:00:00"
 	zeroDateStr     = "0000-00-00"
 
 	// TimeMaxHour is the max hour for mysql time type.
@@ -217,11 +217,13 @@ func (t *Time) IsNegative() bool {
 func (t Time) String() string {
 	if t.Type == mysql.TypeDate {
 		// We control the format, so no error would occur.
-		str, _ := t.DateFormat("%Y-%m-%d")
+		str, err := t.DateFormat("%Y-%m-%d")
+		terror.Log(err)
 		return str
 	}
 
-	str, _ := t.DateFormat("%Y-%m-%d %H:%i:%s")
+	str, err := t.DateFormat("%Y-%m-%d %H:%i:%s")
+	terror.Log(err)
 	if t.Fsp > 0 {
 		tmp := fmt.Sprintf(".%06d", t.Time.Microsecond())
 		str = str + tmp[:1+t.Fsp]
@@ -274,7 +276,8 @@ func (t Time) ToNumber() *MyDecimal {
 
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
-	dec.FromString([]byte(s))
+	err = dec.FromString([]byte(s))
+	terror.Log(err)
 	return dec
 }
 
@@ -303,10 +306,10 @@ func (t Time) ConvertToDuration() (Duration, error) {
 
 	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
 	if t.negative {
-		return Duration{Duration: -gotime.Duration(d), Fsp: t.Fsp}, nil
+		return Duration{Duration: -d, Fsp: t.Fsp}, nil
 	}
 	// TODO: check convert validation
-	return Duration{Duration: gotime.Duration(d), Fsp: t.Fsp}, nil
+	return Duration{Duration: d, Fsp: t.Fsp}, nil
 }
 
 // Compare returns an integer comparing the time instant t to o.
@@ -435,7 +438,7 @@ func (t Time) ToPackedUint() (uint64, error) {
 	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
 	hour, minute, sec := tm.Hour(), tm.Minute(), tm.Second()
-	ymd := uint64(((year*13 + int(month)) << 5) | day)
+	ymd := uint64(((year*13 + month) << 5) | day)
 	hms := uint64(hour<<12 | minute<<6 | sec)
 	micro := uint64(tm.Microsecond())
 	return ((ymd<<17 | hms) << 24) | micro, nil
@@ -495,8 +498,10 @@ func (t *Time) Sub(t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
 		// TODO: Consider time_zone variable.
-		a, _ := t.Time.GoTime(gotime.Local)
-		b, _ := t1.Time.GoTime(gotime.Local)
+		a, err := t.Time.GoTime(gotime.Local)
+		terror.Log(err)
+		b, err := t1.Time.GoTime(gotime.Local)
+		terror.Log(err)
 		duration = a.Sub(b)
 	} else {
 		seconds, microseconds, neg := calcTimeDiff(t.Time, t1.Time, 1)
@@ -595,7 +600,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(str string, fsp int) (Time, error) {
+func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
@@ -611,6 +616,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		err error
 	)
 
+	var hhmmss bool
 	seps, fracStr := splitDateTime(str)
 	switch len(seps) {
 	case 1:
@@ -619,10 +625,17 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		if len(sep) == 14 {
 			// YYYYMMDDHHMMSS
 			_, err = fmt.Sscanf(sep, "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+			hhmmss = true
 		} else if len(sep) == 12 {
 			// YYMMDDHHMMSS
 			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
 			year = adjustYear(year)
+			hhmmss = true
+		} else if len(sep) == 11 {
+			// YYMMDDHHMMS
+			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute, &second)
+			year = adjustYear(year)
+			hhmmss = true
 		} else if len(sep) == 8 {
 			// YYYYMMDD
 			_, err = fmt.Sscanf(sep, "%4d%2d%2d", &year, &month, &day)
@@ -632,6 +645,18 @@ func parseDatetime(str string, fsp int) (Time, error) {
 			year = adjustYear(year)
 		} else {
 			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
+		}
+		if len(sep) == 6 || len(sep) == 8 {
+			// YYMMDD or YYYYMMDD
+			// We must handle float => string => datetime, the difference is that fractional
+			// part of float type is discarded directly, while fractional part of string type
+			// is parsed to HH:MM:SS.
+			if isFloat {
+				// 20170118.123423 => 2017-01-18 00:00:00
+			} else {
+				// '20170118.123423' => 2017-01-18 12:34:23.234
+				fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+			}
 		}
 	case 3:
 		// YYYY-MM-DD
@@ -643,6 +668,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		// We don't have fractional seconds part.
 		// YYYY-MM-DD HH-MM-SS
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+		hhmmss = true
 	default:
 		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
 	}
@@ -661,9 +687,14 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		}
 	}
 
-	microsecond, overflow, err := parseFrac(fracStr, fsp)
-	if err != nil {
-		return ZeroDatetime, errors.Trace(err)
+	var microsecond int
+	var overflow bool
+	if hhmmss {
+		// If input string is "20170118.999", without hhmmss, fsp is meanless.
+		microsecond, overflow, err = parseFrac(fracStr, fsp)
+		if err != nil {
+			return ZeroDatetime, errors.Trace(err)
+		}
 	}
 
 	tmp := FromDate(year, month, day, hour, minute, second, microsecond)
@@ -810,7 +841,7 @@ func (d Duration) formatFrac(frac int) string {
 // e.g,
 // 10:10:10 -> 101010
 func (d Duration) ToNumber() *MyDecimal {
-	sign, hours, minutes, seconds, fraction := splitDuration(gotime.Duration(d.Duration))
+	sign, hours, minutes, seconds, fraction := splitDuration(d.Duration)
 	var (
 		s       string
 		signStr string
@@ -828,7 +859,8 @@ func (d Duration) ToNumber() *MyDecimal {
 
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
-	dec.FromString([]byte(s))
+	err := dec.FromString([]byte(s))
+	terror.Log(err)
 	return dec
 }
 
@@ -1184,13 +1216,22 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(str string, tp byte, fsp int) (Time, error) {
+func ParseTime(str string, tp byte, fst int) (Time, error) {
+	return parseTime(str, tp, fst, false)
+}
+
+// ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
+func ParseTimeFromFloatString(str string, tp byte, fst int) (Time, error) {
+	return parseTime(str, tp, fst, true)
+}
+
+func parseTime(str string, tp byte, fsp int, isFloat bool) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 
-	t, err := parseDatetime(str, fsp)
+	t, err := parseDatetime(str, fsp, isFloat)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}

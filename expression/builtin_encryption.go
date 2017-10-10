@@ -69,8 +69,7 @@ var (
 
 // TODO: support other mode
 const (
-	aes128ecb          string = "aes-128-ecb"
-	aes128ecbBlobkSize int    = 16
+	aes128ecbBlobkSize int = 16
 )
 
 type aesDecryptFunctionClass struct {
@@ -81,15 +80,15 @@ func (c *aesDecryptFunctionClass) getFunction(ctx context.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
 	bf.tp.Flen = args[0].GetType().Flen // At most.
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinAesDecryptSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinAesDecryptSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinAesDecryptSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals AES_DECRYPT(crypt_str, key_key).
@@ -123,15 +122,15 @@ func (c *aesEncryptFunctionClass) getFunction(ctx context.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
 	bf.tp.Flen = aes128ecbBlobkSize * (args[0].GetType().Flen/aes128ecbBlobkSize + 1) // At most.
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinAesEncryptSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinAesEncryptSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinAesEncryptSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals AES_ENCRYPT(str, key_str).
@@ -162,7 +161,7 @@ type decodeFunctionClass struct {
 }
 
 func (c *decodeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DECODE")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DECODE")
 }
 
 type desDecryptFunctionClass struct {
@@ -170,7 +169,7 @@ type desDecryptFunctionClass struct {
 }
 
 func (c *desDecryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DES_DECRYPT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DES_DECRYPT")
 }
 
 type desEncryptFunctionClass struct {
@@ -178,7 +177,7 @@ type desEncryptFunctionClass struct {
 }
 
 func (c *desEncryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DES_ENCRYPT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DES_ENCRYPT")
 }
 
 type encodeFunctionClass struct {
@@ -186,7 +185,7 @@ type encodeFunctionClass struct {
 }
 
 func (c *encodeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("ENCODE")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ENCODE")
 }
 
 type encryptFunctionClass struct {
@@ -194,7 +193,7 @@ type encryptFunctionClass struct {
 }
 
 func (c *encryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("ENCRYPT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ENCRYPT")
 }
 
 type oldPasswordFunctionClass struct {
@@ -202,7 +201,7 @@ type oldPasswordFunctionClass struct {
 }
 
 func (c *oldPasswordFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("OLD_PASSWORD")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "OLD_PASSWORD")
 }
 
 type passwordFunctionClass struct {
@@ -213,14 +212,14 @@ func (c *passwordFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.PWDHashLen + 1
-	sig := &builtinPasswordSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinPasswordSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinPasswordSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinPasswordSig.
@@ -247,15 +246,15 @@ func (c *randomBytesFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 	bf.tp.Flen = 1024 // Max allowed random bytes
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinRandomBytesSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinRandomBytesSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRandomBytesSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals RANDOM_BYTES(len).
@@ -285,14 +284,14 @@ func (c *md5FunctionClass) getFunction(ctx context.Context, args []Expression) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 32
-	sig := &builtinMD5Sig{baseStringBuiltinFunc{bf}}
+	sig := &builtinMD5Sig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinMD5Sig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinMD5Sig.
@@ -315,14 +314,14 @@ func (c *sha1FunctionClass) getFunction(ctx context.Context, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 40
-	sig := &builtinSHA1Sig{baseStringBuiltinFunc{bf}}
+	sig := &builtinSHA1Sig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSHA1Sig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals SHA1(str).
@@ -334,7 +333,10 @@ func (b *builtinSHA1Sig) evalString(row []types.Datum) (string, bool, error) {
 		return "", isNull, errors.Trace(err)
 	}
 	hasher := sha1.New()
-	hasher.Write([]byte(str))
+	_, err = hasher.Write([]byte(str))
+	if err != nil {
+		return "", true, errors.Trace(err)
+	}
 	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
 
@@ -346,14 +348,14 @@ func (c *sha2FunctionClass) getFunction(ctx context.Context, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
 	bf.tp.Flen = 128 // sha512
-	sig := &builtinSHA2Sig{baseStringBuiltinFunc{bf}}
+	sig := &builtinSHA2Sig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSHA2Sig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // Supported hash length of SHA-2 family
@@ -391,7 +393,10 @@ func (b *builtinSHA2Sig) evalString(row []types.Datum) (string, bool, error) {
 		return "", true, nil
 	}
 
-	hasher.Write([]byte(str))
+	_, err = hasher.Write([]byte(str))
+	if err != nil {
+		return "", true, errors.Trace(err)
+	}
 	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
 
@@ -399,7 +404,7 @@ func (b *builtinSHA2Sig) evalString(row []types.Datum) (string, bool, error) {
 func deflate(data []byte) ([]byte, error) {
 	var buffer bytes.Buffer
 	w := zlib.NewWriter(&buffer)
-	if _, err := w.Write([]byte(data)); err != nil {
+	if _, err := w.Write(data); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := w.Close(); err != nil {
@@ -416,11 +421,11 @@ func inflate(compressStr []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if _, err := io.Copy(&out, r); err != nil {
+	if _, err = io.Copy(&out, r); err != nil {
 		return nil, errors.Trace(err)
 	}
-	r.Close()
-	return out.Bytes(), nil
+	err = r.Close()
+	return out.Bytes(), errors.Trace(err)
 }
 
 type compressFunctionClass struct {
@@ -431,7 +436,7 @@ func (c *compressFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	srcLen := args[0].GetType().Flen
 	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
 	if compressBound > mysql.MaxBlobWidth {
@@ -439,12 +444,12 @@ func (c *compressFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 	bf.tp.Flen = compressBound
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinCompressSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinCompressSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCompressSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals COMPRESS(str).
@@ -492,15 +497,15 @@ func (c *uncompressFunctionClass) getFunction(ctx context.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinUncompressSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinUncompressSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinUncompressSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals UNCOMPRESS(compressed_string).
@@ -535,14 +540,14 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx context.Context, args 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 10
-	sig := &builtinUncompressedLengthSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinUncompressedLengthSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinUncompressedLengthSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals UNCOMPRESSED_LENGTH(str).
@@ -570,5 +575,5 @@ type validatePasswordStrengthFunctionClass struct {
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("VALIDATE_PASSWORD_STRENGTH")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "VALIDATE_PASSWORD_STRENGTH")
 }

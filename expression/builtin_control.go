@@ -58,78 +58,78 @@ type caseWhenFunctionClass struct {
 }
 
 // Infer result type for builtin IF, IFNULL && NULLIF.
-func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
-	retTp, typeClass := &types.FieldType{}, types.ClassString
-	if tp1.Tp == mysql.TypeNull {
-		*retTp, typeClass = *tp2, tp2.ToClass()
+func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
+	resultFieldType := &types.FieldType{}
+	if lhs.Tp == mysql.TypeNull {
+		*resultFieldType = *rhs
 		// If both arguments are NULL, make resulting type BINARY(0).
-		if tp2.Tp == mysql.TypeNull {
-			retTp.Tp, typeClass = mysql.TypeString, types.ClassString
-			retTp.Flen, retTp.Decimal = 0, 0
-			types.SetBinChsClnFlag(retTp)
+		if rhs.Tp == mysql.TypeNull {
+			resultFieldType.Tp = mysql.TypeString
+			resultFieldType.Flen, resultFieldType.Decimal = 0, 0
+			types.SetBinChsClnFlag(resultFieldType)
 		}
-	} else if tp2.Tp == mysql.TypeNull {
-		*retTp, typeClass = *tp1, tp1.ToClass()
+	} else if rhs.Tp == mysql.TypeNull {
+		*resultFieldType = *lhs
 	} else {
 		var unsignedFlag uint
-		typeClass = types.AggTypeClass([]*types.FieldType{tp1, tp2}, &unsignedFlag)
-		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
-		if typeClass == types.ClassInt {
-			retTp.Decimal = 0
+		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &unsignedFlag)
+		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
+		if evalType == types.ETInt {
+			resultFieldType.Decimal = 0
 		} else {
-			if tp1.Decimal == types.UnspecifiedLength || tp2.Decimal == types.UnspecifiedLength {
-				retTp.Decimal = types.UnspecifiedLength
+			if lhs.Decimal == types.UnspecifiedLength || rhs.Decimal == types.UnspecifiedLength {
+				resultFieldType.Decimal = types.UnspecifiedLength
 			} else {
-				retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+				resultFieldType.Decimal = mathutil.Max(lhs.Decimal, rhs.Decimal)
 			}
 		}
-		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
-			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
-			if mysql.HasBinaryFlag(tp1.Flag) {
-				retTp.Flag |= mysql.BinaryFlag
+		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
+			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			if mysql.HasBinaryFlag(lhs.Flag) {
+				resultFieldType.Flag |= mysql.BinaryFlag
 			}
-		} else if types.IsNonBinaryStr(tp2) && !types.IsBinaryStr(tp1) {
-			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
-			if mysql.HasBinaryFlag(tp2.Flag) {
-				retTp.Flag |= mysql.BinaryFlag
+		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
+			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			if mysql.HasBinaryFlag(rhs.Flag) {
+				resultFieldType.Flag |= mysql.BinaryFlag
 			}
-		} else if types.IsBinaryStr(tp1) || types.IsBinaryStr(tp2) || typeClass != types.ClassString {
-			types.SetBinChsClnFlag(retTp)
+		} else if types.IsBinaryStr(lhs) || types.IsBinaryStr(rhs) || !evalType.IsStringKind() {
+			types.SetBinChsClnFlag(resultFieldType)
 		} else {
-			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
 		}
-		if typeClass == types.ClassDecimal || typeClass == types.ClassInt {
-			unsignedFlag1, unsignedFlag2 := mysql.HasUnsignedFlag(tp1.Flag), mysql.HasUnsignedFlag(tp2.Flag)
-			flagLen1, flagLen2 := 0, 0
-			if !unsignedFlag1 {
-				flagLen1 = 1
+		if evalType == types.ETDecimal || evalType == types.ETInt {
+			lhsUnsignedFlag, rhsUnsignedFlag := mysql.HasUnsignedFlag(lhs.Flag), mysql.HasUnsignedFlag(rhs.Flag)
+			lhsFlagLen, rhsFlagLen := 0, 0
+			if !lhsUnsignedFlag {
+				lhsFlagLen = 1
 			}
-			if !unsignedFlag2 {
-				flagLen2 = 1
+			if !rhsUnsignedFlag {
+				rhsFlagLen = 1
 			}
-			len1 := tp1.Flen - flagLen1
-			len2 := tp2.Flen - flagLen2
-			if tp1.Decimal != types.UnspecifiedLength {
-				len1 -= tp1.Decimal
+			lhsFlen := lhs.Flen - lhsFlagLen
+			rhsFlen := rhs.Flen - rhsFlagLen
+			if lhs.Decimal != types.UnspecifiedLength {
+				lhsFlen -= lhs.Decimal
 			}
-			if tp1.Decimal != types.UnspecifiedLength {
-				len2 -= tp2.Decimal
+			if lhs.Decimal != types.UnspecifiedLength {
+				rhsFlen -= rhs.Decimal
 			}
-			retTp.Flen = mathutil.Max(len1, len2) + retTp.Decimal + 1
+			resultFieldType.Flen = mathutil.Max(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1
 		} else {
-			retTp.Flen = mathutil.Max(tp1.Flen, tp2.Flen)
+			resultFieldType.Flen = mathutil.Max(lhs.Flen, rhs.Flen)
 		}
 	}
 	// Fix decimal for int and string.
-	fieldTp := fieldTp2EvalTp(retTp)
-	if fieldTp == tpInt {
-		retTp.Decimal = 0
-	} else if fieldTp == tpString {
-		if tp1.Tp != mysql.TypeNull || tp2.Tp != mysql.TypeNull {
-			retTp.Decimal = types.UnspecifiedLength
+	resultEvalType := resultFieldType.EvalType()
+	if resultEvalType == types.ETInt {
+		resultFieldType.Decimal = 0
+	} else if resultEvalType == types.ETString {
+		if lhs.Tp != mysql.TypeNull || rhs.Tp != mysql.TypeNull {
+			resultFieldType.Decimal = types.UnspecifiedLength
 		}
 	}
-	return retTp
+	return resultFieldType
 }
 
 func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
@@ -154,13 +154,13 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 
 	fieldTp := types.AggFieldType(fieldTps)
-	tp := fieldTp2EvalTp(fieldTp)
+	tp := fieldTp.EvalType()
 
-	if tp == tpInt {
+	if tp == types.ETInt {
 		decimal = 0
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
-	if fieldTp.ToClass() == types.ClassString && !isBinaryStr {
+	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
 		fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
@@ -168,37 +168,43 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 		fieldTp.Flen, fieldTp.Decimal = 0, -1
 		types.SetBinChsClnFlag(fieldTp)
 	}
-	argTps := make([]evalTp, 0, l)
+	argTps := make([]types.EvalType, 0, l)
 	for i := 0; i < l-1; i += 2 {
-		argTps = append(argTps, tpInt, tp)
+		argTps = append(argTps, types.ETInt, tp)
 	}
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
 	bf.tp = fieldTp
 
 	switch tp {
-	case tpInt:
+	case types.ETInt:
 		bf.tp.Decimal = 0
-		sig = &builtinCaseWhenIntSig{baseIntBuiltinFunc{bf}}
-	case tpReal:
-		sig = &builtinCaseWhenRealSig{baseRealBuiltinFunc{bf}}
-	case tpDecimal:
-		sig = &builtinCaseWhenDecimalSig{baseDecimalBuiltinFunc{bf}}
-	case tpString:
+		sig = &builtinCaseWhenIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenInt)
+	case types.ETReal:
+		sig = &builtinCaseWhenRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenReal)
+	case types.ETDecimal:
+		sig = &builtinCaseWhenDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
+	case types.ETString:
 		bf.tp.Decimal = types.UnspecifiedLength
-		sig = &builtinCaseWhenStringSig{baseStringBuiltinFunc{bf}}
-	case tpDatetime, tpTimestamp:
-		sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
-	case tpDuration:
-		sig = &builtinCaseWhenDurationSig{baseDurationBuiltinFunc{bf}}
+		sig = &builtinCaseWhenStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenString)
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinCaseWhenTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenTime)
+	case types.ETDuration:
+		sig = &builtinCaseWhenDurationSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDuration)
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCaseWhenIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinCaseWhenIntSig.
@@ -229,7 +235,7 @@ func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (ret int64, isNull bo
 }
 
 type builtinCaseWhenRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinCaseWhenRealSig.
@@ -260,7 +266,7 @@ func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (ret float64, isNul
 }
 
 type builtinCaseWhenDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDecimal evals a builtinCaseWhenDecimalSig.
@@ -291,7 +297,7 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (ret *types.M
 }
 
 type builtinCaseWhenStringSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinCaseWhenStringSig.
@@ -322,7 +328,7 @@ func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (ret string, is
 }
 
 type builtinCaseWhenTimeSig struct {
-	baseTimeBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalTime evals a builtinCaseWhenTimeSig.
@@ -353,7 +359,7 @@ func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (ret types.Time, is
 }
 
 type builtinCaseWhenDurationSig struct {
-	baseDurationBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDuration evals a builtinCaseWhenDurationSig.
@@ -393,37 +399,37 @@ func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 		return nil, errors.Trace(err)
 	}
 	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
-	evalTps := fieldTp2EvalTp(retTp)
-	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
+	evalTps := retTp.EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
-	case tpInt:
-		sig = &builtinIfIntSig{baseIntBuiltinFunc{bf}}
+	case types.ETInt:
+		sig = &builtinIfIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfInt)
-	case tpReal:
-		sig = &builtinIfRealSig{baseRealBuiltinFunc{bf}}
+	case types.ETReal:
+		sig = &builtinIfRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfReal)
-	case tpDecimal:
-		sig = &builtinIfDecimalSig{baseDecimalBuiltinFunc{bf}}
+	case types.ETDecimal:
+		sig = &builtinIfDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
-	case tpString:
-		sig = &builtinIfStringSig{baseStringBuiltinFunc{bf}}
+	case types.ETString:
+		sig = &builtinIfStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfString)
-	case tpDatetime, tpTimestamp:
-		sig = &builtinIfTimeSig{baseTimeBuiltinFunc{bf}}
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinIfTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfTime)
-	case tpDuration:
-		sig = &builtinIfDurationSig{baseDurationBuiltinFunc{bf}}
+	case types.ETDuration:
+		sig = &builtinIfDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDuration)
-	case tpJSON:
-		sig = &builtinIfJSONSig{baseJSONBuiltinFunc{bf}}
+	case types.ETJson:
+		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinIfIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, err error) {
@@ -441,7 +447,7 @@ func (b *builtinIfIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, er
 }
 
 type builtinIfRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfRealSig) evalReal(row []types.Datum) (ret float64, isNull bool, err error) {
@@ -459,7 +465,7 @@ func (b *builtinIfRealSig) evalReal(row []types.Datum) (ret float64, isNull bool
 }
 
 type builtinIfDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecimal, isNull bool, err error) {
@@ -477,7 +483,7 @@ func (b *builtinIfDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecim
 }
 
 type builtinIfStringSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfStringSig) evalString(row []types.Datum) (ret string, isNull bool, err error) {
@@ -495,7 +501,7 @@ func (b *builtinIfStringSig) evalString(row []types.Datum) (ret string, isNull b
 }
 
 type builtinIfTimeSig struct {
-	baseTimeBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull bool, err error) {
@@ -513,7 +519,7 @@ func (b *builtinIfTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull b
 }
 
 type builtinIfDurationSig struct {
-	baseDurationBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Duration, isNull bool, err error) {
@@ -531,7 +537,7 @@ func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Durati
 }
 
 type builtinIfJSONSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfJSONSig) evalJSON(row []types.Datum) (ret json.JSON, isNull bool, err error) {
@@ -565,45 +571,45 @@ func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	if err = errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tp0, tp1 := args[0].GetType(), args[1].GetType()
-	retTp := inferType4ControlFuncs(tp0, tp1)
-	retTp.Flag |= (tp0.Flag & mysql.NotNullFlag) | (tp1.Flag & mysql.NotNullFlag)
-	if tp0.Tp == mysql.TypeNull && tp1.Tp == mysql.TypeNull {
+	lhs, rhs := args[0].GetType(), args[1].GetType()
+	retTp := inferType4ControlFuncs(lhs, rhs)
+	retTp.Flag |= (lhs.Flag & mysql.NotNullFlag) | (rhs.Flag & mysql.NotNullFlag)
+	if lhs.Tp == mysql.TypeNull && rhs.Tp == mysql.TypeNull {
 		retTp.Tp = mysql.TypeNull
 		retTp.Flen, retTp.Decimal = 0, -1
 		types.SetBinChsClnFlag(retTp)
 	}
-	evalTps := fieldTp2EvalTp(retTp)
-	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
+	evalTps := retTp.EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
-	case tpInt:
-		sig = &builtinIfNullIntSig{baseIntBuiltinFunc{bf}}
+	case types.ETInt:
+		sig = &builtinIfNullIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
-	case tpReal:
-		sig = &builtinIfNullRealSig{baseRealBuiltinFunc{bf}}
+	case types.ETReal:
+		sig = &builtinIfNullRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
-	case tpDecimal:
-		sig = &builtinIfNullDecimalSig{baseDecimalBuiltinFunc{bf}}
+	case types.ETDecimal:
+		sig = &builtinIfNullDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
-	case tpString:
-		sig = &builtinIfNullStringSig{baseStringBuiltinFunc{bf}}
+	case types.ETString:
+		sig = &builtinIfNullStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
-	case tpDatetime, tpTimestamp:
-		sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinIfNullTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullTime)
-	case tpDuration:
-		sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
+	case types.ETDuration:
+		sig = &builtinIfNullDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDuration)
-	case tpJSON:
-		sig = &builtinIfNullJSONSig{baseJSONBuiltinFunc{bf}}
+	case types.ETJson:
+		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinIfNullIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -617,7 +623,7 @@ func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 type builtinIfNullRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error) {
@@ -631,7 +637,7 @@ func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error
 }
 
 type builtinIfNullDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
@@ -645,7 +651,7 @@ func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecim
 }
 
 type builtinIfNullStringSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, error) {
@@ -659,7 +665,7 @@ func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, er
 }
 
 type builtinIfNullTimeSig struct {
-	baseTimeBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
@@ -673,7 +679,7 @@ func (b *builtinIfNullTimeSig) evalTime(row []types.Datum) (types.Time, bool, er
 }
 
 type builtinIfNullDurationSig struct {
-	baseDurationBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
@@ -687,7 +693,7 @@ func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Durati
 }
 
 type builtinIfNullJSONSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullJSONSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {

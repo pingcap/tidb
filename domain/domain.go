@@ -21,6 +21,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -51,25 +53,27 @@ type Domain struct {
 	sysSessionPool  *pools.ResourcePool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
+	wg              sync.WaitGroup
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
 // infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
-// It returns the latest schema version, the changed table IDs and an error.
-func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) (int64, []int64, error) {
+// It returns the latest schema version, the changed table IDs, whether it's a full load and an error.
+func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) (int64, []int64, bool, error) {
+	var fullLoad bool
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return 0, nil, fullLoad, errors.Trace(err)
 	}
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersion()
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return 0, nil, fullLoad, errors.Trace(err)
 	}
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
-		return latestSchemaVersion, nil, nil
+		return latestSchemaVersion, nil, fullLoad, nil
 	}
 
 	// Update self schema version to etcd.
@@ -93,22 +97,23 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if ok {
 		log.Infof("[ddl] diff load InfoSchema from version %d to %d, in %v",
 			usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
-		return latestSchemaVersion, tblIDs, nil
+		return latestSchemaVersion, tblIDs, fullLoad, nil
 	}
 
+	fullLoad = true
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return 0, nil, fullLoad, errors.Trace(err)
 	}
 
 	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, latestSchemaVersion)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return 0, nil, fullLoad, errors.Trace(err)
 	}
 	log.Infof("[ddl] full load InfoSchema from version %d to %d, in %v",
 		usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
 	newISBuilder.Build()
-	return latestSchemaVersion, nil, nil
+	return latestSchemaVersion, nil, fullLoad, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
@@ -229,7 +234,7 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
 	snapHandle := do.infoHandle.EmptyClone()
-	_, _, err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
+	_, _, _, err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -284,8 +289,11 @@ func (do *Domain) Reload() error {
 		schemaVersion = oldInfoSchema.SchemaMetaVersion()
 	}
 
-	var changedTableIDs []int64
-	latestSchemaVersion, changedTableIDs, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+	var (
+		fullLoad        bool
+		changedTableIDs []int64
+	)
+	latestSchemaVersion, changedTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
 	loadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		loadSchemaCounter.WithLabelValues("failed").Inc()
@@ -293,6 +301,10 @@ func (do *Domain) Reload() error {
 	}
 	loadSchemaCounter.WithLabelValues("succ").Inc()
 
+	if fullLoad {
+		log.Info("[ddl] full load and reset schema validator.")
+		do.SchemaValidator.Reset()
+	}
 	do.SchemaValidator.Update(ver.Ver, schemaVersion, latestSchemaVersion, changedTableIDs)
 
 	lease := do.DDL().GetLease()
@@ -342,12 +354,13 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
-	do.ddl.Stop()
+	terror.Log(do.ddl.Stop())
 	close(do.exit)
 	if do.etcdClient != nil {
-		do.etcdClient.Close()
+		terror.Log(do.etcdClient.Close())
 	}
 	do.sysSessionPool.Close()
+	do.wg.Wait()
 }
 
 type ddlCallback struct {
@@ -413,6 +426,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			cli, err = clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
+				DialOptions: []grpc.DialOption{
+					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+				},
 			})
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -523,6 +540,9 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
+// RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
+var RunAutoAnalyze = true
+
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
@@ -539,7 +559,12 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
+	do.wg.Add(1)
 	go do.updateStatsWorker(ctx, lease)
+	if RunAutoAnalyze {
+		do.wg.Add(1)
+		go do.autoAnalyzeWorker(lease)
+	}
 	return nil
 }
 
@@ -558,6 +583,7 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
+			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
 		case t := <-statsHandle.DDLEventCh():
@@ -593,14 +619,21 @@ func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
 		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
 	}
 	statsHandle := do.StatsHandle()
+	analyzeTicker := time.NewTicker(lease)
+	defer analyzeTicker.Stop()
 	for {
-		if statsOwner.IsOwner() {
-			err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
-			if err != nil {
-				log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+		select {
+		case <-analyzeTicker.C:
+			if statsOwner.IsOwner() {
+				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
+				if err != nil {
+					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+				}
 			}
+		case <-do.exit:
+			do.wg.Done()
+			return
 		}
-		time.Sleep(lease)
 	}
 }
 

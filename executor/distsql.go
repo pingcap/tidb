@@ -33,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -42,6 +44,8 @@ import (
 const (
 	minLogDuration = 50 * time.Millisecond
 )
+
+var xIndexSelectGP = gp.New(3 * time.Minute)
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize int32 = 50
@@ -202,7 +206,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(sc, ran.LowVal[i])
+		cmp, err := converted.CompareDatum(sc, &ran.LowVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -231,7 +235,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(sc, ran.HighVal[i])
+		cmp, err := converted.CompareDatum(sc, &ran.HighVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -272,7 +276,7 @@ func extractHandlesFromIndexResult(idxResult distsql.SelectResult) (handles []in
 }
 
 func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64, error) {
-	defer subResult.Close()
+	defer terror.Call(subResult.Close)
 	var handles []int64
 	for {
 		h, data, err := subResult.Next()
@@ -283,6 +287,47 @@ func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64,
 			break
 		}
 		handles = append(handles, h)
+	}
+	return handles, nil
+}
+
+func extractHandlesFromNewIndexResult(idxResult distsql.NewSelectResult) (handles []int64, finish bool, err error) {
+	subResult, e0 := idxResult.Next()
+	if e0 != nil {
+		err = errors.Trace(e0)
+		return
+	}
+	if subResult == nil {
+		finish = true
+		return
+	}
+	handles, err = extractHandlesFromNewIndexSubResult(subResult)
+	if err != nil {
+		err = errors.Trace(err)
+	}
+	return
+}
+
+func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]int64, error) {
+	defer terror.Call(subResult.Close)
+	var (
+		handles     []int64
+		handleDatum types.Datum
+	)
+	handleType := types.NewFieldType(mysql.TypeLonglong)
+	for {
+		data, err := subResult.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if data == nil {
+			break
+		}
+		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), handleType, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		handles = append(handles, handleDatum.GetInt64())
 	}
 	return handles, nil
 }
@@ -470,7 +515,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (Row, error) {
 		}
 		if rowData == nil {
 			// Finish current partial result and get the next one.
-			e.partialResult.Close()
+			terror.Log(e.partialResult.Close())
 			e.partialResult = nil
 			continue
 		}
@@ -551,7 +596,9 @@ func (e *XSelectIndexExec) nextForDoubleRead() (Row, error) {
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
 		// run concurrently.
 		e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
-		go e.fetchHandles(idxResult, e.taskChan)
+		xIndexSelectGP.Go(func() {
+			e.fetchHandles(idxResult, e.taskChan)
+		})
 	}
 
 	for {
@@ -587,7 +634,9 @@ func (e *XSelectIndexExec) slowQueryInfo(duration time.Duration) string {
 
 func (e *XSelectIndexExec) addWorker(workCh chan *lookupTableTask, concurrency *int, concurrencyLimit int) {
 	if *concurrency < concurrencyLimit {
-		go e.pickAndExecTask(workCh)
+		xIndexSelectGP.Go(func() {
+			e.pickAndExecTask(workCh)
+		})
 		*concurrency++
 	}
 }
@@ -597,7 +646,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	defer func() {
 		close(ch)
 		close(workCh)
-		idxResult.Close()
+		terror.Log(idxResult.Close())
 	}()
 
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
@@ -762,7 +811,7 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 }
 
 func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult distsql.SelectResult) ([]Row, error) {
-	defer tblResult.Close()
+	defer terror.Call(tblResult.Close)
 	var rows []Row
 	for {
 		partialResult, err := tblResult.Next()
@@ -782,7 +831,7 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult d
 }
 
 func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult distsql.PartialResult) ([]Row, error) {
-	defer partialResult.Close()
+	defer terror.Call(partialResult.Close)
 	var rows []Row
 	for {
 		h, rowData, err := partialResult.Next()
@@ -991,7 +1040,7 @@ func (e *XSelectTableExec) Next() (Row, error) {
 		}
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
-			e.partialResult.Close()
+			terror.Log(e.partialResult.Close())
 			e.partialResult = nil
 			continue
 		}

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
@@ -35,11 +34,12 @@ type tikvTxn struct {
 	us        kv.UnionStore
 	store     *tikvStore // for connection to region.
 	startTS   uint64
-	startTime monotime.Time // Monotonic timestamp for recording txn time consuming.
+	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
 	valid     bool
 	lockKeys  [][]byte
 	dirty     bool
+	setCnt    int64
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -60,7 +60,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		us:        kv.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
-		startTime: monotime.Now(),
+		startTime: time.Now(),
 		valid:     true,
 	}, nil
 }
@@ -75,11 +75,17 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	err = txn.store.CheckVisibility(txn.startTS)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return ret, nil
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
-	txnCmdCounter.WithLabelValues("set").Inc()
+	txn.setCnt++
 
 	txn.dirty = true
 	return txn.us.Set(k, v)
@@ -120,6 +126,10 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
 		txn.snapshot.priority = kvPriorityToCommandPri(val.(int))
+	case kv.NotFillCache:
+		txn.snapshot.notFillCache = val.(bool)
+	case kv.SyncLog:
+		txn.snapshot.syncLog = val.(bool)
 	}
 }
 
@@ -136,6 +146,7 @@ func (txn *tikvTxn) Commit() error {
 	}
 	defer txn.close()
 
+	txnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	txnCmdCounter.WithLabelValues("commit").Inc()
 	start := time.Now()
 	defer func() { txnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
@@ -161,9 +172,8 @@ func (txn *tikvTxn) Commit() error {
 	return nil
 }
 
-func (txn *tikvTxn) close() error {
+func (txn *tikvTxn) close() {
 	txn.valid = false
-	return nil
 }
 
 func (txn *tikvTxn) Rollback() error {

@@ -135,6 +135,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
 		SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(str))
+		if modeParts, exists := mysql.CombinationSQLMode[str]; exists {
+			for _, part := range modeParts {
+				mode |= mysql.Str2SQLMode[part]
+			}
+		}
 		c.Assert(v.SQLMode, Equals, mode)
 	}
 

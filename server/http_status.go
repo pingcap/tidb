@@ -22,6 +22,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -46,6 +47,7 @@ func (s *Server) startHTTPServer() {
 		tikvHandler := s.newRegionHandler()
 		// HTTP path for regions
 		router.Handle("/tables/{db}/{table}/regions", tableRegionsHandler{tikvHandler})
+		router.Handle("/regions/meta", tikvHandler)
 		router.Handle("/regions/{regionID}", tikvHandler)
 		router.Handle("/mvcc/key/{db}/{table}/{recordID}", mvccTxnHandler{tikvHandler, opMvccGetByKey})
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
@@ -83,6 +85,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Error("Encode json error", err)
 	} else {
-		w.Write(js)
+		_, err = w.Write(js)
+		terror.Log(err)
 	}
 }

@@ -16,6 +16,7 @@ package plan
 import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/terror"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated, returns true if
@@ -59,6 +60,8 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	switch expr := origin.(type) {
 	case *expression.Column:
 		resolveColumnAndReplace(expr, replace)
+	case *expression.CorrelatedColumn:
+		resolveColumnAndReplace(&expr.Column, replace)
 	case *expression.ScalarFunction:
 		for _, arg := range expr.GetArgs() {
 			resolveExprAndReplace(arg, replace)
@@ -78,7 +81,8 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		return p
 	}
 	child := p.Children()[0]
-	RemovePlan(p)
+	err := RemovePlan(p)
+	terror.Log(err)
 	return child.(PhysicalPlan)
 }
 
@@ -159,7 +163,8 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
-	RemovePlan(p)
+	err := RemovePlan(p)
+	terror.Log(err)
 	return child.(LogicalPlan)
 }
 
