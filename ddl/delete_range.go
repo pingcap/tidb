@@ -118,7 +118,7 @@ func (dr *delRange) startEmulator() {
 			return
 		}
 		err := dr.doDelRangeWork()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}
 }
 

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
@@ -385,5 +386,5 @@ func runServer() {
 func cleanup() {
 	dom.Close()
 	err := storage.Close()
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }

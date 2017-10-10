@@ -126,7 +126,7 @@ func (it *response) Next() (resp []byte, err error) {
 	}
 	if err != nil {
 		err1 := it.Close()
-		terror.Log(err1)
+		terror.Log(errors.Trace(err1))
 		return nil, errors.Trace(err)
 	}
 	if len(regionResp.newStartKey) != 0 {
@@ -141,7 +141,7 @@ func (it *response) Next() (resp []byte, err error) {
 	it.respGot++
 	if it.reqSent == len(it.tasks) && it.respGot == it.reqSent {
 		err = it.Close()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}
 	return regionResp.data, nil
 }

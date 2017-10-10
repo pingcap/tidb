@@ -1237,7 +1237,7 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			*col.Data = expression.One.Value
 		}
 		newCond, err := expression.SubstituteCorCol2Constant(cond)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		corColConds = append(corColConds, newCond)
 	}
 	if p.controllerStatus == controlTableScan {

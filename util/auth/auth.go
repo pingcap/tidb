@@ -53,9 +53,9 @@ func (user *UserIdentity) String() string {
 func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 	crypt := sha1.New()
 	_, err := crypt.Write(salt)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	_, err = crypt.Write(hpwd)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	hash := crypt.Sum(nil)
 	// token = scrambleHash XOR stage1Hash
 	for i := range hash {
@@ -69,7 +69,7 @@ func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 func Sha1Hash(bs []byte) []byte {
 	crypt := sha1.New()
 	_, err := crypt.Write(bs)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return crypt.Sum(nil)
 }
 

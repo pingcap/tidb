@@ -167,7 +167,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
 			err1 := se.RollbackTxn()
-			terror.Log(err1)
+			terror.Log(errors.Trace(err1))
 		} else {
 			err = se.CommitTxn()
 		}
@@ -293,7 +293,7 @@ func IsQuery(sql string) bool {
 func init() {
 	// Register default memory and goleveldb storage
 	err := RegisterLocalStore("memory", goleveldb.MemoryDriver{})
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	err = RegisterLocalStore("goleveldb", goleveldb.Driver{})
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }
