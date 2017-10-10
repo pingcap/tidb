@@ -180,7 +180,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if e.Full {
 			info = pi.Info
 		} else {
-			info = fmt.Sprintf("%-.100v", pi.Info)
+			info = fmt.Sprintf("%.100v", pi.Info)
 		}
 
 		row := []types.Datum{
