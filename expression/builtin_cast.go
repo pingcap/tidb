@@ -514,6 +514,9 @@ func (b *builtinCastIntAsTimeSig) evalTime(row []types.Datum) (res types.Time, i
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseTimeFromNum(sc, val, b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
@@ -818,6 +821,9 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row []types.Datum) (res types.Tim
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseTime(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
@@ -972,6 +978,9 @@ func (b *builtinCastStringAsTimeSig) evalTime(row []types.Datum) (res types.Time
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseTime(sc, val, b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
@@ -1268,6 +1277,9 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row []types.Datum) (res types.Time, 
 		return res, false, errors.Trace(err)
 	}
 	res, err = types.ParseTime(sc, s, b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
