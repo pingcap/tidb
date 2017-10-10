@@ -93,7 +93,7 @@ func (cc *clientConn) handshake() error {
 	}
 	if err := cc.readOptionalSSLRequestAndHandshakeResponse(); err != nil {
 		err1 := cc.writeError(err)
-		terror.Log(err1)
+		terror.Log(errors.Trace(err1))
 		return errors.Trace(err)
 	}
 	data := cc.alloc.AllocWithLen(4, 32)
@@ -120,7 +120,7 @@ func (cc *clientConn) Close() error {
 	cc.server.rwlock.Unlock()
 	connGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -389,7 +389,7 @@ func (cc *clientConn) Run() {
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
 		err := cc.Close()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}()
 
 	for !cc.killed {
@@ -428,7 +428,7 @@ func (cc *clientConn) Run() {
 			log.Warnf("[%d] dispatch error:\n%s\n%q\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
 			err1 := cc.writeError(err)
-			terror.Log(err1)
+			terror.Log(errors.Trace(err1))
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0

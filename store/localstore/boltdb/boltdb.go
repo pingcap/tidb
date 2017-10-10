@@ -192,7 +192,7 @@ func (driver Driver) Open(dbPath string) (engine.DB, error) {
 
 	if _, err = tx.CreateBucketIfNotExists(bucketName); err != nil {
 		err1 := tx.Rollback()
-		terror.Log(err1)
+		terror.Log(errors.Trace(err1))
 		return nil, errors.Trace(err)
 	}
 

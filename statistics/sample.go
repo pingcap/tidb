@@ -39,7 +39,7 @@ func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	c.Sketch.mergeFMSketch(rc.Sketch)
 	for _, val := range rc.Samples {
 		err := c.collect(val, false)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}
 }
 

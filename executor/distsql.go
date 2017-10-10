@@ -515,7 +515,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (Row, error) {
 		}
 		if rowData == nil {
 			// Finish current partial result and get the next one.
-			terror.Log(e.partialResult.Close())
+			terror.Log(errors.Trace(e.partialResult.Close()))
 			e.partialResult = nil
 			continue
 		}
@@ -646,7 +646,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	defer func() {
 		close(ch)
 		close(workCh)
-		terror.Log(idxResult.Close())
+		terror.Log(errors.Trace(idxResult.Close()))
 	}()
 
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
@@ -1040,7 +1040,7 @@ func (e *XSelectTableExec) Next() (Row, error) {
 		}
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
-			terror.Log(e.partialResult.Close())
+			terror.Log(errors.Trace(e.partialResult.Close()))
 			e.partialResult = nil
 			continue
 		}
