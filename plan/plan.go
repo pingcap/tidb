@@ -516,7 +516,7 @@ func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("ReplaceParent Failed!")
+	return SystemInternalErrorType.Gen("ReplaceParent Failed: parent \"%s\" not found", parent.ExplainID())
 }
 
 // ReplaceChild means replace a child with another one.
@@ -527,7 +527,7 @@ func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("ReplaceChildren Failed!")
+	return SystemInternalErrorType.Gen("ReplaceChildren Failed: child \"%s\" not found", child.ExplainID())
 }
 
 // Parents implements Plan Parents interface.

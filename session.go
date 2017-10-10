@@ -368,7 +368,7 @@ func (s *session) String() string {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
 	}
 	b, err := json.MarshalIndent(data, "", "  ")
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return string(b)
 }
 
@@ -670,7 +670,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
 			err2 := s.RollbackTxn()
-			terror.Log(err2)
+			terror.Log(errors.Trace(err2))
 			return nil, errors.Trace(err1)
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -882,7 +882,7 @@ func getHostByIP(ip string) []string {
 		return []string{"localhost"}
 	}
 	addrs, err := net.LookupAddr(ip)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return addrs
 }
 

@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/terror"
@@ -84,7 +85,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	}
 	child := p.Children()[0]
 	err := RemovePlan(p)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return child.(PhysicalPlan)
 }
 
@@ -166,7 +167,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
 	err := RemovePlan(p)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return child.(LogicalPlan)
 }
 

@@ -143,7 +143,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 func Serialize(j JSON) []byte {
 	var buffer = new(bytes.Buffer)
 	err := buffer.WriteByte(byte(j.TypeCode))
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	encode(j, buffer)
 	return buffer.Bytes()
 }
@@ -200,7 +200,7 @@ func decode(typeCode byte, data []byte) (j JSON, err error) {
 
 func encodeJSONLiteral(literal byte, buffer *bytes.Buffer) {
 	err := buffer.WriteByte(literal)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }
 
 func decodeJSONLiteral(literal *byte, data []byte) error {
@@ -210,7 +210,7 @@ func decodeJSONLiteral(literal *byte, data []byte) error {
 
 func encodeJSONInt64(i64 int64, buffer *bytes.Buffer) {
 	err := binary.Write(buffer, binary.LittleEndian, i64)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }
 
 func decodeJSONInt64(i64 *int64, data []byte) error {
@@ -220,7 +220,7 @@ func decodeJSONInt64(i64 *int64, data []byte) error {
 
 func encodeJSONFloat64(f64 float64, buffer *bytes.Buffer) {
 	err := binary.Write(buffer, binary.LittleEndian, f64)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }
 
 func decodeJSONFloat64(f64 *float64, data []byte) error {
@@ -233,9 +233,9 @@ func encodeJSONString(s string, buffer *bytes.Buffer) {
 	var varIntBuf = make([]byte, 9)
 	var varIntLen = binary.PutUvarint(varIntBuf, uint64(len(byteArray)))
 	_, err := buffer.Write(varIntBuf[0:varIntLen])
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	_, err = buffer.Write(byteArray)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }
 
 func decodeJSONString(s *string, data []byte) (err error) {
@@ -270,11 +270,11 @@ func encodeJSONObject(m map[string]JSON, buffer *bytes.Buffer) {
 		var keyOffset = uint32(countAndSizeLen + keyEntrysLen + valueEntrysLen + keys.Len())
 		var keyLength = uint16(len(hack.Slice(key)))
 		err := binary.Write(keyEntrys, binary.LittleEndian, keyOffset)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		err = binary.Write(keyEntrys, binary.LittleEndian, keyLength)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		_, err = keys.Write(hack.Slice(key))
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}
 
 	for _, key := range keySlice {
@@ -286,16 +286,16 @@ func encodeJSONObject(m map[string]JSON, buffer *bytes.Buffer) {
 	countAndSize[1] = uint32(countAndSizeLen + keyEntrysLen + valueEntrysLen + keys.Len() + values.Len())
 	for _, v := range countAndSize {
 		err := binary.Write(buffer, binary.LittleEndian, v)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}
 	_, err := buffer.Write(keyEntrys.Bytes())
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	_, err = buffer.Write(valueEntrys.Bytes())
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	_, err = buffer.Write(keys.Bytes())
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	_, err = buffer.Write(values.Bytes())
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return
 }
 
@@ -380,12 +380,12 @@ func encodeJSONArray(a []JSON, buffer *bytes.Buffer) {
 	countAndSize[1] = uint32(countAndSizeLen + valueEntrysLen + values.Len())
 	for _, v := range countAndSize {
 		err := binary.Write(buffer, binary.LittleEndian, v)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}
 	_, err := buffer.Write(valueEntrys.Bytes())
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	_, err = buffer.Write(values.Bytes())
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }
 
 func decodeJSONArray(a *[]JSON, data []byte) (err error) {
@@ -468,7 +468,7 @@ func pushValueEntry(value JSON, valueEntrys *bytes.Buffer, values *bytes.Buffer,
 	} else {
 		var valueOffset = uint32(prefixLen + values.Len())
 		err := binary.Write(valueEntrys, binary.LittleEndian, valueOffset)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		encode(value, values)
 	}
 	return
@@ -482,7 +482,7 @@ func pushInlineValue(buffer *bytes.Buffer, value JSON) {
 	case TypeCodeLiteral:
 		var v = byte(value.I64)
 		err := binary.Write(buffer, binary.LittleEndian, v)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	default:
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, value.TypeCode)
 		panic(msg)
@@ -490,6 +490,6 @@ func pushInlineValue(buffer *bytes.Buffer, value JSON) {
 	var newLen = buffer.Len()
 	for i := 0; i < valueInlineLen-(newLen-oldLen); i++ {
 		err := buffer.WriteByte(0x00)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}
 }

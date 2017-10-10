@@ -15,6 +15,7 @@ package expression
 
 import (
 	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -176,7 +177,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
 				value, err := EvalBool([]Expression{con}, nil, s.ctx)
-				terror.Log(err)
+				terror.Log(errors.Trace(err))
 				if !value {
 					s.setConds2ConstFalse()
 					return nil
