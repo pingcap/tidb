@@ -4482,10 +4482,11 @@ ShowStmt:
 			User:	$4.(*auth.UserIdentity),
 		}
 	}
-|	"SHOW" "PROCESSLIST"
+|	"SHOW" OptFull "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowProcessList,
+			Full:	$2.(bool),
 		}
 	}
 |	"SHOW" "STATS_META" ShowLikeOrWhereOpt

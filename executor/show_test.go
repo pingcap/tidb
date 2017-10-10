@@ -137,6 +137,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows())
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 
