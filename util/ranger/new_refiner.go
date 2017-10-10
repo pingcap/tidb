@@ -16,6 +16,7 @@ package ranger
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -126,6 +127,50 @@ func getEQColOffset(expr expression.Expression, cols []*expression.Column) int {
 	return -1
 }
 
+func detachColumnCNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
+	var accessConditions, filterConditions []expression.Expression
+	for _, cond := range conditions {
+		cond = expression.PushDownNot(cond, false, nil)
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			filterConditions = append(filterConditions, cond)
+			dnfExprs := expression.ExtractDNFConditions(sf)
+			rebuildDNF := expression.ComposeDNFCondition(nil, detachColumnDNFConditions(dnfExprs, checker)...)
+			if rebuildDNF != nil {
+				accessConditions = append(accessConditions, rebuildDNF)
+			}
+			continue
+		}
+		if !checker.check(cond) {
+			filterConditions = append(filterConditions, cond)
+			continue
+		}
+		accessConditions = append(accessConditions, cond)
+		if checker.shouldReserve {
+			filterConditions = append(filterConditions, cond)
+			checker.shouldReserve = false
+		}
+	}
+	return accessConditions, filterConditions
+}
+
+func detachColumnDNFConditions(conditions []expression.Expression, checker *conditionChecker) []expression.Expression {
+	var accessConditions []expression.Expression
+	for _, cond := range conditions {
+		cond = expression.PushDownNot(cond, false, nil)
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+			cnfExprs := expression.ExtractCNFConditions(sf)
+			usedCNFExprs, _ := detachColumnCNFConditions(cnfExprs, checker)
+			rebuildCNF := expression.ComposeCNFCondition(nil, usedCNFExprs...)
+			if rebuildCNF != nil {
+				accessConditions = append(accessConditions, rebuildCNF)
+			}
+		} else {
+			return nil
+		}
+	}
+	return accessConditions
+}
+
 // detachIndexScanConditions will detach the index filters from table filters.
 func detachIndexScanConditions(conditions []expression.Expression, cols []*expression.Column, lengths []int) (accessConds []expression.Expression,
 	filterConds []expression.Expression, accessEqualCount int, accessInAndEqCount int) {
@@ -207,10 +252,15 @@ func buildColumnRange(conds []expression.Expression, sc *variable.StatementConte
 }
 
 // BuildRange is a method which can calculate IntColumnRange, ColumnRange, IndexRange.
-func BuildRange(sc *variable.StatementContext, conds []expression.Expression, rangeType int, cols []*expression.Column, lengths []int) (retRanges []types.Range,
+func BuildRange(ctx context.Context, conds []expression.Expression, rangeType int, cols []*expression.Column, lengths []int) (retRanges []types.Range,
 	accessConditions, otherConditions []expression.Expression, _ error) {
+	sc := ctx.GetSessionVars().StmtCtx
 	if rangeType == IntRangeType {
-		accessConditions, otherConditions = DetachColumnConditions(conds, cols[0].ColName)
+		checker := &conditionChecker{
+			colName: cols[0].ColName,
+			length:  types.UnspecifiedLength,
+		}
+		accessConditions, otherConditions = detachColumnCNFConditions(conds, checker)
 		ranges, err := BuildTableRange(accessConditions, sc)
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)

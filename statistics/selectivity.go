@@ -157,7 +157,7 @@ func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeT
 	for _, expr := range exprs {
 		exprsClone = append(exprsClone, expr.Clone())
 	}
-	ranges, accessConds, _, err := ranger.BuildRange(ctx.GetSessionVars().StmtCtx, exprsClone, rangeType, cols, lengths)
+	ranges, accessConds, _, err := ranger.BuildRange(ctx, exprsClone, rangeType, cols, lengths)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
