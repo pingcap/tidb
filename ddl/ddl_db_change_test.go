@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -45,9 +45,8 @@ type testStateChangeSuite struct {
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	var err error
-	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	s.store, err = tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	localstore.MockRemoteStore = true
 	tidb.SetSchemaLease(s.lease)
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -104,7 +103,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	_, err := s.se.Execute(`create table t (
 		c1 int,
 		c2 varchar(64),
-		c3 enum('N','Y') not null default 'N', 
+		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
 	c.Assert(err, IsNil)
