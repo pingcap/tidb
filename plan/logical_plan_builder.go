@@ -1021,12 +1021,12 @@ func buildFuncDependCol(p LogicalPlan, cond ast.ExprNode) (*expression.Column, *
 	if !ok {
 		return nil, nil
 	}
-	lCol, _ := p.Schema().FindColumn(lColExpr.Name)
-	if lCol == nil {
+	lCol, err := p.Schema().FindColumn(lColExpr.Name)
+	if err != nil {
 		return nil, nil
 	}
-	rCol, _ := p.Schema().FindColumn(rColExpr.Name)
-	if rCol == nil {
+	rCol, err := p.Schema().FindColumn(rColExpr.Name)
+	if err != nil {
 		return nil, nil
 	}
 	return lCol, rCol
@@ -1091,11 +1091,15 @@ func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.Ta
 				funcDepend = false
 				break
 			}
-			iCol, _ := p.Schema().FindColumn(&ast.ColumnName{
+			iCol, err := p.Schema().FindColumn(&ast.ColumnName{
 				Schema: col.DBName,
 				Table:  col.TblName,
 				Name:   iColInfo.Name,
 			})
+			if err != nil {
+				funcDepend = false
+				break
+			}
 			if _, ok := gbyCols[iCol]; ok {
 				continue
 			}
@@ -1123,11 +1127,15 @@ func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.Ta
 			continue
 		}
 		hasPrimaryField = true
-		pCol, _ := p.Schema().FindColumn(&ast.ColumnName{
+		pCol, err := p.Schema().FindColumn(&ast.ColumnName{
 			Schema: col.DBName,
 			Table:  col.TblName,
 			Name:   colInfo.Name,
 		})
+		if err != nil {
+			primaryFuncDepend = false
+			break
+		}
 		if _, ok := gbyCols[pCol]; ok {
 			continue
 		}
@@ -1153,8 +1161,8 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 	schema := p.Schema()
 	for _, byItem := range gby.Items {
 		if colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr); ok {
-			col, _ := schema.FindColumn(colExpr.Name)
-			if col == nil {
+			col, err := schema.FindColumn(colExpr.Name)
+			if err != nil {
 				continue
 			}
 			gbyCols[col] = true
@@ -1224,15 +1232,19 @@ func (b *planBuilder) allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*ex
 	case *ast.SelectField:
 		b.allColFromExprNode(p, v.Expr, cols)
 	case *ast.ColumnNameExpr:
-		col, _ := p.Schema().FindColumn(v.Name)
-		if col == nil {
-			col, _ = p.Schema().FindColumn(&ast.ColumnName{
-				Schema: v.Refer.DBName,
-				Table:  v.Refer.TableName.Name,
-				Name:   v.Refer.Column.Name,
-			})
+		col, err := p.Schema().FindColumn(v.Name)
+		if err == nil {
+			cols[col] = true
+			return
 		}
-		cols[col] = true
+		col, err = p.Schema().FindColumn(&ast.ColumnName{
+			Schema: v.Refer.DBName,
+			Table:  v.Refer.TableName.Name,
+			Name:   v.Refer.Column.Name,
+		})
+		if err == nil {
+			cols[col] = true
+		}
 	case *ast.ByItem:
 		b.allColFromExprNode(p, v.Expr, cols)
 	}
