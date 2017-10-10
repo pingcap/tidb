@@ -25,7 +25,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/mock"
@@ -1413,7 +1417,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = dayOfWeek("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
 	c.Assert(err, IsNil)
@@ -1422,14 +1426,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfMonth(123)`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("insert into t value(dayOfYear('0000-00-00'))")
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayOfYear("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(err, IsNil)
 
 	tk.MustExec("set sql_mode = ''")
 
@@ -1500,7 +1504,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = monthname("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = monthname(123)`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(err, IsNil)
 	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("December <nil> January January"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
@@ -1516,7 +1520,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = dayname("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayname(123)`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(err, IsNil)
 	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
@@ -1917,6 +1921,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	_, err = tk.Exec("insert into t values(-9223372036854775809)")
 	c.Assert(err, NotNil)
 
+	// test case decimal precision less than the scale.
+	rs, err := tk.Exec("select cast(12.1 as decimal(3, 4));")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').")
+
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
 	result.Check(testkit.Rows("MySQL"))
@@ -2083,10 +2094,10 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	likeTests := []testCase{
 		{"a", "a", 1},
 		{"a", "b", 0},
-		{"aA", "Aa", 1},
+		{"aA", "Aa", 0},
 		{"aA%", "aAab", 1},
 		{"aA_", "Aaab", 0},
-		{"aA_", "Aab", 1},
+		{"Aa_", "Aab", 1},
 		{"", "", 1},
 		{"", "a", 0},
 	}
@@ -2870,6 +2881,23 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r.Check(testkit.Rows("2"))
 }
 
+func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists tab0")
+	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
+	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
+	ctx := testKit.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
+	col := table.FindCol(tbl.Cols(), "col1")
+	c.Assert(col.Tp, Equals, mysql.TypeLong)
+}
+
 func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
@@ -2886,7 +2914,34 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, NotNil)
 
 	var r *testkit.Result
-	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE';")
+	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE,ANSI,ANSI_QUOTES';")
 	r = tk.MustQuery(`select @@session.sql_mode`)
-	r.Check(testkit.Rows("NO_ZERO_DATE"))
+	r.Check(testkit.Rows("NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
+	r = tk.MustQuery(`show variables like 'sql_mode'`)
+	r.Check(testkit.Rows("sql_mode NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
+
+	// for invalid SQL mode.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tab0")
+	tk.MustExec("CREATE TABLE tab0(col1 time)")
+	_, err = tk.Exec("set sql_mode='STRICT_TRANS_TABLES';")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+	_, err = tk.Exec("set sql_mode=' ,';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+}
+
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := tikv.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	tidb.SetSchemaLease(0)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
 }

@@ -68,7 +68,7 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check:
+check: errcheck
 	go get github.com/golang/lint/golint
 
 	@echo "vet"
@@ -86,7 +86,7 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	errcheck -blank $(PACKAGES)
+	@ GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...

@@ -92,7 +92,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "default", "shared", "exclusive",
+		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
 		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version",
 	}
 	for _, kw := range unreservedKws {
@@ -251,6 +251,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for issue 2402
 		{"INSERT INTO tt VALUES (01000001783);", true},
+		{"INSERT INTO tt VALUES (default);", true},
 
 		{"REPLACE INTO foo VALUES (1 || 2)", true},
 		{"REPLACE INTO foo VALUES (1 | 2)", true},
@@ -960,7 +961,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT RELEASE_ALL_LOCKS(1);`, true},
 		{`SELECT UUID(1);`, true},
 		{`SELECT UUID_SHORT(1)`, true},
-
+		// interval
+		{`select "2011-11-11 10:10:10.123456" + interval 10 second`, true},
+		{`select "2011-11-11 10:10:10.123456" - interval 10 second`, true},
 		// for date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 second)`, true},
@@ -1728,6 +1731,24 @@ func (s *testParserSuite) TestPriority(c *C) {
 	c.Assert(sel.SelectStmtOpts.Priority, Equals, mysql.HighPriority)
 }
 
+func (s *testParserSuite) TestSQLNoCache(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select SQL_NO_CACHE * from t`, false},
+		{`select SQL_CACHE * from t`, true},
+		{`select * from t`, true},
+	}
+
+	parser := New()
+	for _, tt := range table {
+		stmt, err := parser.Parse(tt.src, "", "")
+		c.Assert(err, IsNil)
+
+		sel := stmt[0].(*ast.SelectStmt)
+		c.Assert(sel.SelectStmtOpts.SQLCache, Equals, tt.ok)
+	}
+}
+
 func (s *testParserSuite) TestEscape(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
@@ -1750,25 +1771,6 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 	c.Assert(err, IsNil)
 	runtime.ReadMemStats(&newStats)
 	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)
-}
-
-func BenchmarkParse(b *testing.B) {
-	var table = []string{
-		"insert into t values (1), (2), (3)",
-		"insert into t values (4), (5), (6), (7)",
-		"select c from t where c > 2",
-	}
-	parser := New()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, v := range table {
-			_, err := parser.Parse(v, "", "")
-			if err != nil {
-				b.Failed()
-			}
-		}
-	}
-	b.ReportAllocs()
 }
 
 func (s *testParserSuite) TestExplain(c *C) {

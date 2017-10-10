@@ -14,6 +14,7 @@
 package mocktikv
 
 import (
+	"bytes"
 	"io"
 
 	"github.com/golang/protobuf/proto"
@@ -396,6 +397,17 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 	}
 }
 
+func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse {
+	key := NewMvccKey(req.GetSplitKey())
+	region, _ := h.cluster.GetRegionByKey(key)
+	if bytes.Equal(region.GetStartKey(), key) {
+		return &kvrpcpb.SplitRegionResponse{}
+	}
+	newRegionID, newPeerIDs := h.cluster.AllocID(), h.cluster.AllocIDs(len(region.Peers))
+	h.cluster.SplitRaw(region.GetId(), newRegionID, key, newPeerIDs, newPeerIDs[0])
+	return &kvrpcpb.SplitRegionResponse{}
+}
+
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
 	Cluster   *Cluster
@@ -450,10 +462,7 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	if err != nil {
 		return nil, err
 	}
-	reqCtx, err := req.GetContext()
-	if err != nil {
-		return nil, err
-	}
+	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
 	resp.Type = req.Type
 	switch req.Type {
@@ -572,14 +581,10 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
 		var res *coprocessor.Response
-		var err error
 		if r.GetTp() == kv.ReqTypeDAG {
-			res, err = handler.handleCopDAGRequest(r)
+			res = handler.handleCopDAGRequest(r)
 		} else {
-			res, err = handler.handleCopAnalyzeRequest(r)
-		}
-		if err != nil {
-			return nil, err
+			res = handler.handleCopAnalyzeRequest(r)
 		}
 		resp.Cop = res
 	case tikvrpc.CmdMvccGetByKey:
@@ -596,6 +601,13 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			return resp, nil
 		}
 		resp.MvccGetByStartTS = handler.handleMvccGetByStartTS(r)
+	case tikvrpc.CmdSplitRegion:
+		r := req.SplitRegion
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.SplitRegion = &kvrpcpb.SplitRegionResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.SplitRegion = handler.handleSplitRegion(r)
 	default:
 		return nil, errors.Errorf("unsupport this request type %v", req.Type)
 	}

@@ -40,14 +40,14 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	}
 	fc := funcs[ast.Case]
 	for _, t := range tbl {
-		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.Arg...)))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg...)))
 		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
-	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
@@ -81,18 +81,18 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 
 	fc := funcs[ast.If]
 	for _, t := range tbl {
-		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)))
 		c.Assert(err, IsNil)
 		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
-	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
-	_, err = fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(1, 2)))
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1, 2)))
 	c.Assert(err, NotNil)
 }
 
@@ -119,7 +119,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 	}
 
 	for _, t := range tbl {
-		f, err := newFunctionForTest(s.ctx, ast.Ifnull, primitiveValsToConstants([]interface{}{t.arg1, t.arg2})...)
+		f, err := newFunctionForTest(s.ctx, ast.Ifnull, s.primitiveValsToConstants([]interface{}{t.arg1, t.arg2})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
 		if t.getErr {

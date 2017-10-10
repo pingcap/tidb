@@ -282,7 +282,7 @@ func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs 
 	c.Lock()
 	defer c.Unlock()
 
-	newRegion := c.regions[regionID].split(newRegionID, []byte(rawKey), peerIDs, leaderPeerID)
+	newRegion := c.regions[regionID].split(newRegionID, rawKey, peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
 }
 

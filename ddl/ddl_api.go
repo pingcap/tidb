@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -204,6 +205,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.Tp)
 	if tp.Flen == types.UnspecifiedLength {
 		tp.Flen = defaultFlen
+		if mysql.HasUnsignedFlag(tp.Flag) && tp.Tp != mysql.TypeLonglong && mysql.IsIntegerType(tp.Tp) {
+			// Issue #4684: the flen of unsigned integer(except bigint) is 1 digit shorter than signed integer
+			// because it has no prefix "+" or "-" character.
+			tp.Flen--
+		}
 	}
 	if tp.Decimal == types.UnspecifiedLength {
 		tp.Decimal = defaultDecimal
@@ -273,7 +279,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 			case ast.ColumnOptionNotNull:
 				col.Flag |= mysql.NotNullFlag
 			case ast.ColumnOptionNull:
-				col.Flag &= ^uint(mysql.NotNullFlag)
+				col.Flag &= ^mysql.NotNullFlag
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
@@ -298,7 +304,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if !expression.IsCurrentTimeExpr(v.Expr) {
+				if !expression.IsCurrentTimestampExpr(v.Expr) {
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
 				col.Flag |= mysql.OnUpdateNowFlag
@@ -396,7 +402,7 @@ func removeOnUpdateNowFlag(c *table.Column) {
 	// For timestamp Col, if it is set null or default value,
 	// OnUpdateNowFlag should be removed.
 	if mysql.HasTimestampFlag(c.Flag) {
-		c.Flag &= ^uint(mysql.OnUpdateNowFlag)
+		c.Flag &= ^mysql.OnUpdateNowFlag
 	}
 }
 
@@ -408,9 +414,9 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.DefaultValue = expression.ZeroTimestamp
+			c.DefaultValue = types.ZeroDatetimeStr
 		} else {
-			c.DefaultValue = expression.CurrentTimestamp
+			c.DefaultValue = strings.ToUpper(ast.CurrentTimestamp)
 		}
 	}
 }
@@ -574,7 +580,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
+func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, ctx context.Context) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
@@ -657,7 +663,13 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		}
 		// set index type.
 		if constr.Option != nil {
-			idxInfo.Comment = constr.Option.Comment
+			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(),
+				constr.Option.Comment,
+				maxCommentLength,
+				errTooLongIndexComment.GenByArgs(idxInfo.Name.String(), maxCommentLength))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			if constr.Option.Tp == model.IndexTypeInvalid {
 				// Use btree as default index type.
 				idxInfo.Tp = model.IndexTypeBtree
@@ -749,7 +761,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := d.buildTableInfo(ident.Name, cols, newConstraints)
+	tbInfo, err := d.buildTableInfo(ident.Name, cols, newConstraints, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -768,7 +780,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first id is expected to greater than 1, we need to do rebase.
-			d.handleAutoIncID(tbInfo, schema.ID)
+			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
 	err = d.callHookOnChanged(err)
@@ -949,7 +961,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		}
 	}
 
-	if col.OriginDefaultValue == expression.CurrentTimestamp &&
+	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
 	}
@@ -1028,8 +1040,8 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		msg := fmt.Sprintf("collate %s not match origin %s", to.Collate, origin.Collate)
 		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
-	toUnsigned := mysql.HasUnsignedFlag(uint(to.Flag))
-	originUnsigned := mysql.HasUnsignedFlag(uint(origin.Flag))
+	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
+	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
 		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
 		return errUnsupportedModifyColumn.GenByArgs(msg)
@@ -1102,14 +1114,14 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 		case ast.ColumnOptionNotNull:
 			col.Flag |= mysql.NotNullFlag
 		case ast.ColumnOptionNull:
-			col.Flag &= ^uint(mysql.NotNullFlag)
+			col.Flag &= ^mysql.NotNullFlag
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
 			return errUnsupportedModifyColumn.Gen("unsupported modify column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if !expression.IsCurrentTimeExpr(opt.Expr) {
+			if !expression.IsCurrentTimestampExpr(opt.Expr) {
 				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 			}
 			col.Flag |= mysql.OnUpdateNowFlag
@@ -1284,7 +1296,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	}
 
 	// Clean the NoDefaultValueFlag value.
-	col.Flag &= ^uint(mysql.NoDefaultValueFlag)
+	col.Flag &= ^mysql.NoDefaultValueFlag
 	if len(spec.NewColumn.Options) == 0 {
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)
@@ -1423,6 +1435,17 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 
 	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
 		return errDupKeyName.Gen("index already exist %s", indexName)
+	}
+
+	if indexOption != nil {
+		// May be truncate comment here, when index comment too long and sql_mode is't strict.
+		indexOption.Comment, err = validateCommentLength(ctx.GetSessionVars(),
+			indexOption.Comment,
+			maxCommentLength,
+			errTooLongIndexComment.GenByArgs(indexName.String(), maxCommentLength))
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job := &model.Job{
@@ -1575,4 +1598,18 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
 	}
 	return nil
+}
+
+// validateCommentLength checks comment length of table, column, index and partition.
+// If comment length is more than the standard length truncate it
+// and store the comment length upto the standard comment length size.
+func validateCommentLength(vars *variable.SessionVars, comment string, maxLen int, err error) (string, error) {
+	if len(comment) > maxLen {
+		if vars.StrictSQLMode {
+			return "", err
+		}
+		vars.StmtCtx.AppendWarning(err)
+		return comment[:maxLen], nil
+	}
+	return comment, nil
 }

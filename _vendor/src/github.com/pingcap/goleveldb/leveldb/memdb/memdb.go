@@ -35,6 +35,7 @@ func (r *lockedSource) Seed(seed int64) {
 	r.lk.Unlock()
 }
 
+// Common errors.
 var (
 	ErrNotFound     = errors.ErrNotFound
 	ErrIterReleased = errors.New("leveldb/memdb: iterator released")
@@ -435,7 +436,7 @@ func (p *DB) Find(key []byte) (rkey, value []byte, err error) {
 }
 
 // NewIterator returns an iterator of the DB.
-// The returned iterator is not goroutine-safe, but it is safe to use
+// The returned iterator is not safe for concurrent use, but it is safe to use
 // multiple iterators concurrently, with each in a dedicated goroutine.
 // It is also safe to use an iterator concurrently with modifying its
 // underlying DB. However, the resultant key/value pairs are not guaranteed
@@ -461,7 +462,7 @@ func (p *DB) Capacity() int {
 }
 
 // Size returns sum of keys and values length. Note that deleted
-// key/value will not be accouted for, but it will still consume
+// key/value will not be accounted for, but it will still consume
 // the buffer, since the buffer is append only.
 func (p *DB) Size() int {
 	p.mu.RLock()
@@ -502,11 +503,14 @@ func (p *DB) Reset() {
 	p.mu.Unlock()
 }
 
-// New creates a new initalized in-memory key/value DB. The capacity
+// New creates a new initialized in-memory key/value DB. The capacity
 // is the initial key/value buffer capacity. The capacity is advisory,
 // not enforced.
 //
-// The returned DB instance is goroutine-safe.
+// This DB is append-only, deleting an entry would remove entry node but not
+// reclaim KV buffer.
+//
+// The returned DB instance is safe for concurrent use.
 func New(cmp comparer.BasicComparer, capacity int) *DB {
 	p := &DB{
 		cmp:       cmp,

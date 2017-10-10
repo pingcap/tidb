@@ -134,7 +134,8 @@ func (j *JSON) UnmarshalJSON(data []byte) (err error) {
 
 // String implements fmt.Stringer interface.
 func (j JSON) String() string {
-	bytes, _ := json.Marshal(j)
+	bytes, err := json.Marshal(j)
+	terror.Log(err)
 	return strings.TrimSpace(hack.String(bytes))
 }
 

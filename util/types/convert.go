@@ -419,13 +419,13 @@ func ToString(value interface{}) (string, error) {
 	case int:
 		return strconv.FormatInt(int64(v), 10), nil
 	case int64:
-		return strconv.FormatInt(int64(v), 10), nil
+		return strconv.FormatInt(v, 10), nil
 	case uint64:
-		return strconv.FormatUint(uint64(v), 10), nil
+		return strconv.FormatUint(v, 10), nil
 	case float32:
 		return strconv.FormatFloat(float64(v), 'f', -1, 32), nil
 	case float64:
-		return strconv.FormatFloat(float64(v), 'f', -1, 64), nil
+		return strconv.FormatFloat(v, 'f', -1, 64), nil
 	case string:
 		return v, nil
 	case []byte:

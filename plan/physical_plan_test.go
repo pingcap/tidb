@@ -288,11 +288,10 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			cond: "eq(test.t.a, if(eq(test.t.a, 1), <nil>, test.t.a))",
 		},
 		// ifnull
-		// TODO: ifnull(null, a) will be wrapped with cast which can not be pushed down.
-		//{
-		//	sql:  "a = ifnull(null, a)",
-		//	cond: "eq(test.t.a, ifnull(<nil>, test.t.a))",
-		//},
+		{
+			sql:  "a = ifnull(null, a)",
+			cond: "eq(test.t.a, ifnull(<nil>, test.t.a))",
+		},
 		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
@@ -312,8 +311,6 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 		ast.SetFlag(stmt)
 
 		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
-		err = expression.InferType(mockContext().GetSessionVars().StmtCtx, stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -548,6 +545,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
+		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)

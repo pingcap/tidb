@@ -21,6 +21,8 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
 
@@ -114,6 +116,22 @@ func (t backoffType) String() string {
 	return ""
 }
 
+func (t backoffType) TError() *terror.Error {
+	switch t {
+	case boTiKVRPC:
+		return ErrTiKVServerTimeout
+	case boTxnLock, boTxnLockFast:
+		return ErrResolveLockTimeout
+	case boPDRPC:
+		return ErrPDServerTimeout
+	case boRegionMiss:
+		return ErrRegionUnavaiable
+	case boServerBusy:
+		return ErrTiKVServerBusy
+	}
+	return terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
+}
+
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	copBuildTaskMaxBackoff  = 5000
@@ -128,6 +146,7 @@ const (
 	gcResolveLockMaxBackoff = 100000
 	gcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
+	splitRegionBackoff      = 20000
 )
 
 var commitMaxBackoff = 20000
@@ -183,7 +202,9 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 				errMsg += "\n" + err.Error()
 			}
 		}
-		return errors.Annotate(errors.New(errMsg), txnRetryableMark)
+		log.Warn(errMsg)
+		// Use the last backoff type to generate a MySQL error.
+		return typ.TError()
 	}
 	return nil
 }

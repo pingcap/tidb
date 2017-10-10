@@ -199,7 +199,7 @@ func (s *testTableSuite) TestGetZeroValue(c *C) {
 		colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 		zv := GetZeroValue(colInfo)
 		c.Assert(zv.Kind(), Equals, tt.value.Kind())
-		cmp, err := zv.CompareDatum(sc, tt.value)
+		cmp, err := zv.CompareDatum(sc, &tt.value)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -317,7 +317,7 @@ func (s *testTableSuite) TestGetDefaultValue(c *C) {
 			},
 			true,
 			types.NewDatum(zeroTimestamp),
-			errNoDefaultValue,
+			ErrNoDefaultValue,
 		},
 		{
 			&model.ColumnInfo{

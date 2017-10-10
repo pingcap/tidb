@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -291,12 +292,13 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:        b.ctx,
-		Columns:    v.Columns,
-		Lists:      v.Lists,
-		Setlist:    v.Setlist,
-		GenColumns: v.GenCols.Columns,
-		GenExprs:   v.GenCols.Exprs,
+		ctx:                   b.ctx,
+		Columns:               v.Columns,
+		Lists:                 v.Lists,
+		Setlist:               v.Setlist,
+		GenColumns:            v.GenCols.Columns,
+		GenExprs:              v.GenCols.Exprs,
+		needFillDefaultValues: v.NeedFillDefaultValue,
 	}
 	if len(v.Children()) > 0 {
 		ivs.SelectExec = b.build(v.Children()[0])
@@ -417,13 +419,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.Columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	case *XSelectIndexExec:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -437,7 +439,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -451,7 +453,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -465,10 +467,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows(x.table)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return src
+	}
+	if b.err != nil {
+		return nil
 	}
 	return us
 }
@@ -1052,6 +1057,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		SketchSize:  maxSketchSize,
 		ColumnsInfo: distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
 	}
+	b.err = setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	return e
 }
 
@@ -1137,10 +1143,6 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
-	var handleCol *expression.Column
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[ts.Table.ID][0]
-	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1151,14 +1153,10 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
-		handleCol: handleCol,
 		priority:  b.priority,
 	}
 
 	for i := range v.Schema().Columns {
-		if v.Schema().Columns[i].ID == model.ExtraHandleID {
-			break
-		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
@@ -1172,10 +1170,6 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
-	var handleCol *expression.Column
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
-	}
 	e := &IndexReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1187,15 +1181,10 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		desc:      is.Desc,
 		ranges:    is.Ranges,
 		columns:   is.Columns,
-		handleCol: handleCol,
 		priority:  b.priority,
 	}
 
 	for _, col := range v.OutputColumns {
-		// If it's ID is ExtraHandleID, then it must is the tail of the slice.
-		if col.ID == model.ExtraHandleID {
-			break
-		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
@@ -1212,15 +1201,25 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		return nil
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
+	var (
+		handleCol         *expression.Column
+		tableReaderSchema *expression.Schema
+	)
 	table, _ := b.is.TableByID(is.Table.ID)
-	var handleCol *expression.Column
+	len := v.Schema().Len()
 	if v.NeedColHandle {
 		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
-	}
-
-	len := v.Schema().Len()
-	if handleIsExtra(handleCol) {
-		len--
+	} else if !is.OutOfOrder {
+		tableReaderSchema = v.Schema().Clone()
+		handleCol = &expression.Column{
+			ID:      model.ExtraHandleID,
+			ColName: model.NewCIStr("_rowid"),
+			Index:   v.Schema().Len(),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		tableReaderSchema.Append(handleCol)
+		len = tableReaderSchema.Len()
 	}
 
 	for i := 0; i < len; i++ {
@@ -1228,19 +1227,20 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	e := &IndexLookUpExecutor{
-		ctx:          b.ctx,
-		schema:       v.Schema(),
-		dagPB:        indexReq,
-		tableID:      is.Table.ID,
-		table:        table,
-		index:        is.Index,
-		keepOrder:    !is.OutOfOrder,
-		desc:         is.Desc,
-		ranges:       is.Ranges,
-		tableRequest: tableReq,
-		columns:      is.Columns,
-		handleCol:    handleCol,
-		priority:     b.priority,
+		ctx:               b.ctx,
+		schema:            v.Schema(),
+		dagPB:             indexReq,
+		tableID:           is.Table.ID,
+		table:             table,
+		index:             is.Index,
+		keepOrder:         !is.OutOfOrder,
+		desc:              is.Desc,
+		ranges:            is.Ranges,
+		tableRequest:      tableReq,
+		columns:           is.Columns,
+		handleCol:         handleCol,
+		priority:          b.priority,
+		tableReaderSchema: tableReaderSchema,
 	}
 	return e
 }

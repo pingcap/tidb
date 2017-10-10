@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -51,10 +52,13 @@ type Histogram struct {
 // Repeat is the number of repeats of the bucket value, it can be used to find popular values.
 //
 type Bucket struct {
-	Count      int64
-	UpperBound types.Datum
-	LowerBound types.Datum
-	Repeats    int64
+	Count        int64
+	UpperBound   types.Datum
+	LowerBound   types.Datum
+	Repeats      int64
+	lowerScalar  float64
+	upperScalar  float64
+	commonPfxLen int // when the bucket value type is KindString or KindBytes, commonPfxLen is the common prefix length of the lower bound and upper bound.
 }
 
 // SaveToStorage saves the histogram to storage.
@@ -139,11 +143,15 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 				return nil, errors.Trace(err)
 			}
 		}
+		lowerScalar, upperScalar, commonLength := preCalculateDatumScalar(&lowerBound, &upperBound)
 		hg.Buckets[bucketID] = Bucket{
-			Count:      count,
-			UpperBound: upperBound,
-			LowerBound: lowerBound,
-			Repeats:    repeats,
+			Count:        count,
+			UpperBound:   upperBound,
+			LowerBound:   lowerBound,
+			Repeats:      repeats,
+			lowerScalar:  lowerScalar,
+			upperScalar:  upperScalar,
+			commonPfxLen: commonLength,
 		}
 	}
 	for i := 1; i < bucketSize; i++ {
@@ -160,8 +168,10 @@ func (hg *Histogram) toString(isIndex bool) string {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
 	}
 	for _, bucket := range hg.Buckets {
-		upperVal, _ := bucket.UpperBound.ToString()
-		lowerVal, _ := bucket.LowerBound.ToString()
+		upperVal, err := bucket.UpperBound.ToString()
+		terror.Log(err)
+		lowerVal, err := bucket.LowerBound.ToString()
+		terror.Log(err)
 		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", bucket.Count, lowerVal, upperVal, bucket.Repeats))
 	}
 	return strings.Join(strs, "\n")
@@ -179,7 +189,7 @@ func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Da
 	if match {
 		return float64(hg.Buckets[index].Repeats), nil
 	}
-	c, err := value.CompareDatum(sc, hg.Buckets[index].LowerBound)
+	c, err := value.CompareDatum(sc, &hg.Buckets[index].LowerBound)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -237,14 +247,16 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 	if match {
 		return lessThanBucketValueCount, nil
 	}
-	c, err := value.CompareDatum(sc, hg.Buckets[index].LowerBound)
+	c, err := value.CompareDatum(sc, &hg.Buckets[index].LowerBound)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	if c <= 0 {
 		return prevCount, nil
 	}
-	return (prevCount + lessThanBucketValueCount) / 2, nil
+	valueScalar := convertDatumToScalar(&value, hg.Buckets[index].commonPfxLen)
+	frac := calcFraction(hg.Buckets[index].lowerScalar, hg.Buckets[index].upperScalar, valueScalar)
+	return prevCount + (lessThanBucketValueCount-prevCount)*frac, nil
 }
 
 // lessAndEqRowCount estimates the row count where the column less than or equal to value.
@@ -294,7 +306,7 @@ func (hg *Histogram) inBucketBetweenCount() float64 {
 
 func (hg *Histogram) lowerBound(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
 	index = sort.Search(len(hg.Buckets), func(i int) bool {
-		cmp, err1 := hg.Buckets[i].UpperBound.CompareDatum(sc, target)
+		cmp, err1 := hg.Buckets[i].UpperBound.CompareDatum(sc, &target)
 		if err1 != nil {
 			err = errors.Trace(err1)
 			return false
@@ -384,7 +396,7 @@ func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram
 	}
 	lh.NDV += rh.NDV
 	lLen := len(lh.Buckets)
-	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, rh.Buckets[0].LowerBound)
+	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, &rh.Buckets[0].LowerBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -476,7 +488,7 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*types.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
-		cmp, err := rg.Low.CompareDatum(sc, rg.High)
+		cmp, err := rg.Low.CompareDatum(sc, &rg.High)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
