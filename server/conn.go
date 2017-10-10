@@ -119,7 +119,6 @@ func (cc *clientConn) Close() error {
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
 	connGauge.WithLabelValues(cc.dbname).Set(float64(connections))
-	connGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
 	terror.Log(err)
 	if cc.ctx != nil {
