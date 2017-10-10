@@ -1226,7 +1226,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
-	ranges := make([]*types.IndexRange, len(is.Ranges))
+	ranges := make([]*types.IndexRange, 0, len(is.Ranges))
 	for _, rangeInPlan := range is.Ranges {
 		ranges = append(ranges, rangeInPlan.Clone())
 	}
