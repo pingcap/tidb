@@ -69,6 +69,32 @@ func (s *testSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// Issue #4684.
+	tk.MustExec("drop table if exists `t1`")
+	testSQL = "create table `t1` (" +
+		"`c1` tinyint unsigned default null," +
+		"`c2` smallint unsigned default null," +
+		"`c3` mediumint unsigned default null," +
+		"`c4` int unsigned default null," +
+		"`c5` bigint unsigned default null);`"
+
+	tk.MustExec(testSQL)
+	testSQL = "show create table t1"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"t1", "CREATE TABLE `t1` (\n" +
+			"  `c1` tinyint(3) UNSIGNED DEFAULT NULL,\n" +
+			"  `c2` smallint(5) UNSIGNED DEFAULT NULL,\n" +
+			"  `c3` mediumint(8) UNSIGNED DEFAULT NULL,\n" +
+			"  `c4` int(10) UNSIGNED DEFAULT NULL,\n" +
+			"  `c5` bigint(20) UNSIGNED DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)

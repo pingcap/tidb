@@ -24,16 +24,10 @@ func FoldConstant(expr Expression) Expression {
 		return expr
 	}
 	args := scalarFunc.GetArgs()
-	canFold := true
 	for i := 0; i < len(args); i++ {
-		foldedArg := FoldConstant(args[i])
-		scalarFunc.GetArgs()[i] = foldedArg
-		if _, ok := foldedArg.(*Constant); !ok {
-			canFold = false
+		if _, ok := args[i].(*Constant); !ok {
+			return expr
 		}
-	}
-	if !canFold {
-		return expr
 	}
 	value, err := scalarFunc.Eval(nil)
 	if err != nil {
