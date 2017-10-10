@@ -581,14 +581,10 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
 		var res *coprocessor.Response
-		var err error
 		if r.GetTp() == kv.ReqTypeDAG {
-			res, err = handler.handleCopDAGRequest(r)
+			res = handler.handleCopDAGRequest(r)
 		} else {
-			res, err = handler.handleCopAnalyzeRequest(r)
-		}
-		if err != nil {
-			return nil, err
+			res = handler.handleCopAnalyzeRequest(r)
 		}
 		resp.Cop = res
 	case tikvrpc.CmdMvccGetByKey:

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -77,6 +76,7 @@ type twoPhaseCommitter struct {
 		undetermined bool
 	}
 	priority pb.CommandPri
+	syncLog  bool
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -151,6 +151,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 		mutations: mutations,
 		lockTTL:   txnLockTTL(txn.startTime, size),
 		priority:  getTxnPriority(txn),
+		syncLog:   getTxnSyncLog(txn),
 	}, nil
 }
 
@@ -160,7 +161,7 @@ func (c *twoPhaseCommitter) primary() []byte {
 
 const bytesPerMiB = 1024 * 1024
 
-func txnLockTTL(startTime monotime.Time, txnSize int) uint64 {
+func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	// Increase lockTTL for large transactions.
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
 	// When writeSize is less than 256KB, the base ttl is defaultTTL (3s);
@@ -168,7 +169,7 @@ func txnLockTTL(startTime monotime.Time, txnSize int) uint64 {
 	lockTTL := defaultLockTTL
 	if txnSize >= txnCommitBatchSize {
 		sizeMiB := float64(txnSize) / bytesPerMiB
-		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
+		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(sizeMiB))
 		if lockTTL < defaultLockTTL {
 			lockTTL = defaultLockTTL
 		}
@@ -180,7 +181,7 @@ func txnLockTTL(startTime monotime.Time, txnSize int) uint64 {
 	// Increase lockTTL by the transaction's read time.
 	// When resolving a lock, we compare current ts and startTS+lockTTL to decide whether to clean up. If a txn
 	// takes a long time to read, increasing its TTL will help to prevent it from been aborted soon after prewrite.
-	elapsed := time.Duration(monotime.Now()-startTime) / time.Millisecond
+	elapsed := time.Since(startTime) / time.Millisecond
 	return lockTTL + uint64(elapsed)
 }
 
@@ -328,8 +329,11 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			StartVersion: c.startTS,
 			LockTtl:      c.lockTTL,
 		},
+		Context: pb.Context{
+			Priority: c.priority,
+			SyncLog:  c.syncLog,
+		},
 	}
-	req.Context.Priority = c.priority
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -396,6 +400,13 @@ func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	return pb.CommandPri_Normal
 }
 
+func getTxnSyncLog(txn *tikvTxn) bool {
+	if sync := txn.us.GetOption(kv.SyncLog); sync != nil {
+		return sync.(bool)
+	}
+	return false
+}
+
 func kvPriorityToCommandPri(pri int) pb.CommandPri {
 	switch pri {
 	case kv.PriorityLow:
@@ -413,6 +424,10 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,
 			CommitVersion: c.commitTS,
+		},
+		Context: pb.Context{
+			Priority: c.priority,
+			SyncLog:  c.syncLog,
 		},
 	}
 	req.Context.Priority = c.priority
@@ -478,6 +493,10 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		BatchRollback: &pb.BatchRollbackRequest{
 			Keys:         batch.keys,
 			StartVersion: c.startTS,
+		},
+		Context: pb.Context{
+			Priority: c.priority,
+			SyncLog:  c.syncLog,
 		},
 	}
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)

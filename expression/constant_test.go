@@ -50,8 +50,7 @@ func newLonglong(value int64) *Constant {
 
 func newFunction(funcName string, args ...Expression) Expression {
 	typeLong := types.NewFieldType(mysql.TypeLonglong)
-	newFunc, _ := NewFunction(mock.NewContext(), funcName, typeLong, args...)
-	return newFunc
+	return NewFunctionInternal(mock.NewContext(), funcName, typeLong, args...)
 }
 
 func (*testExpressionSuite) TestConstantPropagation(c *C) {

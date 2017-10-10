@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
 )
@@ -353,7 +354,8 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 func (rh *regionHandler) writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
-	w.Write([]byte(err.Error()))
+	_, err = w.Write([]byte(err.Error()))
+	terror.Log(err)
 }
 
 func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
@@ -366,7 +368,8 @@ func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
-	w.Write(js)
+	_, err = w.Write(js)
+	terror.Log(err)
 }
 
 // NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,

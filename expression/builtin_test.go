@@ -66,13 +66,13 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
 	fc := funcs[ast.IsNull]
-	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(1)))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
-	f, err = fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
@@ -83,14 +83,14 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	defer testleak.AfterTest(c)()
 
 	lock := funcs[ast.GetLock]
-	f, err := lock.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil, 1)))
+	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
 	c.Assert(err, IsNil)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
 	releaseLock := funcs[ast.ReleaseLock]
-	f, err = releaseLock.getFunction(s.ctx, datumsToConstants(types.MakeDatums(1)))
+	f, err = releaseLock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)

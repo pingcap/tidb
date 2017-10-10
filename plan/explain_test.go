@@ -224,6 +224,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		},
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
+	tk.MustExec("set @@session.tidb_opt_agg_push_down = 1")
 	for _, tt := range tests {
 		result := tk.MustQuery("explain " + tt.sql)
 		result.Check(testkit.Rows(tt.expect...))
