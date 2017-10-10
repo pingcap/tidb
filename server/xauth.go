@@ -15,6 +15,7 @@ package server
 
 import (
 	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/xprotocol/notice"
 	"github.com/pingcap/tidb/xprotocol/util"
@@ -55,11 +56,15 @@ func (xa *xAuth) handleMessage(msgType Mysqlx.ClientMessages_Type, payload []byt
 func (xa *xAuth) handleReadyMessage(msgType Mysqlx.ClientMessages_Type, payload []byte) error {
 	switch msgType {
 	case Mysqlx.ClientMessages_SESS_CLOSE:
-		notice.SendNoticeOK(xa.xcc.pkt, "bye!")
+		if err := notice.SendNoticeOK(xa.xcc.pkt, "bye!"); err != nil {
+			return errors.Trace(err)
+		}
 		xa.onClose(false)
 		return nil
 	case Mysqlx.ClientMessages_CON_CLOSE:
-		notice.SendNoticeOK(xa.xcc.pkt, "bye!")
+		if err := notice.SendNoticeOK(xa.xcc.pkt, "bye!"); err != nil {
+			return errors.Trace(err)
+		}
 		xa.onClose(false)
 		return nil
 	case Mysqlx.ClientMessages_SESS_RESET:
@@ -103,22 +108,31 @@ func (xa *xAuth) handleAuthMessage(msgType Mysqlx.ClientMessages_Type, payload [
 
 	switch r.status {
 	case authSucceed:
-		xa.onAuthSuccess(r)
+		if err := xa.onAuthSuccess(r); err != nil {
+			return errors.Trace(err)
+		}
 	case authFailed:
 		xa.onAuthFailure(r)
 		return util.ErrorMessage(mysql.ErrAccessDenied, r.data)
 	default:
-		xa.sendAuthContinue(&r.data)
+		if err := xa.sendAuthContinue(&r.data); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
 }
 
-func (xa *xAuth) onAuthSuccess(r *response) {
-	notice.SendClientID(xa.xcc.pkt, xa.xcc.connectionID)
+func (xa *xAuth) onAuthSuccess(r *response) error {
+	if err := notice.SendClientID(xa.xcc.pkt, xa.xcc.connectionID); err != nil {
+		return errors.Trace(err)
+	}
 	xa.stopAuth()
 	xa.mState = ready
-	xa.sendAuthOk(&r.data)
+	if err := xa.sendAuthOk(&r.data); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (xa *xAuth) onAuthFailure(r *response) {

@@ -779,7 +779,11 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	var e *expression.Constant
 	if strings.EqualFold(name, "lower_case_table_names") {
-		num, _ := strconv.Atoi(val)
+		num, err := strconv.Atoi(val)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
 		e = datumToConstant(types.NewIntDatum(int64(num)), mysql.TypeLonglong)
 		e.RetType.Flag |= mysql.UnsignedFlag
 	} else {

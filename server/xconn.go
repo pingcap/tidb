@@ -16,6 +16,7 @@ package server
 import (
 	"io"
 	"net"
+	"runtime"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
@@ -65,9 +66,17 @@ const (
 )
 
 func (xcc *mysqlXClientConn) Run() {
+	const size = 4096
 	defer func() {
-		recover()
-		xcc.Close()
+		r := recover()
+		if r != nil {
+			buf := make([]byte, size)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("lastCmd %s, %v, %s", xcc.lastCmd, r, buf)
+		}
+		err := xcc.Close()
+		terror.Log(errors.Trace(err))
 		log.Infof("[%d] connection exit.", xcc.connectionID)
 	}()
 
@@ -84,7 +93,8 @@ func (xcc *mysqlXClientConn) Run() {
 		log.Debugf("[%d] receive msg type[%d]", xcc.connectionID, tp)
 		if xcc.state == clientAccepted {
 			if err = xcc.handleMessage(tp, payload); err != nil {
-				xcc.writeError(err)
+				err1 := xcc.writeError(err)
+				terror.Log(errors.Trace(err1))
 			}
 		} else {
 			if err = xcc.dispatch(tp, payload); err != nil {
@@ -102,7 +112,8 @@ func (xcc *mysqlXClientConn) Run() {
 					return
 				}
 				log.Warnf("[%d] dispatch error: %s", xcc.connectionID, err)
-				xcc.writeError(err)
+				err1 := xcc.writeError(err)
+				terror.Log(errors.Trace(err1))
 			}
 		}
 	}
@@ -114,7 +125,9 @@ func (xcc *mysqlXClientConn) Close() error {
 	connections := len(xcc.server.clients)
 	xcc.server.rwlock.Unlock()
 	connGauge.Set(float64(connections))
-	xcc.conn.Close()
+	if err := xcc.conn.Close(); err != nil {
+		return errors.Trace(err)
+	}
 	if xcc.ctx != nil {
 		return xcc.ctx.Close()
 	}
@@ -135,7 +148,9 @@ func (xcc *mysqlXClientConn) handleMessage(tp Mysqlx.ClientMessages_Type, msg []
 		}
 		if xcc.dbname != "" {
 			if err := xcc.useDB(xcc.dbname); err != nil {
-				xcc.writeError(err)
+				if err = xcc.writeError(err); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		xcc.ctx.SetSessionManager(xcc.server)
@@ -185,7 +200,9 @@ func (xcc *mysqlXClientConn) auth(tp Mysqlx.ClientMessages_Type, msg []byte) err
 		err := xcc.xauth.handleMessage(tp, msg)
 		if err != nil {
 			log.Errorf("[%d] auth failed on x-protocol, get error %s", xcc.connectionID, err.Error())
-			xcc.writeError(err)
+			if err1 := xcc.writeError(err); err1 != nil {
+				return errors.Trace(err1)
+			}
 			return err
 		}
 

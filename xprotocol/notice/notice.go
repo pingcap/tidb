@@ -1,6 +1,7 @@
 package notice
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/xprotocol/xpacketio"
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
@@ -39,7 +40,9 @@ func (n *notice) sendNotice(scope Mysqlx_Notice.Frame_Scope, forceFlush bool) er
 		return err
 	}
 
-	n.pkt.WritePacket(Mysqlx.ServerMessages_NOTICE, data)
+	if err := n.pkt.WritePacket(Mysqlx.ServerMessages_NOTICE, data); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 

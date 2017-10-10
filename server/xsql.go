@@ -16,6 +16,7 @@ package server
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xprotocol/notice"
@@ -86,7 +87,7 @@ func (xsql *xSQL) executeStmt(sql string) error {
 // WriteResultSet write result set message to client
 // @TODO this is important to performance, need to consider carefully and tuning in next pr
 func WriteResultSet(r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator) error {
-	defer r.Close()
+	defer terror.Call(r.Close)
 	row, err := r.Next()
 	if err != nil {
 		return errors.Trace(err)

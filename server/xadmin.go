@@ -266,7 +266,7 @@ func (xsql *xSQL) isCollection(schema string, collection string) (bool, error) {
 		return false, nil
 	}
 
-	defer rs[0].Close()
+	defer terror.Call(rs[0].Close)
 	row, err := rs[0].Next()
 	if err != nil {
 		return false, errors.Trace(err)

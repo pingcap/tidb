@@ -14,27 +14,30 @@
 package protocol
 
 import (
-	"errors"
 	"strconv"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 )
 
 // DumpIntBinary dumps int to binary.
 func DumpIntBinary(value int64) []byte {
 	p := proto.NewBuffer([]byte{})
-	// error == nil for ever
-	_ = p.EncodeZigzag64(uint64(value))
+	// err == nil for ever, make errcheck happy.
+	err := p.EncodeZigzag64(uint64(value))
+	terror.Log(errors.Trace(err))
 	return p.Bytes()
 }
 
 // DumpUIntBinary dumps uint to binary.
 func DumpUIntBinary(value uint64) []byte {
 	p := proto.NewBuffer([]byte{})
-	// error == nil for ever
-	_ = p.EncodeVarint(uint64(value))
+	// error == nil for ever, make errcheck happy.
+	err := p.EncodeVarint(uint64(value))
+	terror.Log(errors.Trace(err))
 	return p.Bytes()
 }
 
