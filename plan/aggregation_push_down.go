@@ -216,8 +216,7 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []aggregation.Aggregati
 		}
 	}
 	agg := a.makeNewAgg(aggFuncs, gbyCols)
-	child.SetParents(agg)
-	agg.SetChildren(child)
+	setParentAndChildren(agg, child)
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
 	if len(agg.GroupByItems) == 0 {
@@ -307,12 +306,11 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionS
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
 			proj := a.convertAggToProj(newAgg, a.ctx, a.allocator)
-			proj.SetChildren(unionChild)
+			setParentAndChildren(proj, unionChild)
 			return proj
 		}
 	}
-	newAgg.SetChildren(unionChild)
-	unionChild.SetParents(newAgg)
+	setParentAndChildren(newAgg, unionChild)
 	return newAgg
 }
 
@@ -351,9 +349,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 					} else {
 						lChild = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0)
 					}
-					join.SetChildren(lChild, rChild)
-					lChild.SetParents(join)
-					rChild.SetParents(join)
+					setParentAndChildren(join, lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 					join.buildKeyInfo()
 					proj := a.tryToEliminateAggregation(agg)
@@ -376,8 +372,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 					aggFunc.SetArgs(newArgs)
 				}
 				projChild := proj.children[0]
-				agg.SetChildren(projChild)
-				projChild.SetParents(agg)
+				setParentAndChildren(agg, projChild)
 			} else if union, ok1 := child.(*Union); ok1 {
 				var gbyCols []*expression.Column
 				for _, gbyExpr := range agg.GroupByItems {
@@ -388,9 +383,8 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				for _, child := range union.children {
 					newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
 					newChildren = append(newChildren, newChild)
-					newChild.SetParents(union)
 				}
-				union.SetChildren(newChildren...)
+				setParentAndChildren(union, newChildren...)
 				union.SetSchema(pushedAgg.schema)
 			}
 		}
@@ -398,10 +392,9 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild := a.aggPushDown(child.(LogicalPlan))
-		newChild.SetParents(p)
 		newChildren = append(newChildren, newChild)
 	}
-	p.SetChildren(newChildren...)
+	setParentAndChildren(p, newChildren...)
 	return p
 }
 
@@ -421,8 +414,7 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation
 	if coveredByUniqueKey {
 		// GroupByCols has unique key, so this aggregation can be removed.
 		proj := a.convertAggToProj(agg, a.ctx, a.allocator)
-		proj.SetChildren(agg.children[0])
-		agg.children[0].SetParents(proj)
+		setParentAndChildren(proj, agg.children[0])
 		return proj
 	}
 	return nil
