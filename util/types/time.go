@@ -1324,14 +1324,7 @@ func checkDateType(t TimeInternal, allowZeroInDate bool) error {
 	}
 
 	if !allowZeroInDate && (month == 0 || day == 0) {
-		errMsg := fmt.Sprintf("%d-00-00", year)
-		switch {
-		case month == 0 && day != 0:
-			errMsg = fmt.Sprintf("%d-00-%d", year, day)
-		case month != 0 && day == 0:
-			errMsg = fmt.Sprintf("%d-%d-00", year, month)
-		}
-		return ErrIncorrectDatetimeValue.GenByArgs(errMsg)
+		return ErrIncorrectDatetimeValue.GenByArgs(fmt.Sprintf("%04d-%02d-%02d", year, month, day))
 	}
 
 	if err := checkDateRange(t); err != nil {

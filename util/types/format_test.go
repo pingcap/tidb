@@ -21,11 +21,7 @@ import (
 
 func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	tblDate := []struct {
 		Input  string
 		Format string
@@ -81,11 +77,7 @@ func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 
 func (s *testTimeSuite) TestStrToDate(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	tests := []struct {
 		input  string
 		format string

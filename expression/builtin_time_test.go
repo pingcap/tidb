@@ -270,11 +270,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 
 func (s *testEvaluatorSuite) TestMonthName(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
@@ -311,11 +307,7 @@ func (s *testEvaluatorSuite) TestMonthName(c *C) {
 
 func (s *testEvaluatorSuite) TestDayName(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
@@ -355,11 +347,7 @@ func (s *testEvaluatorSuite) TestDayName(c *C) {
 func (s *testEvaluatorSuite) TestDayOfWeek(c *C) {
 	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	cases := []struct {
 		args     interface{}
 		expected int64
@@ -396,11 +384,7 @@ func (s *testEvaluatorSuite) TestDayOfWeek(c *C) {
 func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	cases := []struct {
 		args     interface{}
 		expected int64
@@ -437,11 +421,7 @@ func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 func (s *testEvaluatorSuite) TestDayOfYear(c *C) {
 	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	cases := []struct {
 		args     interface{}
 		expected int64
@@ -1333,11 +1313,7 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 
 func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 	tests := []struct {
 		args      []interface{}
@@ -1408,11 +1384,7 @@ func (s *testEvaluatorSuite) TestWeek(c *C) {
 
 func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 	tests := []struct {
 		t      string
@@ -1814,11 +1786,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 
 func (s *testEvaluatorSuite) TestQuarter(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	tests := []struct {
 		t      string
 		expect int64
@@ -1897,11 +1865,7 @@ func (s *testEvaluatorSuite) TestGetFormat(c *C) {
 
 func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	tests := []struct {
 		param  interface{}
 		expect int64
@@ -1943,11 +1907,7 @@ func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 
 func (s *testEvaluatorSuite) TestToDays(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	tests := []struct {
 		param  interface{}
 		expect int64

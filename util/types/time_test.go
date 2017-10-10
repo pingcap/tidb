@@ -30,11 +30,7 @@ type testTimeSuite struct {
 
 func (s *testTimeSuite) TestDateTime(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
@@ -646,11 +642,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 
 func (s *testTimeSuite) TestRoundFrac(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
-	origIgnoreZeroInDate := sc.IgnoreZeroInDate
 	sc.IgnoreZeroInDate = true
-	defer func() {
-		sc.IgnoreZeroInDate = origIgnoreZeroInDate
-	}()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
