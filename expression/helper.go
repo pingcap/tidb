@@ -66,7 +66,7 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 			}
 		} else if upperX == types.ZeroDatetimeStr {
 			value, err = types.ParseTimeFromNum(0, tp, fsp)
-			terror.Log(err)
+			terror.Log(errors.Trace(err))
 		} else {
 			value, err = types.ParseTime(x, tp, fsp)
 			if err != nil {

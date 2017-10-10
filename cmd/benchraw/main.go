@@ -67,7 +67,7 @@ func main() {
 	log.SetLevel(log.WarnLevel)
 	go func() {
 		err := http.ListenAndServe(":9191", nil)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}()
 
 	value := make([]byte, *valueSize)

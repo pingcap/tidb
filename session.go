@@ -369,7 +369,7 @@ func (s *session) String() string {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
 	}
 	b, err := json.MarshalIndent(data, "", "  ")
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return string(b)
 }
 
@@ -924,7 +924,7 @@ func getHostByIP(ip string) []string {
 		return []string{"localhost"}
 	}
 	addrs, err := net.LookupAddr(ip)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return addrs
 }
 
