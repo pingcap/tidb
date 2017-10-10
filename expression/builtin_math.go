@@ -460,7 +460,7 @@ func (b *builtinCeilDecToIntSig) evalInt(row []types.Datum) (int64, bool, error)
 		err = nil
 		res = res + 1
 	}
-	return res, false, nil
+	return res, false, err
 }
 
 type builtinCeilDecToDecSig struct {
@@ -604,7 +604,7 @@ func (b *builtinFloorDecToIntSig) evalInt(row []types.Datum) (int64, bool, error
 		err = nil
 		res--
 	}
-	return res, false, nil
+	return res, false, err
 }
 
 type builtinFloorDecToDecSig struct {
