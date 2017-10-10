@@ -182,10 +182,10 @@ func (e *DeleteExec) Next() (Row, error) {
 }
 
 type tblColPosInfo struct {
-	tblID int64
+	tblID         int64
 	colBeginIndex int
-	colEndIndex int
-	handleIndex int
+	colEndIndex   int
+	handleIndex   int
 }
 
 func (e *DeleteExec) deleteMultiTables() error {
