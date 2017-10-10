@@ -82,6 +82,7 @@ const (
 	ClassGlobal
 	ClassMockTikv
 	ClassJSON
+	ClassTiKV
 	// Add more as needed.
 )
 
@@ -107,6 +108,8 @@ var errClz2Str = map[ErrClass]string{
 	ClassTypes:         "types",
 	ClassGlobal:        "global",
 	ClassMockTikv:      "mocktikv",
+	ClassJSON:          "json",
+	ClassTiKV:          "tikv",
 }
 
 // String implements fmt.Stringer interface.
@@ -316,4 +319,26 @@ func ErrorEqual(err1, err2 error) bool {
 // ErrorNotEqual returns a boolean indicating whether err1 isn't equal to err2.
 func ErrorNotEqual(err1, err2 error) bool {
 	return !ErrorEqual(err1, err2)
+}
+
+// MustNil fatals if err is not nil.
+func MustNil(err error) {
+	if err != nil {
+		log.Fatalf(errors.ErrorStack(err))
+	}
+}
+
+// Call executes a function and checks the returned err.
+func Call(fn func() error) {
+	err := fn()
+	if err != nil {
+		log.Error(errors.ErrorStack(err))
+	}
+}
+
+// Log logs the error if it is not nil.
+func Log(err error) {
+	if err != nil {
+		log.Error(errors.ErrorStack(err))
+	}
 }

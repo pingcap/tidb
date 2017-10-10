@@ -35,6 +35,8 @@ type Context struct {
 	Store       kv.Storage     // mock global variable
 	sessionVars *variable.SessionVars
 	mux         sync.Mutex // fix data race in ddl test.
+	ctx         goctx.Context
+	cancel      goctx.CancelFunc
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -156,17 +158,21 @@ func (c *Context) GetSessionManager() util.SessionManager {
 
 // Cancel implements the Session interface.
 func (c *Context) Cancel() {
+	c.cancel()
 }
 
 // GoCtx returns standard context.Context that bind with current transaction.
 func (c *Context) GoCtx() goctx.Context {
-	return goctx.Background()
+	return c.ctx
 }
 
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
+	ctx, cancel := goctx.WithCancel(goctx.Background())
 	return &Context{
 		values:      make(map[fmt.Stringer]interface{}),
 		sessionVars: variable.NewSessionVars(),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }

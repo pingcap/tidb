@@ -3,6 +3,7 @@ package localstore
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -124,7 +125,8 @@ func (it *response) Next() (resp []byte, err error) {
 	case err = <-it.errChan:
 	}
 	if err != nil {
-		it.Close()
+		err1 := it.Close()
+		terror.Log(errors.Trace(err1))
 		return nil, errors.Trace(err)
 	}
 	if len(regionResp.newStartKey) != 0 {
@@ -138,7 +140,8 @@ func (it *response) Next() (resp []byte, err error) {
 	}
 	it.respGot++
 	if it.reqSent == len(it.tasks) && it.respGot == it.reqSent {
-		it.Close()
+		err = it.Close()
+		terror.Log(errors.Trace(err))
 	}
 	return regionResp.data, nil
 }

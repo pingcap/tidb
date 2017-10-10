@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -44,6 +44,13 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+)
+
+const (
+	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
+	waitForCleanDataRound = 60
+	// waitForCleanDataInterval is a min duration between 2 check for data clean.
+	waitForCleanDataInterval = time.Millisecond * 100
 )
 
 var _ = Suite(&testDBSuite{})
@@ -66,10 +73,11 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 
 	s.lease = 200 * time.Millisecond
 	tidb.SetSchemaLease(s.lease)
+	tidb.SetStatsLease(0)
 	s.schemaName = "test_db"
-	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
+
+	s.store, err = tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	localstore.MockRemoteStore = true
 
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -84,7 +92,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	localstore.MockRemoteStore = false
 	s.s.Execute("drop database if exists test_db")
 	s.s.Close()
 	s.dom.Close()
@@ -342,18 +349,18 @@ func (s *testDBSuite) testAlterLock(c *C) {
 func (s *testDBSuite) TestAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
+	s.tk.MustExec("create table test_add_index (c1 int, c2 int, c3 int, primary key(c1))")
 
 	done := make(chan error, 1)
 	start := -10
 	num := defaultBatchSize
 	// first add some rows
 	for i := start; i < num; i++ {
-		sql := fmt.Sprintf("insert into t1 values (%d, %d, %d)", i, i, i)
+		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
 		s.mustExec(c, sql)
 	}
 
-	sessionExecInGoroutine(c, s.store, "create index c3_index on t1 (c3)", done)
+	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -379,9 +386,9 @@ LOOP:
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
 				deletedKeys[n] = struct{}{}
-				sql := fmt.Sprintf("delete from t1 where c1 = %d", n)
+				sql := fmt.Sprintf("delete from test_add_index where c1 = %d", n)
 				s.mustExec(c, sql)
-				sql = fmt.Sprintf("insert into t1 values (%d, %d, %d)", i, i, i)
+				sql = fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
 				s.mustExec(c, sql)
 			}
 			num += step
@@ -402,18 +409,18 @@ LOOP:
 	for _, key := range keys {
 		expectedRows = append(expectedRows, []interface{}{key})
 	}
-	rows := s.mustQuery(c, fmt.Sprintf("select c1 from t1 where c3 >= %d", start))
+	rows := s.mustQuery(c, fmt.Sprintf("select c1 from test_add_index where c3 >= %d", start))
 	matchRows(c, rows, expectedRows)
 
 	// test index range
 	for i := 0; i < 100; i++ {
 		index := rand.Intn(len(keys) - 3)
-		rows := s.mustQuery(c, "select c1 from t1 where c3 >= ? limit 3", keys[index])
+		rows := s.mustQuery(c, "select c1 from test_add_index where c3 >= ? limit 3", keys[index])
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
 	}
 
 	// TODO: Support explain in future.
-	// rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 100")
+	// rows := s.mustQuery(c, "explain select c1 from test_add_index where c3 >= 100")
 
 	// ay := dumpRows(c, rows)
 	// c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
@@ -421,7 +428,7 @@ LOOP:
 	// get all row handles
 	ctx := s.s.(context.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
-	t := s.testGetTable(c, "t1")
+	t := s.testGetTable(c, "test_add_index")
 	handles := make(map[int64]struct{})
 	startKey := t.RecordKey(math.MinInt64)
 	err := t.IterRecords(ctx, startKey, t.Cols(),
@@ -464,23 +471,24 @@ LOOP:
 	}
 	c.Assert(handles, HasLen, 0)
 
-	s.tk.MustExec("drop table t1")
+	s.tk.MustExec("drop table test_add_index")
 }
 
 func (s *testDBSuite) TestDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
-	s.tk.MustExec("create index c3_index on t1 (c3)")
+	s.tk.MustExec("drop table if exists test_drop_index")
+	s.tk.MustExec("create table test_drop_index (c1 int, c2 int, c3 int, primary key(c1))")
+	s.tk.MustExec("create index c3_index on test_drop_index (c3)")
 	done := make(chan error, 1)
-	s.mustExec(c, "delete from t1")
+	s.mustExec(c, "delete from test_drop_index")
 
 	num := 100
 	//  add some rows
 	for i := 0; i < num; i++ {
-		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+		s.mustExec(c, "insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
-	t := s.testGetTable(c, "t1")
+	t := s.testGetTable(c, "test_drop_index")
 	var c3idx table.Index
 	for _, tidx := range t.Indices() {
 		if tidx.Meta().Name.L == "c3_index" {
@@ -490,7 +498,7 @@ func (s *testDBSuite) TestDropIndex(c *C) {
 	}
 	c.Assert(c3idx, NotNil)
 
-	sessionExecInGoroutine(c, s.store, "drop index c3_index on t1", done)
+	sessionExecInGoroutine(c, s.store, "drop index c3_index on test_drop_index", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -507,21 +515,21 @@ LOOP:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
-				s.mustExec(c, "update t1 set c2 = 1 where c1 = ?", n)
-				s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+				s.mustExec(c, "update test_drop_index set c2 = 1 where c1 = ?", n)
+				s.mustExec(c, "insert into test_drop_index values (?, ?, ?)", i, i, i)
 			}
 			num += step
 		}
 	}
 
-	rows := s.mustQuery(c, "explain select c1 from t1 where c3 >= 0")
+	rows := s.mustQuery(c, "explain select c1 from test_drop_index where c3 >= 0")
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows), "c3_index"), IsFalse)
 
 	// check in index, must no index in kv
 	ctx := s.s.(context.Context)
 
 	// Make sure there is no index with name c3_index.
-	t = s.testGetTable(c, "t1")
+	t = s.testGetTable(c, "test_drop_index")
 	var nidx table.Index
 	for _, tidx := range t.Indices() {
 		if tidx.Meta().Name.L == "c3_index" {
@@ -555,17 +563,17 @@ LOOP:
 	}
 
 	var handles map[int64]struct{}
-	for i := 0; i < 30; i++ {
+	for i := 0; i < waitForCleanDataRound; i++ {
 		handles = f()
 		if len(handles) != 0 {
-			time.Sleep(time.Millisecond * 100)
+			time.Sleep(waitForCleanDataInterval)
 		} else {
 			break
 		}
 	}
 	c.Assert(handles, HasLen, 0)
 
-	s.tk.MustExec("drop table t1")
+	s.tk.MustExec("drop table test_drop_index")
 }
 
 func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {
@@ -574,20 +582,20 @@ func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {
 	err1 := infoschema.ErrColumnExists.GenByArgs("b")
 	err2 := infoschema.ErrColumnExists.GenByArgs("B")
 
-	s.tk.MustExec("create table t (a int, b int)")
-	_, err := s.tk.Exec("create index c on t(b, a, b)")
+	s.tk.MustExec("create table test_add_index_with_dup (a int, b int)")
+	_, err := s.tk.Exec("create index c on test_add_index_with_dup(b, a, b)")
 	c.Check(err1.Equal(err), Equals, true)
 
-	_, err = s.tk.Exec("create index c on t(b, a, B)")
+	_, err = s.tk.Exec("create index c on test_add_index_with_dup(b, a, B)")
 	c.Check(err2.Equal(err), Equals, true)
 
-	_, err = s.tk.Exec("alter table t add index c (b, a, b)")
+	_, err = s.tk.Exec("alter table test_add_index_with_dup add index c (b, a, b)")
 	c.Check(err1.Equal(err), Equals, true)
 
-	_, err = s.tk.Exec("alter table t add index c (b, a, B)")
+	_, err = s.tk.Exec("alter table test_add_index_with_dup add index c (b, a, B)")
 	c.Check(err2.Equal(err), Equals, true)
 
-	s.tk.MustExec("drop table t")
+	s.tk.MustExec("drop table test_add_index_with_dup")
 }
 
 func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
@@ -1193,7 +1201,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
-	for i := 0; i < 30; i++ {
+	for i := 0; i < waitForCleanDataRound; i++ {
 		err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 			it, err1 := txn.Seek(tablePrefix)
 			if err1 != nil {
@@ -1211,7 +1219,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 		if !hasOldTableData {
 			break
 		}
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(waitForCleanDataInterval)
 	}
 	c.Assert(hasOldTableData, IsFalse)
 }
@@ -1477,7 +1485,6 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 }
 
 func (s *testDBSuite) TestComment(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("drop table if exists ct, ct1")

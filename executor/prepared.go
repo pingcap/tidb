@@ -380,6 +380,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.IgnoreZeroInDate = true
 		if opts := stmt.SelectStmtOpts; opts != nil {
 			sc.Priority = opts.Priority
+			sc.NotFillCache = !opts.SQLCache
 		}
 	default:
 		sc.IgnoreTruncate = true

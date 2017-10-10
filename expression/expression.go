@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 )
@@ -61,9 +62,6 @@ type Expression interface {
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
-
-	// GetTypeClass gets the TypeClass that the expression returns.
-	GetTypeClass() types.TypeClass
 
 	// Clone copies an expression totally.
 	Clone() Expression
@@ -121,124 +119,6 @@ func EvalBool(exprList CNFExprs, row []types.Datum, ctx context.Context) (bool, 
 	return true, nil
 }
 
-// evalExprToInt evaluates `expr` to int type.
-func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementContext) (res int64, isNull bool, err error) {
-	val, err := expr.Eval(row)
-	if val.IsNull() || err != nil {
-		return res, val.IsNull(), errors.Trace(err)
-	}
-	if IsHybridType(expr) {
-		res, err = val.ToInt64(sc)
-		return res, false, errors.Trace(err)
-	} else if expr.GetType().EvalType() == types.ETInt {
-		return val.GetInt64(), false, nil
-	}
-	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
-}
-
-// evalExprToReal evaluates `expr` to real type.
-func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res float64, isNull bool, err error) {
-	val, err := expr.Eval(row)
-	if val.IsNull() || err != nil {
-		return res, val.IsNull(), errors.Trace(err)
-	}
-	if expr.GetType().EvalType() == types.ETReal {
-		// TODO: fix this to val.GetFloat64() after all built-in functions been rewritten.
-		res, err = val.ToFloat64(sc)
-		return res, false, errors.Trace(err)
-	} else if IsHybridType(expr) {
-		res, err = val.ToFloat64(sc)
-		return res, false, errors.Trace(err)
-	}
-	panic(fmt.Sprintf("cannot get REAL result from %s expression", types.TypeStr(expr.GetType().Tp)))
-}
-
-// evalExprToDecimal evaluates `expr` to decimal type.
-func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res *types.MyDecimal, isNull bool, err error) {
-	val, err := expr.Eval(row)
-	if val.IsNull() || err != nil {
-		return res, val.IsNull(), errors.Trace(err)
-	}
-	if expr.GetType().EvalType() == types.ETDecimal {
-		res, err = val.ToDecimal(sc)
-		return res, false, errors.Trace(err)
-		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
-		// So there exists some situations that the two types are not corresponded.
-		// For example, `select 1.1+1.1`
-		// we infer the result type of the sql as `mysql.TypeNewDecimal` which is consistent with MySQL,
-		// but what we actually get is store as float64 in Datum.
-		// So if we wrap `CastDecimalAsInt` upon the result, we'll get <nil> when call `arg.EvalDecimal()`.
-		// This will be fixed after all built-in functions be rewrite correctly.
-	} else if IsHybridType(expr) {
-		res, err = val.ToDecimal(sc)
-		return res, false, errors.Trace(err)
-	}
-	panic(fmt.Sprintf("cannot get DECIMAL result from %s expression", types.TypeStr(expr.GetType().Tp)))
-}
-
-// evalExprToString evaluates `expr` to string type.
-func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementContext) (res string, isNull bool, err error) {
-	val, err := expr.Eval(row)
-	if val.IsNull() || err != nil {
-		return res, val.IsNull(), errors.Trace(err)
-	}
-	exprEvalTp := expr.GetType().EvalType()
-	if exprEvalTp == types.ETString || exprEvalTp == types.ETJson || IsHybridType(expr) {
-		// We cannot use val.GetString() directly.
-		// For example, `Bit` is regarded as ClassString,
-		// while we can not use val.GetString() to get the value of a Bit variable,
-		// because value of `Bit` is stored in Datum.i while val.GetString() get value from Datum.b.
-		res, err = val.ToString()
-		return res, false, errors.Trace(err)
-	}
-	panic(fmt.Sprintf("cannot get STRING result from %s expression", types.TypeStr(expr.GetType().Tp)))
-}
-
-// evalExprToTime evaluates `expr` to TIME type.
-func evalExprToTime(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Time, isNull bool, err error) {
-	if IsHybridType(expr) {
-		return res, true, nil
-	}
-	val, err := expr.Eval(row)
-	if val.IsNull() || err != nil {
-		return res, val.IsNull(), errors.Trace(err)
-	}
-	if types.IsTypeTime(expr.GetType().Tp) {
-		return val.GetMysqlTime(), false, nil
-	}
-	panic(fmt.Sprintf("cannot get DATE result from %s expression", types.TypeStr(expr.GetType().Tp)))
-}
-
-// evalExprToDuration evaluates `expr` to DURATION type.
-func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Duration, isNull bool, err error) {
-	if IsHybridType(expr) {
-		return res, true, nil
-	}
-	val, err := expr.Eval(row)
-	if val.IsNull() || err != nil {
-		return res, val.IsNull(), errors.Trace(err)
-	}
-	if expr.GetType().Tp == mysql.TypeDuration {
-		return val.GetMysqlDuration(), false, nil
-	}
-	panic(fmt.Sprintf("cannot get DURATION result from %s expression", types.TypeStr(expr.GetType().Tp)))
-}
-
-// evalExprToJSON evaluates `expr` to JSON type.
-func evalExprToJSON(expr Expression, row []types.Datum, _ *variable.StatementContext) (res json.JSON, isNull bool, err error) {
-	if IsHybridType(expr) {
-		return res, true, nil
-	}
-	val, err := expr.Eval(row)
-	if val.IsNull() || err != nil {
-		return res, val.IsNull(), errors.Trace(err)
-	}
-	if expr.GetType().Tp == mysql.TypeJSON {
-		return val.GetMysqlJSON(), false, nil
-	}
-	panic(fmt.Sprintf("cannot get JSON result from %s expression", types.TypeStr(expr.GetType().Tp)))
-}
-
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
 func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
@@ -248,7 +128,7 @@ func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, 
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(ctx, funcName,
+	expr := NewFunctionInternal(ctx, funcName,
 		types.NewFieldType(mysql.TypeTiny),
 		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
 		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
@@ -338,9 +218,14 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 	}
 }
 
-// TableInfo2Schema converts table info to schema.
+// TableInfo2Schema converts table info to schema with empty DBName.
 func TableInfo2Schema(tbl *model.TableInfo) *Schema {
-	cols := ColumnInfos2Columns(tbl.Name, tbl.Columns)
+	return TableInfo2SchemaWithDBName(model.CIStr{}, tbl)
+}
+
+// TableInfo2SchemaWithDBName converts table info to schema.
+func TableInfo2SchemaWithDBName(dbName model.CIStr, tbl *model.TableInfo) *Schema {
+	cols := ColumnInfos2ColumnsWithDBName(dbName, tbl.Name, tbl.Columns)
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -382,30 +267,33 @@ func TableInfo2Schema(tbl *model.TableInfo) *Schema {
 	return schema
 }
 
-// ColumnInfos2Columns converts a slice of ColumnInfo to a slice of Column.
+// ColumnInfos2Columns converts a slice of ColumnInfo to a slice of Column with empty DBName.
 func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
+	return ColumnInfos2ColumnsWithDBName(model.CIStr{}, tblName, colInfos)
+}
+
+// ColumnInfos2ColumnsWithDBName converts a slice of ColumnInfo to a slice of Column.
+func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
 	columns := make([]*Column, 0, len(colInfos))
 	for i, col := range colInfos {
 		newCol := &Column{
 			ColName:  col.Name,
 			TblName:  tblName,
+			DBName:   dbName,
 			RetType:  &col.FieldType,
 			Position: i,
+			Index:    col.Offset,
 		}
 		columns = append(columns, newCol)
 	}
 	return columns
 }
 
-// NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) Expression {
-	return FoldConstant(BuildCastFunction(arg, tp, ctx))
-}
-
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
-	bt, _ := fc.getFunction(ctx, nil)
+	bt, err := fc.getFunction(ctx, nil)
+	terror.Log(errors.Trace(err))
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
@@ -421,8 +309,7 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 // For BinaryLiteral/MysqlBit, we will get a wrong result if we convert it to int as a string value.
 // For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
 func IsHybridType(expr Expression) bool {
-	switch expr.GetType().Tp {
-	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+	if expr.GetType().Hybrid() {
 		return true
 	}
 

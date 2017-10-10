@@ -169,6 +169,24 @@ func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	defer resp.Body.Close()
 }
 
+func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/regions/meta")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	// Verify the resp body.
+	decoder := json.NewDecoder(resp.Body)
+	metas := make([]RegionMeta, 0)
+	err = decoder.Decode(&metas)
+	c.Assert(err, IsNil)
+	for _, meta := range metas {
+		c.Assert(meta.ID != 0, IsTrue)
+	}
+}
+
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	store, err := tikv.NewMockTikvStore(tikv.WithMVCCStore(mvccStore))

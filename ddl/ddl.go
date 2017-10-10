@@ -329,8 +329,8 @@ func (d *ddl) Stop() error {
 
 func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
-	d.ownerManager.CampaignOwner(ctx)
-
+	err := d.ownerManager.CampaignOwner(ctx)
+	terror.Log(errors.Trace(err))
 	d.wait.Add(1)
 	go d.onDDLWorker()
 

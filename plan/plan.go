@@ -30,7 +30,7 @@ import (
 
 // UseDAGPlanBuilder checks if we use new DAG planner.
 func UseDAGPlanBuilder(ctx context.Context) bool {
-	return ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) && ctx.GetSessionVars().CBO
+	return ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic)
 }
 
 // Plan is the description of an execution flow.
@@ -461,7 +461,6 @@ func (p *basePlan) copy() *basePlan {
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
-	return
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -517,7 +516,7 @@ func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("ReplaceParent Failed!")
+	return SystemInternalErrorType.Gen("ReplaceParent Failed: parent \"%s\" not found", parent.ExplainID())
 }
 
 // ReplaceChild means replace a child with another one.
@@ -528,7 +527,7 @@ func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("ReplaceChildren Failed!")
+	return SystemInternalErrorType.Gen("ReplaceChildren Failed: child \"%s\" not found", child.ExplainID())
 }
 
 // Parents implements Plan Parents interface.

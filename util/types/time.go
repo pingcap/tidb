@@ -218,11 +218,13 @@ func (t *Time) IsNegative() bool {
 func (t Time) String() string {
 	if t.Type == mysql.TypeDate {
 		// We control the format, so no error would occur.
-		str, _ := t.DateFormat("%Y-%m-%d")
+		str, err := t.DateFormat("%Y-%m-%d")
+		terror.Log(errors.Trace(err))
 		return str
 	}
 
-	str, _ := t.DateFormat("%Y-%m-%d %H:%i:%s")
+	str, err := t.DateFormat("%Y-%m-%d %H:%i:%s")
+	terror.Log(errors.Trace(err))
 	if t.Fsp > 0 {
 		tmp := fmt.Sprintf(".%06d", t.Time.Microsecond())
 		str = str + tmp[:1+t.Fsp]
@@ -275,7 +277,8 @@ func (t Time) ToNumber() *MyDecimal {
 
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
-	dec.FromString([]byte(s))
+	err = dec.FromString([]byte(s))
+	terror.Log(errors.Trace(err))
 	return dec
 }
 
@@ -304,10 +307,10 @@ func (t Time) ConvertToDuration() (Duration, error) {
 
 	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
 	if t.negative {
-		return Duration{Duration: -gotime.Duration(d), Fsp: t.Fsp}, nil
+		return Duration{Duration: -d, Fsp: t.Fsp}, nil
 	}
 	// TODO: check convert validation
-	return Duration{Duration: gotime.Duration(d), Fsp: t.Fsp}, nil
+	return Duration{Duration: d, Fsp: t.Fsp}, nil
 }
 
 // Compare returns an integer comparing the time instant t to o.
@@ -436,7 +439,7 @@ func (t Time) ToPackedUint() (uint64, error) {
 	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
 	hour, minute, sec := tm.Hour(), tm.Minute(), tm.Second()
-	ymd := uint64(((year*13 + int(month)) << 5) | day)
+	ymd := uint64(((year*13 + month) << 5) | day)
 	hms := uint64(hour<<12 | minute<<6 | sec)
 	micro := uint64(tm.Microsecond())
 	return ((ymd<<17 | hms) << 24) | micro, nil
@@ -499,8 +502,10 @@ func (t *Time) Sub(t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
 		// TODO: Consider time_zone variable.
-		a, _ := t.Time.GoTime(gotime.Local)
-		b, _ := t1.Time.GoTime(gotime.Local)
+		a, err := t.Time.GoTime(gotime.Local)
+		terror.Log(errors.Trace(err))
+		b, err := t1.Time.GoTime(gotime.Local)
+		terror.Log(errors.Trace(err))
 		duration = a.Sub(b)
 	} else {
 		seconds, microseconds, neg := calcTimeDiff(t.Time, t1.Time, 1)
@@ -840,7 +845,7 @@ func (d Duration) formatFrac(frac int) string {
 // e.g,
 // 10:10:10 -> 101010
 func (d Duration) ToNumber() *MyDecimal {
-	sign, hours, minutes, seconds, fraction := splitDuration(gotime.Duration(d.Duration))
+	sign, hours, minutes, seconds, fraction := splitDuration(d.Duration)
 	var (
 		s       string
 		signStr string
@@ -858,7 +863,8 @@ func (d Duration) ToNumber() *MyDecimal {
 
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
-	dec.FromString([]byte(s))
+	err := dec.FromString([]byte(s))
+	terror.Log(errors.Trace(err))
 	return dec
 }
 

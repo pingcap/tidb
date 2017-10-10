@@ -19,8 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
@@ -34,9 +33,7 @@ type testIndexSuite struct {
 }
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
-	path := "memory:"
-	d := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := d.Open(path)
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
 }

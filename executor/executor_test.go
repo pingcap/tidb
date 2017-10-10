@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
@@ -57,6 +58,7 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testSuite{})
+var _ = Suite(&testContextOptionSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -164,8 +166,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, NotNil)
 	// different index values
 	ctx := tk.Se.(context.Context)
-	domain := sessionctx.GetDomain(ctx)
-	is := domain.InfoSchema()
+	dom := sessionctx.GetDomain(ctx)
+	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
@@ -635,7 +637,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows("2"))
 	r = tk.MustQuery("select b from (select a,b from t order by a,c limit 1) t")
 	r.Check(testkit.Rows("2"))
-
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("insert into t values(1, 1), (2, 2)")
@@ -658,6 +659,29 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, 10-i))
 	}
 	tk.MustQuery("select a from t use index(b) order by b").Check(testkit.Rows("9", "8", "7", "6", "5", "4", "3", "2", "1", "0"))
+}
+
+func (s *testSuite) TestOrderBy(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, c2 int, c3 varchar(20))")
+	tk.MustExec("insert into t values (1, 2, 'abc'), (2, 1, 'bcd')")
+
+	// Fix issue https://github.com/pingcap/tidb/issues/337
+	tk.MustQuery("select c1 as a, c1 as b from t order by c1").Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustQuery("select c1 as a, t.c1 as a from t order by a desc").Check(testkit.Rows("2 2", "1 1"))
+	tk.MustQuery("select c1 as c2 from t order by c2").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select sum(c1) from t order by sum(c1)").Check(testkit.Rows("3"))
+	tk.MustQuery("select c1 as c2 from t order by c2 + 1").Check(testkit.Rows("2", "1"))
+
+	// Order by position.
+	tk.MustQuery("select * from t order by 1").Check(testkit.Rows("1 2 abc", "2 1 bcd"))
+	tk.MustQuery("select * from t order by 2").Check(testkit.Rows("2 1 bcd", "1 2 abc"))
+
+	// Order by binary.
+	tk.MustQuery("select c1, c3 from t order by binary c1 desc").Check(testkit.Rows("2 bcd", "1 abc"))
+	tk.MustQuery("select c1, c2 from t order by binary c3").Check(testkit.Rows("1 2", "2 1"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
@@ -1929,58 +1953,92 @@ func (s *testSuite) TestIssue4024(c *C) {
 	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
 }
 
+const (
+	checkRequestOff          = 0
+	checkRequestPriority     = 1
+	checkRequestNotFillCache = 2
+	checkRequestSyncLog      = 3
+)
+
 type checkRequestClient struct {
 	tikv.Client
-	priority pb.CommandPri
-	mu       struct {
+	priority     pb.CommandPri
+	notFillCache bool
+	mu           struct {
 		sync.RWMutex
-		turnOn bool
+		checkFlags uint32
+		syncLog    bool
 	}
 }
 
 func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendReq(ctx, addr, req)
 	c.mu.RLock()
-	turnOn := c.mu.turnOn
+	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
-	if turnOn {
+	if checkFlags == checkRequestPriority {
 		switch req.Type {
 		case tikvrpc.CmdCop:
 			if c.priority != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
 		}
+	} else if checkFlags == checkRequestNotFillCache {
+		if c.notFillCache != req.NotFillCache {
+			return nil, errors.New("fail to set not fail cache")
+		}
+	} else if checkFlags == checkRequestSyncLog {
+		switch req.Type {
+		case tikvrpc.CmdPrewrite, tikvrpc.CmdCommit:
+			c.mu.RLock()
+			syncLog := c.mu.syncLog
+			c.mu.RUnlock()
+			if syncLog != req.SyncLog {
+				return nil, errors.New("fail to set sync log")
+			}
+		}
 	}
 	return resp, err
 }
 
-type testPrioritySuite struct{}
+type testContextOptionSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+	cli   *checkRequestClient
+}
 
-var _ = Suite(testPrioritySuite{})
-
-func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
+func (s *testContextOptionSuite) SetUpSuite(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
 	}
+	s.cli = cli
 
-	tmpStore, err := tikv.NewMockTikvStore(
+	var err error
+	s.store, err = tikv.NewMockTikvStore(
 		tikv.WithHijackClient(hijackClient),
 	)
-	defer tmpStore.Close()
 	c.Assert(err, IsNil)
-	dom, err := tidb.BootstrapSession(tmpStore)
+	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	defer dom.Close()
+}
 
-	tk := testkit.NewTestKit(c, tmpStore)
+func (s *testContextOptionSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
+	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1)")
 
+	cli := s.cli
 	cli.mu.Lock()
-	cli.mu.turnOn = true
+	cli.mu.checkFlags = checkRequestPriority
 	cli.mu.Unlock()
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
@@ -2008,6 +2066,76 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+}
+
+func (s *testContextOptionSuite) TestNotFillCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+	defer tk.MustExec("drop table t")
+	tk.MustExec("insert into t values (1)")
+
+	cli := s.cli
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestNotFillCache
+	cli.mu.Unlock()
+	cli.notFillCache = true
+	tk.MustQuery("select SQL_NO_CACHE * from t")
+
+	cli.notFillCache = false
+	tk.MustQuery("select SQL_CACHE * from t")
+	tk.MustQuery("select * from t")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+}
+
+func (s *testContextOptionSuite) TestSyncLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	cli := s.cli
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestSyncLog
+	cli.mu.syncLog = true
+	cli.mu.Unlock()
+	tk.MustExec("create table t (id int primary key)")
+	cli.mu.Lock()
+	cli.mu.syncLog = false
+	cli.mu.Unlock()
+	tk.MustExec("insert into t values (1)")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+}
+
+func (s *testSuite) TestHandleTransfer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1), (2), (4)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = 3 where a = 4")
+	// test table scan read whose result need handle.
+	tk.MustQuery("select * from t ignore index(idx)").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("insert into t values(4)")
+	// test single read whose result need handle
+	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("update t set a = 5 where a = 3")
+	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "4", "5"))
+	tk.MustExec("commit")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("insert into t values(3, 3), (1, 1), (2, 2)")
+	// Second test double read.
+	tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1", "2 2", "3 3"))
 }
 
 func (s *testSuite) TestBit(c *C) {

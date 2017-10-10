@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -89,8 +90,10 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 		x := ctx.Value.GetMysqlDecimal()
 		y := types.NewDecFromInt(ctx.Count)
 		to := new(types.MyDecimal)
-		types.DecimalDiv(x, y, to, types.DivFracIncr)
-		to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
+		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
+		terror.Log(errors.Trace(err))
+		err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
+		terror.Log(errors.Trace(err))
 		d.SetMysqlDecimal(to)
 	}
 	return

@@ -29,18 +29,6 @@ const (
 	UnspecifiedLength int = -1
 )
 
-// TypeClass classifies field types, used for type inference.
-type TypeClass byte
-
-// TypeClass values.
-const (
-	ClassString  TypeClass = 0
-	ClassReal    TypeClass = 1
-	ClassInt     TypeClass = 2
-	ClassRow     TypeClass = 3
-	ClassDecimal TypeClass = 4
-)
-
 // FieldType records field type information.
 type FieldType struct {
 	Tp      byte
@@ -105,8 +93,8 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 			unsigned = unsigned && mysql.HasUnsignedFlag(ft.Flag)
 		}
 	}
-	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
-	setTypeFlag(flag, uint(mysql.BinaryFlag), !aggregatedEvalType.IsStringKind() || gotBinString)
+	setTypeFlag(flag, mysql.UnsignedFlag, unsigned)
+	setTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
 	return aggregatedEvalType
 }
 
@@ -126,20 +114,6 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 		*flag |= flagItem
 	} else {
 		*flag &= ^flagItem
-	}
-}
-
-// ToClass maps the field type to a type class.
-func (ft *FieldType) ToClass() TypeClass {
-	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
-		return ClassInt
-	case mysql.TypeNewDecimal:
-		return ClassDecimal
-	case mysql.TypeFloat, mysql.TypeDouble:
-		return ClassReal
-	default:
-		return ClassString
 	}
 }
 
@@ -165,35 +139,9 @@ func (ft *FieldType) EvalType() EvalType {
 	return ETString
 }
 
-func (tc TypeClass) String() string {
-	switch tc {
-	case ClassString:
-		return "ClassString"
-	case ClassReal:
-		return "ClassReal"
-	case ClassInt:
-		return "ClassInt"
-	case ClassDecimal:
-		return "ClassDecimal"
-	default:
-		return "ClassRow"
-	}
-}
-
-// ToType maps the type class to a type.
-func (tc TypeClass) ToType() byte {
-	switch tc {
-	case ClassString:
-		return mysql.TypeVarString
-	case ClassReal:
-		return mysql.TypeDouble
-	case ClassInt:
-		return mysql.TypeLonglong
-	case ClassDecimal:
-		return mysql.TypeNewDecimal
-	default:
-		return mysql.TypeUnspecified
-	}
+// Hybrid checks whether a type is a hybrid type, which can represent different types of value in specific context.
+func (ft *FieldType) Hybrid() bool {
+	return ft.Tp == mysql.TypeEnum || ft.Tp == mysql.TypeBit || ft.Tp == mysql.TypeSet
 }
 
 // Init initializes the FieldType data.
@@ -315,13 +263,13 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case int64:
 		tp.Tp = mysql.TypeLonglong
-		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Flen = len(strconv.FormatInt(x, 10))
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
-		tp.Flen = len(strconv.FormatUint(uint64(x), 10))
+		tp.Flen = len(strconv.FormatUint(x, 10))
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case string:

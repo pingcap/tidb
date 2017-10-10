@@ -144,7 +144,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tests {
-		bf, err := funcs[t.funcName].getFunction(s.ctx, primitiveValsToConstants([]interface{}{t.arg0, t.arg1}))
+		bf, err := funcs[t.funcName].getFunction(s.ctx, s.primitiveValsToConstants([]interface{}{t.arg0, t.arg1}))
 		c.Assert(err, IsNil)
 		args := bf.getArgs()
 		c.Assert(args[0].GetType().Tp, Equals, t.tp)
@@ -196,7 +196,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Coalesce, primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Coalesce, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(nil)
@@ -253,7 +253,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
 	} {
 		fc := funcs[ast.Interval]
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t.args))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
 		c.Assert(err, IsNil)
 		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
@@ -312,7 +312,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			nil, nil, false, true,
 		},
 	} {
-		f0, err := newFunctionForTest(s.ctx, ast.Greatest, primitiveValsToConstants(t.args)...)
+		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f0.Eval(nil)
 		if t.getErr {
@@ -326,7 +326,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			}
 		}
 
-		f1, err := newFunctionForTest(s.ctx, ast.Least, primitiveValsToConstants(t.args)...)
+		f1, err := newFunctionForTest(s.ctx, ast.Least, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		d, err = f1.Eval(nil)
 		if t.getErr {

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
@@ -149,7 +150,7 @@ func (e *HashJoinExec) fetchBigExec() {
 		for _, cn := range e.bigTableResultCh {
 			close(cn)
 		}
-		e.bigExec.Close()
+		terror.Log(errors.Trace(e.bigExec.Close()))
 		e.wg.Done()
 	}()
 	curBatchSize := 1
@@ -216,7 +217,7 @@ func (e *HashJoinExec) prepare() error {
 			return errors.Trace(err)
 		}
 		if row == nil {
-			e.smallExec.Close()
+			terror.Log(errors.Trace(e.smallExec.Close()))
 			break
 		}
 
@@ -523,7 +524,7 @@ func (e *NestedLoopJoinExec) prepare() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer e.SmallExec.Close()
+	defer terror.Call(e.SmallExec.Close)
 	e.innerRows = e.innerRows[:0]
 	e.prepared = true
 	for {
@@ -661,7 +662,7 @@ func (e *HashSemiJoinExec) prepare() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer e.smallExec.Close()
+	defer terror.Call(e.smallExec.Close)
 	e.hashTable = make(map[string][]Row)
 	e.resultRows = make([]Row, 1)
 	e.prepared = true

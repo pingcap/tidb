@@ -14,8 +14,10 @@
 package plan
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/terror"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated, returns true if
@@ -71,7 +73,9 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		children = append(children, doPhysicalProjectionElimination(child.(PhysicalPlan)))
+		newChild := doPhysicalProjectionElimination(child.(PhysicalPlan))
+		children = append(children, newChild)
+		newChild.SetParents(p)
 	}
 	p.SetChildren(children...)
 
@@ -80,7 +84,8 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		return p
 	}
 	child := p.Children()[0]
-	RemovePlan(p)
+	err := RemovePlan(p)
+	terror.Log(errors.Trace(err))
 	return child.(PhysicalPlan)
 }
 
@@ -161,7 +166,8 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
-	RemovePlan(p)
+	err := RemovePlan(p)
+	terror.Log(errors.Trace(err))
 	return child.(LogicalPlan)
 }
 

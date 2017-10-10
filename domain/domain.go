@@ -21,6 +21,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -352,10 +354,10 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
-	do.ddl.Stop()
+	terror.Log(errors.Trace(do.ddl.Stop()))
 	close(do.exit)
 	if do.etcdClient != nil {
-		do.etcdClient.Close()
+		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
 	do.sysSessionPool.Close()
 	do.wg.Wait()
@@ -424,6 +426,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			cli, err = clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
+				DialOptions: []grpc.DialOption{
+					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+				},
 			})
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -535,7 +541,7 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 }
 
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
-var RunAutoAnalyze = false
+var RunAutoAnalyze = true
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.

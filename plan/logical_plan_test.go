@@ -853,6 +853,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
+		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
@@ -1120,6 +1121,27 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "insert into t set a = 1, b = values(a) + 1",
 			err: nil,
 		},
+		// TODO: Fix Error Code.
+		//{
+		//	sql: "select a, b, c from t order by 0",
+		//	err: ErrUnknownColumn,
+		//},
+		//{
+		//	sql: "select a, b, c from t order by 4",
+		//	err: ErrUnknownColumn,
+		//},
+		{
+			sql: "select a as c1, b as c1 from t order by c1",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "(select a as b, b from t) union (select a, b from t) order by b",
+			err: ErrAmbiguous,
+		},
+		//{
+		//	sql: "(select a as b, b from t) union (select a, b from t) order by a",
+		//	err: ErrUnknownColumn,
+		//},
 	}
 	for _, tt := range tests {
 		sql := tt.sql
@@ -1127,7 +1149,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
 		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
@@ -1287,6 +1309,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
+		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)

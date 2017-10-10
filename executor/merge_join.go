@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -271,7 +272,7 @@ func (e *MergeJoinExec) Close() error {
 
 	lErr := e.leftRowBlock.reader.Close()
 	if lErr != nil {
-		e.rightRowBlock.reader.Close()
+		terror.Log(errors.Trace(e.rightRowBlock.reader.Close()))
 		return errors.Trace(lErr)
 	}
 	rErr := e.rightRowBlock.reader.Close()
