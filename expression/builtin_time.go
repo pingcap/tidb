@@ -2897,7 +2897,7 @@ func (b *builtinUnixTimestampCurrentSig) evalInt(row []types.Datum) (int64, bool
 		return 0, true, errors.Trace(err)
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return intVal, false, nil
 }
 
@@ -2922,7 +2922,7 @@ func (b *builtinUnixTimestampIntSig) evalInt(row []types.Datum) (int64, bool, er
 		return 0, true, errors.Trace(err)
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return intVal, false, nil
 }
 
