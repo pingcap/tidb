@@ -658,7 +658,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		useCachedPlan = false
 	)
 
-	if cache.EnablePlanCache {
+	if cache.PlanCacheEnabled {
 		schemaVersion := sessionctx.GetDomain(s).InfoSchema().SchemaMetaVersion()
 		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
 
@@ -705,13 +705,13 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			if err1 != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
 				err2 := s.RollbackTxn()
-				terror.Log(err2)
+				terror.Log(errors.Trace(err2))
 				return nil, errors.Trace(err1)
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			s.SetValue(context.QueryString, stmt.OriginText())
-			if cache.EnablePlanCache && len(stmtNodes) == 1 {
+			if cache.PlanCacheEnabled && len(stmtNodes) == 1 {
 				_, isSelect := stmtNodes[0].(*ast.SelectStmt)
 				if isSelect && stmt.Cacheable() {
 					cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmt, stmtNode))

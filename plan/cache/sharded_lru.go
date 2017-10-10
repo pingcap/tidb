@@ -21,8 +21,8 @@ import (
 )
 
 var (
-	// EnablePlanCache stores the global config "enable-plan-cache".
-	EnablePlanCache bool
+	// PlanCacheEnabled stores the global config "plan-cache-enabled".
+	PlanCacheEnabled bool
 	// PlanCacheShards stores the global config "plan-cache-shards".
 	PlanCacheShards int64 = 200
 	// PlanCacheCapacity stores the global config "plan-cache-capacity".

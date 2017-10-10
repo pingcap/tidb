@@ -116,6 +116,6 @@ xport = 14000
 xsocket = ""
 
 [plan-cache]
-enable-plan-cache = true
+plan-cache-enabled = true
 plan-cache-capacity = 1000
 plan-cache-shards = 200
