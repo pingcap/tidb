@@ -181,6 +181,13 @@ func (e *DeleteExec) Next() (Row, error) {
 	return nil, e.deleteSingleTable()
 }
 
+type tblColPosInfo struct {
+	tblID int64
+	colBeginIndex int
+	colEndIndex int
+	handleIndex int
+}
+
 func (e *DeleteExec) deleteMultiTables() error {
 	if len(e.Tables) == 0 {
 		return nil
@@ -193,6 +200,18 @@ func (e *DeleteExec) deleteMultiTables() error {
 	for _, t := range e.Tables {
 		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t)
 	}
+	var colPosInfos []tblColPosInfo
+	for id, cols := range e.SelectExec.Schema().TblID2Handle {
+		tbl := e.tblID2Table[id]
+		for _, col := range cols {
+			if names, ok := tblMap[id]; !ok || !isMatchTableName(names, col) {
+				continue
+			}
+			offset := getTableOffset(e.SelectExec.Schema(), col)
+			end := offset + len(tbl.Cols())
+			colPosInfos = append(colPosInfos, tblColPosInfo{tblID: id, colBeginIndex: offset, colEndIndex: end, handleIndex: col.Index})
+		}
+	}
 	// Map for unique (Table, Row) pair.
 	tblRowMap := make(map[int64]map[int64][]types.Datum)
 	for {
@@ -204,23 +223,13 @@ func (e *DeleteExec) deleteMultiTables() error {
 			break
 		}
 
-		for id, cols := range e.SelectExec.Schema().TblID2Handle {
-			tbl := e.tblID2Table[id]
-			for _, col := range cols {
-				if names, ok := tblMap[id]; !ok || !isMatchTableName(names, col) {
-					continue
-				}
-				if tblRowMap[id] == nil {
-					tblRowMap[id] = make(map[int64][]types.Datum)
-				}
-				offset := getTableOffset(e.SelectExec.Schema(), col)
-				end := offset + len(tbl.Cols())
-				data := joinedRow[offset:end]
-				handle := joinedRow[col.Index].GetInt64()
-				tblRowMap[id][handle] = data
+		for _, info := range colPosInfos {
+			if tblRowMap[info.tblID] == nil {
+				tblRowMap[info.tblID] = make(map[int64][]types.Datum)
 			}
+			handle := joinedRow[info.handleIndex].GetInt64()
+			tblRowMap[info.tblID][handle] = joinedRow[info.colBeginIndex:info.colEndIndex]
 		}
-
 	}
 	for id, rowMap := range tblRowMap {
 		for handle, data := range rowMap {
