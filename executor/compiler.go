@@ -29,33 +29,25 @@ type Compiler struct {
 // Compile compiles an ast.StmtNode to an ast.Statement.
 // After preprocessed and validated, it will be optimized to a plan,
 // then wrappped to an adapter *statement as stmt.Statement.
-func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
+func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (infoschema.InfoSchema, plan.Plan, bool, bool, error) {
 	is := GetInfoSchema(ctx)
 	if err := plan.Preprocess(node, is, ctx); err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, false, false, errors.Trace(err)
 	}
 	// Validate should be after NameResolve.
 	if err := plan.Validate(node, false); err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, false, false, errors.Trace(err)
 	}
-
-	cacheable := plan.Cacheable(node)
 
 	p, err := plan.Optimize(ctx, node, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, false, false, errors.Trace(err)
 	}
 
 	// Don't take restricted SQL into account for metrics.
-	isExpensive := stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
-	stmt := &statement{
-		is:        is,
-		plan:      p,
-		text:      node.Text(),
-		expensive: isExpensive,
-		cacheable: cacheable,
-	}
-	return stmt, nil
+	expensive := stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
+	cacheable := plan.Cacheable(node)
+	return is, p, expensive, cacheable, nil
 }
 
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,

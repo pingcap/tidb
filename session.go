@@ -668,8 +668,18 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 	connID := s.sessionVars.ConnectionID
 	if useCachedPlan {
-		stmt := cacheValue.(*cache.SQLCacheValue).Stmt
+		plan := cacheValue.(*cache.SQLCacheValue).Plan
+		expensive := cacheValue.(*cache.SQLCacheValue).IsExpensive
 		stmtNode := cacheValue.(*cache.SQLCacheValue).Ast
+
+		stmt := &executor.ExecStmt{
+			InfoSchema:  executor.GetInfoSchema(s),
+			Plan:        plan,
+			Expensive:   expensive,
+			CanBeCached: true,
+			Text:        stmtNode.Text(),
+		}
+
 		s.PrepareTxnCtx()
 		s.SetValue(context.QueryString, stmt.OriginText())
 		executor.ResetStmtCtx(s, stmtNode)
@@ -701,7 +711,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			startTS := time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
 			executor.ResetStmtCtx(s, stmtNode)
-			stmt, err1 := Compile(s, stmtNode)
+
+			compiler := executor.Compiler{}
+			infoSchema, plan, expensive, cacheable, err1 := compiler.Compile(s, stmtNode)
 			if err1 != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
 				err2 := s.RollbackTxn()
@@ -710,11 +722,18 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
+			stmt := &executor.ExecStmt{
+				InfoSchema:  infoSchema,
+				Plan:        plan,
+				Expensive:   expensive,
+				CanBeCached: cacheable,
+				Text:        stmtNode.Text(),
+			}
 			s.SetValue(context.QueryString, stmt.OriginText())
 			if cache.PlanCacheEnabled && len(stmtNodes) == 1 {
 				_, isSelect := stmtNodes[0].(*ast.SelectStmt)
 				if isSelect && stmt.Cacheable() {
-					cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmt, stmtNode))
+					cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
 				}
 			}
 

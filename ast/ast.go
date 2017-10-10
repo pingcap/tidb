@@ -177,6 +177,7 @@ type Statement interface {
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool
 
+	// Cacheable tells whether a Statement can be put into plan cache.
 	Cacheable() bool
 }
 

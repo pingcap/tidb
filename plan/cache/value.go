@@ -15,6 +15,7 @@ package cache
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/plan"
 )
 
 // Value is the interface that every value in LRU Cache should implement.
@@ -23,14 +24,16 @@ type Value interface {
 
 // SQLCacheValue stores the cached Statement and StmtNode.
 type SQLCacheValue struct {
-	Stmt ast.Statement
-	Ast  ast.StmtNode
+	Ast         ast.StmtNode
+	Plan        plan.Plan
+	IsExpensive bool
 }
 
 // NewSQLCacheValue creates a SQLCacheValue.
-func NewSQLCacheValue(stmt ast.Statement, ast ast.StmtNode) *SQLCacheValue {
+func NewSQLCacheValue(ast ast.StmtNode, plan plan.Plan, isExpensive bool) *SQLCacheValue {
 	return &SQLCacheValue{
-		Stmt: stmt,
-		Ast:  ast,
+		Ast:         ast,
+		Plan:        plan,
+		IsExpensive: isExpensive,
 	}
 }

@@ -40,7 +40,7 @@ type processinfoSetter interface {
 type recordSet struct {
 	fields      []*ast.ResultField
 	executor    Executor
-	stmt        *statement
+	stmt        *ExecStmt
 	processinfo processinfoSetter
 	err         error
 }
@@ -90,28 +90,36 @@ func (a *recordSet) Close() error {
 	return errors.Trace(err)
 }
 
-// statement implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
-type statement struct {
-	is infoschema.InfoSchema // The InfoSchema cannot change during execution, so we hold a reference to it.
+// ExecStmt implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
+type ExecStmt struct {
+	// InfoSchema stores a reference to the schema information.
+	InfoSchema infoschema.InfoSchema
+	// Plan stores a reference to the final physical plan.
+	Plan plan.Plan
+	// Expensive repersents whether this sql query is a expensive one.
+	Expensive bool
+	// CanBeCached stores xxx.
+	CanBeCached bool
+	// Text xxx.
+	Text string
 
 	ctx            context.Context
-	text           string
-	plan           plan.Plan
 	startTime      time.Time
 	isPreparedStmt bool
-	expensive      bool
-	cacheable      bool
 }
 
-func (a *statement) Cacheable() bool {
-	return a.cacheable
+// Cacheable implements ast.Statement interface.
+func (a *ExecStmt) Cacheable() bool {
+	return a.CanBeCached
 }
 
-func (a *statement) OriginText() string {
-	return a.text
+// OriginText implements ast.Statement interface.
+func (a *ExecStmt) OriginText() string {
+	return a.Text
 }
 
-func (a *statement) IsPrepared() bool {
+// IsPrepared implements ast.Statement interface.
+func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
 
@@ -119,11 +127,11 @@ func (a *statement) IsPrepared() bool {
 // This function builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
-func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
+func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	a.ctx = ctx
 
-	if _, ok := a.plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
 		oriStats := ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency]
 		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := ctx.GetSessionVars().IndexSerialScanConcurrency
@@ -153,7 +161,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	if raw, ok := ctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
-		if simple, ok := a.plan.(*plan.Simple); ok && simple.Statement != nil {
+		if simple, ok := a.Plan.(*plan.Simple); ok && simple.Statement != nil {
 			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
 				// Use SecureText to avoid leak password information.
 				sql = ss.SecureText()
@@ -174,7 +182,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -208,18 +216,18 @@ func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi pr
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
-func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
+func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 	priority := kv.PriorityNormal
-	if _, ok := a.plan.(*plan.Execute); !ok {
+	if _, ok := a.Plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
 		var err error
-		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.plan)
+		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if isPointGet {
-			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.text)
+			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
-			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.text)
+			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
@@ -232,17 +240,17 @@ func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
 			switch {
 			case isPointGet:
 				priority = kv.PriorityHigh
-			case a.expensive:
+			case a.Expensive:
 				priority = kv.PriorityLow
 			}
 		}
 	}
-	if _, ok := a.plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
 		priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.is, priority)
-	e := b.build(a.plan)
+	b := newExecutorBuilder(ctx, a.InfoSchema, priority)
+	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
 	}
@@ -253,18 +261,18 @@ func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.text = executorExec.Stmt.Text()
+		a.Text = executorExec.Stmt.Text()
 		a.isPreparedStmt = true
-		a.plan = executorExec.Plan
+		a.Plan = executorExec.Plan
 		e = executorExec.StmtExec
 	}
 	return e, nil
 }
 
-func (a *statement) logSlowQuery() {
+func (a *ExecStmt) logSlowQuery() {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
-	sql := a.text
+	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
 		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
