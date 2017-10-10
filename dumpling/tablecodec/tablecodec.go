@@ -142,7 +142,7 @@ func DecodeTableID(key kv.Key) int64 {
 	key = key[len(tablePrefix):]
 	_, tableID, err := codec.DecodeInt(key)
 	// TODO: return error.
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return tableID
 }
 

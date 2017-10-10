@@ -184,7 +184,7 @@ func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi pr
 		if pi != nil {
 			pi.SetProcessInfo("")
 		}
-		terror.Log(e.Close())
+		terror.Log(errors.Trace(e.Close()))
 		a.logSlowQuery()
 	}()
 	for {

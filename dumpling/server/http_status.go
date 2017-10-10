@@ -21,6 +21,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
@@ -86,6 +87,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 		log.Error("Encode json error", err)
 	} else {
 		_, err = w.Write(js)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}
 }
