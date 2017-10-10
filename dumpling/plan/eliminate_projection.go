@@ -72,7 +72,9 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		children = append(children, doPhysicalProjectionElimination(child.(PhysicalPlan)))
+		newChild := doPhysicalProjectionElimination(child.(PhysicalPlan))
+		children = append(children, newChild)
+		newChild.SetParents(p)
 	}
 	p.SetChildren(children...)
 
