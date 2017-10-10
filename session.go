@@ -750,7 +750,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 				recordSets = append(recordSets, recordSet)
 			}
 
-			logCrucialStmt(stmtNode)
+			logCrucialStmt(stmtNode, s.sessionVars.User)
 		}
 	}
 
@@ -1289,15 +1289,15 @@ func (s *session) ShowProcess() util.ProcessInfo {
 }
 
 // logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc.
-func logCrucialStmt(node ast.StmtNode) {
+func logCrucialStmt(node ast.StmtNode, user *auth.UserIdentity) {
 	switch stmt := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] %s.", ss.SecureText())
+			log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
 		}
 	}
 }
