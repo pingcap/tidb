@@ -28,6 +28,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	_ "github.com/pingcap/mysqlx-driver"
 	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"

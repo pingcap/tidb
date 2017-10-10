@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-func (cc *clientConn) handleStmtPrepare(sql string) error {
+func (cc *mysqlClientConn) handleStmtPrepare(sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -101,7 +101,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
+func (cc *mysqlClientConn) handleStmtExecute(data []byte) (err error) {
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
@@ -310,7 +310,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 	return
 }
 
-func (cc *clientConn) handleStmtClose(data []byte) (err error) {
+func (cc *mysqlClientConn) handleStmtClose(data []byte) (err error) {
 	if len(data) < 4 {
 		return
 	}
@@ -323,7 +323,7 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	return
 }
 
-func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
+func (cc *mysqlClientConn) handleStmtSendLongData(data []byte) (err error) {
 	if len(data) < 6 {
 		return mysql.ErrMalformPacket
 	}
@@ -340,7 +340,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 	return stmt.AppendParam(paramID, data[6:])
 }
 
-func (cc *clientConn) handleStmtReset(data []byte) (err error) {
+func (cc *mysqlClientConn) handleStmtReset(data []byte) (err error) {
 	if len(data) < 4 {
 		return mysql.ErrMalformPacket
 	}
@@ -356,7 +356,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 }
 
 // See https://dev.mysql.com/doc/internals/en/com-set-option.html
-func (cc *clientConn) handleSetOption(data []byte) (err error) {
+func (cc *mysqlClientConn) handleSetOption(data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket
 	}

@@ -1,5 +1,5 @@
-hash: 0afdb7ba0bf27f88ec27f6d1632c86ab23ce138ec478887ab6f25346af501245
-updated: 2017-09-28T17:16:17.545832142+08:00
+hash: be97ec58741398846cb1631d7bfeda1ee8b66b043df8ad63528813e0acb6e749
+updated: 2017-10-10T16:30:56.780103971+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -61,7 +61,7 @@ imports:
 - name: github.com/go-sql-driver/mysql
   version: 3955978caca48c1658a4bb7a9c6a0f084e326af3
 - name: github.com/gogo/protobuf
-  version: 100ba4e885062801d56799d78530b73b178a78f3
+  version: 342cbe0a04158f6dcb03ca0079991a51a4248c02
   subpackages:
   - proto
 - name: github.com/golang/protobuf
@@ -130,6 +130,8 @@ imports:
   - pkg/pdpb
   - pkg/raft_serverpb
   - pkg/tikvpb
+- name: github.com/pingcap/mysqlx-driver
+  version: 00f21173caec5b5bc2641b4bcb5fca3aacb5993b
 - name: github.com/pingcap/pd
   version: 91e4257196bb714005f80a6e075bc1e19a9687b1
   subpackages:

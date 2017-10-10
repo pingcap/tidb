@@ -33,11 +33,9 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
-	"time"
 	// For pprof
 	_ "net/http/pprof"
 
@@ -49,6 +47,9 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/xprotocol/xpacketio"
+	"math/rand"
+	"time"
 )
 
 var (
@@ -71,6 +72,12 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth
+const (
+	// MysqlProtocol is MySQL Protocol
+	MysqlProtocol = 1
+	// MysqlXProtocol is MySQL X Protocol
+	MysqlXProtocol = 2
+)
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -80,7 +87,8 @@ type Server struct {
 	listener          net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
-	clients           map[uint32]*clientConn
+	tp                int
+	clients           map[uint32]clientConn
 	capability        uint32
 
 	// When a critical error occurred, we don't want to exit the process, because there may be
@@ -106,10 +114,10 @@ func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
 }
 
-// newConn creates a new *clientConn from a net.Conn.
+// newConn creates a new *ClientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
-func (s *Server) newConn(conn net.Conn) *clientConn {
-	cc := &clientConn{
+func (s *Server) newConn(conn net.Conn) *mysqlClientConn {
+	cc := &mysqlClientConn{
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
@@ -124,8 +132,21 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		}
 	}
 	cc.setConn(conn)
-	cc.salt = util.RandomBuf(20)
+	cc.salt = util.RandomBuf(mysql.ScrambleLength)
 	return cc
+}
+
+func (s *Server) newXConn(conn net.Conn) *mysqlXClientConn {
+	return &mysqlXClientConn{
+		conn:         conn,
+		pkt:          xpacketio.NewXPacketIO(conn),
+		server:       s,
+		capability:   defaultCapability,
+		connectionID: atomic.AddUint32(&baseConnID, 1),
+		collation:    mysql.DefaultCollationID,
+		alloc:        arena.NewAllocator(32 * 1024),
+		salt:         util.RandomBuf(mysql.ScrambleLength),
+	}
 }
 
 func (s *Server) skipAuth() bool {
@@ -135,13 +156,14 @@ func (s *Server) skipAuth() bool {
 const tokenLimit = 1000
 
 // NewServer creates a new Server.
-func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
+func NewServer(cfg *config.Config, driver IDriver, serverType int) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(tokenLimit),
 		rwlock:            &sync.RWMutex{},
-		clients:           make(map[uint32]*clientConn),
+		tp:                serverType,
+		clients:           make(map[uint32]clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
 	s.loadTLSCertificates()
@@ -151,15 +173,23 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
+	socket := cfg.Socket
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	protocol := "MySQL"
+	if serverType == MysqlXProtocol {
+		socket = cfg.XProtocol.XSocket
+		addr = fmt.Sprintf("%s:%d", s.cfg.XProtocol.XHost, s.cfg.XProtocol.XPort)
+		protocol = "MySQL X"
+	}
+
 	var err error
-	if cfg.Socket != "" {
-		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
-			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
+	if socket != "" {
+		if s.listener, err = net.Listen("unix", socket); err == nil {
+			log.Infof("Server is running %s Protocol through Socket [%s]", protocol, socket)
 		}
 	} else {
-		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
-			log.Infof("Server is running MySQL Protocol at [%s]", addr)
+			log.Infof("Server is running %s Protocol at [%s]", protocol, addr)
 		}
 	}
 	if err != nil {
@@ -275,9 +305,13 @@ func (s *Server) Close() {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
-	conn := s.newConn(c)
+	conn := createClientConn(c, s)
+	if conn == nil {
+		return
+	}
+
 	defer func() {
-		log.Infof("[%d] close connection", conn.connectionID)
+		log.Infof("[%d] close connection", conn.id())
 	}()
 
 	if err := conn.handshake(); err != nil {
@@ -290,7 +324,7 @@ func (s *Server) onConn(c net.Conn) {
 	}
 
 	s.rwlock.Lock()
-	s.clients[conn.connectionID] = conn
+	s.clients[conn.id()] = conn
 	connections := len(s.clients)
 	s.rwlock.Unlock()
 	connGauge.Set(float64(connections))
@@ -303,10 +337,10 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
-		if client.killed {
+		if client.isKilled() {
 			continue
 		}
-		rs = append(rs, client.ctx.ShowProcess())
+		rs = append(rs, client.showProcess())
 	}
 	s.rwlock.RUnlock()
 	return rs
@@ -322,10 +356,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	conn.ctx.Cancel()
-	if !query {
-		conn.killed = true
-	}
+	conn.Cancel(query)
 }
 
 // Server error codes.

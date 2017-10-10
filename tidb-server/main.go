@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
-	"github.com/pingcap/tidb/x-server"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -106,7 +105,7 @@ var (
 	storage kv.Storage
 	dom     *domain.Domain
 	svr     *server.Server
-	xsvr    *xserver.Server
+	xsvr    *server.Server
 )
 
 func main() {
@@ -335,14 +334,10 @@ func createServer() {
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(storage)
 	var err error
-	svr, err = server.NewServer(cfg, driver)
+	svr, err = server.NewServer(cfg, driver, server.MysqlProtocol)
 	terror.MustNil(err)
 	if cfg.XProtocol.XServer {
-		xcfg := &xserver.Config{
-			Addr:   fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
-			Socket: cfg.XProtocol.XSocket,
-		}
-		xsvr, err = xserver.NewServer(xcfg)
+		xsvr, err = server.NewServer(cfg, driver, server.MysqlXProtocol)
 		terror.MustNil(err)
 	}
 }
@@ -359,7 +354,7 @@ func setupSignalHandler() {
 		sig := <-sc
 		log.Infof("Got signal [%d] to exit.", sig)
 		if xsvr != nil {
-			xsvr.Close() // Should close xserver before server.
+			xsvr.Close() // Should close mysqlx server before server.
 		}
 		svr.Close()
 	}()
@@ -375,12 +370,20 @@ func setupMetrics() {
 }
 
 func runServer() {
-	err := svr.Run()
-	terror.MustNil(err)
+	var srvError chan error
+	go func() {
+		srvError <- svr.Run()
+	}()
 	if cfg.XProtocol.XServer {
-		err := xsvr.Run()
-		terror.MustNil(err)
+		go func() {
+			srvError <- xsvr.Run()
+		}()
 	}
+	var err error
+	select {
+	case err = <-srvError:
+	}
+	terror.MustNil(err)
 }
 
 func cleanup() {

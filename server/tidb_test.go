@@ -26,6 +26,7 @@ import (
 	"os"
 	"time"
 
+	"database/sql"
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -37,6 +38,7 @@ import (
 type TidbTestSuite struct {
 	tidbdrv *TiDBDriver
 	server  *Server
+	xserver *Server
 }
 
 var suite = new(TidbTestSuite)
@@ -57,12 +59,22 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 		Performance: config.Performance{
 			TCPKeepAlive: true,
 		},
+		XProtocol: config.XProtocol{
+			XServer: true,
+			XPort:   14002,
+		},
 	}
 
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv, MysqlProtocol)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
+
+	xserver, err := NewServer(cfg, ts.tidbdrv, MysqlXProtocol)
+	c.Assert(err, IsNil)
+	ts.xserver = xserver
+	go ts.xserver.Run()
+
 	waitUntilServerOnline(cfg.Status.StatusPort)
 
 	// Run this test here because parallel would affect the result of it.
@@ -152,7 +164,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 		},
 	}
 
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv, MysqlProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -287,7 +299,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 			StatusPort:   10091,
 		},
 	}
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv, MysqlProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -312,7 +324,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 			SSLKey:  "/tmp/server-key.pem",
 		},
 	}
-	server, err = NewServer(cfg, ts.tidbdrv)
+	server, err = NewServer(cfg, ts.tidbdrv, MysqlProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -346,7 +358,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 			SSLKey:  "/tmp/server-key.pem",
 		},
 	}
-	server, err = NewServer(cfg, ts.tidbdrv)
+	server, err = NewServer(cfg, ts.tidbdrv, MysqlProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -417,4 +429,161 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
 	c.Assert(int(cols[1].ColumnLength), Equals, len(row[1].GetString())*tmysql.MaxBytesOfCharacter)
+}
+
+func (ts *TidbTestSuite) TestOnXServer(c *C) {
+	dsn := "root@tcp(localhost:14002)/test?xprotocol=1"
+	db, err := sql.Open("mysql/xprotocol", dsn)
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	_, err = db.Query("SELECT DATABASE()")
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+	_, err = db.Query("SELECT ABC")
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// admin bogus
+	args := []interface{}{
+		"mysqlx",
+	}
+	_, err = db.Query("whatever", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"bogus",
+	}
+	_, err = db.Query("whatever", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// admin create collection
+	args = []interface{}{
+		"mysqlx",
+		"test",
+		"books",
+	}
+	_, err = db.Query("create_collection", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+	_, err = db.Query("drop_collection", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		"",
+		"",
+	}
+	_, err = db.Query("create_collection", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		"test",
+		"",
+	}
+	_, err = db.Query("create_collection", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// ensure collection
+	args = []interface{}{
+		"mysqlx",
+		"test",
+		"books",
+	}
+	_, err = db.Query("create_collection", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+	_, err = db.Query("ensure_collection", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// kill client
+	args = []interface{}{
+		"mysqlx",
+	}
+	_, err = db.Query("list_clients", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		2,
+	}
+	_, err = db.Query("kill_client", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+	}
+	_, err = db.Query("list_clients", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		1,
+	}
+	_, err = db.Query("kill_client", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+	}
+	_, err = db.Query("list_clients", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		3,
+	}
+	_, err = db.Query("kill_client", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// list objects
+	args = []interface{}{
+		"mysqlx",
+		"test",
+	}
+	_, err = db.Query("list_objects", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		"invalid",
+	}
+	_, err = db.Query("list_objects", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		"test",
+		"myt%",
+	}
+	_, err = db.Query("list_objects", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		"test",
+		"bla%",
+	}
+	_, err = db.Query("list_objects", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+	}
+	_, err = db.Query("list_objects", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	args = []interface{}{
+		"mysqlx",
+		"test",
+		"books",
+	}
+	_, err = db.Query("list_objects", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// ping
+	args = []interface{}{
+		"mysqlx",
+	}
+	_, err = db.Query("ping", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// clean up
+	err = db.Close()
+	c.Assert(err, IsNil, Commentf("Error close db: %s", err))
 }

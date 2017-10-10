@@ -582,3 +582,8 @@ const (
 const (
 	PrimaryKeyName = "PRIMARY"
 )
+
+// session-wide random string
+const (
+	ScrambleLength = 20
+)

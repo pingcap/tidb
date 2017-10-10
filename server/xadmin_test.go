@@ -11,11 +11,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package xserver
-
-// Config contains configuration options.
-type Config struct {
-	Addr     string `json:"addr" toml:"addr"`
-	Socket   string `json:"socket" toml:"socket"`
-	SkipAuth bool   `json:"skip_auth" toml:"skip_auth"`
-}
+package server

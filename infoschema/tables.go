@@ -166,6 +166,7 @@ var columnsCols = []columnInfo{
 	{"EXTRA", mysql.TypeVarchar, 30, 0, nil, nil},
 	{"PRIVILEGES", mysql.TypeVarchar, 80, 0, nil, nil},
 	{"COLUMN_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
+	{"GENERATION_EXPRESSION", mysql.TypeBlob, 589779, mysql.NotNullFlag, nil, nil},
 }
 
 var statisticsCols = []columnInfo{
@@ -711,6 +712,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Extra,                  // EXTRA
 			"select,insert,update,references", // PRIVILEGES
 			columnDesc.Comment,                // COLUMN_COMMENT
+			col.GeneratedExprString,           // GENERATION_EXPRESSION
 		)
 		rows = append(rows, record)
 	}

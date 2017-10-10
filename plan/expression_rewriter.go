@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+	"strconv"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -776,10 +777,18 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
-	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	var e *expression.Constant
+	if strings.EqualFold(name, "lower_case_table_names") {
+		num, _ := strconv.Atoi(val)
+		e = datumToConstant(types.NewIntDatum(int64(num)), mysql.TypeLonglong)
+		e.RetType.Flag |= mysql.UnsignedFlag
+	} else {
+		e = datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	}
 	e.RetType.Charset = er.ctx.GetSessionVars().Systems[variable.CharacterSetConnection]
 	e.RetType.Collate = er.ctx.GetSessionVars().Systems[variable.CollationConnection]
 	er.ctxStack = append(er.ctxStack, e)
+	return
 }
 
 func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
