@@ -484,8 +484,10 @@ func (p *MySQLPrivilege) showGrants(user, host string) []string {
 	for _, record := range p.User {
 		if record.User == user && record.Host == host {
 			g := userPrivToString(record.Privileges)
-			s := fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, record.User, record.Host)
-			gs = append(gs, s)
+			if len(g) > 0 {
+				s := fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, record.User, record.Host)
+				gs = append(gs, s)
+			}
 			break // it's unique
 		}
 	}
@@ -494,8 +496,10 @@ func (p *MySQLPrivilege) showGrants(user, host string) []string {
 	for _, record := range p.DB {
 		if record.User == user && record.Host == host {
 			g := dbPrivToString(record.Privileges)
-			s := fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, record.DB, record.User, record.Host)
-			gs = append(gs, s)
+			if len(g) > 0 {
+				s := fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, record.DB, record.User, record.Host)
+				gs = append(gs, s)
+			}
 		}
 	}
 
@@ -503,8 +507,10 @@ func (p *MySQLPrivilege) showGrants(user, host string) []string {
 	for _, record := range p.TablesPriv {
 		if record.User == user && record.Host == host {
 			g := tablePrivToString(record.TablePriv)
-			s := fmt.Sprintf(`GRANT %s ON %s.%s TO '%s'@'%s'`, g, record.DB, record.TableName, record.User, record.Host)
-			gs = append(gs, s)
+			if len(g) > 0 {
+				s := fmt.Sprintf(`GRANT %s ON %s.%s TO '%s'@'%s'`, g, record.DB, record.TableName, record.User, record.Host)
+				gs = append(gs, s)
+			}
 		}
 	}
 	return gs

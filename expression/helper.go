@@ -52,7 +52,7 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
+	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
 	case string:
 		upperX := strings.ToUpper(x)
@@ -65,10 +65,10 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 				}
 			}
 		} else if upperX == types.ZeroDatetimeStr {
-			value, err = types.ParseTimeFromNum(0, tp, fsp)
+			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
 			terror.Log(errors.Trace(err))
 		} else {
-			value, err = types.ParseTime(x, tp, fsp)
+			value, err = types.ParseTime(sc, x, tp, fsp)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
@@ -76,12 +76,12 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	case *ast.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
-			value, err = types.ParseTime(x.GetString(), tp, fsp)
+			value, err = types.ParseTime(sc, x.GetString(), tp, fsp)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
 		case types.KindInt64:
-			value, err = types.ParseTimeFromNum(x.GetInt64(), tp, fsp)
+			value, err = types.ParseTimeFromNum(sc, x.GetInt64(), tp, fsp)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
@@ -108,7 +108,7 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 			return d, errors.Trace(err)
 		}
 
-		value, err = types.ParseTimeFromNum(xval.GetInt64(), tp, fsp)
+		value, err = types.ParseTimeFromNum(sc, xval.GetInt64(), tp, fsp)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
