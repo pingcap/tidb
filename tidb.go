@@ -148,16 +148,8 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
 	compiler := executor.Compiler{}
-	infoSchema, plan, expensive, _, err := compiler.Compile(ctx, stmtNode)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &executor.ExecStmt{
-		InfoSchema: infoSchema,
-		Plan:       plan,
-		Expensive:  expensive,
-		Text:       stmtNode.Text(),
-	}, nil
+	stmt, err := compiler.Compile(ctx, stmtNode)
+	return stmt, errors.Trace(err)
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.

@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -44,10 +45,10 @@ type sqlCacheKey struct {
 func (key *sqlCacheKey) Hash() []byte {
 	if key.hash == nil {
 		var (
-			userBytes  = []byte(key.user)
-			hostBytes  = []byte(key.host)
-			dbBytes    = []byte(key.database)
-			sqlBytes   = []byte(key.sql)
+			userBytes  = hack.Slice(key.user)
+			hostBytes  = hack.Slice(key.host)
+			dbBytes    = hack.Slice(key.database)
+			sqlBytes   = hack.Slice(key.sql)
 			bufferSize = len(userBytes) + len(hostBytes) + len(dbBytes) + len(sqlBytes) + 8*4 + 1
 		)
 

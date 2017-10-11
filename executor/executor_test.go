@@ -1531,26 +1531,14 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	ctx := se.(context.Context)
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
-	infoSchema, plan, expensive, _, err := compiler.Compile(ctx, stmtNode)
+	stmt, err := compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
-	stmt := &executor.ExecStmt{
-		InfoSchema: infoSchema,
-		Plan:       plan,
-		Expensive:  expensive,
-		Text:       stmtNode.Text(),
-	}
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
 	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
-	infoSchema, plan, expensive, _, err = compiler.Compile(ctx, stmtNode)
+	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
-	stmt = &executor.ExecStmt{
-		InfoSchema: infoSchema,
-		Plan:       plan,
-		Expensive:  expensive,
-		Text:       stmtNode.Text(),
-	}
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 

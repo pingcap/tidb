@@ -27,25 +27,28 @@ type Compiler struct {
 }
 
 // Compile compiles an ast.StmtNode to a physical plan.
-func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (is infoschema.InfoSchema, p plan.Plan, expensive bool, cacheable bool, err error) {
-	is = GetInfoSchema(ctx)
-	if err = plan.Preprocess(node, is, ctx); err != nil {
-		return nil, nil, false, false, errors.Trace(err)
+func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+	infoSchema := GetInfoSchema(ctx)
+	if err := plan.Preprocess(stmtNode, infoSchema, ctx); err != nil {
+		return nil, errors.Trace(err)
 	}
 	// Validate should be after NameResolve.
-	if err = plan.Validate(node, false); err != nil {
-		return nil, nil, false, false, errors.Trace(err)
+	if err := plan.Validate(stmtNode, false); err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	p, err = plan.Optimize(ctx, node, is)
+	finalPlan, err := plan.Optimize(ctx, stmtNode, infoSchema)
 	if err != nil {
-		return nil, nil, false, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	// Don't take restricted SQL into account for metrics.
-	expensive = stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
-	cacheable = plan.Cacheable(node)
-	return is, p, expensive, cacheable, nil
+	return &ExecStmt{
+		InfoSchema: infoSchema,
+		Plan:       finalPlan,
+		Expensive:  stmtCount(stmtNode, finalPlan, ctx.GetSessionVars().InRestrictedSQL),
+		Cacheable:  plan.Cacheable(stmtNode),
+		Text:       stmtNode.Text(),
+	}, nil
 }
 
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,

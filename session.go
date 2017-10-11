@@ -717,11 +717,11 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 		for _, stmtNode := range stmtNodes {
 			s.PrepareTxnCtx()
 
-			// Step2: Transform abstract syntax tree to a physical plan.
+			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 			startTS = time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
 			executor.ResetStmtCtx(s, stmtNode)
-			infoSchema, plan, expensive, cacheable, err := compiler.Compile(s, stmtNode)
+			stmt, err := compiler.Compile(s, stmtNode)
 			if err != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
 				terror.Log(errors.Trace(s.RollbackTxn()))
@@ -730,17 +730,11 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			// Step3: Cache the physical plan if possiable.
-			if cache.PlanCacheEnabled && cacheable && len(stmtNodes) == 1 {
-				cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, plan, expensive))
+			if cache.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 {
+				cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
 			}
 
-			// Step4: Construct ExecStmt and execute.
-			stmt := &executor.ExecStmt{
-				InfoSchema: infoSchema,
-				Plan:       plan,
-				Expensive:  expensive,
-				Text:       stmtNode.Text(),
-			}
+			// Step4: Execute the physical plan.
 			if recordSets, err = s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
 				return nil, errors.Trace(err)
 			}

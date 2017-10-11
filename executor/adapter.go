@@ -98,6 +98,8 @@ type ExecStmt struct {
 	Plan plan.Plan
 	// Expensive represents whether this query is an expensive one.
 	Expensive bool
+	// Cacheable represents whether the physical plan can be cached.
+	Cacheable bool
 	// Text represents the origin query text.
 	Text string
 
