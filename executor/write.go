@@ -201,10 +201,12 @@ func (e *DeleteExec) deleteMultiTables() error {
 		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t)
 	}
 	var colPosInfos []tblColPosInfo
+	// Extract the columns' position information of this table in the delete's schema, together with the table id
+	// and its handle's position in the schema.
 	for id, cols := range e.SelectExec.Schema().TblID2Handle {
 		tbl := e.tblID2Table[id]
 		for _, col := range cols {
-			if names, ok := tblMap[id]; !ok || !isMatchTableName(names, col) {
+			if names, ok := tblMap[id]; !ok || !e.matchingDeletingTable(col, names) {
 				continue
 			}
 			offset := getTableOffset(e.SelectExec.Schema(), col)
@@ -242,7 +244,8 @@ func (e *DeleteExec) deleteMultiTables() error {
 	return nil
 }
 
-func isMatchTableName(names []*ast.TableName, col *expression.Column) bool {
+// matchingDeletingTable checks whether this column is from the table which is in the deleting list.
+func (e *DeleteExec) matchingDeletingTable(col *expression.Column, names []*ast.TableName) bool {
 	for _, n := range names {
 		if (col.DBName.L == "" || col.DBName.L == n.Schema.L) && col.TblName.L == n.Name.L {
 			return true
