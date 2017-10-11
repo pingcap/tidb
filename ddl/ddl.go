@@ -64,7 +64,8 @@ var (
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
-	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid ddl job")
+	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid DDL job")
+	errCancelledDDLJob       = terror.ClassDDL.New(codeCancelledDDLJob, "cancelled DDL job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
 	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
@@ -226,6 +227,8 @@ type ddl struct {
 	reorgDoneCh chan error
 	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
 	reorgRowCount int64
+	// notifyCancelReorgJob is for reorganization, it used to notify the fill-back goroutine if the DDL job is cancelled.
+	notifyCancelReorgJob chan struct{}
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
@@ -525,6 +528,7 @@ const (
 	codeUnknownTypeLength                    = 9
 	codeUnknownFractionLength                = 10
 	codeInvalidJobVersion                    = 11
+	codeCancelledDDLJob                      = 12
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101

@@ -91,8 +91,15 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 
 func (d *ddl) isReorgRunnable() error {
 	if d.isClosed() {
-		// worker is closed, can't run reorganization.
+		// Worker is closed that can't run reorganization.
 		return errInvalidWorker.Gen("worker is closed")
+	}
+
+	select {
+	case <-d.notifyCancelReorgJob:
+		// Job is cancelled that doesn't run reorganization.
+		return errCancelledDDLJob
+	default:
 	}
 
 	if !d.isOwner() {

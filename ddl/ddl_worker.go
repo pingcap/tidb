@@ -248,6 +248,17 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 	if job.IsFinished() {
 		return
 	}
+	// The cause of this job state is that the job is cancelled by client.
+	if job.IsCancelling() {
+		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+			d.notifyCancelReorgJob <- struct{}{}
+		} else {
+			job.State = model.JobCancelled
+			job.Error = errCancelledDDLJob
+			job.ErrorCount++
+			return
+		}
+	}
 
 	if job.State != model.JobRollback {
 		job.State = model.JobRunning
