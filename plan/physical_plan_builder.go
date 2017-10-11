@@ -1564,14 +1564,13 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.Correlat
 			newChild := Cache{}.init(p.Allocator(), p.context())
 			newChild.SetSchema(child.Schema())
 
-			addChild(newChild, child)
-			newChild.SetParents(p)
+			setParentAndChildren(newChild, child)
 
 			newChildren = append(newChildren, newChild)
 		} else {
 			newChildren = append(newChildren, child)
 		}
 	}
-	p.SetChildren(newChildren...)
+	setParentAndChildren(p, newChildren...)
 	return selfCorCols
 }
