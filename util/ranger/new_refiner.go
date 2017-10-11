@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/Sirupsen/logrus"
 )
 
 func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, lengths []int, inAndEqCount int,
@@ -134,7 +135,9 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			filterConditions = append(filterConditions, cond)
 			dnfExprs := expression.ExtractDNFConditions(sf)
+			logrus.Warnf("dnf exprs: %v", dnfExprs)
 			rebuildDNF := expression.ComposeDNFCondition(nil, detachColumnDNFConditions(dnfExprs, checker)...)
+			logrus.Warnf("rebuilt dnf: %v", rebuildDNF)
 			if rebuildDNF != nil {
 				accessConditions = append(accessConditions, rebuildDNF)
 			}
@@ -164,6 +167,8 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 			if rebuildCNF != nil {
 				accessConditions = append(accessConditions, rebuildCNF)
 			}
+		} else if checker.check(cond) {
+			accessConditions = append(accessConditions, cond)
 		} else {
 			return nil
 		}

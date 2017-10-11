@@ -62,7 +62,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("create table t(a int, b int)")
 
 	tests := []struct {
 		exprStr   string
@@ -172,6 +172,14 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		{
 			exprStr:   "a IS NOT FALSE",
 			resultStr: "[(-inf,-1] [1,+inf)]",
+		},
+		{
+			exprStr:   "a = 1 or a = 3 or a = 4 or (a > 1 and (a = -1 or a = 5))",
+			resultStr: "[[1,1] [3,3] [4,4] [5,5]]",
+		},
+		{
+			exprStr:   "(a = 1 and b = 1) or (a = 2 and b = 2)",
+			resultStr: "[[1,1] [2,2]]",
 		},
 	}
 
