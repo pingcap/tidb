@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
 )
 
 var (
@@ -966,4 +967,31 @@ func escapeStringQuotes(buf []byte, v string) []byte {
 	}
 
 	return buf[:pos]
+}
+
+func scalar2Any(scalar Mysqlx_Datatypes.Scalar) Mysqlx_Datatypes.Any {
+	any := Mysqlx_Datatypes.Any{
+		Type:   Mysqlx_Datatypes.Any_SCALAR.Enum(),
+		Scalar: &scalar,
+	}
+	return any
+}
+
+func setString(data []byte) Mysqlx_Datatypes.Any {
+	str := Mysqlx_Datatypes.Scalar_String{
+		Value: data,
+	}
+	sca := Mysqlx_Datatypes.Scalar{
+		Type:    Mysqlx_Datatypes.Scalar_V_STRING.Enum(),
+		VString: &str,
+	}
+	return scalar2Any(sca)
+}
+
+func setUint(data uint64) Mysqlx_Datatypes.Any {
+	sca := Mysqlx_Datatypes.Scalar{
+		Type:         Mysqlx_Datatypes.Scalar_V_UINT.Enum(),
+		VUnsignedInt: &data,
+	}
+	return scalar2Any(sca)
 }

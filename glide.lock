@@ -1,5 +1,5 @@
-hash: be97ec58741398846cb1631d7bfeda1ee8b66b043df8ad63528813e0acb6e749
-updated: 2017-10-10T16:30:56.780103971+08:00
+hash: 0a3be77914458ae2d919542b787a96840d1bdfca14c47403c2392e15b61ea804
+updated: 2017-10-11T13:03:01.507559653+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -130,8 +130,9 @@ imports:
   - pkg/pdpb
   - pkg/raft_serverpb
   - pkg/tikvpb
-- name: github.com/pingcap/mysqlx-driver
-  version: 00f21173caec5b5bc2641b4bcb5fca3aacb5993b
+- name: github.com/pingcap/mysqlx_driver
+  version: 2d8314d333881ae8b5947623d6ff49741707a31a
+  repo: git@github.com:pingcap/mysqlx-driver.git
 - name: github.com/pingcap/pd
   version: 91e4257196bb714005f80a6e075bc1e19a9687b1
   subpackages:

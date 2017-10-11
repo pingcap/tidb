@@ -21,7 +21,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/pingcap/tidb/xprotocol/util"
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
 	"github.com/pingcap/tipb/go-mysqlx/Resultset"
@@ -339,9 +338,9 @@ func (mc *mysqlXConn) Query(query string, args []driver.Value) (driver.Rows, err
 			var any Mysqlx_Datatypes.Any
 			switch v := args[i].(type) {
 			case string:
-				any = util.SetString([]byte(v))
+				any = setString([]byte(v))
 			case int:
-				any = util.SetUint(uint64(v))
+				any = setUint(uint64(v))
 			default:
 				continue
 			}
