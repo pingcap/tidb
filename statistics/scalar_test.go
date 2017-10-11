@@ -34,9 +34,11 @@ func getDuration(value string) types.Duration {
 	return dur
 }
 
-func getTime(value string) types.Time {
-	t, _ := types.ParseTime(value, mysql.TypeDate, 0)
-	return t
+func getTime(year, month, day int) types.Time {
+	return types.Time{
+		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
+		Type: mysql.TypeDatetime,
+		Fsp:  types.DefaultFsp}
 }
 
 func getBinaryLiteral(value string) types.BinaryLiteral {
@@ -106,9 +108,9 @@ func (t *testStatisticsSuite) TestCalcFraction(c *C) {
 			fraction: 0.25,
 		},
 		{
-			lower:    types.NewTimeDatum(getTime("2017-01-01")),
-			upper:    types.NewTimeDatum(getTime("2017-04-01")),
-			value:    types.NewTimeDatum(getTime("2017-02-01")),
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1)),
+			value:    types.NewTimeDatum(getTime(2017, 2, 1)),
 			fraction: 0.34444444444444444,
 		},
 		{

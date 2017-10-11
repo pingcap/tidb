@@ -522,7 +522,7 @@ func (d *Datum) compareString(sc *variable.StatementContext, s string) (int, err
 		err := sc.HandleTruncate(dec.FromString(hack.Slice(s)))
 		return d.GetMysqlDecimal().Compare(dec), err
 	case KindMysqlTime:
-		dt, err := ParseDatetime(s)
+		dt, err := ParseDatetime(sc, s)
 		return d.GetMysqlTime().Compare(dt), err
 	case KindMysqlDuration:
 		dur, err := ParseDuration(s, MaxFsp)
@@ -620,7 +620,7 @@ func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON
 func (d *Datum) compareMysqlTime(sc *variable.StatementContext, time Time) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		dt, err := ParseDatetime(d.GetString())
+		dt, err := ParseDatetime(sc, d.GetString())
 		return dt.Compare(time), err
 	case KindMysqlTime:
 		return d.GetMysqlTime().Compare(time), nil
@@ -922,9 +922,9 @@ func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *F
 		}
 		t, err = t.RoundFrac(fsp)
 	case KindString, KindBytes:
-		t, err = ParseTime(d.GetString(), mysql.TypeTimestamp, fsp)
+		t, err = ParseTime(sc, d.GetString(), mysql.TypeTimestamp, fsp)
 	case KindInt64:
-		t, err = ParseTimeFromNum(d.GetInt64(), mysql.TypeTimestamp, fsp)
+		t, err = ParseTimeFromNum(sc, d.GetInt64(), mysql.TypeTimestamp, fsp)
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
@@ -950,7 +950,7 @@ func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldT
 	)
 	switch d.k {
 	case KindMysqlTime:
-		t, err = d.GetMysqlTime().Convert(tp)
+		t, err = d.GetMysqlTime().Convert(sc, tp)
 		if err != nil {
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
@@ -964,9 +964,9 @@ func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldT
 		}
 		t, err = t.RoundFrac(fsp)
 	case KindString, KindBytes:
-		t, err = ParseTime(d.GetString(), tp, fsp)
+		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
-		t, err = ParseTimeFromNum(d.GetInt64(), tp, fsp)
+		t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
 	default:
 		return invalidConv(d, tp)
 	}

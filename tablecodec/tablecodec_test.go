@@ -150,7 +150,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	row := make([]types.Datum, colLen)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	ts, err := types.ParseTimestamp("2016-06-23 11:30:45")
+	ts, err := types.ParseTimestamp(nil, "2016-06-23 11:30:45")
 	c.Assert(err, IsNil)
 	row[2] = types.NewDatum(ts)
 	du, err := types.ParseDuration("12:59:59.999999", 6)
