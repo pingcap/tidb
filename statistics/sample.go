@@ -36,6 +36,7 @@ type SampleCollector struct {
 // MergeSampleCollector merges two sample collectors.
 func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	c.NullCount += rc.NullCount
+	c.Count += rc.Count
 	c.Sketch.mergeFMSketch(rc.Sketch)
 	for _, val := range rc.Samples {
 		err := c.collect(val, false)
@@ -74,7 +75,6 @@ func (c *SampleCollector) collect(d types.Datum, insertSketch bool) error {
 		c.NullCount++
 		return nil
 	}
-	c.Count++
 	// The following code use types.CopyDatum(d) because d may have a deep reference
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
@@ -88,6 +88,7 @@ func (c *SampleCollector) collect(d types.Datum, insertSketch bool) error {
 		}
 	}
 	if insertSketch {
+		c.Count++
 		return errors.Trace(c.Sketch.InsertValue(d))
 	}
 	return nil
