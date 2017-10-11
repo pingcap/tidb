@@ -1229,6 +1229,34 @@ func (b *planBuilder) allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*ex
 	case *ast.BinaryOperationExpr:
 		b.allColFromExprNode(p, v.L, cols)
 		b.allColFromExprNode(p, v.R, cols)
+	case *ast.BetweenExpr:
+		b.allColFromExprNode(p, v.Expr, cols)
+		b.allColFromExprNode(p, v.Left, cols)
+		b.allColFromExprNode(p, v.Right, cols)
+	case *ast.CaseExpr:
+		b.allColFromExprNode(p, v.Value, cols)
+		b.allColFromExprNode(p, v.ElseClause, cols)
+		for _, whenClause := range v.WhenClauses {
+			b.allColFromExprNode(p, whenClause.Expr, cols)
+			b.allColFromExprNode(p, whenClause.Result, cols)
+		}
+	case *ast.CompareSubqueryExpr:
+		b.allColFromExprNode(p, v.L, cols)
+	case *ast.IsNullExpr:
+		b.allColFromExprNode(p, v.Expr, cols)
+	case *ast.IsTruthExpr:
+		b.allColFromExprNode(p, v.Expr, cols)
+	case *ast.ParenthesesExpr:
+		b.allColFromExprNode(p, v.Expr, cols)
+	case *ast.PatternInExpr:
+		b.allColFromExprNode(p, v.Expr, cols)
+		for _, listNode := range v.List {
+			b.allColFromExprNode(p, listNode, cols)
+		}
+	case *ast.PatternLikeExpr:
+		b.allColFromExprNode(p, v.Expr, cols)
+	case *ast.PatternRegexpExpr:
+		b.allColFromExprNode(p, v.Expr, cols)
 	case *ast.SelectField:
 		b.allColFromExprNode(p, v.Expr, cols)
 	case *ast.ColumnNameExpr:
