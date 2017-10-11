@@ -75,9 +75,8 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	for _, child := range p.Children() {
 		newChild := doPhysicalProjectionElimination(child.(PhysicalPlan))
 		children = append(children, newChild)
-		newChild.SetParents(p)
 	}
-	p.SetChildren(children...)
+	setParentAndChildren(p, children...)
 
 	proj, isProj := p.(*Projection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
@@ -128,7 +127,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	for _, child := range p.Children() {
 		children = append(children, pe.eliminate(child.(LogicalPlan), replace, childFlag))
 	}
-	p.SetChildren(children...)
+	setParentAndChildren(p, children...)
 
 	switch p.(type) {
 	case *Sort, *TopN, *Limit, *Selection, *MaxOneRow, *Update, *SelectLock:
