@@ -130,7 +130,7 @@ var defaultConf = Config{
 		XPort: 14000,
 	},
 	PlanCache: PlanCache{
-		Enabled:  false,
+		Enabled:  true,
 		Capacity: 2560,
 		Shards:   256,
 	},

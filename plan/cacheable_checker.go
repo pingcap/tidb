@@ -19,6 +19,9 @@ import (
 
 // Cacheable checks whether the input ast is cacheable.
 func Cacheable(node ast.Node) bool {
+	if _, isSelect := node.(*ast.SelectStmt); !isSelect {
+		return false
+	}
 	checker := cacheableChecker{
 		cacheable: true,
 	}
@@ -37,42 +40,15 @@ type cacheableChecker struct {
 
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch node := in.(type) {
-	case *ast.SelectStmt:
-		for _, field := range node.Fields.Fields {
-			if field.Expr == nil {
-				continue
-			}
-			if !checker.canExprBeCached(field.Expr) {
-				checker.cacheable = false
-				return in, true
-			}
-		}
-		if !checker.canExprBeCached(node.Where) {
-			checker.cacheable = false
-			return in, true
-		}
-	case *ast.ExistsSubqueryExpr:
+	switch in.(type) {
+	case *ast.VariableExpr, *ast.ExistsSubqueryExpr:
 		checker.cacheable = false
 		return in, true
 	}
 	return in, false
 }
 
-func (checker *cacheableChecker) canExprBeCached(exprNode ast.ExprNode) bool {
-	switch expr := exprNode.(type) {
-	case *ast.VariableExpr, *ast.ExistsSubqueryExpr:
-		return false
-	case *ast.UnaryOperationExpr:
-		_, isExistsSubQuery := expr.V.(*ast.ExistsSubqueryExpr)
-		if isExistsSubQuery {
-			return false
-		}
-	}
-	return true
-}
-
 // Leave implements Visitor interface.
-func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, skipChildren bool) {
-	return in, false
+func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
 }

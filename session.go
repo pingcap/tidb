@@ -731,9 +731,7 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 
 			// Step3: Cache the physical plan if possiable.
 			if cache.PlanCacheEnabled && cacheable && len(stmtNodes) == 1 {
-				if _, isSelect := stmtNodes[0].(*ast.SelectStmt); isSelect {
-					cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, plan, expensive))
-				}
+				cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, plan, expensive))
 			}
 
 			// Step4: Construct ExecStmt and execute.
