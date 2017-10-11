@@ -1255,6 +1255,8 @@ func (b *planBuilder) allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*ex
 		b.allColFromExprNode(p, v.Expr, cols)
 	case *ast.PatternRegexpExpr:
 		b.allColFromExprNode(p, v.Expr, cols)
+	case *ast.UnaryOperationExpr:
+		b.allColFromExprNode(p, v.V, cols)
 	case *ast.SelectField:
 		b.allColFromExprNode(p, v.Expr, cols)
 	case *ast.ColumnNameExpr:

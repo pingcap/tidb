@@ -385,6 +385,8 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("select c REGEXP '1.*' from t group by b")
 	c.Assert(err, NotNil)
+	_, err = tk.Exec("select -b from t group by c")
+	c.Assert(err, NotNil)
 	// test OnlyFullGroupBy
 	tk.MustExec("select a from t group by a,b,c")
 	tk.MustExec("select b from t group by b")
@@ -401,6 +403,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustExec("select b in (c,d) from t group by b,c,d")
 	tk.MustExec("select b like '%a' from t group by b")
 	tk.MustExec("select c REGEXP '1.*' from t group by c")
+	tk.MustExec("select -b from t group by b")
 	// test functinal depend on primary key
 	tk.MustExec("select * from t group by a")
 	// test functional depend on unique not null columns
