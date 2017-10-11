@@ -79,12 +79,3 @@ func (s *ShardedLRUCache) Put(key Key, value Value) {
 	s.shards[id].Put(key, value)
 	s.locks[id].Unlock()
 }
-
-// Clear clears a ShardedLRUCache.
-func (s *ShardedLRUCache) Clear() {
-	for i, length := 0, len(s.shards); i < length; i++ {
-		s.locks[i].Lock()
-		s.shards[i].Clear()
-		s.locks[i].Unlock()
-	}
-}

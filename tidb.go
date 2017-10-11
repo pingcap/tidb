@@ -153,11 +153,11 @@ func Compile(ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) 
 		return nil, errors.Trace(err)
 	}
 	return &executor.ExecStmt{
-		InfoSchema:  infoSchema,
-		Plan:        plan,
-		Expensive:   expensive,
-		CanBeCached: cacheable,
-		Text:        stmtNode.Text(),
+		InfoSchema: infoSchema,
+		Plan:       plan,
+		Expensive:  expensive,
+		Cacheable:  cacheable,
+		Text:       stmtNode.Text(),
 	}, nil
 }
 

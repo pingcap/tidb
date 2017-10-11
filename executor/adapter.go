@@ -96,11 +96,11 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan plan.Plan
-	// Expensive repersents whether this sql query is a expensive one.
+	// Expensive repersents whether this query is a expensive one.
 	Expensive bool
-	// CanBeCached stores xxx.
-	CanBeCached bool
-	// Text xxx.
+	// Cacheable repersents whether the query plan for this query is cacheable.
+	Cacheable bool
+	// Text repersents the origin query text.
 	Text string
 
 	ctx            context.Context
@@ -108,9 +108,9 @@ type ExecStmt struct {
 	isPreparedStmt bool
 }
 
-// Cacheable implements ast.Statement interface.
-func (a *ExecStmt) Cacheable() bool {
-	return a.CanBeCached
+// CanBeCached implements ast.Statement interface.
+func (a *ExecStmt) CanBeCached() bool {
+	return a.Cacheable
 }
 
 // OriginText implements ast.Statement interface.

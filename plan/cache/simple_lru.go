@@ -45,17 +45,13 @@ func NewSimpleLRUCache(capacity int64) *SimpleLRUCache {
 	}
 }
 
-func (l *SimpleLRUCache) moveToFront(element *list.Element) {
-	l.cache.MoveToFront(element)
-}
-
 // Get trys to find the corresponding value according to the given key.
 func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 	element, exists := l.elements[string(key.Hash())]
 	if !exists {
 		return nil, false
 	}
-	l.moveToFront(element)
+	l.cache.MoveToFront(element)
 	return element.Value.(*cacheEntry).value, true
 }
 
@@ -64,7 +60,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	hash := string(key.Hash())
 	element, exists := l.elements[hash]
 	if exists {
-		l.moveToFront(element)
+		l.cache.MoveToFront(element)
 		return
 	}
 
@@ -83,11 +79,4 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
 	}
-}
-
-// Clear clears the cache.
-func (l *SimpleLRUCache) Clear() {
-	l.size = 0
-	l.elements = make(map[string]*list.Element)
-	l.cache = list.New()
 }

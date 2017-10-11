@@ -669,15 +669,15 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	connID := s.sessionVars.ConnectionID
 	if useCachedPlan {
 		plan := cacheValue.(*cache.SQLCacheValue).Plan
-		expensive := cacheValue.(*cache.SQLCacheValue).IsExpensive
-		stmtNode := cacheValue.(*cache.SQLCacheValue).Ast
+		expensive := cacheValue.(*cache.SQLCacheValue).Expensive
+		stmtNode := cacheValue.(*cache.SQLCacheValue).StmtNode
 
 		stmt := &executor.ExecStmt{
-			InfoSchema:  executor.GetInfoSchema(s),
-			Plan:        plan,
-			Expensive:   expensive,
-			CanBeCached: true,
-			Text:        stmtNode.Text(),
+			InfoSchema: executor.GetInfoSchema(s),
+			Plan:       plan,
+			Expensive:  expensive,
+			Cacheable:  true,
+			Text:       stmtNode.Text(),
 		}
 
 		s.PrepareTxnCtx()
@@ -723,16 +723,16 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			stmt := &executor.ExecStmt{
-				InfoSchema:  infoSchema,
-				Plan:        plan,
-				Expensive:   expensive,
-				CanBeCached: cacheable,
-				Text:        stmtNode.Text(),
+				InfoSchema: infoSchema,
+				Plan:       plan,
+				Expensive:  expensive,
+				Cacheable:  cacheable,
+				Text:       stmtNode.Text(),
 			}
 			s.SetValue(context.QueryString, stmt.OriginText())
 			if cache.PlanCacheEnabled && len(stmtNodes) == 1 {
 				_, isSelect := stmtNodes[0].(*ast.SelectStmt)
-				if isSelect && stmt.Cacheable() {
+				if isSelect && stmt.CanBeCached() {
 					cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
 				}
 			}

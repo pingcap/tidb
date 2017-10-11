@@ -1534,11 +1534,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	infoSchema, plan, expensive, cacheable, err := compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	stmt := &executor.ExecStmt{
-		InfoSchema:  infoSchema,
-		Plan:        plan,
-		Expensive:   expensive,
-		CanBeCached: cacheable,
-		Text:        stmtNode.Text(),
+		InfoSchema: infoSchema,
+		Plan:       plan,
+		Expensive:  expensive,
+		Cacheable:  cacheable,
+		Text:       stmtNode.Text(),
 	}
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
@@ -1547,11 +1547,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	infoSchema, plan, expensive, cacheable, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	stmt = &executor.ExecStmt{
-		InfoSchema:  infoSchema,
-		Plan:        plan,
-		Expensive:   expensive,
-		CanBeCached: cacheable,
-		Text:        stmtNode.Text(),
+		InfoSchema: infoSchema,
+		Plan:       plan,
+		Expensive:  expensive,
+		Cacheable:  cacheable,
+		Text:       stmtNode.Text(),
 	}
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }

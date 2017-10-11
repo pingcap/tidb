@@ -257,11 +257,11 @@ func (t *testExecInfo) compileSQL(idx int) error {
 		}
 
 		c.stmt = &executor.ExecStmt{
-			InfoSchema:  infoSchema,
-			Plan:        plan,
-			Expensive:   expensive,
-			CanBeCached: cacheable,
-			Text:        c.rawStmt.Text(),
+			InfoSchema: infoSchema,
+			Plan:       plan,
+			Expensive:  expensive,
+			Cacheable:  cacheable,
+			Text:       c.rawStmt.Text(),
 		}
 	}
 	return nil

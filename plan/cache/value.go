@@ -24,16 +24,16 @@ type Value interface {
 
 // SQLCacheValue stores the cached Statement and StmtNode.
 type SQLCacheValue struct {
-	Ast         ast.StmtNode
-	Plan        plan.Plan
-	IsExpensive bool
+	StmtNode  ast.StmtNode
+	Plan      plan.Plan
+	Expensive bool
 }
 
 // NewSQLCacheValue creates a SQLCacheValue.
-func NewSQLCacheValue(ast ast.StmtNode, plan plan.Plan, isExpensive bool) *SQLCacheValue {
+func NewSQLCacheValue(ast ast.StmtNode, plan plan.Plan, expensive bool) *SQLCacheValue {
 	return &SQLCacheValue{
-		Ast:         ast,
-		Plan:        plan,
-		IsExpensive: isExpensive,
+		StmtNode:  ast,
+		Plan:      plan,
+		Expensive: expensive,
 	}
 }
