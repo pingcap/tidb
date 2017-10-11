@@ -648,7 +648,7 @@ func (s *session) SetProcessInfo(sql string) {
 	s.processInfo.Store(pi)
 }
 
-func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) error {
+func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
 	s.SetValue(context.QueryString, stmt.OriginText())
 
 	startTS := time.Now()
@@ -657,7 +657,7 @@ func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt as
 		if !kv.ErrKeyExists.Equal(err) {
 			log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
 		}
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
 
@@ -665,12 +665,12 @@ func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt as
 		recordSets = append(recordSets, recordSet)
 	}
 	logCrucialStmt(stmtNode, s.sessionVars.User)
-	return nil
+	return recordSets, nil
 }
 
-func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
+	s.PrepareTxnCtx()
 	var (
-		recordSets    []ast.RecordSet
 		cacheKey      cache.Key
 		cacheValue    cache.Value
 		useCachedPlan = false
@@ -696,12 +696,11 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 		s.PrepareTxnCtx()
 		executor.ResetStmtCtx(s, stmtNode)
-		if err := s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
+		if recordSets, err = s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
 		charset, collation := s.sessionVars.GetCharsetInfo()
-		s.PrepareTxnCtx()
 
 		// Step1: Compile query string to abstract syntax trees(ASTs).
 		startTS := time.Now()
@@ -742,7 +741,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 				Expensive:  expensive,
 				Text:       stmtNode.Text(),
 			}
-			if err := s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
+			if recordSets, err = s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
