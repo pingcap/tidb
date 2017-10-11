@@ -62,9 +62,12 @@ type dbRecord struct {
 	User       string
 	Privileges mysql.PrivilegeType
 
-	// patChars is compiled from Host, cached for pattern match performance.
-	patChars []byte
-	patTypes []byte
+	// patChars is compiled from Host and DB, cached for pattern match performance.
+	hostPatChars []byte
+	hostPatTypes []byte
+
+	dbPatChars []byte
+	dbPatTypes []byte
 }
 
 type tablesPrivRecord struct {
@@ -234,9 +237,10 @@ func (p *MySQLPrivilege) decodeDBTableRow(row *ast.Row, fs []*ast.ResultField) e
 			value.User = d.GetString()
 		case f.ColumnAsName.L == "host":
 			value.Host = d.GetString()
-			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
+			value.hostPatChars, value.hostPatTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "db":
 			value.DB = d.GetString()
+			value.dbPatChars, value.dbPatTypes = stringutil.CompilePattern(strings.ToUpper(value.DB), '\\')
 		case d.Kind() == types.KindMysqlEnum:
 			ed := d.GetMysqlEnum()
 			if ed.String() != "Y" {
@@ -328,8 +332,9 @@ func (record *userRecord) match(user, host string) bool {
 }
 
 func (record *dbRecord) match(user, host, db string) bool {
-	return record.User == user && strings.EqualFold(record.DB, db) &&
-		patternMatch(host, record.patChars, record.patTypes)
+	return record.User == user &&
+		patternMatch(strings.ToUpper(db), record.dbPatChars, record.dbPatTypes) &&
+		patternMatch(host, record.hostPatChars, record.hostPatTypes)
 }
 
 func (record *tablesPrivRecord) match(user, host, db, table string) bool {

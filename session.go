@@ -221,13 +221,15 @@ type schemaLeaseChecker struct {
 
 var (
 	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
-	SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+	SchemaOutOfDateRetryInterval = int64(500 * time.Millisecond)
 	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
-	SchemaOutOfDateRetryTimes = 10
+	SchemaOutOfDateRetryTimes = int32(10)
 )
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
-	for i := 0; i < SchemaOutOfDateRetryTimes; i++ {
+	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
+	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
+	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
 		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
 		switch result {
 		case domain.ResultSucc:
@@ -237,7 +239,7 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 			return domain.ErrInfoSchemaChanged
 		case domain.ResultUnknown:
 			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-			time.Sleep(SchemaOutOfDateRetryInterval)
+			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
 	}
