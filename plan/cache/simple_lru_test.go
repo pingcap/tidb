@@ -66,7 +66,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	c.Assert(lru.size, Equals, lru.capacity)
 	c.Assert(lru.size, Equals, int64(3))
 
-	// test for nonexistence elements
+	// test for non-existent elements
 	for i := 0; i < 2; i++ {
 		hash := string(keys[i].Hash())
 		element, exists := lru.elements[hash]
@@ -74,7 +74,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 		c.Assert(element, IsNil)
 	}
 
-	// test for in existence elements
+	// test for existent elements
 	root := lru.cache.Front()
 	c.Assert(root, NotNil)
 	for i := 4; i >= 2; i-- {
@@ -116,7 +116,7 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 		lru.Put(keys[i], vals[i])
 	}
 
-	// test for nonexistence elements
+	// test for non-existent elements
 	for i := 0; i < 2; i++ {
 		value, exists := lru.Get(keys[i])
 		c.Assert(exists, IsFalse)
