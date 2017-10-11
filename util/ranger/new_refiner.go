@@ -211,7 +211,7 @@ func buildColumnRange(conds []expression.Expression, sc *variable.StatementConte
 	return ranges, nil
 }
 
-// DetachCondsForSelectivity distinguishes between conditions dor selectivity calculation and other conditions
+// DetachCondsForSelectivity distinguishes between conditions or selectivity calculation and other conditions.
 func DetachCondsForSelectivity(conds []expression.Expression, rangeType int, cols []*expression.Column,
 	lengths []int) (accessConditions, otherConditions []expression.Expression) {
 	if rangeType == IntRangeType || rangeType == ColumnRangeType {
