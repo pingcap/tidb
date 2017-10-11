@@ -515,14 +515,14 @@ func (b *builtinCastIntAsTimeSig) evalTime(row []types.Datum) (res types.Time, i
 	}
 	res, err = types.ParseTimeFromNum(sc, val, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, true, errors.Trace(err)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
 	res.TimeZone = sc.TimeZone
-	return res, false, errors.Trace(err)
+	return res, false, nil
 }
 
 type builtinCastIntAsDurationSig struct {
