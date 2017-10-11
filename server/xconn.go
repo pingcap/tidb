@@ -17,6 +17,7 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"sync/atomic"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
@@ -54,6 +55,8 @@ type mysqlXClientConn struct {
 }
 
 type clientState int32
+
+var baseSessionID uint32
 
 const (
 	clientInvalid clientState = iota
@@ -318,12 +321,14 @@ func (xcc *mysqlXClientConn) configCapabilities() {
 }
 
 type xSession struct {
-	xsql *xSQL
+	xsql      *xSQL
+	sessionID uint32
 }
 
 func (xcc *mysqlXClientConn) createXSession() *xSession {
 	return &xSession{
-		xsql: createXSQL(xcc),
+		xsql:      createXSQL(xcc),
+		sessionID: atomic.AddUint32(&baseSessionID, 1),
 	}
 }
 

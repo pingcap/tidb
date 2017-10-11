@@ -19,8 +19,11 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xprotocol/util"
+	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
 	"github.com/pingcap/tipb/go-mysqlx/Sql"
 )
@@ -50,7 +53,7 @@ func (xsql *xSQL) dispatchAdminCmd(msg Mysqlx_Sql.StmtExecute) error {
 	case "ping":
 		return xsql.ping(args)
 	case "list_clients":
-		return util.ErXInvalidAdminCommand.GenByArgs(msg.GetNamespace(), stmt)
+		return xsql.listClients(args)
 	case "kill_client":
 		return xsql.killClient(args)
 	case "create_collection":
@@ -83,7 +86,43 @@ func (xsql *xSQL) ping(args []*Mysqlx_Datatypes.Any) error {
 	return nil
 }
 
-func (xsql *xSQL) listClients() error {
+func (xsql *xSQL) listClients(args []*Mysqlx_Datatypes.Any) error {
+	if len(args) != 0 {
+		return util.ErXCmdNumArguments.GenByArgs(0, len(args))
+	}
+	info := xsql.xcc.server.getClientsInfo()
+	cols := []*ColumnInfo{
+		{Name: "client_id", Flag: uint16(mysql.UnsignedFlag), Type: mysql.TypeLonglong},
+		{Name: "user", Type: mysql.TypeVarchar},
+		{Name: "host", Type: mysql.TypeVarchar},
+		{Name: "sql_session", Flag: uint16(mysql.UnsignedFlag), Type: mysql.TypeLonglong},
+	}
+	if err := writeColumnsInfo(cols, xsql.pkt); err != nil {
+		return errors.Trace(err)
+	}
+	for _, i := range info {
+		row := []types.Datum{
+			types.NewUintDatum(uint64(i.clientID)),
+			types.NewStringDatum(i.user),
+			types.NewStringDatum(i.host),
+			types.NewUintDatum(uint64(i.sessionID)),
+		}
+		rowData, err := rowToRow(xsql.xcc.alloc, cols, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		data, err := rowData.Marshal()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if err = xsql.pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_ROW, data); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := xsql.pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_FETCH_DONE, []byte{}); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 

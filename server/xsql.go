@@ -84,23 +84,10 @@ func (xsql *xSQL) executeStmt(sql string) error {
 	return nil
 }
 
-// WriteResultSet write result set message to client
-// @TODO this is important to performance, need to consider carefully and tuning in next pr
-func WriteResultSet(r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator) error {
-	defer terror.Call(r.Close)
-	row, err := r.Next()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cols, err := r.Columns()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Write column information.
-	for _, c := range cols {
+func writeColumnsInfo(columns []*ColumnInfo, pkt *xpacketio.XPacketIO) error {
+	for _, c := range columns {
 		var tp Mysqlx_Resultset.ColumnMetaData_FieldType
-		tp, err = util.MysqlType2XType(c.Type, mysql.HasUnsignedFlag(uint(c.Flag)))
+		tp, err := util.MysqlType2XType(c.Type, mysql.HasUnsignedFlag(uint(c.Flag)))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -122,6 +109,26 @@ func WriteResultSet(r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator
 		if err = pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_COLUMN_META_DATA, data); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	return nil
+}
+
+// WriteResultSet write result set message to client
+// @TODO this is important to performance, need to consider carefully and tuning in next pr
+func WriteResultSet(r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator) error {
+	defer terror.Call(r.Close)
+	row, err := r.Next()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cols, err := r.Columns()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Write column information.
+	if err = writeColumnsInfo(cols, pkt); err != nil {
+		return errors.Trace(err)
 	}
 
 	// Write rows.

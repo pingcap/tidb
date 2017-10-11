@@ -33,9 +33,12 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
+
 	// For pprof
 	_ "net/http/pprof"
 
@@ -48,8 +51,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/xprotocol/xpacketio"
-	"math/rand"
-	"time"
 )
 
 var (
@@ -104,6 +105,27 @@ func (s *Server) ConnectionCount() int {
 	cnt = len(s.clients)
 	s.rwlock.RUnlock()
 	return cnt
+}
+
+type clientInfo struct {
+	clientID  uint32
+	user      string
+	host      string
+	sessionID uint32
+}
+
+func (s *Server) getClientsInfo() []clientInfo {
+	var info []clientInfo
+	s.rwlock.RLock()
+	for _, v := range s.clients {
+		switch c := v.(type) {
+		case *mysqlXClientConn:
+			info = append(info, clientInfo{clientID: c.id(), user: c.user, host: "", sessionID: c.xsession.sessionID})
+		default:
+		}
+	}
+	s.rwlock.RUnlock()
+	return info
 }
 
 func (s *Server) getToken() *Token {
