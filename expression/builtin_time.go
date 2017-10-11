@@ -2912,9 +2912,12 @@ type builtinUnixTimestampIntSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
-	if isNull || err != nil {
+	if err != nil && terror.ErrorEqual(types.ErrInvalidTimeFormat, err) {
 		// Return 0 for invalid date time.
-		return 0, isNull, nil
+		return 0, false, nil
+	}
+	if isNull {
+		return 0, true, nil
 	}
 	t, err := val.Time.GoTime(getTimeZone(b.getCtx()))
 	if err != nil {
