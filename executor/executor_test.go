@@ -156,6 +156,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 
 	// cancel DDL jobs test
+	_, err = tk.Exec("admin cancel ddl jobs 1")
+	c.Assert(err, IsNil, Commentf("err %v", err))
 
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")

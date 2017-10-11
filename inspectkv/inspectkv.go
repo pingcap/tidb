@@ -90,7 +90,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			if job.IsCancelled() {
 				continue
 			}
-			job.State = model.JobCancelled
+			job.State = model.JobCancelling
 			err := t.UpdateDDLJob(int64(i), job)
 			if err != nil {
 				errs[j] = errors.Trace(err)

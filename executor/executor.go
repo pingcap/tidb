@@ -152,37 +152,32 @@ type Executor interface {
 type CancelDDLJobsExec struct {
 	baseExecutor
 
-	done    bool
-	cursor  int
-	JobsIDs []int64
-	errs    []error
+	cursor int
+	JobIDs []int64
+	errs   []error
 }
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next() (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-
 	if e.errs == nil {
 		var err error
-		e.errs, err = inspectkv.CancelJobs(e.ctx.Txn(), e.JobsIDs)
+		e.errs, err = inspectkv.CancelJobs(e.ctx.Txn(), e.JobIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	if e.cursor < len(e.JobsIDs) {
+
+	var row Row
+	if e.cursor < len(e.JobIDs) {
 		ret := "successful"
 		if e.errs[e.cursor] != nil {
-			ret := "failed"
+			ret = "failed"
 		}
-		row := types.MakeDatums(
-			e.JobsIDs[e.cursor],
-			ret,
-		)
+		row = types.MakeDatums(e.JobIDs[e.cursor], ret)
+		e.cursor++
 	}
 
-	return nil, nil
+	return row, nil
 }
 
 // ShowDDLExec represents a show DDL executor.

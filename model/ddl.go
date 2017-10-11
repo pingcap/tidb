@@ -204,6 +204,11 @@ func (job *Job) IsCancelled() bool {
 	return job.State == JobCancelled || job.State == JobRollbackDone
 }
 
+// IsCancelling returns whether the job is cancelling or not.
+func (job *Job) IsCancelling() bool {
+	return job.State == JobCancelling
+}
+
 // IsSynced returns whether the DDL modification is synced among all TiDB servers.
 func (job *Job) IsSynced() bool {
 	return job.State == JobSynced
@@ -236,6 +241,8 @@ const (
 	// JobSynced is used to mark the information about the completion of this job
 	// has been synchronized to all servers.
 	JobSynced
+	// JobCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
+	JobCancelling
 )
 
 // String implements fmt.Stringer interface.
