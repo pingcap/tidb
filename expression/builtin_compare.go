@@ -1560,11 +1560,11 @@ func (s *builtinNullEQRealSig) evalInt(row []types.Datum) (val int64, isNull boo
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalReal(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalReal(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1586,11 +1586,11 @@ func (s *builtinNullEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull 
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalDecimal(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalDecimal(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1612,11 +1612,11 @@ func (s *builtinNullEQStringSig) evalInt(row []types.Datum) (val int64, isNull b
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalString(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalString(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1638,11 +1638,11 @@ func (s *builtinNullEQDurationSig) evalInt(row []types.Datum) (val int64, isNull
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalDuration(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalDuration(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1664,11 +1664,11 @@ func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull boo
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalTime(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalTime(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1690,11 +1690,11 @@ func (s *builtinNullEQJSONSig) evalInt(row []types.Datum) (val int64, isNull boo
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalJSON(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalJSON(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1705,7 +1705,7 @@ func (s *builtinNullEQJSONSig) evalInt(row []types.Datum) (val int64, isNull boo
 	default:
 		cmpRes, err := json.CompareJSON(arg0, arg1)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 		if cmpRes == 0 {
 			res = 1
@@ -1853,7 +1853,7 @@ func compareDecimal(args []Expression, row []types.Datum, ctx context.Context) (
 	}
 	arg1, isNull1, err := args[1].EvalDecimal(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
@@ -1898,5 +1898,5 @@ func compareJSON(args []Expression, row []types.Datum, ctx context.Context) (int
 		return 0, isNull1, errors.Trace(err)
 	}
 	res, err := json.CompareJSON(arg0, arg1)
-	return int64(res), false, errors.Trace(err)
+	return int64(res), err != nil, errors.Trace(err)
 }
