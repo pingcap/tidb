@@ -17,6 +17,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -125,7 +126,7 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 			t := d.GetMysqlTime()
 			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
 				err := t.ConvertTimeZone(loc, time.UTC)
-				terror.Log(err)
+				terror.Log(errors.Trace(err))
 			}
 			v, err := t.ToPackedUint()
 			if err != nil {

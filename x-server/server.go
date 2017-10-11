@@ -71,7 +71,7 @@ func NewServer(cfg *Config) (s *Server, err error) {
 func (s *Server) Close() {
 	if s.listener != nil {
 		err := s.listener.Close()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
 }
@@ -91,7 +91,7 @@ func (s *Server) Run() error {
 		}
 		if s.shouldStopListener() {
 			err = conn.Close()
-			terror.Log(err)
+			terror.Log(errors.Trace(err))
 			break
 		}
 		go s.onConn(conn)
@@ -119,7 +119,7 @@ func (s *Server) onConn(c net.Conn) {
 		// So we use info log level.
 		log.Infof("handshake error %s", errors.ErrorStack(err))
 		err := c.Close()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		return
 	}
 	conn.Run()

@@ -221,13 +221,15 @@ type schemaLeaseChecker struct {
 
 var (
 	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
-	SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+	SchemaOutOfDateRetryInterval = int64(500 * time.Millisecond)
 	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
-	SchemaOutOfDateRetryTimes = 10
+	SchemaOutOfDateRetryTimes = int32(10)
 )
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
-	for i := 0; i < SchemaOutOfDateRetryTimes; i++ {
+	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
+	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
+	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
 		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
 		switch result {
 		case domain.ResultSucc:
@@ -237,7 +239,7 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 			return domain.ErrInfoSchemaChanged
 		case domain.ResultUnknown:
 			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-			time.Sleep(SchemaOutOfDateRetryInterval)
+			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
 	}
@@ -368,7 +370,7 @@ func (s *session) String() string {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
 	}
 	b, err := json.MarshalIndent(data, "", "  ")
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return string(b)
 }
 
@@ -670,7 +672,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
 			err2 := s.RollbackTxn()
-			terror.Log(err2)
+			terror.Log(errors.Trace(err2))
 			return nil, errors.Trace(err1)
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -690,7 +692,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			rs = append(rs, r)
 		}
 
-		logCrucialStmt(rst)
+		logCrucialStmt(rst, s.sessionVars.User)
 	}
 
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
@@ -882,7 +884,7 @@ func getHostByIP(ip string) []string {
 		return []string{"localhost"}
 	}
 	addrs, err := net.LookupAddr(ip)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return addrs
 }
 
@@ -1228,15 +1230,15 @@ func (s *session) ShowProcess() util.ProcessInfo {
 }
 
 // logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc.
-func logCrucialStmt(node ast.StmtNode) {
+func logCrucialStmt(node ast.StmtNode, user *auth.UserIdentity) {
 	switch stmt := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] %s.", ss.SecureText())
+			log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
 		}
 	}
 }

@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/terror"
@@ -72,9 +73,10 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		children = append(children, doPhysicalProjectionElimination(child.(PhysicalPlan)))
+		newChild := doPhysicalProjectionElimination(child.(PhysicalPlan))
+		children = append(children, newChild)
 	}
-	p.SetChildren(children...)
+	setParentAndChildren(p, children...)
 
 	proj, isProj := p.(*Projection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
@@ -82,7 +84,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	}
 	child := p.Children()[0]
 	err := RemovePlan(p)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return child.(PhysicalPlan)
 }
 
@@ -125,7 +127,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	for _, child := range p.Children() {
 		children = append(children, pe.eliminate(child.(LogicalPlan), replace, childFlag))
 	}
-	p.SetChildren(children...)
+	setParentAndChildren(p, children...)
 
 	switch p.(type) {
 	case *Sort, *TopN, *Limit, *Selection, *MaxOneRow, *Update, *SelectLock:
@@ -164,7 +166,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
 	err := RemovePlan(p)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return child.(LogicalPlan)
 }
 

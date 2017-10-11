@@ -99,7 +99,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
 func NewFunctionInternal(ctx context.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return expr
 }
 
@@ -257,14 +257,14 @@ func (sf *ScalarFunction) EvalJSON(row []types.Datum, sc *variable.StatementCont
 func (sf *ScalarFunction) HashCode() []byte {
 	v := make([]types.Datum, 0, len(sf.GetArgs())+1)
 	bytes, err := codec.EncodeValue(nil, types.NewStringDatum(sf.FuncName.L))
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	v = append(v, types.NewBytesDatum(bytes))
 	for _, arg := range sf.GetArgs() {
 		v = append(v, types.NewBytesDatum(arg.HashCode()))
 	}
 	bytes = bytes[:0]
 	bytes, err = codec.EncodeValue(bytes, v...)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return bytes
 }
 

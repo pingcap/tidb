@@ -44,7 +44,7 @@ func (cc *clientConn) Run() {
 			log.Error(x)
 		}
 		err := cc.Close()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	}()
 
 	for !cc.killed {

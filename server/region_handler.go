@@ -355,7 +355,7 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (rh *regionHandler) writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_, err = w.Write([]byte(err.Error()))
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }
 
 func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
@@ -369,7 +369,7 @@ func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(js)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }
 
 // NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,

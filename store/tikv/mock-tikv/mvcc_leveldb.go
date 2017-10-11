@@ -413,7 +413,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 	succ := iter.Last()
 	currKey, _, err := mvccDecode(iter.Key())
 	// TODO: return error.
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	helper := reverseScanHelper{
 		startTS:  startTS,
 		isoLevel: isoLevel,

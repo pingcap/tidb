@@ -238,13 +238,13 @@ func (s *Server) Run() error {
 		}
 		if s.shouldStopListener() {
 			err = conn.Close()
-			terror.Log(err)
+			terror.Log(errors.Trace(err))
 			break
 		}
 		go s.onConn(conn)
 	}
 	err := s.listener.Close()
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	s.listener = nil
 	for {
 		log.Errorf("listener stopped, waiting for manual kill.")
@@ -268,7 +268,7 @@ func (s *Server) Close() {
 
 	if s.listener != nil {
 		err := s.listener.Close()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
 }
@@ -285,7 +285,7 @@ func (s *Server) onConn(c net.Conn) {
 		// So we use info log level.
 		log.Infof("handshake error %s", errors.ErrorStack(err))
 		err = c.Close()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		return
 	}
 

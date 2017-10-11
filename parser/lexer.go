@@ -90,7 +90,7 @@ func (s *Scanner) Errors() []error {
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	s.r = reader{s: sql}
+	s.r = reader{s: sql, p: Pos{Line: 1}}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.stmtStartPos = 0
@@ -324,7 +324,8 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		for {
 			ch0 = s.r.readByte()
 			if ch0 == unicode.ReplacementChar && s.r.eof() {
-				tok = unicode.ReplacementChar
+				// unclosed comment
+				s.errs = append(s.errs, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
 				return
 			}
 			if ch0 == '*' && s.r.readByte() == '/' {
