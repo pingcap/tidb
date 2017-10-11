@@ -1537,7 +1537,6 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 		InfoSchema: infoSchema,
 		Plan:       plan,
 		Expensive:  expensive,
-		Cacheable:  cacheable,
 		Text:       stmtNode.Text(),
 	}
 	c.Check(stmt.OriginText(), Equals, "select 1")
@@ -1550,7 +1549,6 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 		InfoSchema: infoSchema,
 		Plan:       plan,
 		Expensive:  expensive,
-		Cacheable:  cacheable,
 		Text:       stmtNode.Text(),
 	}
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")

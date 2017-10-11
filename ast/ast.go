@@ -176,9 +176,6 @@ type Statement interface {
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool
-
-	// CanBeCached tells whether a Statement can be put into plan cache.
-	CanBeCached() bool
 }
 
 // Visitor visits a Node.

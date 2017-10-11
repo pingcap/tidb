@@ -98,19 +98,12 @@ type ExecStmt struct {
 	Plan plan.Plan
 	// Expensive repersents whether this query is a expensive one.
 	Expensive bool
-	// Cacheable repersents whether the query plan for this query is cacheable.
-	Cacheable bool
 	// Text repersents the origin query text.
 	Text string
 
 	ctx            context.Context
 	startTime      time.Time
 	isPreparedStmt bool
-}
-
-// CanBeCached implements ast.Statement interface.
-func (a *ExecStmt) CanBeCached() bool {
-	return a.Cacheable
 }
 
 // OriginText implements ast.Statement interface.

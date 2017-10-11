@@ -260,7 +260,6 @@ func (t *testExecInfo) compileSQL(idx int) error {
 			InfoSchema: infoSchema,
 			Plan:       plan,
 			Expensive:  expensive,
-			Cacheable:  cacheable,
 			Text:       c.rawStmt.Text(),
 		}
 	}

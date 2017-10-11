@@ -691,7 +691,6 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			InfoSchema: executor.GetInfoSchema(s),
 			Plan:       cacheValue.(*cache.SQLCacheValue).Plan,
 			Expensive:  cacheValue.(*cache.SQLCacheValue).Expensive,
-			Cacheable:  true,
 			Text:       stmtNode.Text(),
 		}
 
@@ -741,7 +740,6 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 				InfoSchema: infoSchema,
 				Plan:       plan,
 				Expensive:  expensive,
-				Cacheable:  cacheable,
 				Text:       stmtNode.Text(),
 			}
 			if err := s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
