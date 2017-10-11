@@ -157,6 +157,10 @@ type DeleteExec struct {
 	Tables       []*ast.TableName
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
+	// Table ID may not be unique for deleting multiple tables, for statements like
+	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
+	// by its alias instead of ID, so the table map value is an array which contains table aliases.
+	tblMap map[int64][]*ast.TableName
 
 	finished bool
 }
@@ -193,12 +197,9 @@ func (e *DeleteExec) deleteMultiTables() error {
 		return nil
 	}
 
-	// Table ID may not be unique for deleting multiple tables, for statements like
-	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
-	// by its alias instead of ID, so the table map value is an array which contains table aliases.
-	tblMap := make(map[int64][]*ast.TableName, len(e.Tables))
+	e.tblMap = make(map[int64][]*ast.TableName, len(e.Tables))
 	for _, t := range e.Tables {
-		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t)
+		e.tblMap[t.TableInfo.ID] = append(e.tblMap[t.TableInfo.ID], t)
 	}
 	var colPosInfos []tblColPosInfo
 	// Extract the columns' position information of this table in the delete's schema, together with the table id
@@ -206,7 +207,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 	for id, cols := range e.SelectExec.Schema().TblID2Handle {
 		tbl := e.tblID2Table[id]
 		for _, col := range cols {
-			if names, ok := tblMap[id]; !ok || !e.matchingDeletingTable(col, names) {
+			if !e.matchingDeletingTable(id, col) {
 				continue
 			}
 			offset := getTableOffset(e.SelectExec.Schema(), col)
@@ -245,7 +246,11 @@ func (e *DeleteExec) deleteMultiTables() error {
 }
 
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
-func (e *DeleteExec) matchingDeletingTable(col *expression.Column, names []*ast.TableName) bool {
+func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column) bool {
+	names, ok := e.tblMap[tableID]
+	if !ok {
+		return false
+	}
 	for _, n := range names {
 		if (col.DBName.L == "" || col.DBName.L == n.Schema.L) && col.TblName.L == n.Name.L {
 			return true
