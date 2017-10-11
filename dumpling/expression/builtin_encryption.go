@@ -228,7 +228,7 @@ func (b *builtinPasswordSig) evalString(row []types.Datum) (d string, isNull boo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	pass, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
-		return "", false, errors.Trace(err)
+		return "", err != nil, errors.Trace(err)
 	}
 
 	if len(pass) == 0 {
@@ -269,7 +269,7 @@ func (b *builtinRandomBytesSig) evalString(row []types.Datum) (string, bool, err
 	}
 	buf := make([]byte, len)
 	if n, err := rand.Read(buf); err != nil {
-		return "", false, errors.Trace(err)
+		return "", true, errors.Trace(err)
 	} else if int64(n) != len {
 		return "", false, errors.New("fail to generate random bytes")
 	}

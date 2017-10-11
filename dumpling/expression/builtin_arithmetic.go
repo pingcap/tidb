@@ -621,7 +621,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bo
 		ret, err = types.DivInt64(a, b)
 	}
 
-	return ret, false, errors.Trace(err)
+	return ret, err != nil, errors.Trace(err)
 }
 
 func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -648,7 +648,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64
 	ret, err := c.ToInt()
 	// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 	if err == types.ErrOverflow {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	return ret, false, nil
 }
@@ -753,7 +753,7 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(row []types.Datum) (*types.
 	if err == types.ErrDivByZero {
 		return c, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	}
-	return c, false, errors.Trace(err)
+	return c, err != nil, errors.Trace(err)
 }
 
 type builtinArithmeticModIntSig struct {
