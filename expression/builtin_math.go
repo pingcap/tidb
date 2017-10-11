@@ -457,10 +457,9 @@ func (b *builtinCeilDecToIntSig) evalInt(row []types.Datum) (int64, bool, error)
 	// err here will only be ErrOverFlow(will never happen) or ErrTruncate(can be ignored).
 	res, err := val.ToInt()
 	if err == types.ErrTruncated && !val.IsNegative() {
-		err = nil
 		res = res + 1
 	}
-	return res, false, err
+	return res, false, nil
 }
 
 type builtinCeilDecToDecSig struct {
@@ -601,10 +600,9 @@ func (b *builtinFloorDecToIntSig) evalInt(row []types.Datum) (int64, bool, error
 	// err here will only be ErrOverFlow(will never happen) or ErrTruncate(can be ignored).
 	res, err := val.ToInt()
 	if err == types.ErrTruncated && val.IsNegative() {
-		err = nil
 		res--
 	}
-	return res, false, err
+	return res, false, nil
 }
 
 type builtinFloorDecToDecSig struct {
