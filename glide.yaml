@@ -197,3 +197,6 @@ import:
   version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
 - package: github.com/spaolacci/murmur3
   version: v1.0
+- package: github.com/pingcap/mysqlx_driver
+  version: 2d8314d333881ae8b5947623d6ff49741707a31a
+  repo: git@github.com:pingcap/mysqlx-driver.git
