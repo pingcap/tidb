@@ -361,7 +361,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{aggFunc},
 	}.init(er.b.allocator, er.ctx)
-	addChild(agg, np)
+	setParentAndChildren(agg, np)
 	aggCol0 := &expression.Column{
 		ColName:  model.NewCIStr("agg_Col_0"),
 		FromID:   agg.id,
@@ -431,7 +431,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 		IsAggOrSubq: true,
 		RetType:     cond.GetType(),
 	})
-	addChild(proj, er.p)
+	setParentAndChildren(proj, er.p)
 	er.p = proj
 }
 
@@ -444,7 +444,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
-	addChild(agg, np)
+	setParentAndChildren(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
@@ -472,7 +472,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
-	addChild(agg, np)
+	setParentAndChildren(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
