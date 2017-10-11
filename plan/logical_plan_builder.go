@@ -106,7 +106,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		agg.AggFuncs = append(agg.AggFuncs, newFunc)
 		schema.Append(col.Clone().(*expression.Column))
 	}
-	addChild(agg, p)
+	setParentAndChildren(agg, p)
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
@@ -238,8 +238,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 	joinPlan := LogicalJoin{}.init(b.allocator, b.ctx)
-	addChild(joinPlan, leftPlan)
-	addChild(joinPlan, rightPlan)
+	setParentAndChildren(joinPlan, leftPlan, rightPlan)
 	joinPlan.SetSchema(newSchema)
 
 	// Merge sub join's redundantSchema into this join plan. When handle query like
@@ -417,7 +416,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	selection.Conditions = expressions
 	selection.SetSchema(p.Schema().Clone())
-	addChild(selection, p)
+	setParentAndChildren(selection, p)
 	return selection
 }
 
@@ -515,7 +514,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		}
 	}
 	proj.SetSchema(schema)
-	addChild(proj, p)
+	setParentAndChildren(proj, p)
 	return proj, oldLen
 }
 
@@ -530,7 +529,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	for _, col := range child.Schema().Columns {
 		agg.AggFuncs = append(agg.AggFuncs, aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
 	}
-	addChild(agg, child)
+	setParentAndChildren(agg, child)
 	agg.SetSchema(child.Schema().Clone())
 	return agg
 }
@@ -570,8 +569,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 				col.FromID = proj.ID()
 			}
 			proj.SetSchema(schema)
-			sel.SetParents(proj)
-			proj.SetChildren(sel)
+			setParentAndChildren(proj, sel)
 			sel = proj
 			u.children[i] = proj
 		}
@@ -643,7 +641,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 		exprs = append(exprs, &ByItems{Expr: it, Desc: item.Desc})
 	}
 	sort.ByItems = exprs
-	addChild(sort, p)
+	setParentAndChildren(sort, p)
 	sort.SetSchema(p.Schema().Clone())
 	return sort
 }
@@ -694,7 +692,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 		Offset: offset,
 		Count:  count,
 	}.init(b.allocator, b.ctx)
-	addChild(li, src)
+	setParentAndChildren(li, src)
 	li.SetSchema(src.Schema().Clone())
 	return li
 }
@@ -1473,7 +1471,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
-		addChild(proj, p)
+		setParentAndChildren(proj, p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
 			col.FromID = proj.ID()
@@ -1629,8 +1627,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		proj.Exprs = append(proj.Exprs, expr)
 	}
 	proj.SetSchema(ds.Schema().Clone())
-	proj.SetChildren(ds)
-	ds.SetParents(proj)
+	setParentAndChildren(proj, ds)
 	return proj
 }
 
@@ -1644,8 +1641,7 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	if tp == LeftOuterJoin {
 		ap.DefaultValues = make([]types.Datum, innerPlan.Schema().Len())
 	}
-	addChild(ap, outerPlan)
-	addChild(ap, innerPlan)
+	setParentAndChildren(ap, outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.schema.Columns[i].IsAggOrSubq = true
@@ -1689,7 +1685,7 @@ out:
 		}
 	}
 	exists := Exists{}.init(b.allocator, b.ctx)
-	addChild(exists, p)
+	setParentAndChildren(exists, p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
 		RetType: types.NewFieldType(mysql.TypeTiny),
@@ -1700,7 +1696,7 @@ out:
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow := MaxOneRow{}.init(b.allocator, b.ctx)
-	addChild(maxOneRow, p)
+	setParentAndChildren(maxOneRow, p)
 	maxOneRow.SetSchema(p.Schema().Clone())
 	return maxOneRow
 }
@@ -1710,9 +1706,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
-	joinPlan.SetChildren(outerPlan, innerPlan)
-	outerPlan.SetParents(joinPlan)
-	innerPlan.SetParents(joinPlan)
+	setParentAndChildren(joinPlan, outerPlan, innerPlan)
 	joinPlan.attachOnConds(onCondition)
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()
@@ -1779,7 +1773,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		OrderedList: orderedList,
 		IgnoreErr:   update.IgnoreErr,
 	}.init(b.allocator, b.ctx)
-	addChild(updt, p)
+	setParentAndChildren(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt
 }
@@ -1930,7 +1924,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		Tables:       tables,
 		IsMultiTable: delete.IsMultiTable,
 	}.init(b.allocator, b.ctx)
-	addChild(del, p)
+	setParentAndChildren(del, p)
 	del.SetSchema(expression.NewSchema())
 
 	// Collect visitInfo.
