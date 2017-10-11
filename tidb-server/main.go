@@ -319,9 +319,11 @@ func setGlobalVars() {
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
 	cache.PlanCacheEnabled = cfg.PlanCache.Enabled
-	cache.PlanCacheCapacity = cfg.PlanCache.Capacity
-	cache.PlanCacheShards = cfg.PlanCache.Shards
-	cache.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	if cache.PlanCacheEnabled {
+		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
+		cache.PlanCacheShards = cfg.PlanCache.Shards
+		cache.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	}
 }
 
 func setupLog() {
