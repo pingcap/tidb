@@ -482,7 +482,7 @@ func buildShowDDLJobsFields() *expression.Schema {
 func buildCancelDDLJobsFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "JOB_ID", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 16))
+	schema.Append(buildColumn("", "RESULT", mysql.TypeVarchar, 128))
 
 	return schema
 }

@@ -146,10 +146,16 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 }
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
-	return &CancelDDLJobsExec{
+	e := &CancelDDLJobsExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		JobIDs:       v.JobIDs,
 	}
+	e.errs, b.err = inspectkv.CancelJobs(e.ctx.Txn(), e.JobIDs)
+	if b.err != nil {
+		return nil
+	}
+
+	return e
 }
 
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {

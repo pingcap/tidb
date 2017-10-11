@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -159,19 +160,11 @@ type CancelDDLJobsExec struct {
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next() (Row, error) {
-	if e.errs == nil {
-		var err error
-		e.errs, err = inspectkv.CancelJobs(e.ctx.Txn(), e.JobIDs)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
 	var row Row
 	if e.cursor < len(e.JobIDs) {
 		ret := "successful"
 		if e.errs[e.cursor] != nil {
-			ret = "failed"
+			ret = fmt.Sprintf("error: %v", e.errs[e.cursor])
 		}
 		row = types.MakeDatums(e.JobIDs[e.cursor], ret)
 		e.cursor++

@@ -77,24 +77,29 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 
 	errs := make([]error, len(ids))
 	t := meta.NewMeta(txn)
-	for i, job := range jobs {
-		for j, id := range ids {
+	for i, id := range ids {
+		done := false
+		for j, job := range jobs {
 			if id != job.ID {
 				continue
 			}
+			done = true
 			// These states can't be cancelled.
 			if job.IsDone() {
-				errs[j] = errors.New("This job will be done, so can't be cancelled")
+				errs[i] = errors.New("This job will be done, so can't be cancelled")
 				continue
 			}
 			if job.IsCancelled() {
 				continue
 			}
 			job.State = model.JobCancelling
-			err := t.UpdateDDLJob(int64(i), job)
+			err := t.UpdateDDLJob(int64(j), job)
 			if err != nil {
-				errs[j] = errors.Trace(err)
+				errs[i] = errors.Trace(err)
 			}
+		}
+		if !done {
+			errs[i] = errors.New("Can't find this job")
 		}
 	}
 	return errs, nil
