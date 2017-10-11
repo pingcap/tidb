@@ -497,7 +497,7 @@ func (b *builtinGreatestTimeSig) evalString(row []types.Datum) (_ string, isNull
 		if isNull || err != nil {
 			return "", true, errors.Trace(err)
 		}
-		t, err = types.ParseDatetime(v)
+		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, errors.Trace(err)
@@ -670,7 +670,7 @@ func (b *builtinLeastTimeSig) evalString(row []types.Datum) (res string, isNull 
 		if isNull || err != nil {
 			return "", true, errors.Trace(err)
 		}
-		t, err = types.ParseDatetime(v)
+		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, errors.Trace(err)
