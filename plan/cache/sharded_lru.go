@@ -23,9 +23,9 @@ var (
 	// PlanCacheEnabled stores the global config "plan-cache-enabled".
 	PlanCacheEnabled bool
 	// PlanCacheShards stores the global config "plan-cache-shards".
-	PlanCacheShards int64 = 200
+	PlanCacheShards int64
 	// PlanCacheCapacity stores the global config "plan-cache-capacity".
-	PlanCacheCapacity int64 = 1000
+	PlanCacheCapacity int64
 	// GlobalPlanCache stores the global plan cache for every session in a tidb-server.
 	GlobalPlanCache *ShardedLRUCache
 )
