@@ -207,7 +207,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	}
 	dual.SetSchema(expression.NewSchema())
 	p := Projection{Exprs: exprs}.init(b.allocator, b.ctx)
-	addChild(p, dual)
+	setParentAndChildren(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
 	return p
@@ -343,7 +343,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
 	selectLock := SelectLock{Lock: lock}.init(b.allocator, b.ctx)
-	addChild(selectLock, src)
+	setParentAndChildren(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
@@ -572,7 +572,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	if len(conditions) != 0 {
 		sel := Selection{Conditions: conditions}.init(b.allocator, b.ctx)
-		addChild(sel, p)
+		setParentAndChildren(sel, p)
 		sel.SetSchema(p.Schema())
 		resultPlan = sel
 	}
@@ -868,7 +868,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				return nil
 			}
 		}
-		addChild(insertPlan, selectPlan)
+		setParentAndChildren(insertPlan, selectPlan)
 	}
 
 	// Calculate generated columns.
