@@ -27,8 +27,9 @@ import (
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
 type SampleCollector struct {
 	Samples       []types.Datum
+	sampleCount   int64 // sampleCount is the current seen samples.
 	NullCount     int64
-	Count         int64
+	Count         int64 // Count is the number of non-null rows.
 	MaxSampleSize int64
 	Sketch        *FMSketch
 }
@@ -75,13 +76,14 @@ func (c *SampleCollector) collect(d types.Datum, insertSketch bool) error {
 		c.NullCount++
 		return nil
 	}
+	c.sampleCount++
 	// The following code use types.CopyDatum(d) because d may have a deep reference
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
 	if len(c.Samples) < int(c.MaxSampleSize) {
 		c.Samples = append(c.Samples, types.CopyDatum(d))
 	} else {
-		shouldAdd := rand.Int63n(c.Count) < c.MaxSampleSize
+		shouldAdd := rand.Int63n(c.sampleCount) < c.MaxSampleSize
 		if shouldAdd {
 			idx := rand.Intn(int(c.MaxSampleSize))
 			c.Samples[idx] = types.CopyDatum(d)
