@@ -224,8 +224,7 @@ func (p *LogicalJoin) getProj(idx int) *Projection {
 		proj.Exprs = append(proj.Exprs, col.Clone())
 	}
 	proj.SetSchema(child.Schema().Clone())
-	child.SetParents(proj)
-	proj.SetChildren(child)
+	setParentAndChildren(proj, child)
 	proj.SetParents(p)
 	p.children[idx] = proj
 	return proj
