@@ -85,7 +85,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			}
 			done = true
 			// These states can't be cancelled.
-			if job.IsDone() {
+			if job.IsDone() || job.IsSynced() {
 				errs[i] = errors.New("This job will be done, so can't be cancelled")
 				continue
 			}
