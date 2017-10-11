@@ -22,31 +22,29 @@ import (
 	"github.com/pingcap/tidb/plan"
 )
 
-// Compiler compiles an ast.StmtNode to a stmt.Statement.
+// Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
 }
 
-// Compile compiles an ast.StmtNode to an ast.Statement.
-// After preprocessed and validated, it will be optimized to a plan,
-// then wrappped to an adapter *statement as stmt.Statement.
-func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (infoschema.InfoSchema, plan.Plan, bool, bool, error) {
-	is := GetInfoSchema(ctx)
-	if err := plan.Preprocess(node, is, ctx); err != nil {
+// Compile compiles an ast.StmtNode to a physical plan.
+func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (is infoschema.InfoSchema, p plan.Plan, expensive bool, cacheable bool, err error) {
+	is = GetInfoSchema(ctx)
+	if err = plan.Preprocess(node, is, ctx); err != nil {
 		return nil, nil, false, false, errors.Trace(err)
 	}
 	// Validate should be after NameResolve.
-	if err := plan.Validate(node, false); err != nil {
+	if err = plan.Validate(node, false); err != nil {
 		return nil, nil, false, false, errors.Trace(err)
 	}
 
-	p, err := plan.Optimize(ctx, node, is)
+	p, err = plan.Optimize(ctx, node, is)
 	if err != nil {
 		return nil, nil, false, false, errors.Trace(err)
 	}
 
 	// Don't take restricted SQL into account for metrics.
-	expensive := stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
-	cacheable := plan.Cacheable(node)
+	expensive = stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
+	cacheable = plan.Cacheable(node)
 	return is, p, expensive, cacheable, nil
 }
 

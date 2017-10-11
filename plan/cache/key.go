@@ -14,10 +14,11 @@
 package cache
 
 import (
+	"time"
+
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
-	"time"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -33,8 +34,8 @@ type sqlCacheKey struct {
 	snapshot       uint64
 	schemaVersion  int64
 	sqlMode        mysql.SQLMode
-	timeZoneOffset int
-	readOnly       bool
+	timezoneOffset int
+	readOnly       bool // stores the current tidb-server status.
 
 	hash []byte
 }
@@ -58,7 +59,7 @@ func (key *sqlCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, int64(key.snapshot))
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
-		key.hash = codec.EncodeInt(key.hash, int64(key.timeZoneOffset))
+		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
 		if key.readOnly {
 			key.hash = append(key.hash, '1')
 		} else {
@@ -70,9 +71,9 @@ func (key *sqlCacheKey) Hash() []byte {
 
 // NewSQLCacheKey creates a new sqlCacheKey object.
 func NewSQLCacheKey(sessionVars *variable.SessionVars, sql string, schemaVersion int64, readOnly bool) Key {
-	timeZoneOffset, user, host := 0, "", ""
+	timezoneOffset, user, host := 0, "", ""
 	if sessionVars.TimeZone != nil {
-		_, timeZoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
+		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
 	if sessionVars.User != nil {
 		user = sessionVars.User.Username
@@ -87,7 +88,7 @@ func NewSQLCacheKey(sessionVars *variable.SessionVars, sql string, schemaVersion
 		snapshot:       sessionVars.SnapshotTS,
 		schemaVersion:  schemaVersion,
 		sqlMode:        sessionVars.SQLMode,
-		timeZoneOffset: timeZoneOffset,
+		timezoneOffset: timezoneOffset,
 		readOnly:       readOnly,
 	}
 }

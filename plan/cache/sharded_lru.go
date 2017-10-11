@@ -16,7 +16,6 @@ package cache
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/terror"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -27,7 +26,7 @@ var (
 	PlanCacheShards int64 = 200
 	// PlanCacheCapacity stores the global config "plan-cache-capacity".
 	PlanCacheCapacity int64 = 1000
-	// GlobalPlanCache stores the global plan cache for every session in a tidb-server
+	// GlobalPlanCache stores the global plan cache for every session in a tidb-server.
 	GlobalPlanCache *ShardedLRUCache
 )
 
@@ -49,20 +48,9 @@ func NewShardedLRUCache(capacity, shardCount int64) *ShardedLRUCache {
 	return shardedLRUCache
 }
 
-func (s *ShardedLRUCache) hash(key Key) int {
-	hashFunc := murmur3.New32()
-
-	// hash.Hash32.Write() should never returns an error
-	if _, err := hashFunc.Write(key.Hash()); err != nil {
-		terror.Log(err)
-	}
-
-	return int(hashFunc.Sum32() % uint32(len(s.shards)))
-}
-
 // Get gets a value from a ShardedLRUCache.
 func (s *ShardedLRUCache) Get(key Key) (Value, bool) {
-	id := s.hash(key)
+	id := int(murmur3.Sum32(key.Hash())) % len(s.shards)
 
 	s.locks[id].Lock()
 	value, ok := s.shards[id].Get(key)
@@ -73,7 +61,7 @@ func (s *ShardedLRUCache) Get(key Key) (Value, bool) {
 
 // Put puts a (key, value) pair to a ShardedLRUCache.
 func (s *ShardedLRUCache) Put(key Key, value Value) {
-	id := s.hash(key)
+	id := int(murmur3.Sum32(key.Hash())) % len(s.shards)
 
 	s.locks[id].Lock()
 	s.shards[id].Put(key, value)

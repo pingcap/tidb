@@ -32,10 +32,10 @@ type SimpleLRUCache struct {
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
-// NOTE: "capacity" should be a nonnegative value.
+// NOTE: "capacity" should be a positive value.
 func NewSimpleLRUCache(capacity int64) *SimpleLRUCache {
 	if capacity <= 0 {
-		panic("capacity of LRU Cache should be nonnegative.")
+		panic("capacity of LRU Cache should be positive.")
 	}
 	return &SimpleLRUCache{
 		capacity: capacity,
@@ -45,7 +45,7 @@ func NewSimpleLRUCache(capacity int64) *SimpleLRUCache {
 	}
 }
 
-// Get trys to find the corresponding value according to the given key.
+// Get tries to find the corresponding value according to the given key.
 func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 	element, exists := l.elements[string(key.Hash())]
 	if !exists {

@@ -96,7 +96,7 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan plan.Plan
-	// Expensive repersents whether this query is a expensive one.
+	// Expensive repersents whether this query is an expensive one.
 	Expensive bool
 	// Text repersents the origin query text.
 	Text string

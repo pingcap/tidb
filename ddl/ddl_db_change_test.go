@@ -251,7 +251,7 @@ func (t *testExecInfo) compileSQL(idx int) error {
 		ctx := se.(context.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
 
-		infoSchema, plan, expensive, cacheable, err := compiler.Compile(ctx, c.rawStmt)
+		infoSchema, plan, expensive, _, err := compiler.Compile(ctx, c.rawStmt)
 		if err != nil {
 			return errors.Trace(err)
 		}
