@@ -695,7 +695,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		}
 		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp.(LogicalPlan), builder.ctx, builder.allocator)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, builder.ctx, builder.allocator)
 			c.Assert(err, IsNil)
 		}
 		c.Assert(builder.err, IsNil)
@@ -750,10 +750,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		lp, err = logicalOptimize(flagPredicatePushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -857,11 +856,10 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		lp, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
-		lp.ResolveIndices()
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p.ResolveIndices()
 		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
