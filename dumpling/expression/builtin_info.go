@@ -63,7 +63,6 @@ func (c *databaseFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
-	bf.foldable = false
 	sig := &builtinDatabaseSig{bf}
 	return sig.setSelf(sig), nil
 }
@@ -119,7 +118,6 @@ func (c *currentUserFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
-	bf.foldable = false
 	sig := &builtinCurrentUserSig{bf}
 	return sig.setSelf(sig), nil
 }
@@ -149,7 +147,6 @@ func (c *userFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
-	bf.foldable = false
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
 	return sig.setSelf(sig), nil
@@ -179,7 +176,6 @@ func (c *connectionIDFunctionClass) getFunction(ctx context.Context, args []Expr
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
-	bf.foldable = false
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinConnectionIDSig{bf}
 	return sig.setSelf(sig), nil
@@ -212,7 +208,6 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expr
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argsTp...)
 	bf.tp.Flag |= mysql.UnsignedFlag
-	bf.foldable = false
 
 	if len(args) == 1 {
 		sig = &builtinLastInsertIDWithIDSig{bf}
@@ -260,7 +255,6 @@ func (c *versionFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
-	bf.foldable = false
 	sig := &builtinVersionSig{bf}
 	return sig.setSelf(sig), nil
 }

@@ -51,22 +51,12 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	}
 	c.Assert(Cacheable(stmt), IsTrue)
 
-	whereExpr.FnName = model.NewCIStr("now")
-	c.Assert(Cacheable(stmt), IsFalse)
+	for funcName := range nonCacheableFunctions {
+		whereExpr.FnName = model.NewCIStr(funcName)
+		c.Assert(Cacheable(stmt), IsFalse)
+	}
 
-	whereExpr.FnName = model.NewCIStr("current_timestamp")
-	c.Assert(Cacheable(stmt), IsFalse)
-
-	whereExpr.FnName = model.NewCIStr("utc_time")
-	c.Assert(Cacheable(stmt), IsFalse)
-
-	whereExpr.FnName = model.NewCIStr("curtime")
-	c.Assert(Cacheable(stmt), IsFalse)
-
-	whereExpr.FnName = model.NewCIStr("current_time")
-	c.Assert(Cacheable(stmt), IsFalse)
-
-	whereExpr.FnName = model.NewCIStr("rand")
+	whereExpr.FnName = model.NewCIStr(ast.Rand)
 	c.Assert(Cacheable(stmt), IsTrue)
 
 	stmt = &ast.SelectStmt{
