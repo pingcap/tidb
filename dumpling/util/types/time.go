@@ -104,13 +104,13 @@ var (
 )
 
 var (
-	// minDatetime is the minimum for mysql datetime type.
-	minDatetime = FromDate(1000, 1, 1, 0, 0, 0, 0)
+	// MinDatetime is the minimum for mysql datetime type.
+	MinDatetime = FromDate(1000, 1, 1, 0, 0, 0, 0)
 	// MaxDatetime is the maximum for mysql datetime type.
 	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
-	// minTimestamp is the minimum for mysql timestamp type.
-	minTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
+	// MinTimestamp is the minimum for mysql timestamp type.
+	MinTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
 	// maxTimestamp is the maximum for mysql timestamp type.
 	maxTimestamp = FromDate(2038, 1, 19, 3, 14, 7, 999999)
 
@@ -1374,7 +1374,7 @@ func checkTimestampType(t TimeInternal) error {
 		return nil
 	}
 
-	if compareTime(t, maxTimestamp) > 0 || compareTime(t, minTimestamp) < 0 {
+	if compareTime(t, maxTimestamp) > 0 || compareTime(t, MinTimestamp) < 0 {
 		return errors.Trace(ErrInvalidTimeFormat)
 	}
 
