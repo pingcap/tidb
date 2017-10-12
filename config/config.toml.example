@@ -114,3 +114,13 @@ xport = 14000
 
 # The socket file to use for x protocol connection.
 xsocket = ""
+
+[dashbase]
+# Whether TiDB is acted as a Dashbase proxy.
+enabled = false
+
+# The Kafka hosts for inserting data.
+kafka-hosts = ["localhost:9092"]
+
+# The path to the file describes table schemas in TOML.
+schema-file = ""

@@ -36,6 +36,7 @@ type Config struct {
 	Status      Status      `toml:"status" json:"status"`
 	Performance Performance `toml:"performance" json:"performance"`
 	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
+	Dashbase    Dashbase    `tomk:"dashbase" json:"dashbase"`
 }
 
 // Log is the log section of config.
@@ -88,6 +89,13 @@ type XProtocol struct {
 	XSocket string `toml:"xsocket" json:"xsocket"`
 }
 
+// Dashbase is the dashbase section of the config.
+type Dashbase struct {
+	Enabled    bool     `toml:"enabled" json:"enabled"`
+	KafkaHosts []string `toml:"kafka-hosts" json:"kafka-hosts"`
+	SchemaFile string   `toml:"schema-file" json:"schema-file"`
+}
+
 var defaultConf = Config{
 	Host:   "0.0.0.0",
 	Port:   4000,
@@ -120,6 +128,11 @@ var defaultConf = Config{
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",
 		XPort: 14000,
+	},
+	Dashbase: Dashbase{
+		Enabled:    true,
+		KafkaHosts: []string{"localhost:9092"},
+		SchemaFile: "dashbase-schema.toml",
 	},
 }
 

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/dashbase"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -124,6 +125,7 @@ func main() {
 	validateConfig()
 	setGlobalVars()
 	setupLog()
+	setupDashbase()
 	printInfo()
 	createStoreAndDomain()
 	setupBinlogClient()
@@ -316,6 +318,15 @@ func setGlobalVars() {
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+}
+
+func setupDashbase() {
+	if !cfg.Dashbase.Enabled {
+		return
+	}
+	if err := dashbase.LoadSchemaFromFile(cfg.Dashbase.SchemaFile); err != nil {
+		log.Fatalf("Unable to load Dashbase schema definition: %s", err.Error())
+	}
 }
 
 func setupLog() {
