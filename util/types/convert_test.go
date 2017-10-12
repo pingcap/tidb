@@ -156,7 +156,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vv.(Duration).String(), Equals, "10:11:12.1")
 
-	vt, err := ParseTime("2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
+	vt, err := ParseTime(nil, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vt, ft)
@@ -264,7 +264,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(1800, ft)
 	c.Assert(err, NotNil)
-	dt, err := ParseDate("2015-11-11")
+	dt, err := ParseDate(nil, "2015-11-11")
 	c.Assert(err, IsNil)
 	v, err = Convert(dt, ft)
 	c.Assert(v, Equals, int64(2015))
@@ -326,7 +326,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, Enum{Name: "a", Value: 1}, "a")
 	testToString(c, Set{Name: "a", Value: 1}, "a")
 
-	t, err := ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+	t, err := ParseTime(nil, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testToString(c, t, "2011-11-10 11:11:11.999999")
 

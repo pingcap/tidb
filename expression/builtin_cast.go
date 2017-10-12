@@ -513,13 +513,16 @@ func (b *builtinCastIntAsTimeSig) evalTime(row []types.Datum) (res types.Time, i
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseTimeFromNum(val, b.tp.Tp, b.tp.Decimal)
+	res, err = types.ParseTimeFromNum(sc, val, b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return res, true, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
 	res.TimeZone = sc.TimeZone
-	return res, false, errors.Trace(err)
+	return res, false, nil
 }
 
 type builtinCastIntAsDurationSig struct {
@@ -706,7 +709,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(row []types.Datum) (types.Time, bool
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
-	res, err := types.ParseTime(strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
+	res, err := types.ParseTime(sc, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -723,7 +726,8 @@ type builtinCastRealAsDurationSig struct {
 }
 
 func (b *builtinCastRealAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalReal(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
@@ -816,7 +820,10 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row []types.Datum) (res types.Tim
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseTime(string(val.ToString()), b.tp.Tp, b.tp.Decimal)
+	res, err = types.ParseTime(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
@@ -830,7 +837,8 @@ type builtinCastDecimalAsDurationSig struct {
 }
 
 func (b *builtinCastDecimalAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
 		return res, false, errors.Trace(err)
 	}
@@ -969,7 +977,10 @@ func (b *builtinCastStringAsTimeSig) evalTime(row []types.Datum) (res types.Time
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseTime(val, b.tp.Tp, b.tp.Decimal)
+	res, err = types.ParseTime(sc, val, b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
@@ -1006,7 +1017,7 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row []types.Datum) (res types.Time, 
 		return res, isNull, errors.Trace(err)
 	}
 
-	if res, err = res.Convert(b.tp.Tp); err != nil {
+	if res, err = res.Convert(sc, b.tp.Tp); err != nil {
 		return res, true, errors.Trace(err)
 	}
 	res, err = res.RoundFrac(b.tp.Decimal)
@@ -1265,7 +1276,10 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row []types.Datum) (res types.Time, 
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
-	res, err = types.ParseTime(s, b.tp.Tp, b.tp.Decimal)
+	res, err = types.ParseTime(sc, s, b.tp.Tp, b.tp.Decimal)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)

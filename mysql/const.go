@@ -81,6 +81,9 @@ const (
 	MaxUserDefinedVariableLen int = 64
 )
 
+// ErrTextLength error text length limit.
+const ErrTextLength = 80
+
 // Command information.
 const (
 	ComSleep byte = iota

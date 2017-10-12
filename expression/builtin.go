@@ -36,9 +36,8 @@ type baseBuiltinFunc struct {
 	tp   *types.FieldType
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
-	self     builtinFunc
-	pbCode   tipb.ScalarFuncSig
-	foldable bool // Default value is true because many expressions are foldable.
+	self   builtinFunc
+	pbCode tipb.ScalarFuncSig
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -51,10 +50,9 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 
 func newBaseBuiltinFunc(ctx context.Context, args []Expression) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:     args,
-		ctx:      ctx,
-		foldable: true,
-		tp:       types.NewFieldType(mysql.TypeUnspecified),
+		args: args,
+		ctx:  ctx,
+		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
 }
 
@@ -151,20 +149,15 @@ func newBaseBuiltinFuncWithTp(ctx context.Context, args []Expression, retType ty
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
 	return baseBuiltinFunc{
-		args:     args,
-		ctx:      ctx,
-		foldable: true,
-		tp:       fieldType,
+		args: args,
+		ctx:  ctx,
+		tp:   fieldType,
 	}
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
 	b.self = f
 	return f
-}
-
-func (b *baseBuiltinFunc) canBeFolded() bool {
-	return b.foldable
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -252,9 +245,6 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 }
 
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.canBeFolded() || !fun.canBeFolded() {
-		return false
-	}
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
 		return false
@@ -291,8 +281,6 @@ type builtinFunc interface {
 	evalJSON(row []types.Datum) (val json.JSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
-	// canBeFolded checks whether a function can be folded in constant folding.
-	canBeFolded() bool
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
@@ -425,7 +413,7 @@ var funcs = map[string]functionClass{
 	ast.UnixTimestamp:    &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
 	ast.UTCDate:          &utcDateFunctionClass{baseFunctionClass{ast.UTCDate, 0, 0}},
 	ast.UTCTime:          &utcTimeFunctionClass{baseFunctionClass{ast.UTCTime, 0, 1}},
-	ast.UTCTimestamp:     &utcTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
+	ast.UTCTimestamp:     &utcTimestampFunctionClass{baseFunctionClass{ast.UTCTimestamp, 0, 1}},
 	ast.Week:             &weekFunctionClass{baseFunctionClass{ast.Week, 1, 2}},
 	ast.Weekday:          &weekDayFunctionClass{baseFunctionClass{ast.Weekday, 1, 1}},
 	ast.WeekOfYear:       &weekOfYearFunctionClass{baseFunctionClass{ast.WeekOfYear, 1, 1}},
