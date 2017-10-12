@@ -67,7 +67,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -105,7 +105,7 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 			}
 		}
 	}
-	f, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -239,7 +239,7 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 		}
 	}
 
-	fn, err := funcs[ast.ConcatWS].getFunction(s.ctx, s.primitiveValsToConstants([]interface{}{nil, nil}))
+	_, err = funcs[ast.ConcatWS].getFunction(s.ctx, s.primitiveValsToConstants([]interface{}{nil, nil}))
 	c.Assert(err, IsNil)
 }
 
@@ -289,7 +289,7 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Left].getFunction(s.ctx, []Expression{varcharCon, int8Con})
+	_, err := funcs[ast.Left].getFunction(s.ctx, []Expression{varcharCon, int8Con})
 	c.Assert(err, IsNil)
 }
 
@@ -339,7 +339,7 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Right].getFunction(s.ctx, []Expression{varcharCon, int8Con})
+	_, err := funcs[ast.Right].getFunction(s.ctx, []Expression{varcharCon, int8Con})
 	c.Assert(err, IsNil)
 }
 
@@ -425,7 +425,7 @@ func (s *testEvaluatorSuite) TestLower(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Lower].getFunction(s.ctx, []Expression{varcharCon})
+	_, err := funcs[ast.Lower].getFunction(s.ctx, []Expression{varcharCon})
 	c.Assert(err, IsNil)
 }
 
@@ -458,7 +458,7 @@ func (s *testEvaluatorSuite) TestUpper(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Upper].getFunction(s.ctx, []Expression{varcharCon})
+	_, err := funcs[ast.Upper].getFunction(s.ctx, []Expression{varcharCon})
 	c.Assert(err, IsNil)
 }
 
@@ -572,7 +572,7 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Replace].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err := funcs[ast.Replace].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -618,10 +618,10 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Substring].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err := funcs[ast.Substring].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
 	c.Assert(err, IsNil)
 
-	f, err = funcs[ast.Substring].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.Substring].getFunction(s.ctx, []Expression{Zero, Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -708,7 +708,7 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.SubstringIndex].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err := funcs[ast.SubstringIndex].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -754,7 +754,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Space].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Space].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -870,13 +870,13 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 
-	f, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero, Zero})
 	c.Assert(err, IsNil)
 
-	f, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -910,7 +910,7 @@ func (s *testEvaluatorSuite) TestLTrim(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.LTrim].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.LTrim].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -944,7 +944,7 @@ func (s *testEvaluatorSuite) TestRTrim(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.RTrim].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.RTrim].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -985,10 +985,10 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Hex].getFunction(s.ctx, []Expression{int8Con})
+	_, err := funcs[ast.Hex].getFunction(s.ctx, []Expression{int8Con})
 	c.Assert(err, IsNil)
 
-	f, err = funcs[ast.Hex].getFunction(s.ctx, []Expression{varcharCon})
+	_, err = funcs[ast.Hex].getFunction(s.ctx, []Expression{varcharCon})
 	c.Assert(err, IsNil)
 }
 
@@ -1028,7 +1028,7 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Unhex].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Unhex].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -1061,7 +1061,7 @@ func (s *testEvaluatorSuite) TestBitLength(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.BitLength].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.BitLength].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -1606,7 +1606,7 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 			}
 		}
 	}
-	f, err := funcs[ast.Ord].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Ord].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 
@@ -1794,7 +1794,7 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
 

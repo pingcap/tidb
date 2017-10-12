@@ -132,9 +132,9 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Ifnull].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err := funcs[ast.Ifnull].getFunction(s.ctx, []Expression{Zero, Zero})
 	c.Assert(err, IsNil)
 
-	f, err = funcs[ast.Ifnull].getFunction(s.ctx, []Expression{Zero})
+	_, err = funcs[ast.Ifnull].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, NotNil)
 }

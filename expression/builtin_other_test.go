@@ -74,7 +74,7 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RowFunc]
-	fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
+	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
 	c.Assert(err, IsNil)
 }
 

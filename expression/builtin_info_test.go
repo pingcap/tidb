@@ -220,6 +220,6 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
