@@ -45,9 +45,10 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.cacheable = false
 		return in, true
 	case *ast.FuncCallExpr:
-		if node.FnName.L == "now" || node.FnName.L == "current_timestamp" ||
-			node.FnName.L == "utc_time" || node.FnName.L == "curtime" ||
-			node.FnName.L == "current_time" {
+		if node.FnName.L == ast.Now || node.FnName.L == ast.CurrentTimestamp ||
+			node.FnName.L == ast.UTCTime || node.FnName.L == ast.Curtime ||
+			node.FnName.L == ast.CurrentTime || node.FnName.L == ast.UTCTimestamp ||
+			node.FnName.L == ast.UnixTimestamp {
 			checker.cacheable = false
 			return in, true
 		}
