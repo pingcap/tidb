@@ -34,6 +34,7 @@ var (
 	ErXInvalidAdminCommand       = ErrorMessage(mysql.ErXInvalidAdminCommand, mysql.MySQLErrName[mysql.ErXInvalidAdminCommand])
 	ErXCmdNumArguments           = ErrorMessage(mysql.ErXCmdNumArguments, mysql.MySQLErrName[mysql.ErXCmdNumArguments])
 	ErXCmdArgumentType           = ErrorMessage(mysql.ErXCmdArgumentType, mysql.MySQLErrName[mysql.ErXCmdArgumentType])
+	ErXCannotDisableNotice       = ErrorMessage(mysql.ErXCannotDisableNotice, mysql.MySQLErrName[mysql.ErXCannotDisableNotice])
 )
 
 const (
@@ -53,6 +54,7 @@ const (
 	codeErXInvalidAdminCommand                      = terror.ErrCode(mysql.ErXInvalidAdminCommand)
 	codeErXCmdNumArguments                          = terror.ErrCode(mysql.ErXCmdNumArguments)
 	codeErXCmdArgumentType                          = terror.ErrCode(mysql.ErXCmdArgumentType)
+	codeErXCannotDisableNotice                      = terror.ErrCode(mysql.ErXCannotDisableNotice)
 )
 
 func init() {
@@ -73,6 +75,7 @@ func init() {
 		codeErXInvalidAdminCommand:       mysql.ErXInvalidAdminCommand,
 		codeErXCmdNumArguments:           mysql.ErXCmdNumArguments,
 		codeErXCmdArgumentType:           mysql.ErXCmdArgumentType,
+		codeErXCannotDisableNotice:       mysql.ErXCannotDisableNotice,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassXProtocol] = xProtocolMySQLErrCodes
 }

@@ -71,9 +71,9 @@ func (xsql *xSQL) dispatchAdminCmd(msg Mysqlx_Sql.StmtExecute) error {
 	case "enable_notices":
 		return xsql.enableNotices(args)
 	case "disable_notices":
-		return util.ErXInvalidAdminCommand.GenByArgs(msg.GetNamespace(), stmt)
+		return xsql.disableNotices(args)
 	case "list_notices":
-		return util.ErXInvalidAdminCommand.GenByArgs(msg.GetNamespace(), stmt)
+		return xsql.listNotices(args)
 	default:
 		return util.ErXInvalidAdminCommand.GenByArgs(msg.GetNamespace(), stmt)
 	}
@@ -82,6 +82,21 @@ func (xsql *xSQL) dispatchAdminCmd(msg Mysqlx_Sql.StmtExecute) error {
 func (xsql *xSQL) ping(args []*Mysqlx_Datatypes.Any) error {
 	if len(args) != 0 {
 		return util.ErXCmdNumArguments.GenByArgs(0, len(args))
+	}
+	return nil
+}
+
+func (xsql *xSQL) writeOneRow(row []types.Datum, columnsInfo []*ColumnInfo) error {
+	rowData, err := rowToRow(xsql.xcc.alloc, columnsInfo, row)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	data, err := rowData.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = xsql.pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_ROW, data); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -107,16 +122,7 @@ func (xsql *xSQL) listClients(args []*Mysqlx_Datatypes.Any) error {
 			types.NewStringDatum(i.host),
 			types.NewUintDatum(uint64(i.sessionID)),
 		}
-		rowData, err := rowToRow(xsql.xcc.alloc, cols, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		data, err := rowData.Marshal()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if err = xsql.pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_ROW, data); err != nil {
+		if err := xsql.writeOneRow(row, cols); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -251,23 +257,78 @@ func (xsql *xSQL) enableNotices(args []*Mysqlx_Datatypes.Any) error {
 			return errors.Trace(err)
 		}
 		notice := string(v.GetScalar().GetVString().GetValue())
-		if strings.EqualFold(notice, "warning") {
+		if strings.EqualFold(notice, "warnings") {
 			enableWarning = true
 		} else if err := isFixedNoticeName(notice); err != nil {
 			return errors.Trace(err)
 		}
 		if enableWarning {
-			// TODO: enable warning here, need a context.
+			xsql.xcc.xsession.setSendWarnings(true)
 		}
 	}
 	return nil
 }
 
 func (xsql *xSQL) disableNotices(args []*Mysqlx_Datatypes.Any) error {
+	disableWarning := false
+	for i, v := range args {
+		if err := isString(v, i); err != nil {
+			return errors.Trace(err)
+		}
+		notice := string(v.GetScalar().GetVString().GetValue())
+		if strings.EqualFold(notice, "warnings") {
+			disableWarning = true
+		} else if err := isFixedNoticeName(notice); err != nil {
+			return errors.Trace(err)
+		} else {
+			return util.ErXCannotDisableNotice.GenByArgs(notice)
+		}
+		if disableWarning {
+			xsql.xcc.xsession.setSendWarnings(false)
+		}
+	}
 	return nil
 }
 
 func (xsql *xSQL) listNotices(args []*Mysqlx_Datatypes.Any) error {
+	if len(args) != 0 {
+		return util.ErXCmdNumArguments.GenByArgs(0, len(args))
+	}
+
+	// notice | enabled
+	// <name> | <1/0>
+	cols := []*ColumnInfo{
+		{Name: "notice", Type: mysql.TypeVarchar},
+		{Name: "enabled", Type: mysql.TypeLonglong},
+	}
+	if err := writeColumnsInfo(cols, xsql.pkt); err != nil {
+		return errors.Trace(err)
+	}
+	var enabled int64
+	if xsql.xcc.xsession.getSendWarnings() {
+		enabled = 1
+	}
+	row := []types.Datum{
+		types.NewStringDatum("warnings"),
+		types.NewIntDatum(enabled),
+	}
+	if err := xsql.writeOneRow(row, cols); err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, n := range fixedNoticeNames {
+		r := []types.Datum{
+			types.NewStringDatum(n),
+			types.NewIntDatum(1),
+		}
+		if err := xsql.writeOneRow(r, cols); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if err := xsql.pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_FETCH_DONE, []byte{}); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 

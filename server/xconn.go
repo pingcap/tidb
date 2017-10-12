@@ -17,7 +17,6 @@ import (
 	"io"
 	"net"
 	"runtime"
-	"sync/atomic"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
@@ -318,18 +317,6 @@ func (xcc *mysqlXClientConn) configCapabilities() {
 	xcc.addCapability(&capability.HandlerAuthMechanisms{Values: []string{"MYSQL41"}})
 	xcc.addCapability(&capability.HandlerReadOnlyValue{Name: "doc.formats", Value: "text"})
 	xcc.addCapability(&capability.HandlerReadOnlyValue{Name: "node_type", Value: "mysql"})
-}
-
-type xSession struct {
-	xsql      *xSQL
-	sessionID uint32
-}
-
-func (xcc *mysqlXClientConn) createXSession() *xSession {
-	return &xSession{
-		xsql:      createXSQL(xcc),
-		sessionID: atomic.AddUint32(&baseSessionID, 1),
-	}
 }
 
 func (xs *xSession) handleMessage(msgType Mysqlx.ClientMessages_Type, payload []byte) error {

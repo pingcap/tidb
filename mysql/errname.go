@@ -899,10 +899,12 @@ var MySQLErrName = map[uint16]string{
 
 	ErXBadMessage:                "Invalid message",
 	ErXBadSchema:                 "Invalid schema",
+	ErXBadNotice:                 "Invalid notice name %s",
 	ErXBadTable:                  "Invalid collection name",
 	ErXCapabilitiesPrepareFailed: "Capability prepare failed for '%s'",
 	ErXInvalidNamespace:          "Unknown namespace %s",
 	ErXInvalidAdminCommand:       "Invalid %s command %s",
 	ErXCmdNumArguments:           "Invalid number of arguments, expected %d but got %d",
 	ErXCmdArgumentType:           "Invalid type for argument '%s' at #%d (should be %s)",
+	ErXCannotDisableNotice:       "Cannot disable notice %s",
 }

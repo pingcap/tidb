@@ -583,6 +583,37 @@ func (ts *TidbTestSuite) TestOnXServer(c *C) {
 	_, err = db.Query("ping", args...)
 	c.Assert(err, IsNil, Commentf("Error: %s", err))
 
+	// enable_notices
+	args = []interface{}{
+		"mysqlx",
+		"warnings",
+		"account_expired",
+		"generated_insert_id",
+		"rows_affected",
+		"produced_message",
+	}
+	_, err = db.Query("enable_notices", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// disable_notices
+	args = []interface{}{
+		"mysqlx",
+		"warnings",
+		"account_expired",
+		"generated_insert_id",
+		"rows_affected",
+		"produced_message",
+	}
+	_, err = db.Query("disable_notices", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
+	// list_notices
+	args = []interface{}{
+		"mysqlx",
+	}
+	_, err = db.Query("list_notices", args...)
+	c.Assert(err, IsNil, Commentf("Error: %s", err))
+
 	// clean up
 	err = db.Close()
 	c.Assert(err, IsNil, Commentf("Error close db: %s", err))
