@@ -29,6 +29,26 @@ func Cacheable(node ast.Node) bool {
 	return checker.cacheable
 }
 
+var nonCacheableFunctions = map[string]struct{}{
+	ast.Now:              {},
+	ast.CurrentTimestamp: {},
+	ast.UTCTime:          {},
+	ast.Curtime:          {},
+	ast.CurrentTime:      {},
+	ast.UTCTimestamp:     {},
+	ast.UnixTimestamp:    {},
+	ast.Sysdate:          {},
+	ast.Curdate:          {},
+	ast.CurrentDate:      {},
+	ast.UTCDate:          {},
+	ast.Database:         {},
+	ast.CurrentUser:      {},
+	ast.User:             {},
+	ast.ConnectionID:     {},
+	ast.LastInsertId:     {},
+	ast.Version:          {},
+}
+
 // cacheableChecker checks whether a query's plan can be cached, querys that:
 //	 1. have ExistsSubqueryExpr, or
 //	 2. have VariableExpr
@@ -45,10 +65,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.cacheable = false
 		return in, true
 	case *ast.FuncCallExpr:
-		if node.FnName.L == ast.Now || node.FnName.L == ast.CurrentTimestamp ||
-			node.FnName.L == ast.UTCTime || node.FnName.L == ast.Curtime ||
-			node.FnName.L == ast.CurrentTime || node.FnName.L == ast.UTCTimestamp ||
-			node.FnName.L == ast.UnixTimestamp {
+		if _, found := nonCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			return in, true
 		}
