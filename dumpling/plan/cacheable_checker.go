@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 )
 
 // Cacheable checks whether the input ast is cacheable.
@@ -27,26 +28,6 @@ func Cacheable(node ast.Node) bool {
 	}
 	node.Accept(&checker)
 	return checker.cacheable
-}
-
-var nonCacheableFunctions = map[string]struct{}{
-	ast.Now:              {},
-	ast.CurrentTimestamp: {},
-	ast.UTCTime:          {},
-	ast.Curtime:          {},
-	ast.CurrentTime:      {},
-	ast.UTCTimestamp:     {},
-	ast.UnixTimestamp:    {},
-	ast.Sysdate:          {},
-	ast.Curdate:          {},
-	ast.CurrentDate:      {},
-	ast.UTCDate:          {},
-	ast.Database:         {},
-	ast.CurrentUser:      {},
-	ast.User:             {},
-	ast.ConnectionID:     {},
-	ast.LastInsertId:     {},
-	ast.Version:          {},
 }
 
 // cacheableChecker checks whether a query's plan can be cached, querys that:
@@ -65,7 +46,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.cacheable = false
 		return in, true
 	case *ast.FuncCallExpr:
-		if _, found := nonCacheableFunctions[node.FnName.L]; found {
+		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			return in, true
 		}

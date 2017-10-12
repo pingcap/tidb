@@ -16,6 +16,7 @@ package plan
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 )
 
@@ -51,7 +52,7 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	}
 	c.Assert(Cacheable(stmt), IsTrue)
 
-	for funcName := range nonCacheableFunctions {
+	for funcName := range expression.UnCacheableFunctions {
 		whereExpr.FnName = model.NewCIStr(funcName)
 		c.Assert(Cacheable(stmt), IsFalse)
 	}
