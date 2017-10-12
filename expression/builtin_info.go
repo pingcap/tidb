@@ -88,7 +88,6 @@ func (c *foundRowsFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
-	bf.foldable = false
 	sig := &builtinFoundRowsSig{bf}
 	return sig.setSelf(sig), nil
 }
