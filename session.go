@@ -59,6 +59,7 @@ import (
 // Session context
 type Session interface {
 	context.Context
+	IsSystemSession() bool
 	Status() uint16                              // Flag of current status, such as autocommit.
 	LastInsertID() uint64                        // LastInsertID is the last inserted auto_increment ID.
 	AffectedRows() uint64                        // Affected rows by latest executed stmt.
@@ -121,6 +122,8 @@ type session struct {
 	// goCtx is used for cancelling the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
+
+	isSystem bool
 
 	mu struct {
 		sync.RWMutex
@@ -211,6 +214,14 @@ func (s *session) SetSessionManager(sm util.SessionManager) {
 
 func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
+}
+
+func (s *session) SetSystemSession() {
+	s.isSystem = true
+}
+
+func (s *session) IsSystemSession() bool {
+	return s.isSystem
 }
 
 type schemaLeaseChecker struct {
@@ -527,7 +538,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 	return rows, fields, nil
 }
 
-func createSessionFunc(store kv.Storage) pools.Factory {
+func createSessionFunc(store kv.Storage, isSystem bool) pools.Factory {
 	return func() (pools.Resource, error) {
 		se, err := createSession(store)
 		if err != nil {
@@ -539,11 +550,14 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		if isSystem {
+			se.SetSystemSession()
+		}
 		return se, nil
 	}
 }
 
-func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+func createSessionWithDomainFunc(store kv.Storage, isSystem bool) func(*domain.Domain) (pools.Resource, error) {
 	return func(dom *domain.Domain) (pools.Resource, error) {
 		se, err := createSessionWithDomain(store, dom)
 		if err != nil {
@@ -555,6 +569,9 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		if isSystem {
+			se.SetSystemSession()
+		}
 		return se, nil
 	}
 }
