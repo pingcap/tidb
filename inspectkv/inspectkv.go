@@ -78,15 +78,16 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	errs := make([]error, len(ids))
 	t := meta.NewMeta(txn)
 	for i, id := range ids {
-		done := false
+		found := false
 		for j, job := range jobs {
 			if id != job.ID {
+				log.Debugf("the job ID %d that needs to be canceled isn't equal to current job ID %d", id, job.ID)
 				continue
 			}
-			done = true
+			found = true
 			// These states can't be cancelled.
 			if job.IsDone() || job.IsSynced() {
-				errs[i] = errors.New("This job will be done, so can't be cancelled")
+				errs[i] = errors.New("This job is finished, so can't be cancelled")
 				continue
 			}
 			if job.IsCancelled() {
@@ -98,7 +99,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 			}
 		}
-		if !done {
+		if !found {
 			errs[i] = errors.New("Can't find this job")
 		}
 	}
