@@ -111,7 +111,7 @@ func (t *testStatisticsSuite) TestCalcFraction(c *C) {
 			lower:    types.NewTimeDatum(getTime(2017, 1, 1)),
 			upper:    types.NewTimeDatum(getTime(2017, 4, 1)),
 			value:    types.NewTimeDatum(getTime(2017, 2, 1)),
-			fraction: 0.34444444444444444,
+			fraction: 0.3333333333333333,
 		},
 		{
 			lower:    types.NewStringDatum("aasad"),
@@ -130,6 +130,6 @@ func (t *testStatisticsSuite) TestCalcFraction(c *C) {
 		lower, upper, common := preCalculateDatumScalar(&test.lower, &test.upper)
 		value := convertDatumToScalar(&test.value, common)
 		fraction := calcFraction(lower, upper, value)
-		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue)
+		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue, Commentf("%v, %v", fraction, test.fraction))
 	}
 }
