@@ -693,7 +693,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		return tt
 	}
 
-	for i, x := range []struct {
+	for _, x := range []struct {
 		fc  functionClass
 		now func() time.Time
 	}{
@@ -702,11 +702,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	} {
 		f, err := x.fc.getFunction(s.ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
-		if i == 0 {
-			c.Assert(f.canBeFolded(), IsTrue)
-		} else {
-			c.Assert(f.canBeFolded(), IsFalse)
-		}
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		ts := x.now()
 		c.Assert(err, IsNil)
@@ -1466,7 +1462,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	fc := funcs[ast.UnixTimestamp]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
+	c.Assert(f.canBeFolded(), IsTrue)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))

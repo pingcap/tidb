@@ -1949,7 +1949,6 @@ func (c *utcTimestampFunctionClass) getFunction(ctx context.Context, args []Expr
 	} else {
 		bf.tp.Flen, bf.tp.Decimal = 19, 0
 	}
-	bf.foldable = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
@@ -2852,7 +2851,6 @@ func (c *unixTimestampFunctionClass) getFunction(ctx context.Context, args []Exp
 	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, retTp, argTps...)
-	bf.foldable = false
 	bf.tp.Flen = retFLen
 	bf.tp.Decimal = retDecimal
 
