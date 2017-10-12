@@ -1146,6 +1146,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
 	c.Assert(n.String(), HasLen, 8)
 	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
@@ -1307,6 +1308,7 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(d.IsNull(), IsTrue)
 	}
 }
@@ -1780,6 +1782,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		got, err := f.eval(nil)
 		c.Assert(err, NotNil)
 		want, err := t["Want"][0].ToString()
+		c.Assert(err, IsNil)
 		c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 	}
 }
@@ -2278,6 +2281,7 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(d.IsNull(), IsTrue)
 	}
 }
