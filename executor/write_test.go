@@ -713,6 +713,7 @@ func (s *testSuite) TestDelete(c *C) {
 	_, err := tk.Exec("delete from delete_test where id = (select '2a')")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("delete ignore from delete_test where id = (select '2a')")
+	c.Assert(err, IsNil)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
