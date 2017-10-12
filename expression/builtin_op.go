@@ -79,11 +79,11 @@ func (b *builtinLogicAndSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil || (!isNull0 && arg0 == 0) {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
 	if err != nil || (!isNull1 && arg1 == 0) {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 	if isNull0 || isNull1 {
 		return 0, true, nil
@@ -115,14 +115,14 @@ func (b *builtinLogicOrSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	if !isNull0 && arg0 != 0 {
 		return 1, false, nil
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	if !isNull1 && arg1 != 0 {
 		return 1, false, nil
@@ -642,7 +642,7 @@ func (b *builtinUnaryMinusIntSig) evalInt(row []types.Datum) (res int64, isNull 
 	} else if val == math.MinInt64 {
 		return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("-%v", val))
 	}
-	return -val, false, errors.Trace(err)
+	return -val, false, nil
 }
 
 type builtinUnaryMinusDecimalSig struct {
@@ -662,7 +662,7 @@ func (b *builtinUnaryMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyD
 
 	to := new(types.MyDecimal)
 	err = types.DecimalSub(new(types.MyDecimal), dec, to)
-	return to, false, errors.Trace(err)
+	return to, err != nil, errors.Trace(err)
 }
 
 type builtinUnaryMinusRealSig struct {
