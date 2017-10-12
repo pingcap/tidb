@@ -221,7 +221,7 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
-		c.Assert(historyJob.State, Equals, model.JobCancelled)
+		c.Assert(historyJob.IsCancelled(), IsTrue, Commentf("histroy job %s", historyJob))
 		return nil
 	})
 }
@@ -229,10 +229,11 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
 func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []interface{},
 	ctx context.Context, d *ddl) *model.Job {
 	job := &model.Job{
-		SchemaID: schemaID,
-		TableID:  tableID,
-		Type:     tp,
-		Args:     args,
+		SchemaID:   schemaID,
+		TableID:    tableID,
+		Type:       tp,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
 	// TODO: Add the detail error check.
@@ -245,13 +246,16 @@ func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []inte
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
 	var checkErr error
 	if test.cancelState == job.SchemaState {
-		errs, err := inspectkv.CancelJobs(txn, test.jobIDs)
-		if err != test.cancelRetErr {
-			checkErr = errors.Trace(err)
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != test.cancelRetErrs[0] {
-			checkErr = errors.Trace(errs[0])
+		if test.act == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
+		} else {
+			errs, err := inspectkv.CancelJobs(txn, test.jobIDs)
+			if err != test.cancelRetErr {
+				checkErr = errors.Trace(err)
+			}
+			// It only tests cancel one DDL job.
+			if errs[0] != test.cancelRetErrs[0] {
+				checkErr = errors.Trace(errs[0])
+			}
 		}
 	}
 	if test.nextState == job.SchemaState {
@@ -321,19 +325,14 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	tc := &TestDDLCallback{}
 	// set up hook
-	prevState := model.StateNone
 	firstJobID := job.ID
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
 	// Since this DDL job isn't in the DDL queue, tests[0] is failed to cancel job.
 	test := &tests[0]
 	tc.onJobUpdated = func(job *model.Job) {
-		if job.SchemaState == prevState {
-			return
-		}
 		hookCtx := mock.NewContext()
 		hookCtx.Store = store
-		prevState = job.SchemaState
 		var err error
 		err = hookCtx.NewTxn()
 		if err != nil {

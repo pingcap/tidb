@@ -204,6 +204,11 @@ func (job *Job) IsCancelled() bool {
 	return job.State == JobCancelled || job.State == JobRollbackDone
 }
 
+// IsRollbacking returns whether the job is rollbacking or not.
+func (job *Job) IsRollbacking() bool {
+	return job.State == JobRollback
+}
+
 // IsCancelling returns whether the job is cancelling or not.
 func (job *Job) IsCancelling() bool {
 	return job.State == JobCancelling

@@ -293,16 +293,17 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
-		infoHandle:   infoHandle,
-		hook:         hook,
-		store:        store,
-		uuid:         id,
-		lease:        lease,
-		ddlJobCh:     make(chan struct{}, 1),
-		ddlJobDoneCh: make(chan struct{}, 1),
-		ownerManager: manager,
-		schemaSyncer: syncer,
-		workerVars:   variable.NewSessionVars(),
+		infoHandle:           infoHandle,
+		hook:                 hook,
+		store:                store,
+		uuid:                 id,
+		lease:                lease,
+		ddlJobCh:             make(chan struct{}, 1),
+		ddlJobDoneCh:         make(chan struct{}, 1),
+		notifyCancelReorgJob: make(chan struct{}, 1),
+		ownerManager:         manager,
+		schemaSyncer:         syncer,
+		workerVars:           variable.NewSessionVars(),
 	}
 	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 

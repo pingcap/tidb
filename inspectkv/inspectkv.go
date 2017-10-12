@@ -90,11 +90,18 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.New("This job is finished, so can't be cancelled")
 				continue
 			}
-			if job.IsCancelled() {
+			// If the state is rollbacking, it means the work is cleaning the data after cancelling the job.
+			if job.IsCancelled() || job.IsRollbacking() {
 				continue
 			}
 			job.State = model.JobCancelling
-			err := t.UpdateDDLJob(int64(j), job)
+			// Make sure RawArgs isn't overwritten.
+			err := job.DecodeArgs(job.RawArgs)
+			if err != nil {
+				errs[i] = errors.Trace(err)
+				continue
+			}
+			err = t.UpdateDDLJob(int64(j), job)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 			}
