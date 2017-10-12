@@ -70,9 +70,11 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlTime:
 		valueTime := value.GetMysqlTime()
-		zeroTime := types.ZeroDatetime
-		zeroTime.Type = valueTime.Type
-		return float64(valueTime.Sub(&zeroTime).Duration)
+		packedUint, err := valueTime.ToPackedUint()
+		if err != nil {
+			return 0
+		}
+		return float64(packedUint)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
