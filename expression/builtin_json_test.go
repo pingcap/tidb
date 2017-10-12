@@ -41,7 +41,6 @@ func (s *testEvaluatorSuite) TestJSONType(c *C) {
 	for _, t := range dtbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
@@ -71,7 +70,6 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 	for _, t := range dtbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
@@ -98,7 +96,6 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 		d, err := f.eval(nil)
 		if t.Success {
 			c.Assert(err, IsNil)
-			c.Assert(f.canBeFolded(), IsTrue)
 			switch x := t.Expected.(type) {
 			case string:
 				var j1 json.JSON
@@ -143,7 +140,6 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 		f, err = t.fc.getFunction(s.ctx, s.datumsToConstants(args))
 		if t.BuildSuccess {
 			c.Assert(err, IsNil)
-			c.Assert(f.canBeFolded(), IsTrue)
 			d, err = f.eval(nil)
 			if t.Success {
 				c.Assert(err, IsNil)
@@ -180,7 +176,6 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 
@@ -210,7 +205,6 @@ func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 
@@ -247,7 +241,6 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 		f, err = fc.getFunction(s.ctx, s.datumsToConstants(args))
 		if t.BuildSuccess {
 			c.Assert(err, IsNil)
-			c.Assert(f.canBeFolded(), IsTrue)
 			d, err = f.eval(nil)
 			if t.Success {
 				c.Assert(err, IsNil)
