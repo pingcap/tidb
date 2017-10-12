@@ -105,6 +105,7 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)
 	c.Assert(len(collectors), Equals, 2)
+	collectors[0].IsMerger = true
 	collectors[0].MergeSampleCollector(collectors[1])
 	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(9280))
 	c.Assert(len(collectors[0].Samples), Equals, 1000)

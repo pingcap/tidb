@@ -28,6 +28,7 @@ import (
 type SampleCollector struct {
 	Samples       []types.Datum
 	seenValues    int64 // seenValues is the current seen values.
+	IsMerger      bool
 	NullCount     int64
 	Count         int64 // Count is the number of non-null rows.
 	MaxSampleSize int64
@@ -40,7 +41,7 @@ func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	c.Count += rc.Count
 	c.Sketch.mergeFMSketch(rc.Sketch)
 	for _, val := range rc.Samples {
-		err := c.collect(val, false)
+		err := c.collect(val)
 		terror.Log(errors.Trace(err))
 	}
 }
@@ -71,8 +72,8 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	return s
 }
 
-func (c *SampleCollector) collect(d types.Datum, insertSketch bool) error {
-	if insertSketch {
+func (c *SampleCollector) collect(d types.Datum) error {
+	if !c.IsMerger {
 		if d.IsNull() {
 			c.NullCount++
 			return nil
@@ -143,7 +144,7 @@ func (s SampleBuilder) CollectSamplesAndEstimateNDVs() ([]*SampleCollector, *Sor
 			row.Data = row.Data[1:]
 		}
 		for i, val := range row.Data {
-			err = collectors[i].collect(val, true)
+			err = collectors[i].collect(val)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
