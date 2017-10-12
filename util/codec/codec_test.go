@@ -293,7 +293,7 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 	b, u, err := DecodeComparableUvarint(b)
 	c.Assert(err, IsNil)
 	c.Assert(u, Equals, uint64(1))
-	b, i, err = DecodeComparableVarint(b)
+	_, i, err = DecodeComparableVarint(b)
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(2))
 }

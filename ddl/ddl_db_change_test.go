@@ -242,8 +242,7 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 	return nil
 }
 
-func (t *testExecInfo) compileSQL(idx int) error {
-	var err error
+func (t *testExecInfo) compileSQL(idx int) (err error) {
 	compiler := executor.Compiler{}
 	for _, info := range t.sqlInfos {
 		c := info.cases[idx]
@@ -251,6 +250,7 @@ func (t *testExecInfo) compileSQL(idx int) error {
 		se.PrepareTxnCtx()
 		ctx := se.(context.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
+
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
 		if err != nil {
 			return errors.Trace(err)
