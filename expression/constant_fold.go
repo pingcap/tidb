@@ -23,7 +23,7 @@ func FoldConstant(expr Expression) Expression {
 	if !ok {
 		return expr
 	}
-	if _, ok := nonFoldableFunctions[scalarFunc.FuncName.L]; ok {
+	if _, ok := unFoldableFunctions[scalarFunc.FuncName.L]; ok {
 		return expr
 	}
 	args := scalarFunc.GetArgs()
