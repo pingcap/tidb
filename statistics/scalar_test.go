@@ -34,10 +34,10 @@ func getDuration(value string) types.Duration {
 	return dur
 }
 
-func getTime(year, month, day int) types.Time {
+func getTime(year, month, day int, timeType byte) types.Time {
 	return types.Time{
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
-		Type: mysql.TypeDatetime,
+		Type: timeType,
 		Fsp:  types.DefaultFsp}
 }
 
@@ -108,9 +108,21 @@ func (t *testStatisticsSuite) TestCalcFraction(c *C) {
 			fraction: 0.25,
 		},
 		{
-			lower:    types.NewTimeDatum(getTime(2017, 1, 1)),
-			upper:    types.NewTimeDatum(getTime(2017, 4, 1)),
-			value:    types.NewTimeDatum(getTime(2017, 2, 1)),
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeTimestamp)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeTimestamp)),
+			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeTimestamp)),
+			fraction: 0.34444444444444444,
+		},
+		{
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDatetime)),
+			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDatetime)),
+			fraction: 0.34444444444444444,
+		},
+		{
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDate)),
+			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDate)),
 			fraction: 0.34444444444444444,
 		},
 		{
