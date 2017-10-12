@@ -921,7 +921,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 		varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", timezone)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsFalse)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		last := time.Now()
 		c.Assert(err, IsNil)
@@ -1065,7 +1065,7 @@ func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	fc := funcs[ast.CurrentDate]
 	f, err := fc.getFunction(mock.NewContext(), s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
@@ -1489,7 +1489,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	args = []types.Datum{types.NewDatum(nil)}
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
+	c.Assert(f.canBeFolded(), IsTrue)
 	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.IsNull(), Equals, true)

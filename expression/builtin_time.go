@@ -1659,7 +1659,6 @@ func (c *sysDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDatetime, argTps...)
 	bf.tp.Flen, bf.tp.Decimal = 19, 0
-	bf.foldable = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
@@ -1715,7 +1714,6 @@ func (c *currentDateFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDatetime)
 	bf.tp.Flen, bf.tp.Decimal = 10, 0
-	bf.foldable = false
 	sig := &builtinCurrentDateSig{bf}
 	return sig.setSelf(sig), nil
 }
@@ -1891,7 +1889,6 @@ func (c *utcDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDatetime)
 	bf.tp.Flen, bf.tp.Decimal = 10, 0
-	bf.foldable = false
 	sig := &builtinUTCDateSig{bf}
 	return sig.setSelf(sig), nil
 }
