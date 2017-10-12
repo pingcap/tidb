@@ -172,7 +172,7 @@ func (c *Constant) Decorrelate(_ *Schema) Expression {
 // HashCode implements Expression interface.
 func (c *Constant) HashCode() []byte {
 	bytes, err := codec.EncodeValue(nil, c.Value)
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return bytes
 }
 

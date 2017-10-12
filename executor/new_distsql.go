@@ -109,7 +109,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
 			err = e.partialResult.Close()
-			terror.Log(err)
+			terror.Log(errors.Trace(err))
 			e.partialResult = nil
 			continue
 		}
@@ -230,7 +230,7 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
 			err = e.partialResult.Close()
-			terror.Log(err)
+			terror.Log(errors.Trace(err))
 			e.partialResult = nil
 			continue
 		}

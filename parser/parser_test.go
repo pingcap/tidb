@@ -19,9 +19,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -198,6 +200,12 @@ type testCase struct {
 	ok  bool
 }
 
+type testErrMsgCase struct {
+	src string
+	ok  bool
+	err error
+}
+
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	parser := New()
 	for _, t := range table {
@@ -207,6 +215,19 @@ func (s *testParserSuite) RunTest(c *C, table []testCase) {
 			c.Assert(err, IsNil, comment)
 		} else {
 			c.Assert(err, NotNil, comment)
+		}
+	}
+}
+
+func (s *testParserSuite) RunErrMsgTest(c *C, table []testErrMsgCase) {
+	parser := New()
+	for _, t := range table {
+		_, err := parser.Parse(t.src, "", "")
+		comment := Commentf("source %v", t.src)
+		if t.err != nil {
+			c.Assert(terror.ErrorEqual(err, t.err), IsTrue, comment)
+		} else {
+			c.Assert(err, IsNil, comment)
 		}
 	}
 }
@@ -1618,9 +1639,23 @@ func (s *testParserSuite) TestComment(c *C) {
 		{"START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */", true},
 		// for comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
+		// for unclosed comment
+		{"delete from t where a = 7 or 1=1/*' and b = 'p'", false},
 	}
 	s.RunTest(c, table)
 }
+
+func (s *testParserSuite) TestCommentErrMsg(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testErrMsgCase{
+		{"delete from t where a = 7 or 1=1/*' and b = 'p'", false, errors.New("[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' and b = 'p'' at line 1")},
+		{"delete from t where a = 7 or\n 1=1/*' and b = 'p'", false, errors.New("[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' and b = 'p'' at line 2")},
+		{"select 1/*", false, errors.New("[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' at line 1")},
+		{"select 1/* comment */", false, nil},
+	}
+	s.RunErrMsgTest(c, table)
+}
+
 func (s *testParserSuite) TestSubquery(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{

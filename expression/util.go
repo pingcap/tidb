@@ -178,9 +178,9 @@ func timeZone2Duration(tz string) time.Duration {
 
 	i := strings.Index(tz, ":")
 	h, err := strconv.Atoi(tz[1:i])
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	m, err := strconv.Atoi(tz[i+1:])
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 

@@ -169,9 +169,9 @@ func (hg *Histogram) toString(isIndex bool) string {
 	}
 	for _, bucket := range hg.Buckets {
 		upperVal, err := bucket.UpperBound.ToString()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		lowerVal, err := bucket.LowerBound.ToString()
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", bucket.Count, lowerVal, upperVal, bucket.Repeats))
 	}
 	return strings.Join(strs, "\n")

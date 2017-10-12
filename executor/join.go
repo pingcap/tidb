@@ -150,7 +150,7 @@ func (e *HashJoinExec) fetchBigExec() {
 		for _, cn := range e.bigTableResultCh {
 			close(cn)
 		}
-		terror.Log(e.bigExec.Close())
+		terror.Log(errors.Trace(e.bigExec.Close()))
 		e.wg.Done()
 	}()
 	curBatchSize := 1
@@ -217,7 +217,7 @@ func (e *HashJoinExec) prepare() error {
 			return errors.Trace(err)
 		}
 		if row == nil {
-			terror.Log(e.smallExec.Close())
+			terror.Log(errors.Trace(e.smallExec.Close()))
 			break
 		}
 

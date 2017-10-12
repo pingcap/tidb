@@ -96,7 +96,7 @@ func (a *connArray) Close() {
 	for i, c := range a.v {
 		if c != nil {
 			err := c.Close()
-			terror.Log(err)
+			terror.Log(errors.Trace(err))
 			a.v[i] = nil
 		}
 	}

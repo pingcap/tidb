@@ -147,7 +147,7 @@ func (e *SetExecutor) executeSet() error {
 				return errors.Trace(err)
 			}
 			valStr, err := value.ToString()
-			terror.Log(err)
+			terror.Log(errors.Trace(err))
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 

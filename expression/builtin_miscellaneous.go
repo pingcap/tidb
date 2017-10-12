@@ -85,7 +85,6 @@ func (c *sleepFunctionClass) getFunction(ctx context.Context, args []Expression)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal)
 	bf.tp.Flen = 21
-	bf.foldable = false
 	sig := &builtinSleepSig{bf}
 	return sig.setSelf(sig), nil
 }
@@ -536,7 +535,7 @@ type builtinIsIPv4Sig struct {
 func (b *builtinIsIPv4Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 	if isIPv4(val) {
 		return 1, false, nil
@@ -594,7 +593,7 @@ type builtinIsIPv4CompatSig struct {
 func (b *builtinIsIPv4CompatSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 
 	ipAddress := []byte(val)
@@ -633,7 +632,7 @@ type builtinIsIPv4MappedSig struct {
 func (b *builtinIsIPv4MappedSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return int64(0), false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 
 	ipAddress := []byte(val)
@@ -672,7 +671,7 @@ type builtinIsIPv6Sig struct {
 func (b *builtinIsIPv6Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 	ip := net.ParseIP(val)
 	if ip != nil && !isIPv4(val) {
@@ -723,7 +722,6 @@ func (c *uuidFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 36
-	bf.foldable = false
 	sig := &builtinUUIDSig{bf}
 	return sig.setSelf(sig), nil
 }

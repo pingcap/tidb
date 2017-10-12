@@ -25,6 +25,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/cache"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -315,6 +317,13 @@ func setGlobalVars() {
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+
+	cache.PlanCacheEnabled = cfg.PlanCache.Enabled
+	if cache.PlanCacheEnabled {
+		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
+		cache.PlanCacheShards = cfg.PlanCache.Shards
+		cache.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	}
 }
 
 func setupLog() {
@@ -385,5 +394,5 @@ func runServer() {
 func cleanup() {
 	dom.Close()
 	err := storage.Close()
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }

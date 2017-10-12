@@ -104,7 +104,7 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			val, err := vals[i].GetBinaryLiteral().ToInt()
-			terror.Log(err)
+			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)

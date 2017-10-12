@@ -665,7 +665,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey, session)
 	if err != nil {
 		_, err1 := session.Execute("ROLLBACK")
-		terror.Log(err1)
+		terror.Log(errors.Trace(err1))
 		return false, errors.Trace(err)
 	}
 	log.Debugf("[gc worker] got leader: %s", leader)
@@ -673,7 +673,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
 			_, err1 := session.Execute("ROLLBACK")
-			terror.Log(err1)
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		_, err = session.Execute("COMMIT")
@@ -698,19 +698,19 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid, session)
 		if err != nil {
 			_, err1 := session.Execute("ROLLBACK")
-			terror.Log(err1)
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc, session)
 		if err != nil {
 			_, err1 := session.Execute("ROLLBACK")
-			terror.Log(err1)
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
 			_, err1 := session.Execute("ROLLBACK")
-			terror.Log(err1)
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		_, err = session.Execute("COMMIT")
@@ -720,7 +720,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		return true, nil
 	}
 	_, err1 := session.Execute("ROLLBACK")
-	terror.Log(err1)
+	terror.Log(errors.Trace(err1))
 	return false, nil
 }
 
