@@ -41,7 +41,6 @@ type Config struct {
 	ProxyProtocol ProxyProtocol `toml:"proxy-protocol" toml:"proxy-protocol"`
 }
 
-
 // ProxyProtocol is the PROXY protocol section of the config.
 type ProxyProtocol struct {
 	// PROXY protocol acceptable client networks.

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/terror"
 )
 
 // Ref: https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt .
@@ -244,10 +245,12 @@ func (c *proxyProtocolConn) Read(buffer []byte) (int, error) {
 func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
 	// This mean all header data should be read in headerReadTimeout seconds.
-	_ = c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.builder.headerReadTimeout) * time.Second))
+	err := c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.builder.headerReadTimeout) * time.Second))
+	terror.Log(errors.Trace(err))
 	// When function return clean read deadline.
 	defer func() {
-		_ = c.Conn.SetReadDeadline(time.Time{})
+		cerr := c.Conn.SetReadDeadline(time.Time{})
+		terror.Log(errors.Trace(cerr))
 	}()
 	n, err := c.Conn.Read(buf)
 	if err != nil {
