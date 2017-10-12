@@ -311,7 +311,7 @@ func (s *Server) onConn(c net.Conn) {
 
 	if err != nil {
 		log.Infof("Connection error: %s", errors.ErrorStack(err))
-		c.Close()
+		_ = c.Close()
 		return
 	}
 

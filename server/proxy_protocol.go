@@ -244,9 +244,11 @@ func (c *proxyProtocolConn) Read(buffer []byte) (int, error) {
 func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
 	// This mean all header data should be read in headerReadTimeout seconds.
-	c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.builder.headerReadTimeout) * time.Second))
+	_ = c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.builder.headerReadTimeout) * time.Second))
 	// When function return clean read deadline.
-	defer c.Conn.SetReadDeadline(time.Time{})
+	defer func() {
+		_ = c.Conn.SetReadDeadline(time.Time{})
+	}()
 	n, err := c.Conn.Read(buf)
 	if err != nil {
 		return unknownProtocol, nil, errors.Trace(err)
