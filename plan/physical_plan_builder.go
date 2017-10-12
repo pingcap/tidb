@@ -1237,7 +1237,7 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			*col.Data = expression.One.Value
 		}
 		newCond, err := expression.SubstituteCorCol2Constant(cond)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		corColConds = append(corColConds, newCond)
 	}
 	if p.controllerStatus == controlTableScan {
@@ -1564,14 +1564,13 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.Correlat
 			newChild := Cache{}.init(p.Allocator(), p.context())
 			newChild.SetSchema(child.Schema())
 
-			addChild(newChild, child)
-			newChild.SetParents(p)
+			setParentAndChildren(newChild, child)
 
 			newChildren = append(newChildren, newChild)
 		} else {
 			newChildren = append(newChildren, child)
 		}
 	}
-	p.SetChildren(newChildren...)
+	setParentAndChildren(p, newChildren...)
 	return selfCorCols
 }

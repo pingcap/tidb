@@ -217,10 +217,10 @@ func (b *builtinAbsDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, boo
 		*to = *val
 	} else {
 		if err = types.DecimalSub(new(types.MyDecimal), val, to); err != nil {
-			return nil, false, err
+			return nil, true, errors.Trace(err)
 		}
 	}
-	return to, false, errors.Trace(err)
+	return to, false, nil
 }
 
 func (c *roundFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -306,9 +306,9 @@ func (b *builtinRoundDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, b
 	}
 	to := new(types.MyDecimal)
 	if err = val.Round(to, 0, types.ModeHalfEven); err != nil {
-		return nil, false, err
+		return nil, true, errors.Trace(err)
 	}
-	return to, false, errors.Trace(err)
+	return to, false, nil
 }
 
 type builtinRoundWithFracRealSig struct {
@@ -364,9 +364,9 @@ func (b *builtinRoundWithFracDecSig) evalDecimal(row []types.Datum) (*types.MyDe
 	}
 	to := new(types.MyDecimal)
 	if err = val.Round(to, int(frac), types.ModeHalfEven); err != nil {
-		return nil, false, err
+		return nil, true, errors.Trace(err)
 	}
-	return to, false, errors.Trace(err)
+	return to, false, nil
 }
 
 type ceilFunctionClass struct {
@@ -456,11 +456,13 @@ func (b *builtinCeilDecToIntSig) evalInt(row []types.Datum) (int64, bool, error)
 	}
 	// err here will only be ErrOverFlow(will never happen) or ErrTruncate(can be ignored).
 	res, err := val.ToInt()
-	if err == types.ErrTruncated && !val.IsNegative() {
+	if err == types.ErrTruncated {
 		err = nil
-		res = res + 1
+		if !val.IsNegative() {
+			res = res + 1
+		}
 	}
-	return res, false, nil
+	return res, false, errors.Trace(err)
 }
 
 type builtinCeilDecToDecSig struct {
@@ -484,7 +486,7 @@ func (b *builtinCeilDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecima
 	if err != nil {
 		return nil, true, errors.Trace(err)
 	}
-	return res, false, errors.Trace(err)
+	return res, false, nil
 }
 
 type floorFunctionClass struct {
@@ -600,11 +602,13 @@ func (b *builtinFloorDecToIntSig) evalInt(row []types.Datum) (int64, bool, error
 	}
 	// err here will only be ErrOverFlow(will never happen) or ErrTruncate(can be ignored).
 	res, err := val.ToInt()
-	if err == types.ErrTruncated && val.IsNegative() {
+	if err == types.ErrTruncated {
 		err = nil
-		res--
+		if val.IsNegative() {
+			res--
+		}
 	}
-	return res, false, nil
+	return res, false, errors.Trace(err)
 }
 
 type builtinFloorDecToDecSig struct {
@@ -628,7 +632,7 @@ func (b *builtinFloorDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecim
 	if err != nil {
 		return nil, true, errors.Trace(err)
 	}
-	return res, false, errors.Trace(err)
+	return res, false, nil
 }
 
 type logFunctionClass struct {
@@ -811,7 +815,7 @@ type builtinRandWithSeedSig struct {
 func (b *builtinRandWithSeedSig) evalReal(row []types.Datum) (float64, bool, error) {
 	seed, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	if b.randGen == nil {
 		if isNull {

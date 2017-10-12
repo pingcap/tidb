@@ -22,36 +22,33 @@ import (
 	"github.com/pingcap/tidb/plan"
 )
 
-// Compiler compiles an ast.StmtNode to a stmt.Statement.
+// Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
 }
 
-// Compile compiles an ast.StmtNode to an ast.Statement.
-// After preprocessed and validated, it will be optimized to a plan,
-// then wrappped to an adapter *statement as stmt.Statement.
-func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
-	is := GetInfoSchema(ctx)
-	if err := plan.Preprocess(node, is, ctx); err != nil {
+// Compile compiles an ast.StmtNode to a physical plan.
+func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+	infoSchema := GetInfoSchema(ctx)
+	if err := plan.Preprocess(stmtNode, infoSchema, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Validate should be after NameResolve.
-	if err := plan.Validate(node, false); err != nil {
+	if err := plan.Validate(stmtNode, false); err != nil {
 		return nil, errors.Trace(err)
 	}
-	p, err := plan.Optimize(ctx, node, is)
+
+	finalPlan, err := plan.Optimize(ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	// Don't take restricted SQL into account for metrics.
-	isExpensive := stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
-	sa := &statement{
-		is:        is,
-		plan:      p,
-		text:      node.Text(),
-		expensive: isExpensive,
-	}
-	return sa, nil
+	return &ExecStmt{
+		InfoSchema: infoSchema,
+		Plan:       finalPlan,
+		Expensive:  stmtCount(stmtNode, finalPlan, ctx.GetSessionVars().InRestrictedSQL),
+		Cacheable:  plan.Cacheable(stmtNode),
+		Text:       stmtNode.Text(),
+	}, nil
 }
 
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,

@@ -146,13 +146,10 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
+func Compile(ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
 	compiler := executor.Compiler{}
-	st, err := compiler.Compile(ctx, rawStmt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return st, nil
+	stmt, err := compiler.Compile(ctx, stmtNode)
+	return stmt, errors.Trace(err)
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
@@ -167,7 +164,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
 			err1 := se.RollbackTxn()
-			terror.Log(err1)
+			terror.Log(errors.Trace(err1))
 		} else {
 			err = se.CommitTxn()
 		}
@@ -293,7 +290,7 @@ func IsQuery(sql string) bool {
 func init() {
 	// Register default memory and goleveldb storage
 	err := RegisterLocalStore("memory", goleveldb.MemoryDriver{})
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 	err = RegisterLocalStore("goleveldb", goleveldb.Driver{})
-	terror.Log(err)
+	terror.Log(errors.Trace(err))
 }

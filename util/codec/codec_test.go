@@ -293,7 +293,7 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 	b, u, err := DecodeComparableUvarint(b)
 	c.Assert(err, IsNil)
 	c.Assert(u, Equals, uint64(1))
-	b, i, err = DecodeComparableVarint(b)
+	_, i, err = DecodeComparableVarint(b)
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(2))
 }
@@ -503,7 +503,7 @@ func (s *testCodecSuite) TestBytes(c *C) {
 }
 
 func parseTime(c *C, s string) types.Time {
-	m, err := types.ParseTime(s, mysql.TypeDatetime, types.DefaultFsp)
+	m, err := types.ParseTime(nil, s, mysql.TypeDatetime, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
