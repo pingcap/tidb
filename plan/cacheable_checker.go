@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 )
 
 // Cacheable checks whether the input ast is cacheable.
@@ -45,10 +46,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.cacheable = false
 		return in, true
 	case *ast.FuncCallExpr:
-		if node.FnName.L == ast.Now || node.FnName.L == ast.CurrentTimestamp ||
-			node.FnName.L == ast.UTCTime || node.FnName.L == ast.Curtime ||
-			node.FnName.L == ast.CurrentTime || node.FnName.L == ast.UTCTimestamp ||
-			node.FnName.L == ast.UnixTimestamp {
+		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			return in, true
 		}
