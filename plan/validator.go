@@ -34,12 +34,20 @@ func Validate(node ast.Node, inPrepare bool) error {
 	return v.err
 }
 
+// IsCacheable checkes whether or not the node is cacheable.
+func IsCacheable(node ast.Node, inPrepare bool) bool {
+	v := validator{inPrepare: inPrepare, useCache: true}
+	node.Accept(&v)
+	return v.err == nil && v.useCache
+}
+
 // validator is an ast.Visitor that validates
 // ast Nodes parsed from parser.
 type validator struct {
 	err         error
 	inPrepare   bool
 	inAggregate bool
+	useCache    bool
 }
 
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -96,6 +104,7 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 			break
 		}
 		if _, isParamMarker := x.Count.(*ast.ParamMarkerExpr); isParamMarker {
+			v.useCache = false
 			break
 		}
 		// We only accept ? and uint64 for count/offset in parser.y
@@ -110,6 +119,7 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 			x.Count.SetValue(math.MaxUint64 - offset)
 		}
 	case *ast.ExplainStmt:
+		v.useCache = false
 		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
 			break
 		}
@@ -123,6 +133,8 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if !valid {
 			v.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
 		}
+	case *ast.VariableExpr, *ast.SetPwdStmt, *ast.SetStmt:
+		v.useCache = false
 	}
 
 	return in, v.err == nil

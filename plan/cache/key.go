@@ -20,12 +20,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/kvcache"
 )
-
-// Key is the interface that every key in LRU Cache should implement.
-type Key interface {
-	Hash() []byte
-}
 
 type sqlCacheKey struct {
 	user           string
@@ -71,7 +67,7 @@ func (key *sqlCacheKey) Hash() []byte {
 }
 
 // NewSQLCacheKey creates a new sqlCacheKey object.
-func NewSQLCacheKey(sessionVars *variable.SessionVars, sql string, schemaVersion int64, readOnly bool) Key {
+func NewSQLCacheKey(sessionVars *variable.SessionVars, sql string, schemaVersion int64, readOnly bool) kvcache.Key {
 	timezoneOffset, user, host := 0, "", ""
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -91,5 +87,40 @@ func NewSQLCacheKey(sessionVars *variable.SessionVars, sql string, schemaVersion
 		sqlMode:        sessionVars.SQLMode,
 		timezoneOffset: timezoneOffset,
 		readOnly:       readOnly,
+	}
+}
+
+type pstmtPlanCacheKey struct {
+	database      string
+	connID        uint64
+	pstmtID       uint32
+	schemaVersion int64
+
+	hash []byte
+}
+
+// Hash implements Key interface.
+func (key *pstmtPlanCacheKey) Hash() []byte {
+	if key.hash == nil {
+		var (
+			dbBytes    = hack.Slice(key.database)
+			bufferSize = len(dbBytes) + 8*3
+		)
+		key.hash = make([]byte, 0, bufferSize)
+		key.hash = append(key.hash, dbBytes...)
+		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
+		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
+		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
+	}
+	return key.hash
+}
+
+// NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+	return &pstmtPlanCacheKey{
+		database:      sessionVars.CurrentDB,
+		connID:        sessionVars.ConnectionID,
+		pstmtID:       pstmtID,
+		schemaVersion: schemaVersion,
 	}
 }

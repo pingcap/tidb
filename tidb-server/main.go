@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -93,6 +94,11 @@ var (
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
+	//TODO: enablePreparedPlanCache parameter will be added to session or global variables so that can enable the plan cache without restarting their service at any time
+	enablePreparedPlanCache = flagBoolean("enable-plan-cache-for-prepare", true, "use plan cache for prepared statements")
+	//TODO: preparedPlanCacheSize parameter will be added to session or global variables so that can adjust the plan cache size without restarting their service at any time
+	preparedPlanCacheSize = flag.Int("prepared-plan-cache-size", 100, "the maximum number of plans to be cached for each session.")
+
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -116,6 +122,9 @@ func main() {
 		printer.PrintRawTiDBInfo()
 		os.Exit(0)
 	}
+
+	tidb.SetPreparedPlanCacheSize(*preparedPlanCacheSize)
+	tidb.SetEnablePlanCacheForPrepared(*enablePreparedPlanCache)
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -322,7 +331,7 @@ func setGlobalVars() {
 	if cache.PlanCacheEnabled {
 		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
 		cache.PlanCacheShards = cfg.PlanCache.Shards
-		cache.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+		cache.GlobalPlanCache = kvcache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
 	}
 }
 

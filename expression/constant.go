@@ -49,12 +49,20 @@ var (
 
 // Constant stands for a constant value.
 type Constant struct {
-	Value   types.Datum
-	RetType *types.FieldType
+	Value        types.Datum
+	RetType      *types.FieldType
+	DeferredExpr Expression // parameter getter expression
 }
 
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
+	if c.DeferredExpr != nil {
+		dt, err := c.Eval(nil)
+		if err != nil {
+			return ""
+		}
+		c.Value.SetValue(dt.GetValue())
+	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }
 
@@ -77,6 +85,19 @@ func (c *Constant) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
+	if c.DeferredExpr != nil {
+		if sf, sfOK := c.DeferredExpr.(*ScalarFunction); sfOK {
+			dt, err := sf.Eval(nil)
+			if err != nil {
+				return c.Value, err
+			}
+			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
+			if err != nil {
+				return c.Value, err
+			}
+			c.Value.SetValue(val.GetValue())
+		}
+	}
 	return c.Value, nil
 }
 
@@ -85,7 +106,18 @@ func (c *Constant) EvalInt(_ types.Row, sc *variable.StatementContext) (int64, b
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return 0, true, nil
 	}
-	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral {
+	if c.DeferredExpr != nil {
+		dt, err := c.DeferredExpr.Eval(nil)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		val, err := dt.ToInt64(sc)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		c.Value.SetInt64(val)
+	}
+	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToInt64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
@@ -97,7 +129,18 @@ func (c *Constant) EvalReal(_ types.Row, sc *variable.StatementContext) (float64
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return 0, true, nil
 	}
-	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral {
+	if c.DeferredExpr != nil {
+		dt, err := c.DeferredExpr.Eval(nil)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		val, err := dt.ToFloat64(sc)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		c.Value.SetFloat64(val)
+	}
+	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToFloat64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
@@ -109,6 +152,17 @@ func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (strin
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return "", true, nil
 	}
+	if c.DeferredExpr != nil {
+		dt, err := c.DeferredExpr.Eval(nil)
+		if err != nil {
+			return "", true, errors.Trace(err)
+		}
+		val, err := dt.ToString()
+		if err != nil {
+			return "", true, errors.Trace(err)
+		}
+		c.Value.SetString(val)
+	}
 	res, err := c.Value.ToString()
 	return res, err != nil, errors.Trace(err)
 }
@@ -117,6 +171,13 @@ func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (strin
 func (c *Constant) EvalDecimal(_ types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return nil, true, nil
+	}
+	if c.DeferredExpr != nil {
+		dt, err := c.DeferredExpr.Eval(nil)
+		if err != nil {
+			return nil, true, errors.Trace(err)
+		}
+		c.Value.SetValue(dt.GetValue())
 	}
 	res, err := c.Value.ToDecimal(sc)
 	return res, err != nil, errors.Trace(err)
@@ -127,6 +188,21 @@ func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val typ
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return types.Time{}, true, nil
 	}
+	if c.DeferredExpr != nil {
+		dt, err := c.DeferredExpr.Eval(nil)
+		if err != nil {
+			return types.Time{}, true, errors.Trace(err)
+		}
+		val, err := dt.ToString()
+		if err != nil {
+			return types.Time{}, true, errors.Trace(err)
+		}
+		tim, err := types.ParseDatetime(sc, val)
+		if err != nil {
+			return types.Time{}, true, errors.Trace(err)
+		}
+		c.Value.SetMysqlTime(tim)
+	}
 	return c.Value.GetMysqlTime(), false, nil
 }
 
@@ -134,6 +210,21 @@ func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val typ
 func (c *Constant) EvalDuration(_ types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return types.Duration{}, true, nil
+	}
+	if c.DeferredExpr != nil {
+		dt, err := c.DeferredExpr.Eval(nil)
+		if err != nil {
+			return types.Duration{}, true, errors.Trace(err)
+		}
+		val, err := dt.ToString()
+		if err != nil {
+			return types.Duration{}, true, errors.Trace(err)
+		}
+		dur, err := types.ParseDuration(val, types.MaxFsp)
+		if err != nil {
+			return types.Duration{}, true, errors.Trace(err)
+		}
+		c.Value.SetMysqlDuration(dur)
 	}
 	return c.Value.GetMysqlDuration(), false, nil
 }
@@ -143,6 +234,17 @@ func (c *Constant) EvalJSON(_ types.Row, sc *variable.StatementContext) (json.JS
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return json.JSON{}, true, nil
 	}
+	if c.DeferredExpr != nil {
+		dt, err := c.DeferredExpr.Eval(nil)
+		if err != nil {
+			return json.JSON{}, true, errors.Trace(err)
+		}
+		val, err := dt.ConvertTo(sc, types.NewFieldType(mysql.TypeJSON))
+		if err != nil {
+			return json.JSON{}, true, errors.Trace(err)
+		}
+		c.Value.SetMysqlJSON(val.GetMysqlJSON())
+	}
 	return c.Value.GetMysqlJSON(), false, nil
 }
 
@@ -150,6 +252,11 @@ func (c *Constant) EvalJSON(_ types.Row, sc *variable.StatementContext) (json.JS
 func (c *Constant) Equal(b Expression, ctx context.Context) bool {
 	y, ok := b.(*Constant)
 	if !ok {
+		return false
+	}
+	_, err1 := y.Eval(nil)
+	_, err2 := c.Eval(nil)
+	if err1 != nil || err2 != nil {
 		return false
 	}
 	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, &y.Value)
@@ -171,6 +278,10 @@ func (c *Constant) Decorrelate(_ *Schema) Expression {
 
 // HashCode implements Expression interface.
 func (c *Constant) HashCode() []byte {
+	_, err := c.Eval(nil)
+	if err != nil {
+		terror.Log(errors.Trace(err))
+	}
 	bytes, err := codec.EncodeValue(nil, c.Value)
 	terror.Log(errors.Trace(err))
 	return bytes

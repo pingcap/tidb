@@ -60,12 +60,16 @@ func (e *SetExecutor) executeSet() error {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
 			// This is set charset stmt.
-			cs := v.Expr.(*expression.Constant).Value.GetString()
+			dt, err := v.Expr.(*expression.Constant).Eval(nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cs := dt.GetString()
 			var co string
 			if v.ExtendValue != nil {
 				co = v.ExtendValue.Value.GetString()
 			}
-			err := e.setCharset(cs, co)
+			err = e.setCharset(cs, co)
 			if err != nil {
 				return errors.Trace(err)
 			}

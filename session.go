@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
@@ -132,6 +133,9 @@ type session struct {
 
 	parser *parser.Parser
 
+	enablePlanCache   bool
+	preparedPlanCache *kvcache.SimpleLRUCache
+
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
@@ -204,6 +208,14 @@ func (s *session) SetCollation(coID int) error {
 	}
 	s.sessionVars.Systems[variable.CollationConnection] = co
 	return nil
+}
+
+func (s *session) EnablePlanCache() bool {
+	return s.enablePlanCache
+}
+
+func (s *session) PlanCache() *kvcache.SimpleLRUCache {
+	return s.preparedPlanCache
 }
 
 func (s *session) SetSessionManager(sm util.SessionManager) {
@@ -673,8 +685,8 @@ func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt as
 func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 	s.PrepareTxnCtx()
 	var (
-		cacheKey      cache.Key
-		cacheValue    cache.Value
+		cacheKey      kvcache.Key
+		cacheValue    kvcache.Value
 		useCachedPlan = false
 		connID        = s.sessionVars.ConnectionID
 	)
@@ -1040,9 +1052,11 @@ func createSession(store kv.Storage) (*session, error) {
 		return nil, errors.Trace(err)
 	}
 	s := &session{
-		store:       store,
-		parser:      parser.New(),
-		sessionVars: variable.NewSessionVars(),
+		store:             store,
+		parser:            parser.New(),
+		sessionVars:       variable.NewSessionVars(),
+		enablePlanCache:   enablePreparedPlanCache,
+		preparedPlanCache: kvcache.NewSimpleLRUCache(int64(preparedPlanCacheSize)),
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)

@@ -853,20 +853,29 @@ func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 		return con
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	i64, err := con.Value.ToInt64(sc)
+	dt, err := con.Eval(nil)
+	if err != nil {
+		return con
+	}
+	i64, err := dt.ToInt64(sc)
 	if err != nil {
 		return con
 	}
 	return &Constant{
-		Value:   types.NewIntDatum(i64),
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		Value:        types.NewIntDatum(i64),
+		RetType:      types.NewFieldType(mysql.TypeLonglong),
+		DeferredExpr: con.DeferredExpr,
 	}
 }
 
 // refineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
 func refineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
 	sc := ctx.GetSessionVars().StmtCtx
-	i64, err := con.Value.ToInt64(sc)
+	dt, err := con.Eval(nil)
+	if err != nil {
+		return con
+	}
+	i64, err := dt.ToInt64(sc)
 	if err != nil {
 		return con
 	}
@@ -877,8 +886,9 @@ func refineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Consta
 	}
 	if c == 0 {
 		return &Constant{
-			Value:   datumInt,
-			RetType: types.NewFieldType(mysql.TypeLonglong),
+			Value:        datumInt,
+			RetType:      types.NewFieldType(mysql.TypeLonglong),
+			DeferredExpr: con.DeferredExpr,
 		}
 	}
 	switch op {
@@ -903,7 +913,13 @@ func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression
 	arg0IsInt := args[0].GetType().EvalType() == types.ETInt
 	arg1IsInt := args[1].GetType().EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
+	if arg0IsCon && arg0.DeferredExpr != nil {
+		arg0IsCon = false
+	}
 	arg1, arg1IsCon := args[1].(*Constant)
+	if arg1IsCon && arg1.DeferredExpr != nil {
+		arg1IsCon = false
+	}
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1 = refineConstantArg(ctx, arg1, c.op)
