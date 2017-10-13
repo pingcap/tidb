@@ -23,7 +23,7 @@ import (
 
 type ColumnDefinition struct {
 	name     string
-	dataType string
+	dataType ColumnType
 }
 
 type TableDefinition struct {
@@ -60,7 +60,7 @@ func LoadSchemaFromFile(path string) error {
 			columnType := _columnType.(string)
 			var column ColumnDefinition
 			column.name = columnName
-			column.dataType = columnType
+			column.dataType = ColumnType(columnType)
 			table.columns = append(table.columns, &column)
 		}
 		lowerTableName := strings.ToLower(tableName)
@@ -68,9 +68,37 @@ func LoadSchemaFromFile(path string) error {
 		if existTable {
 			return fmt.Errorf("Duplicate table schema definition %s", lowerTableName)
 		}
+		err := validateTableDefinition(&table)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		tableDefinitions[lowerTableName] = &table
 	}
 
+	return nil
+}
+
+func validateTableDefinition(table *TableDefinition) error {
+	if len(table.columns) == 0 {
+		return fmt.Errorf("There should be at least one column in the table %s", table.name)
+	}
+	timeFieldCount := 0
+	for _, column := range table.columns {
+		switch column.dataType {
+		case TypeTime:
+			timeFieldCount++
+		case TypeMeta, TypeNumeric, TypeText:
+			// do nothing
+		default:
+			return fmt.Errorf("Invalid field type %s for column %s in the table %s", column.dataType, column.name, table.name)
+		}
+	}
+	if timeFieldCount == 0 {
+		return fmt.Errorf("There should be a time column in the table %s", table.name)
+	}
+	if timeFieldCount > 1 {
+		return fmt.Errorf("There should be only one time column in the table %s", table.name)
+	}
 	return nil
 }
 
