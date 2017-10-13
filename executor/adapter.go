@@ -16,6 +16,7 @@ package executor
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -267,15 +268,15 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 func (a *ExecStmt) logSlowQuery() {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
-	sql := a.Text
+	sql := []rune(a.Text)
 	if len(sql) > cfg.Log.QueryLogMaxLen {
-		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+		sql = append(sql[:cfg.Log.QueryLogMaxLen], []rune(fmt.Sprintf("(len:%d)", len(sql)))...)
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
 	logEntry := log.WithFields(log.Fields{
 		"connectionId": connID,
 		"costTime":     costTime,
-		"sql":          sql,
+		"sql":          strconv.Quote(string(sql)),
 	})
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
 		logEntry.WithField("type", "query").Debugf("query")
