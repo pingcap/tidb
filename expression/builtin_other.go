@@ -64,7 +64,7 @@ func (c *rowFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
 	sig = &builtinRowSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRowSig struct {
@@ -88,7 +88,7 @@ func (c *setVarFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf.tp.Flen = args[1].GetType().Flen
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
 	sig = &builtinSetVarSig{bf}
-	return sig.setSelf(sig), errors.Trace(err)
+	return sig, errors.Trace(err)
 }
 
 type builtinSetVarSig struct {
@@ -126,7 +126,7 @@ func (c *getVarFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxFieldVarCharLength
 	sig = &builtinGetVarSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinGetVarSig struct {
@@ -178,7 +178,7 @@ func (c *valuesFunctionClass) getFunction(ctx context.Context, args []Expression
 	case types.ETJson:
 		sig = &builtinValuesJSONSig{bf, c.offset}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinValuesIntSig struct {
@@ -332,7 +332,7 @@ func (c *bitCountFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt)
 	bf.tp.Flen = 2
 	sig := &builtinBitCountSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitCountSig struct {

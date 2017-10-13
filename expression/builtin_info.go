@@ -64,7 +64,7 @@ func (c *databaseFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
 	sig := &builtinDatabaseSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinDatabaseSig struct {
@@ -89,7 +89,7 @@ func (c *foundRowsFunctionClass) getFunction(ctx context.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinFoundRowsSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinFoundRowsSig struct {
@@ -118,7 +118,7 @@ func (c *currentUserFunctionClass) getFunction(ctx context.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
 	sig := &builtinCurrentUserSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCurrentUserSig struct {
@@ -148,7 +148,7 @@ func (c *userFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUserSig struct {
@@ -177,7 +177,7 @@ func (c *connectionIDFunctionClass) getFunction(ctx context.Context, args []Expr
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinConnectionIDSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinConnectionIDSig struct {
@@ -213,7 +213,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expr
 	} else {
 		sig = &builtinLastInsertIDSig{bf}
 	}
-	return sig.setSelf(sig), errors.Trace(err)
+	return sig, errors.Trace(err)
 }
 
 type builtinLastInsertIDSig struct {
@@ -255,7 +255,7 @@ func (c *versionFunctionClass) getFunction(ctx context.Context, args []Expressio
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
 	sig := &builtinVersionSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinVersionSig struct {
@@ -279,7 +279,7 @@ func (c *tidbVersionFunctionClass) getFunction(ctx context.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinTiDBVersionSig struct {
