@@ -133,21 +133,23 @@ func getEQColOffset(expr expression.Expression, cols []*expression.Column) int {
 	return -1
 }
 
+// detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
+// Please make sure that the top level is CNF form.
 func detachColumnCNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
 	var accessConditions, filterConditions []expression.Expression
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			dnfExprs := expression.ExtractDNFConditions(sf)
-			extractedDNFExprs, hasOthers := detachColumnDNFConditions(dnfExprs, checker)
+			dnfItems := expression.ExtractDNFItems(sf)
+			extractedDNFItems, hasResidual := detachColumnDNFConditions(dnfItems, checker)
 			// If this CNF has expression that cannot be resolved as access condition, then the total DNF expression
 			// should be also appended into filter condition.
-			if hasOthers {
+			if hasResidual {
 				filterConditions = append(filterConditions, cond)
 			}
-			if len(extractedDNFExprs) == 0 {
+			if len(extractedDNFItems) == 0 {
 				continue
 			}
-			rebuildDNF := expression.ComposeDNFCondition(nil, extractedDNFExprs...)
+			rebuildDNF := expression.ComposeDNFCondition(nil, extractedDNFItems...)
 			accessConditions = append(accessConditions, rebuildDNF)
 			continue
 		}
@@ -164,34 +166,36 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 	return accessConditions, filterConditions
 }
 
+// detachColumnDNFConditions detaches the condition for calculating range from the other conditions.
+// Please make sure that the top level is DNF form.
 func detachColumnDNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
 	var (
-		hasOtherConditions bool
-		accessConditions   []expression.Expression
+		hasResidualConditions bool
+		accessConditions      []expression.Expression
 	)
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
-			cnfExprs := expression.ExtractCNFConditions(sf)
-			usedCNFExprs, others := detachColumnCNFConditions(cnfExprs, checker)
+			cnfItems := expression.ExtractCNFItems(sf)
+			extractedCNFItems, others := detachColumnCNFConditions(cnfItems, checker)
 			if len(others) > 0 {
-				hasOtherConditions = true
+				hasResidualConditions = true
 			}
-			if len(usedCNFExprs) == 0 {
+			if len(extractedCNFItems) == 0 {
 				continue
 			}
-			rebuildCNF := expression.ComposeCNFCondition(nil, usedCNFExprs...)
+			rebuildCNF := expression.ComposeCNFCondition(nil, extractedCNFItems...)
 			accessConditions = append(accessConditions, rebuildCNF)
 		} else if checker.check(cond) {
 			accessConditions = append(accessConditions, cond)
 			if checker.shouldReserve {
-				hasOtherConditions = true
+				hasResidualConditions = true
 				checker.shouldReserve = false
 			}
 		} else {
 			return nil, true
 		}
 	}
-	if !hasOtherConditions {
+	if !hasResidualConditions {
 		return accessConditions, false
 	}
 	return accessConditions, true
