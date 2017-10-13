@@ -17,6 +17,7 @@ import (
 	"container/list"
 	"fmt"
 	"sync"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
@@ -26,7 +27,7 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-const resolvedCacheSize = 512
+const resolvedCacheSize = 102400
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
@@ -137,6 +138,78 @@ func (lr *LockResolver) getResolved(txnID uint64) (TxnStatus, bool) {
 	return s, ok
 }
 
+func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc RegionVerID) (bool, error) {
+	if len(locks) == 0 {
+		return true, nil
+	}
+
+	lockResolverCounter.WithLabelValues("resolve").Inc()
+
+	var expiredLocks []*Lock
+	for _, l := range locks {
+		if lr.store.oracle.IsExpired(l.TxnID, l.TTL) {
+			lockResolverCounter.WithLabelValues("expired").Inc()
+			expiredLocks = append(expiredLocks, l)
+		} else {
+			lockResolverCounter.WithLabelValues("not_expired").Inc()
+		}
+	}
+	if len(expiredLocks) == 0 {
+		log.Error("This should not occur!")
+		return true, nil
+	}
+
+	lr.cntTxnStatus = 0
+	lr.costTxnStatus = 0
+	txnID2Status := make(map[uint64]uint64)
+	count := 0
+	for _, l := range expiredLocks {
+		count = count + 1
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		txnID2Status[l.TxnID] = uint64(status)
+	}
+	log.Infof("BatchResolveLocks: it takes %v cost to lookup %v txn status from %v txn status", lr.costTxnStatus, lr.cntTxnStatus, count)
+
+	var list2TxnStatus []*kvrpcpb.Txn2Status
+	for txnID, status := range txnID2Status {
+		list2TxnStatus = append(list2TxnStatus, &kvrpcpb.Txn2Status {
+			Txn:	txnID,
+			Status:	status,
+		})
+	}
+
+	req := &tikvrpc.Request{
+        Type: tikvrpc.CmdBatchLockResolve,
+        BatchLockResolve: &kvrpcpb.BatchLockResolveRequest{
+            Txn2StatusS: list2TxnStatus,
+        },
+	}
+	startTime := time.Now()
+	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
+	log.Infof("BatchResolveLocks: it takes %v cost to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
+    if err != nil {
+        return false, errors.Trace(err)
+    }
+
+    regionErr, err := resp.GetRegionError()
+    if err != nil {
+        return false, errors.Trace(err)
+    }
+
+    if regionErr != nil {
+        err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+        if err != nil {
+            return false, errors.Trace(err)
+        }
+        return false, nil
+    }
+
+    return true, nil	
+}
+
 // ResolveLocks tries to resolve Locks. The resolving process is in 3 steps:
 // 1) Use the `lockTTL` to pick up all expired locks. Only locks that are too
 //    old are considered orphan locks and will be handled later. If all locks
@@ -203,7 +276,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
-
+	lr.cntTxnStatus++
 	lockResolverCounter.WithLabelValues("query_txn_status").Inc()
 
 	var status TxnStatus
@@ -220,9 +293,11 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(err)
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		tempTime := time.Now()
 		if err != nil {
 			return status, errors.Trace(err)
 		}
+		lr.costTxnStatus += time.Since(tempTime)
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
 			return status, errors.Trace(err)

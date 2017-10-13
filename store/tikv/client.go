@@ -206,6 +206,8 @@ func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *ti
 		resp.ScanLock, err = client.KvScanLock(ctx, req.ScanLock)
 	case tikvrpc.CmdResolveLock:
 		resp.ResolveLock, err = client.KvResolveLock(ctx, req.ResolveLock)
+	case tikvrpc.CmdBatchLockResolve:
+		resp.BatchLockResolve, err = client.KvBatchLockResolve(ctx, req.BatchLockResolve)
 	case tikvrpc.CmdGC:
 		resp.GC, err = client.KvGC(ctx, req.GC)
 	case tikvrpc.CmdDeleteRange:
