@@ -48,7 +48,7 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 		fc := funcs[ast.Abs]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -365,7 +365,7 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
+	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
@@ -375,7 +375,7 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	c.Assert(err, IsNil)
 	randGen := rand.New(rand.NewSource(20160101))
 	for i := 0; i < 3; i++ {
-		v, err = f2.eval(nil)
+		v, err = evalBuiltinFunc(f2, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.GetFloat64(), Equals, randGen.Float64())
 	}
@@ -399,7 +399,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -417,7 +417,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		_, err = f.eval(nil)
+		_, err = evalBuiltinFunc(f, nil)
 		c.Assert(err, NotNil)
 	}
 }
@@ -452,7 +452,7 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		fc := funcs[ast.Round]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -493,7 +493,7 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -520,7 +520,7 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 		fc := funcs[ast.CRC32]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -620,7 +620,7 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 		fc := funcs[ast.Sign]
 		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.num))
 		c.Assert(err, IsNil, Commentf("%v", t))
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil, Commentf("%v", t))
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("%v", t))
 	}
@@ -685,7 +685,7 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 		fc := funcs[ast.Sqrt]
 		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.Arg))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Ret), Commentf("%v", t))
 	}
@@ -696,7 +696,7 @@ func (s *testEvaluatorSuite) TestPi(c *C) {
 	f, err := funcs[ast.PI].getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
 
-	pi, err := f.eval(nil)
+	pi, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))
 }
@@ -720,7 +720,7 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -729,7 +729,7 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 	fc := funcs[ast.Radians]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
+	_, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, NotNil)
 }
 

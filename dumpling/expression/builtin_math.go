@@ -154,7 +154,7 @@ func (c *absFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	default:
 		panic("unexpected argTp")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinAbsRealSig struct {
@@ -266,7 +266,7 @@ func (c *roundFunctionClass) getFunction(ctx context.Context, args []Expression)
 			panic("unexpected argTp")
 		}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRoundRealSig struct {
@@ -405,7 +405,7 @@ func (c *ceilFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		sig = &builtinCeilRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CeilReal)
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCeilRealSig struct {
@@ -551,7 +551,7 @@ func (c *floorFunctionClass) getFunction(ctx context.Context, args []Expression)
 		sig = &builtinFloorRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FloorReal)
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinFloorRealSig struct {
@@ -661,7 +661,7 @@ func (c *logFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		sig = &builtinLog2ArgsSig{bf}
 	}
 
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLog1ArgSig struct {
@@ -717,7 +717,7 @@ func (c *log2FunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinLog2Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLog2Sig struct {
@@ -747,7 +747,7 @@ func (c *log10FunctionClass) getFunction(ctx context.Context, args []Expression)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinLog10Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLog10Sig struct {
@@ -787,7 +787,7 @@ func (c *randFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	} else {
 		sig = &builtinRandWithSeedSig{bt, nil}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRandSig struct {
@@ -837,7 +837,7 @@ func (c *powFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
 	sig := &builtinPowSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinPowSig struct {
@@ -879,7 +879,7 @@ func (c *convFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETInt)
 	bf.tp.Flen = 64
 	sig := &builtinConvSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinConvSig struct {
@@ -979,7 +979,7 @@ func (c *crc32FunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf.tp.Flen = 10
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinCRC32Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCRC32Sig struct {
@@ -1007,7 +1007,7 @@ func (c *signFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal)
 	sig := &builtinSignSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSignSig struct {
@@ -1040,7 +1040,7 @@ func (c *sqrtFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinSqrtSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSqrtSig struct {
@@ -1070,7 +1070,7 @@ func (c *acosFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinAcosSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinAcosSig struct {
@@ -1101,7 +1101,7 @@ func (c *asinFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinAsinSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinAsinSig struct {
@@ -1149,7 +1149,7 @@ func (c *atanFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		sig = &builtinAtan2ArgsSig{bf}
 	}
 
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinAtan1ArgSig struct {
@@ -1198,7 +1198,7 @@ func (c *cosFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinCosSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCosSig struct {
@@ -1225,7 +1225,7 @@ func (c *cotFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinCotSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCotSig struct {
@@ -1260,7 +1260,7 @@ func (c *degreesFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinDegreesSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinDegreesSig struct {
@@ -1288,7 +1288,7 @@ func (c *expFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinExpSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinExpSig struct {
@@ -1327,7 +1327,7 @@ func (c *piFunctionClass) getFunction(ctx context.Context, args []Expression) (b
 	bf.tp.Decimal = 6
 	bf.tp.Flen = 8
 	sig = &builtinPISig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinPISig struct {
@@ -1350,7 +1350,7 @@ func (c *radiansFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinRadiansSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRadiansSig struct {
@@ -1377,7 +1377,7 @@ func (c *sinFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinSinSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSinSig struct {
@@ -1404,7 +1404,7 @@ func (c *tanFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
 	sig := &builtinTanSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinTanSig struct {
@@ -1471,7 +1471,7 @@ func (c *truncateFunctionClass) getFunction(ctx context.Context, args []Expressi
 		sig = &builtinTruncateDecimalSig{bf}
 	}
 
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinTruncateDecimalSig struct {
