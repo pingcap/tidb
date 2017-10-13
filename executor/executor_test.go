@@ -1644,6 +1644,22 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "d")
 	c.Check(fields[1].Column.Name.L, Equals, "c")
+	rs, err = tk.Exec("select c as a from t as t2")
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(fields[0].Column.Name.L, Equals, "a")
+	c.Check(fields[0].ColumnAsName.L, Equals, "a")
+	c.Check(fields[0].Table.Name.L, Equals, "t")
+	c.Check(fields[0].TableAsName.L, Equals, "t2")
+	c.Check(fields[0].DBName.L, Equals, "test")
+	rs, err = tk.Exec("select hour(1) as a from t as t2")
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(fields[0].Column.Name.L, Equals, "a")
+	c.Check(fields[0].ColumnAsName.L, Equals, "a")
+	c.Check(fields[0].Table.Name.L, Equals, "")
+	c.Check(fields[0].TableAsName.L, Equals, "")
+	c.Check(fields[0].DBName.L, Equals, "")
 }
 
 func (s *testSuite) TestSelectVar(c *C) {

@@ -625,7 +625,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,a)->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,s.a)->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
@@ -1191,7 +1191,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			ans: map[int][][]string{
 				1: {{"test.t.a"}},
 				2: {{"test.t.a"}},
-				3: {{"a"}},
+				3: {{"test.t.a"}},
 			},
 		},
 		{
@@ -1199,7 +1199,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			ans: map[int][][]string{
 				1: {{"test.t.f"}, {"test.t.a"}},
 				2: {{"test.t.a"}, {"test.t.b"}},
-				3: {{"a"}, {"b"}},
+				3: {{"test.t.a"}, {"test.t.b"}},
 			},
 		},
 		{
@@ -1207,7 +1207,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			ans: map[int][][]string{
 				1: {{"test.t.a"}},
 				2: {{"test.t.c", "test.t.d", "test.t.e"}},
-				3: {{"c", "d", "e"}},
+				3: {{"test.t.c", "test.t.d", "test.t.e"}},
 			},
 		},
 		{
@@ -1215,7 +1215,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			ans: map[int][][]string{
 				1: {{"test.t.f"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
 				2: {{"test.t.f"}, {"test.t.f", "test.t.g"}},
-				3: {{"f"}, {"f", "g"}},
+				3: {{"test.t.f"}, {"test.t.f", "test.t.g"}},
 			},
 		},
 		{
@@ -1233,8 +1233,8 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 				1: {{"test.t.f"}, {"test.t.a"}},
 				2: {{"test.t.f"}},
 				6: {{"test.t.f"}},
-				3: {{"f"}},
-				5: {{"f"}},
+				3: {{"test.t.f"}},
+				5: {{"test.t.f"}},
 			},
 		},
 		{
