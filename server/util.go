@@ -38,6 +38,7 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/juju/errors"
@@ -45,8 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xprotocol/protocol"
-	"strconv"
 )
 
 func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
@@ -354,48 +353,4 @@ func dumpTextValue(colInfo *ColumnInfo, value types.Datum) ([]byte, error) {
 	default:
 		return nil, errInvalidType.Gen("invalid type %v", value.Kind())
 	}
-}
-
-func dumpDatumToBinary(alloc arena.Allocator, column *ColumnInfo, val types.Datum) ([]byte, error) {
-	switch val.Kind() {
-	case types.KindInt64:
-		v := val.GetInt64()
-		switch column.Type {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return protocol.DumpIntBinary(v), nil
-		}
-	case types.KindUint64:
-		v := val.GetUint64()
-		switch column.Type {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return protocol.DumpUIntBinary(v), nil
-		}
-	case types.KindFloat32:
-		return protocol.DumpUIntBinary(uint64(math.Float32bits(val.GetFloat32()))), nil
-	case types.KindFloat64:
-		return protocol.DumpUIntBinary(math.Float64bits(val.GetFloat64())), nil
-	case types.KindString, types.KindBytes:
-		return protocol.DumpStringBinary(val.GetBytes(), alloc), nil
-	case types.KindMysqlDecimal:
-		data, err := protocol.StrToXDecimal(val.GetMysqlDecimal().String())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return data, nil
-	case types.KindMysqlTime:
-		tmp, err := dumpBinaryDateTime(val.GetMysqlTime(), nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return tmp, nil
-	case types.KindMysqlDuration:
-		return dumpBinaryTime(val.GetMysqlDuration().Duration), nil
-	case types.KindMysqlSet:
-		return protocol.DumpStringBinary(hack.Slice(val.GetMysqlSet().String()), alloc), nil
-	case types.KindMysqlEnum:
-		return protocol.DumpStringBinary(hack.Slice(val.GetMysqlEnum().String()), alloc), nil
-	case types.KindMysqlBit:
-		return protocol.DumpStringBinary(hack.Slice(val.GetMysqlBit().ToString()), alloc), nil
-	}
-	return nil, errors.New("unknown datum type")
 }

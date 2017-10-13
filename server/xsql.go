@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xprotocol/notice"
+	"github.com/pingcap/tidb/xprotocol/protocol"
 	"github.com/pingcap/tidb/xprotocol/util"
 	"github.com/pingcap/tidb/xprotocol/xpacketio"
 	"github.com/pingcap/tipb/go-mysqlx"
@@ -182,8 +183,8 @@ func rowToRow(alloc arena.Allocator, columns []*ColumnInfo, row []types.Datum) (
 		return nil, mysql.ErrMalformPacket
 	}
 	var fields [][]byte
-	for i, val := range row {
-		datum, err := dumpDatumToBinary(alloc, columns[i], val)
+	for _, val := range row {
+		datum, err := protocol.DumpDatumToBinary(alloc, val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

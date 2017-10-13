@@ -32,15 +32,15 @@ func TestT(t *testing.T) {
 
 func (ts *testProtocolTestSuite) TestDump(c *C) {
 	c.Parallel()
-	b := DumpIntBinary(1)
+	b := dumpIntBinary(1)
 	c.Assert(b, DeepEquals, []byte{0x2})
-	b = DumpIntBinary(-1)
+	b = dumpIntBinary(-1)
 	c.Assert(b, DeepEquals, []byte{0x1})
-	b = DumpUIntBinary(1)
+	b = dumpUintBinary(1)
 	c.Assert(b, DeepEquals, []byte{0x1})
 	data := []byte("a")
 	alloc := arena.NewAllocator(2)
-	b = DumpStringBinary(data, alloc)
+	b = dumpStringBinary(data, alloc)
 	c.Assert(b, DeepEquals, []byte("a\000"))
 }
 
@@ -64,7 +64,7 @@ func (ts *testProtocolTestSuite) TestStrToXDecimal(c *C) {
 		{nil, ierr},
 	}
 	for i, v := range ins {
-		out, err := StrToXDecimal(v)
+		out, err := strToXDecimal(v)
 		c.Assert(terror.ErrorEqual(expect[i].e, err), IsTrue, Commentf("%s : %d", v, i))
 		c.Assert(expect[i].b, DeepEquals, out, Commentf("%s : %d", v, i))
 	}
