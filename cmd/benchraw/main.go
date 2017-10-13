@@ -25,6 +25,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/terror"
 )
 
 var (
@@ -64,7 +65,10 @@ func batchRawPut(value []byte) {
 func main() {
 	flag.Parse()
 	log.SetLevel(log.WarnLevel)
-	go http.ListenAndServe(":9191", nil)
+	go func() {
+		err := http.ListenAndServe(":9191", nil)
+		terror.Log(errors.Trace(err))
+	}()
 
 	value := make([]byte, *valueSize)
 	t := time.Now()

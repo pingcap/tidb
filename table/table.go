@@ -40,15 +40,15 @@ const (
 )
 
 var (
-	// errNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
-	// and it doesn't have a default value.
-	errNoDefaultValue  = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
 	errColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, "column can not be null")
 	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
 	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
 
 	errGetDefaultFailed = terror.ClassTable.New(codeGetDefaultFailed, "get default value fail")
 
+	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
+	// and it doesn't have a default value.
+	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
 	// ErrIndexOutBound returns for index column offset out of bound.
 	ErrIndexOutBound = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
 	// ErrUnsupportedOp returns for unsupported operation.

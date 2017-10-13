@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -106,14 +107,12 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			}
 			apply.attachOnConds(newConds)
 			innerPlan = sel.children[0].(LogicalPlan)
-			apply.SetChildren(outerPlan, innerPlan)
-			innerPlan.SetParents(apply)
+			setParentAndChildren(apply, outerPlan, innerPlan)
 			return s.optimize(p, nil, nil)
 		} else if m, ok := innerPlan.(*MaxOneRow); ok {
 			if m.children[0].Schema().MaxOneRow {
 				innerPlan = m.children[0].(LogicalPlan)
-				innerPlan.SetParents(apply)
-				apply.SetChildren(outerPlan, innerPlan)
+				setParentAndChildren(apply, outerPlan, innerPlan)
 				return s.optimize(p, nil, nil)
 			}
 		} else if proj, ok := innerPlan.(*Projection); ok {
@@ -122,16 +121,17 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			}
 			apply.columnSubstitute(proj.Schema(), proj.Exprs)
 			innerPlan = proj.children[0].(LogicalPlan)
-			apply.SetChildren(outerPlan, innerPlan)
-			innerPlan.SetParents(apply)
+			setParentAndChildren(apply, outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin {
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				proj.SetParents(apply.Parents()...)
-				np, _ := s.optimize(p, nil, nil)
-				proj.SetChildren(np)
-				np.SetParents(proj)
+				np, err := s.optimize(p, nil, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				setParentAndChildren(proj, np)
 				return proj, nil
 			}
 			return s.optimize(p, nil, nil)
@@ -139,8 +139,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0].(LogicalPlan)
 				apply.JoinType = LeftOuterJoin
-				apply.SetChildren(outerPlan, innerPlan)
-				innerPlan.SetParents(apply)
+				setParentAndChildren(apply, outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
 				newAggFuncs := make([]aggregation.Aggregation, 0, apply.Schema().Len())
@@ -152,9 +151,11 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				agg.SetParents(apply.Parents()...)
-				np, _ := s.optimize(p, nil, nil)
-				agg.SetChildren(np)
-				np.SetParents(agg)
+				np, err := s.optimize(p, nil, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				setParentAndChildren(agg, np)
 				agg.collectGroupByColumns()
 				return agg, nil
 			}
@@ -162,10 +163,12 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
+		np, err := s.optimize(child.(LogicalPlan), nil, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		newChildren = append(newChildren, np)
-		np.SetParents(p)
 	}
-	p.SetChildren(newChildren...)
+	setParentAndChildren(p, newChildren...)
 	return p, nil
 }

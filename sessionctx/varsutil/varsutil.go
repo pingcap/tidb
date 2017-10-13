@@ -103,17 +103,12 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		}
 	case variable.SQLModeVar:
 		sVal = mysql.FormatSQLModeStr(sVal)
-		// TODO: Remove this latter.
-		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
-			vars.StrictSQLMode = true
-		} else {
-			vars.StrictSQLMode = false
-		}
 		// Modes is a list of different modes separated by commas.
 		sqlMode, err2 := mysql.GetSQLMode(sVal)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
+		vars.StrictSQLMode = sqlMode.HasStrictMode()
 		vars.SQLMode = sqlMode
 	case variable.TiDBSnapshot:
 		err = setSnapshotTS(vars, sVal)
@@ -150,8 +145,6 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.BatchDelete = tidbOptOn(sVal)
 	case variable.TiDBMaxRowCountForINLJ:
 		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
-	case variable.TiDBCBO:
-		vars.CBO = tidbOptOn(sVal)
 	case variable.TiDBCurrentTS:
 		return variable.ErrReadOnly
 	}
@@ -203,7 +196,7 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 		s.SnapshotTS = 0
 		return nil
 	}
-	t, err := types.ParseTime(sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return errors.Trace(err)
 	}

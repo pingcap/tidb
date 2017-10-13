@@ -23,6 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -94,7 +95,8 @@ func (a *connArray) Get() *grpc.ClientConn {
 func (a *connArray) Close() {
 	for i, c := range a.v {
 		if c != nil {
-			c.Close()
+			err := c.Close()
+			terror.Log(errors.Trace(err))
 			a.v[i] = nil
 		}
 	}

@@ -695,7 +695,8 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		}
 		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp.(LogicalPlan), builder.ctx, builder.allocator)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, builder.ctx, builder.allocator)
+			c.Assert(err, IsNil)
 		}
 		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
@@ -749,10 +750,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		p, err = logicalOptimize(flagPredicatePushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -853,13 +853,13 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
+		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
-		lp.ResolveIndices()
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p.ResolveIndices()
 		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -1264,6 +1264,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		c.Assert(builder.err, IsNil, comment)
 
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx, builder.allocator)
+		c.Assert(err, IsNil)
 		checkUniqueKeys(p, c, tt.ans, tt.sql)
 	}
 }
@@ -1308,6 +1309,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
+		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tidb/util/types"
@@ -275,7 +276,7 @@ func extractHandlesFromIndexResult(idxResult distsql.SelectResult) (handles []in
 }
 
 func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64, error) {
-	defer subResult.Close()
+	defer terror.Call(subResult.Close)
 	var handles []int64
 	for {
 		h, data, err := subResult.Next()
@@ -286,6 +287,47 @@ func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64,
 			break
 		}
 		handles = append(handles, h)
+	}
+	return handles, nil
+}
+
+func extractHandlesFromNewIndexResult(idxResult distsql.NewSelectResult) (handles []int64, finish bool, err error) {
+	subResult, e0 := idxResult.Next()
+	if e0 != nil {
+		err = errors.Trace(e0)
+		return
+	}
+	if subResult == nil {
+		finish = true
+		return
+	}
+	handles, err = extractHandlesFromNewIndexSubResult(subResult)
+	if err != nil {
+		err = errors.Trace(err)
+	}
+	return
+}
+
+func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]int64, error) {
+	defer terror.Call(subResult.Close)
+	var (
+		handles     []int64
+		handleDatum types.Datum
+	)
+	handleType := types.NewFieldType(mysql.TypeLonglong)
+	for {
+		data, err := subResult.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if data == nil {
+			break
+		}
+		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), handleType, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		handles = append(handles, handleDatum.GetInt64())
 	}
 	return handles, nil
 }
@@ -473,7 +515,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (Row, error) {
 		}
 		if rowData == nil {
 			// Finish current partial result and get the next one.
-			e.partialResult.Close()
+			terror.Log(errors.Trace(e.partialResult.Close()))
 			e.partialResult = nil
 			continue
 		}
@@ -604,7 +646,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	defer func() {
 		close(ch)
 		close(workCh)
-		idxResult.Close()
+		terror.Log(errors.Trace(idxResult.Close()))
 	}()
 
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
@@ -769,7 +811,7 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 }
 
 func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult distsql.SelectResult) ([]Row, error) {
-	defer tblResult.Close()
+	defer terror.Call(tblResult.Close)
 	var rows []Row
 	for {
 		partialResult, err := tblResult.Next()
@@ -789,7 +831,7 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult d
 }
 
 func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult distsql.PartialResult) ([]Row, error) {
-	defer partialResult.Close()
+	defer terror.Call(partialResult.Close)
 	var rows []Row
 	for {
 		h, rowData, err := partialResult.Next()
@@ -998,7 +1040,7 @@ func (e *XSelectTableExec) Next() (Row, error) {
 		}
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
-			e.partialResult.Close()
+			terror.Log(errors.Trace(e.partialResult.Close()))
 			e.partialResult = nil
 			continue
 		}

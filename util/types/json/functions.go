@@ -153,7 +153,10 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 		return char, 0, errors.Trace(err)
 	}
 	var unicode uint16
-	binary.Read(bytes.NewReader(char[0:2]), binary.BigEndian, &unicode)
+	err = binary.Read(bytes.NewReader(char[0:2]), binary.BigEndian, &unicode)
+	if err != nil {
+		return char, 0, errors.Trace(err)
+	}
 	size = utf8.RuneLen(rune(unicode))
 	utf8.EncodeRune(char[0:size], rune(unicode))
 	return

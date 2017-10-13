@@ -100,9 +100,6 @@ const (
 	// It controls the max row count of outer table when do index nested loop join without hint.
 	// After the row count of the inner table is accurate, this variable will be removed.
 	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
-
-	// tidb_cbo uses new planner with cost based optimizer.
-	TiDBCBO = "tidb_cbo"
 )
 
 // Default TiDB system variable values.
@@ -115,7 +112,7 @@ const (
 	DefBuildStatsConcurrency      = 4
 	DefMaxRowCountForINLJ         = 128
 	DefSkipUTF8Check              = false
-	DefOptAggPushDown             = true
+	DefOptAggPushDown             = false
 	DefOptInSubqUnfolding         = false
 	DefBatchInsert                = false
 	DefBatchDelete                = false

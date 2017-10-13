@@ -32,9 +32,9 @@ const selectionFactor = 0.8
 type exprSet struct {
 	tp int
 	ID int64
-	// The ith bit of `mask` will tell whether the ith expression is covered by this index/column.
+	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
 	mask int64
-	// This stores ranges we get.
+	// ranges contains all the ranges we got.
 	ranges []types.Range
 }
 
@@ -157,7 +157,8 @@ func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeT
 	for _, expr := range exprs {
 		exprsClone = append(exprsClone, expr.Clone())
 	}
-	ranges, accessConds, _, err := ranger.BuildRange(ctx.GetSessionVars().StmtCtx, exprsClone, rangeType, cols, lengths)
+	accessConds, _ := ranger.DetachCondsForSelectivity(exprsClone, rangeType, cols, lengths)
+	ranges, err := ranger.BuildRange(ctx.GetSessionVars().StmtCtx, accessConds, rangeType, cols, lengths)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}

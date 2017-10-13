@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -26,8 +27,10 @@ import (
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
 type SampleCollector struct {
 	Samples       []types.Datum
+	seenValues    int64 // seenValues is the current seen values.
+	IsMerger      bool
 	NullCount     int64
-	Count         int64
+	Count         int64 // Count is the number of non-null rows.
 	MaxSampleSize int64
 	Sketch        *FMSketch
 }
@@ -35,9 +38,11 @@ type SampleCollector struct {
 // MergeSampleCollector merges two sample collectors.
 func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	c.NullCount += rc.NullCount
+	c.Count += rc.Count
 	c.Sketch.mergeFMSketch(rc.Sketch)
 	for _, val := range rc.Samples {
-		c.collect(val, false)
+		err := c.collect(val)
+		terror.Log(errors.Trace(err))
 	}
 }
 
@@ -67,26 +72,29 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	return s
 }
 
-func (c *SampleCollector) collect(d types.Datum, insertSketch bool) error {
-	if d.IsNull() {
-		c.NullCount++
-		return nil
+func (c *SampleCollector) collect(d types.Datum) error {
+	if !c.IsMerger {
+		if d.IsNull() {
+			c.NullCount++
+			return nil
+		}
+		c.Count++
+		if err := c.Sketch.InsertValue(d); err != nil {
+			return errors.Trace(err)
+		}
 	}
-	c.Count++
+	c.seenValues++
 	// The following code use types.CopyDatum(d) because d may have a deep reference
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
 	if len(c.Samples) < int(c.MaxSampleSize) {
 		c.Samples = append(c.Samples, types.CopyDatum(d))
 	} else {
-		shouldAdd := rand.Int63n(c.Count) < c.MaxSampleSize
+		shouldAdd := rand.Int63n(c.seenValues) < c.MaxSampleSize
 		if shouldAdd {
 			idx := rand.Intn(int(c.MaxSampleSize))
 			c.Samples[idx] = types.CopyDatum(d)
 		}
-	}
-	if insertSketch {
-		return errors.Trace(c.Sketch.InsertValue(d))
 	}
 	return nil
 }
@@ -136,7 +144,7 @@ func (s SampleBuilder) CollectSamplesAndEstimateNDVs() ([]*SampleCollector, *Sor
 			row.Data = row.Data[1:]
 		}
 		for i, val := range row.Data {
-			err = collectors[i].collect(val, true)
+			err = collectors[i].collect(val)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

@@ -276,7 +276,7 @@ func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
 	}
 	buffer.WriteString(fmt.Sprintf("\"limit\": %d, \n", limit))
 	if p.Aggregated {
-		buffer.WriteString(fmt.Sprint("\"aggregated push down\": true, \n"))
+		buffer.WriteString("\"aggregated push down\": true, \n")
 		gbyItems, err := json.Marshal(p.gbyItems)
 		if err != nil {
 			return nil, errors.Trace(err)

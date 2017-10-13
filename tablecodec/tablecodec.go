@@ -140,7 +140,9 @@ func DecodeTableID(key kv.Key) int64 {
 		return 0
 	}
 	key = key[len(tablePrefix):]
-	_, tableID, _ := codec.DecodeInt(key)
+	_, tableID, err := codec.DecodeInt(key)
+	// TODO: return error.
+	terror.Log(errors.Trace(err))
 	return tableID
 }
 
@@ -190,7 +192,10 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
 		if t.Type == mysql.TypeTimestamp && loc != time.UTC {
-			t.ConvertTimeZone(loc, time.UTC)
+			err := t.ConvertTimeZone(loc, time.UTC)
+			if err != nil {
+				return data, errors.Trace(err)
+			}
 		}
 		v, err := t.ToPackedUint()
 		return types.NewUintDatum(v), errors.Trace(err)
@@ -206,7 +211,10 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 		return data, nil
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-		val, _ := data.GetBinaryLiteral().ToInt()
+		val, err := data.GetBinaryLiteral().ToInt()
+		if err != nil {
+			return data, errors.Trace(err)
+		}
 		data.SetUint64(val)
 		return data, nil
 	default:
@@ -392,7 +400,10 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 			return datum, errors.Trace(err)
 		}
 		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
-			t.ConvertTimeZone(time.UTC, loc)
+			err = t.ConvertTimeZone(time.UTC, loc)
+			if err != nil {
+				return datum, errors.Trace(err)
+			}
 		}
 		datum.SetMysqlTime(t)
 		return datum, nil
@@ -402,7 +413,10 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		return datum, nil
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
-		enum, _ := types.ParseEnumValue(ft.Elems, datum.GetUint64())
+		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
+		if err != nil {
+			enum = types.Enum{}
+		}
 		datum.SetValue(enum)
 		return datum, nil
 	case mysql.TypeSet:

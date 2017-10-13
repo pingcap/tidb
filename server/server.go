@@ -237,12 +237,14 @@ func (s *Server) Run() error {
 			return errors.Trace(err)
 		}
 		if s.shouldStopListener() {
-			conn.Close()
+			err = conn.Close()
+			terror.Log(errors.Trace(err))
 			break
 		}
 		go s.onConn(conn)
 	}
-	s.listener.Close()
+	err := s.listener.Close()
+	terror.Log(errors.Trace(err))
 	s.listener = nil
 	for {
 		log.Errorf("listener stopped, waiting for manual kill.")
@@ -265,7 +267,8 @@ func (s *Server) Close() {
 	defer s.rwlock.Unlock()
 
 	if s.listener != nil {
-		s.listener.Close()
+		err := s.listener.Close()
+		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
 }
@@ -281,7 +284,8 @@ func (s *Server) onConn(c net.Conn) {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we use info log level.
 		log.Infof("handshake error %s", errors.ErrorStack(err))
-		c.Close()
+		err = c.Close()
+		terror.Log(errors.Trace(err))
 		return
 	}
 

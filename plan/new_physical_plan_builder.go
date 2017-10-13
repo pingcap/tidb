@@ -677,6 +677,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		dataSourceSchema:    p.schema,
 		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
 		Ranges:              ranger.FullIndexRange(),
+		OutOfOrder:          true,
 	}.init(p.allocator, p.ctx)
 	is.filterCondition = p.pushedDownConds
 	is.profile = p.profile
@@ -688,19 +689,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
 		cop.tablePlan.SetSchema(is.dataSourceSchema)
 	}
-	var indexCols []*expression.Column
-	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-	}
-	if is.Table.PKIsHandle {
-		for _, col := range is.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-				break
-			}
-		}
-	}
-	is.SetSchema(expression.NewSchema(indexCols...))
+	is.initSchema(p.id, idx, cop.tablePlan != nil)
 	is.addPushedDownSelection(cop, p, math.MaxFloat64)
 	t := finishCopTask(cop, p.ctx, p.allocator)
 	return t.plan()
@@ -729,7 +718,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 		if len(idxCols) > 0 {
 			var ranges []types.Range
-			ranges, is.AccessCondition, is.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IndexRangeType, idxCols, colLengths)
+			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(conds, idxCols, colLengths)
+			ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -743,13 +733,14 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 	}
 	is.profile = p.getStatsProfileByFilter(p.pushedDownConds)
+
 	cop := &copTask{
 		indexPlan: is,
 	}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
-		cop.tablePlan.SetSchema(is.dataSourceSchema)
+		cop.tablePlan.SetSchema(is.dataSourceSchema.Clone())
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
 			return &copTask{cst: math.MaxFloat64}, nil
@@ -758,19 +749,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		// If it's parent requires double read task, return max cost.
 		return &copTask{cst: math.MaxFloat64}, nil
 	}
-	var indexCols []*expression.Column
-	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-	}
-	if is.Table.PKIsHandle {
-		for _, col := range is.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-				break
-			}
-		}
-	}
-	is.SetSchema(expression.NewSchema(indexCols...))
+	is.initSchema(p.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
 	matchProperty := false
 	if !prop.isEmpty() {
@@ -802,6 +781,13 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
+		if !is.NeedColHandle && cop.tablePlan != nil {
+			tblPlan := cop.tablePlan.(*PhysicalTableScan)
+			tblPlan.Columns = append(tblPlan.Columns, &model.ColumnInfo{
+				ID:   model.ExtraHandleID,
+				Name: model.NewCIStr("_rowid"),
+			})
+		}
 		cop.keepOrder = true
 		is.addPushedDownSelection(cop, p, prop.expectedCnt)
 		if p.unionScanSchema != nil {
@@ -825,6 +811,27 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
+	var indexCols []*expression.Column
+	for _, col := range idx.Columns {
+		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
+	}
+	setHandle := false
+	for _, col := range is.Columns {
+		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, Position: col.Offset})
+			setHandle = true
+			break
+		}
+	}
+	// If it's double read case, the first index must return handle. So we should add extra handle column
+	// if there isn't a handle column.
+	if isDoubleRead && !setHandle {
+		indexCols = append(indexCols, &expression.Column{FromID: id, ID: model.ExtraHandleID, Position: -1})
+	}
+	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64) {
@@ -920,7 +927,8 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 		if pkCol != nil {
 			var ranges []types.Range
-			ranges, ts.AccessCondition, ts.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+			ts.AccessCondition, ts.filterCondition = ranger.DetachColumnConditions(conds, pkCol.ColName)
+			ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 			ts.Ranges = ranger.Ranges2IntRanges(ranges)
 			if err != nil {
 				return nil, errors.Trace(err)

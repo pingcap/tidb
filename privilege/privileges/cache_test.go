@@ -152,6 +152,14 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(p.RequestVerification("root", "", "test", "", "", mysql.SelectPriv), IsTrue)
 	c.Assert(p.RequestVerification("root", "notnull", "test", "", "", mysql.SelectPriv), IsFalse)
+
+	// Pattern match for DB.
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, "TRUNCATE TABLE mysql.db")
+	mustExec(c, se, `INSERT INTO mysql.db (user,host,db,select_priv) values ('genius', '%', 'te%', 'Y')`)
+	err = p.LoadDBTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification("genius", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
 }
 
 func (s *testCacheSuite) TestCaseInsensitive(c *C) {

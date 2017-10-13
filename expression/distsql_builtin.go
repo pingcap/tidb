@@ -99,7 +99,7 @@ func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 
 func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := pbTypeToFieldType(tp)
-	base := newBaseBuiltinFunc(args, ctx)
+	base := newBaseBuiltinFunc(ctx, args)
 	base.tp = fieldTp
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
@@ -589,7 +589,7 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 	ft := fieldTypeFromPB(ftPB)
 	_, v, err := codec.DecodeUint(data)
 	if err != nil {
-		return nil, errors.Trace(nil)
+		return nil, errors.Trace(err)
 	}
 	var t types.Time
 	t.Type = ft.Tp
@@ -599,7 +599,10 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 		return nil, errors.Trace(err)
 	}
 	if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
-		t.ConvertTimeZone(time.UTC, tz)
+		err = t.ConvertTimeZone(time.UTC, tz)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return &Constant{Value: types.NewTimeDatum(t), RetType: ft}, nil
 }
