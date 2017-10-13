@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math"
 	"time"
-	"unicode/utf8"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
@@ -270,18 +269,13 @@ func (a *ExecStmt) logSlowQuery() {
 	costTime := time.Since(a.startTime)
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
-		// So the truncate won't make the last character an illegal utf8.
-		length := cfg.Log.QueryLogMaxLen
-		for !utf8.RuneStart(sql[length]) {
-			length--
-		}
-		sql = sql[:length]
+		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
 	logEntry := log.WithFields(log.Fields{
 		"connectionId": connID,
 		"costTime":     costTime,
-		"sql":          fmt.Sprintf("%.*q(len:%d)", len(sql), sql, len(a.Text)),
+		"sql":          sql,
 	})
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
 		logEntry.WithField("type", "query").Debugf("query")
