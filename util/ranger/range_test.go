@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 func TestT(t *testing.T) {
@@ -210,7 +211,8 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 		c.Assert(col, NotNil)
-		result, _, _, err := ranger.BuildRange(ctx, conds, ranger.IntRangeType, []*expression.Column{col}, nil)
+		conds, _ = ranger.DetachCondsForTableRange(conds, col)
+		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -311,7 +313,8 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[0])
 		c.Assert(cols, NotNil)
-		result, _, _, err := ranger.BuildRange(ctx, conds, ranger.IndexRangeType, cols, lengths)
+		conds, _ = ranger.DetachIndexConditions(conds, cols, lengths)
+		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -472,7 +475,8 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[0])
 		c.Assert(col, NotNil)
-		result, _, _, err := ranger.BuildRange(ctx, conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
+		conds, _ = ranger.DetachColumnConditions(conds, col.ColName)
+		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%s", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))

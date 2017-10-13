@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1331,11 +1332,11 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
-	tidb.SchemaOutOfDateRetryTimes = 3
-	tidb.SchemaOutOfDateRetryInterval = 20 * time.Millisecond
+	atomic.StoreInt32(&tidb.SchemaOutOfDateRetryTimes, int32(3))
+	atomic.StoreInt64(&tidb.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
 	defer func() {
-		tidb.SchemaOutOfDateRetryTimes = 10
-		tidb.SchemaOutOfDateRetryInterval = 500 * time.Millisecond
+		atomic.StoreInt32(&tidb.SchemaOutOfDateRetryTimes, 10)
+		atomic.StoreInt64(&tidb.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)

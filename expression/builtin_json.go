@@ -178,7 +178,7 @@ func (b *builtinJSONUnquoteSig) evalString(row []types.Datum) (res string, isNul
 		return "", isNull, errors.Trace(err)
 	}
 	res, err = j.Unquote()
-	return res, false, errors.Trace(err)
+	return res, err != nil, errors.Trace(err)
 }
 
 type jsonSetFunctionClass struct {

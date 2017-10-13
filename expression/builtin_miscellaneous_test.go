@@ -112,9 +112,8 @@ func (s *testEvaluatorSuite) TestUUID(c *C) {
 			c.Assert(len(p), Equals, 12)
 		}
 	}
-	bf, err := funcs[ast.UUID].getFunction(s.ctx, s.datumsToConstants(nil))
+	_, err = funcs[ast.UUID].getFunction(s.ctx, s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
-	c.Assert(bf.canBeFolded(), IsFalse)
 }
 
 func (s *testEvaluatorSuite) TestAnyValue(c *C) {
