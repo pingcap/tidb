@@ -14,7 +14,6 @@
 package ranger
 
 import (
-	"github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -138,15 +137,16 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 	for _, cond := range conditions {
 		cond = expression.PushDownNot(cond, false, nil)
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			filterConditions = append(filterConditions, cond)
 			dnfExprs := expression.ExtractDNFConditions(sf)
-			logrus.Warnf("dnf exprs: %v", dnfExprs)
-			rebuildDNF := expression.ComposeDNFCondition(nil, detachColumnDNFConditions(dnfExprs, checker)...)
-			logrus.Warnf("rebuilt dnf: %v", rebuildDNF)
-			if rebuildDNF != nil {
-				accessConditions = append(accessConditions, rebuildDNF)
+			extractedDNFExprs, hasOthers := detachColumnDNFConditions(dnfExprs, checker)
+			if hasOthers {
+				filterConditions = append(filterConditions, cond)
 			}
-			continue
+			if len(extractedDNFExprs) == 0 {
+				continue
+			}
+			rebuildDNF := expression.ComposeDNFCondition(nil, extractedDNFExprs...)
+			accessConditions = append(accessConditions, rebuildDNF)
 		}
 		if !checker.check(cond) {
 			filterConditions = append(filterConditions, cond)
@@ -161,24 +161,34 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 	return accessConditions, filterConditions
 }
 
-func detachColumnDNFConditions(conditions []expression.Expression, checker *conditionChecker) []expression.Expression {
-	var accessConditions []expression.Expression
+func detachColumnDNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
+	var (
+		hasOtherConditions bool
+		accessConditions   []expression.Expression
+	)
 	for _, cond := range conditions {
 		cond = expression.PushDownNot(cond, false, nil)
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfExprs := expression.ExtractCNFConditions(sf)
-			usedCNFExprs, _ := detachColumnCNFConditions(cnfExprs, checker)
-			rebuildCNF := expression.ComposeCNFCondition(nil, usedCNFExprs...)
-			if rebuildCNF != nil {
-				accessConditions = append(accessConditions, rebuildCNF)
+			usedCNFExprs, others := detachColumnCNFConditions(cnfExprs, checker)
+			if len(others) > 0 {
+				hasOtherConditions = true
 			}
+			if len(usedCNFExprs) == 0 {
+				continue
+			}
+			rebuildCNF := expression.ComposeCNFCondition(nil, usedCNFExprs...)
+			accessConditions = append(accessConditions, rebuildCNF)
 		} else if checker.check(cond) {
 			accessConditions = append(accessConditions, cond)
 		} else {
-			return nil
+			return nil, true
 		}
 	}
-	return accessConditions
+	if !hasOtherConditions {
+		return accessConditions, false
+	}
+	return accessConditions, true
 }
 
 // DetachIndexConditions will detach the index filters from table filters.
