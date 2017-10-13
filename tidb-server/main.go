@@ -334,10 +334,10 @@ func createServer() {
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(storage)
 	var err error
-	svr, err = server.NewServer(cfg, driver, server.MysqlProtocol)
+	svr, err = server.NewServer(cfg, driver, server.MySQLProtocol)
 	terror.MustNil(err)
 	if cfg.XProtocol.XServer {
-		xsvr, err = server.NewServer(cfg, driver, server.MysqlXProtocol)
+		xsvr, err = server.NewServer(cfg, driver, server.MySQLXProtocol)
 		terror.MustNil(err)
 	}
 }

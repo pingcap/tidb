@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"strconv"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -777,6 +777,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
+	// These code fix the field type of "lower_case_table_names" which required by establishing a connection using x protocol.
+	// Field type of each system var in TiDB is string, which is different with MySQL.
+	// TODO: assign the suitable field types for all system variables as MySQL, then we can remove these code.
 	var e *expression.Constant
 	if strings.EqualFold(name, "lower_case_table_names") {
 		num, err := strconv.Atoi(val)

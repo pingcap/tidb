@@ -65,12 +65,12 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 		},
 	}
 
-	server, err := NewServer(cfg, ts.tidbdrv, MysqlProtocol)
+	server, err := NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
 
-	xserver, err := NewServer(cfg, ts.tidbdrv, MysqlXProtocol)
+	xserver, err := NewServer(cfg, ts.tidbdrv, MySQLXProtocol)
 	c.Assert(err, IsNil)
 	ts.xserver = xserver
 	go ts.xserver.Run()
@@ -164,7 +164,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 		},
 	}
 
-	server, err := NewServer(cfg, ts.tidbdrv, MysqlProtocol)
+	server, err := NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -299,7 +299,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 			StatusPort:   10091,
 		},
 	}
-	server, err := NewServer(cfg, ts.tidbdrv, MysqlProtocol)
+	server, err := NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -324,7 +324,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 			SSLKey:  "/tmp/server-key.pem",
 		},
 	}
-	server, err = NewServer(cfg, ts.tidbdrv, MysqlProtocol)
+	server, err = NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -358,7 +358,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 			SSLKey:  "/tmp/server-key.pem",
 		},
 	}
-	server, err = NewServer(cfg, ts.tidbdrv, MysqlProtocol)
+	server, err = NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)

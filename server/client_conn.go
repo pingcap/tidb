@@ -14,9 +14,9 @@
 package server
 
 import (
+	"fmt"
 	"net"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -44,12 +44,11 @@ type clientConn interface {
 // create client connection according to the server type, mysql or x-protocol
 func createClientConn(conn net.Conn, s *Server) clientConn {
 	switch s.tp {
-	case MysqlProtocol:
+	case MySQLProtocol:
 		return s.newConn(conn)
-	case MysqlXProtocol:
+	case MySQLXProtocol:
 		return s.newXConn(conn)
 	default:
-		log.Errorf("can't create client connection, unknown server type [%d].", s.tp)
-		return nil
+		panic(fmt.Sprintf("can't create client connection, unknown server type [%d].", s.tp))
 	}
 }

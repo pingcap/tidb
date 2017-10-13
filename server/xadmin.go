@@ -105,7 +105,7 @@ func (xsql *xSQL) listClients(args []*Mysqlx_Datatypes.Any) error {
 	if len(args) != 0 {
 		return util.ErXCmdNumArguments.GenByArgs(0, len(args))
 	}
-	info := xsql.xcc.server.getClientsInfo()
+	info := xsql.xcc.server.getXClientsInfo()
 	cols := []*ColumnInfo{
 		{Name: "client_id", Flag: uint16(mysql.UnsignedFlag), Type: mysql.TypeLonglong},
 		{Name: "user", Type: mysql.TypeVarchar},

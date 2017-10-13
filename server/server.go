@@ -73,11 +73,14 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth
+
+type protocolType uint32
+
 const (
-	// MysqlProtocol is MySQL Protocol
-	MysqlProtocol = 1
-	// MysqlXProtocol is MySQL X Protocol
-	MysqlXProtocol = 2
+	// MySQLProtocol is MySQL Protocol
+	MySQLProtocol protocolType = 1
+	// MySQLXProtocol is MySQL X Protocol
+	MySQLXProtocol = 2
 )
 
 // Server is the MySQL protocol server
@@ -88,7 +91,7 @@ type Server struct {
 	listener          net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
-	tp                int
+	tp                protocolType
 	clients           map[uint32]clientConn
 	capability        uint32
 
@@ -107,22 +110,19 @@ func (s *Server) ConnectionCount() int {
 	return cnt
 }
 
-type clientInfo struct {
+type xClientInfo struct {
 	clientID  uint32
 	user      string
 	host      string
 	sessionID uint32
 }
 
-func (s *Server) getClientsInfo() []clientInfo {
-	var info []clientInfo
+func (s *Server) getXClientsInfo() []xClientInfo {
+	var info []xClientInfo
 	s.rwlock.RLock()
 	for _, v := range s.clients {
-		switch c := v.(type) {
-		case *mysqlXClientConn:
-			info = append(info, clientInfo{clientID: c.id(), user: c.user, host: "", sessionID: c.xsession.sessionID})
-		default:
-		}
+		c := v.(*mysqlXClientConn)
+		info = append(info, xClientInfo{clientID: c.id(), user: c.user, host: "", sessionID: c.xsession.sessionID})
 	}
 	s.rwlock.RUnlock()
 	return info
@@ -178,13 +178,13 @@ func (s *Server) skipAuth() bool {
 const tokenLimit = 1000
 
 // NewServer creates a new Server.
-func NewServer(cfg *config.Config, driver IDriver, serverType int) (*Server, error) {
+func NewServer(cfg *config.Config, driver IDriver, protocolType protocolType) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(tokenLimit),
 		rwlock:            &sync.RWMutex{},
-		tp:                serverType,
+		tp:                protocolType,
 		clients:           make(map[uint32]clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
@@ -198,7 +198,7 @@ func NewServer(cfg *config.Config, driver IDriver, serverType int) (*Server, err
 	socket := cfg.Socket
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	protocol := "MySQL"
-	if serverType == MysqlXProtocol {
+	if protocolType == MySQLXProtocol {
 		socket = cfg.XProtocol.XSocket
 		addr = fmt.Sprintf("%s:%d", s.cfg.XProtocol.XHost, s.cfg.XProtocol.XPort)
 		protocol = "MySQL X"
@@ -328,9 +328,6 @@ func (s *Server) Close() {
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
 	conn := createClientConn(c, s)
-	if conn == nil {
-		return
-	}
 
 	defer func() {
 		log.Infof("[%d] close connection", conn.id())
