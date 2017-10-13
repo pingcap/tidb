@@ -142,7 +142,7 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 type Column struct {
 	FromID      int
 	ColName     model.CIStr
-	DBName      model.CIStr // format: "dbName" or "dummy dbName" for table which use tblAsName
+	DBName      model.CIStr
 	OrigTblName model.CIStr
 	TblName     model.CIStr
 	RetType     *types.FieldType
