@@ -91,7 +91,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expressi
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONTypeSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -124,7 +124,7 @@ func (c *jsonExtractFunctionClass) getFunction(ctx context.Context, args []Expre
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONExtractSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONExtractSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
@@ -168,7 +168,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx context.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONUnquoteSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -178,7 +178,7 @@ func (b *builtinJSONUnquoteSig) evalString(row []types.Datum) (res string, isNul
 		return "", isNull, errors.Trace(err)
 	}
 	res, err = j.Unquote()
-	return res, false, errors.Trace(err)
+	return res, err != nil, errors.Trace(err)
 }
 
 type jsonSetFunctionClass struct {
@@ -205,7 +205,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONSetSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
@@ -238,7 +238,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expres
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONInsertSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
@@ -271,7 +271,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expre
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONReplaceSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
@@ -301,7 +301,7 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx context.Context, args []Expres
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONRemoveSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONRemoveSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
@@ -353,7 +353,7 @@ func (c *jsonMergeFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	sig := &builtinJSONMergeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONMergeSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
@@ -393,7 +393,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx context.Context, args []Expres
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONObjectSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
@@ -448,7 +448,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx context.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 func (b *builtinJSONArraySig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {

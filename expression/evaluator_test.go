@@ -217,7 +217,7 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		val, err := v.ToBool(s.ctx.GetSessionVars().StmtCtx)
 		c.Assert(err, IsNil)
@@ -248,7 +248,7 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -282,7 +282,7 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		switch x := t.ret.(type) {
 		case nil:
@@ -318,7 +318,7 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 
 		switch x := t.ret.(type) {
@@ -412,7 +412,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		switch v.Kind() {
 		case types.KindNull:
@@ -461,7 +461,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		_, err = f.eval(nil)
+		_, err = evalBuiltinFunc(f, nil)
 		c.Assert(err, NotNil)
 	}
 
@@ -471,7 +471,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -514,7 +514,7 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 		fc := funcs[ast.Extract]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Unit, str)))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Expect))
 	}
@@ -523,7 +523,7 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 	fc := funcs[ast.Extract]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("SECOND", nil)))
 	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
+	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
@@ -546,7 +546,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		fc := funcs[ast.Like]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
 	}
@@ -573,7 +573,7 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 		fc := funcs[ast.Regexp]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		c.Assert(err, IsNil)
-		match, err := f.eval(nil)
+		match, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
 	}
@@ -617,7 +617,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
+		result, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(t.result), Commentf("%d", i))
 	}
@@ -637,8 +637,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		result, err := f.eval(nil)
+		result, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 
 		expect := types.NewDatum(t.result)
@@ -652,17 +651,17 @@ func (s *testEvaluatorSuite) TestMod(c *C) {
 	fc := funcs[ast.Mod]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(234, 10)))
 	c.Assert(err, IsNil)
-	r, err := f.eval(nil)
+	r, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(4))
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(29, 9)))
 	c.Assert(err, IsNil)
-	r, err = f.eval(nil)
+	r, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(34.5, 3)))
 	c.Assert(err, IsNil)
-	r, err = f.eval(nil)
+	r, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
 }

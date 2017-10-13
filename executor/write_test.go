@@ -182,6 +182,19 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
+
+	// issue 4653
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a datetime);")
+	_, err = tk.Exec("INSERT INTO t VALUES('2017-00-00')")
+	c.Assert(err, NotNil)
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("INSERT INTO t VALUES('2017-00-00')")
+	r = tk.MustQuery("SELECT * FROM t;")
+	r.Check(testkit.Rows("2017-00-00 00:00:00"))
+	tk.MustExec("set sql_mode = 'strict_all_tables';")
+	r = tk.MustQuery("SELECT * FROM t;")
+	r.Check(testkit.Rows("2017-00-00 00:00:00"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -700,6 +713,7 @@ func (s *testSuite) TestDelete(c *C) {
 	_, err := tk.Exec("delete from delete_test where id = (select '2a')")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("delete ignore from delete_test where id = (select '2a')")
+	c.Assert(err, IsNil)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))

@@ -206,7 +206,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"IndexScan_23   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 1.25",
 				"TableScan_24   cop table:t2, keep order:false 1.25",
 				"IndexLookUp_25 Selection_4  root index:IndexScan_23, table:TableScan_24 1.25",
-				"Selection_4 Limit_16 IndexLookUp_25 root eq(test.t1.c1, test.t2.c1) 6400",
+				"Selection_4 Limit_16 IndexLookUp_25 root eq(test.t1.c1, test.t2.c1) 1",
 				"Limit_16 MaxOneRow_9 Selection_4 root offset:0, count:1 1",
 				"MaxOneRow_9 Apply_13 Limit_16 root  1",
 				"Apply_13 Projection_2 TableReader_15,MaxOneRow_9 root left outer join, small:MaxOneRow_9, right:MaxOneRow_9 8000",

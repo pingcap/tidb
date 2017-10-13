@@ -68,7 +68,7 @@ func (c *logicAndFunctionClass) getFunction(ctx context.Context, args []Expressi
 	sig := &builtinLogicAndSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalAnd)
 	sig.tp.Flen = 1
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLogicAndSig struct {
@@ -79,11 +79,11 @@ func (b *builtinLogicAndSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil || (!isNull0 && arg0 == 0) {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
 	if err != nil || (!isNull1 && arg1 == 0) {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 	if isNull0 || isNull1 {
 		return 0, true, nil
@@ -104,7 +104,7 @@ func (c *logicOrFunctionClass) getFunction(ctx context.Context, args []Expressio
 	bf.tp.Flen = 1
 	sig := &builtinLogicOrSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalOr)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLogicOrSig struct {
@@ -115,14 +115,14 @@ func (b *builtinLogicOrSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	if !isNull0 && arg0 != 0 {
 		return 1, false, nil
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	if !isNull1 && arg1 != 0 {
 		return 1, false, nil
@@ -146,7 +146,7 @@ func (c *logicXorFunctionClass) getFunction(ctx context.Context, args []Expressi
 	sig := &builtinLogicXorSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalXor)
 	sig.tp.Flen = 1
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLogicXorSig struct {
@@ -182,7 +182,7 @@ func (c *bitAndFunctionClass) getFunction(ctx context.Context, args []Expression
 	sig := &builtinBitAndSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitAndSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitAndSig struct {
@@ -215,7 +215,7 @@ func (c *bitOrFunctionClass) getFunction(ctx context.Context, args []Expression)
 	sig := &builtinBitOrSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitOrSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitOrSig struct {
@@ -248,7 +248,7 @@ func (c *bitXorFunctionClass) getFunction(ctx context.Context, args []Expression
 	sig := &builtinBitXorSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitXorSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitXorSig struct {
@@ -280,7 +280,7 @@ func (c *leftShiftFunctionClass) getFunction(ctx context.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinLeftShiftSig{bf}
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLeftShiftSig struct {
@@ -312,7 +312,7 @@ func (c *rightShiftFunctionClass) getFunction(ctx context.Context, args []Expres
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinRightShiftSig{bf}
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRightShiftSig struct {
@@ -377,7 +377,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx context.Context, args []Exp
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 		}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRealIsTrueSig struct {
@@ -482,7 +482,7 @@ func (c *bitNegFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinBitNegSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitNegSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitNegSig struct {
@@ -512,7 +512,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx context.Context, args []Expressi
 
 	sig := &builtinUnaryNotSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UnaryNot)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUnaryNotSig struct {
@@ -618,7 +618,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx context.Context, args []Expres
 		}
 	}
 	bf.tp.Flen = argExprTp.Flen + 1
-	return sig.setSelf(sig), errors.Trace(err)
+	return sig, errors.Trace(err)
 }
 
 type builtinUnaryMinusIntSig struct {
@@ -642,7 +642,7 @@ func (b *builtinUnaryMinusIntSig) evalInt(row []types.Datum) (res int64, isNull 
 	} else if val == math.MinInt64 {
 		return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("-%v", val))
 	}
-	return -val, false, errors.Trace(err)
+	return -val, false, nil
 }
 
 type builtinUnaryMinusDecimalSig struct {
@@ -662,7 +662,7 @@ func (b *builtinUnaryMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyD
 
 	to := new(types.MyDecimal)
 	err = types.DecimalSub(new(types.MyDecimal), dec, to)
-	return to, false, errors.Trace(err)
+	return to, err != nil, errors.Trace(err)
 }
 
 type builtinUnaryMinusRealSig struct {
@@ -714,7 +714,7 @@ func (c *isNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	default:
 		panic("unexpected types.EvalType")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinDecimalIsNullSig struct {

@@ -200,7 +200,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 		sig = &builtinCaseWhenDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDuration)
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCaseWhenIntSig struct {
@@ -371,7 +371,7 @@ func (b *builtinCaseWhenDurationSig) evalDuration(row []types.Datum) (ret types.
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
 		if err != nil {
-			return ret, false, errors.Trace(err)
+			return ret, true, errors.Trace(err)
 		}
 		if isNull || condition == 0 {
 			continue
@@ -425,7 +425,7 @@ func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIfIntSig struct {
@@ -436,7 +436,7 @@ func (b *builtinIfIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, er
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
 	if (!isNull0 && arg0 != 0) || err != nil {
@@ -454,7 +454,7 @@ func (b *builtinIfRealSig) evalReal(row []types.Datum) (ret float64, isNull bool
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalReal(row, sc)
 	if (!isNull0 && arg0 != 0) || err != nil {
@@ -472,7 +472,7 @@ func (b *builtinIfDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecim
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalDecimal(row, sc)
 	if (!isNull0 && arg0 != 0) || err != nil {
@@ -490,7 +490,7 @@ func (b *builtinIfStringSig) evalString(row []types.Datum) (ret string, isNull b
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return "", false, errors.Trace(err)
+		return "", true, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalString(row, sc)
 	if (!isNull0 && arg0 != 0) || err != nil {
@@ -508,7 +508,7 @@ func (b *builtinIfTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull b
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return ret, false, errors.Trace(err)
+		return ret, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalTime(row, sc)
 	if (!isNull0 && arg0 != 0) || err != nil {
@@ -526,7 +526,7 @@ func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Durati
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return ret, false, errors.Trace(err)
+		return ret, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalDuration(row, sc)
 	if (!isNull0 && arg0 != 0) || err != nil {
@@ -544,15 +544,15 @@ func (b *builtinIfJSONSig) evalJSON(row []types.Datum) (ret json.JSON, isNull bo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return ret, false, errors.Trace(err)
+		return ret, true, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalJSON(row, sc)
 	if err != nil {
-		return ret, false, errors.Trace(err)
+		return ret, true, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalJSON(row, sc)
 	if err != nil {
-		return ret, false, errors.Trace(err)
+		return ret, true, errors.Trace(err)
 	}
 	switch {
 	case isNull0 || arg0 == 0:
@@ -605,7 +605,7 @@ func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression
 		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIfNullIntSig struct {
@@ -616,10 +616,10 @@ func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
 	if !isNull || err != nil {
-		return arg0, false, errors.Trace(err)
+		return arg0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalInt(row, sc)
-	return arg1, isNull, errors.Trace(err)
+	return arg1, isNull || err != nil, errors.Trace(err)
 }
 
 type builtinIfNullRealSig struct {
@@ -630,10 +630,10 @@ func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalReal(row, sc)
 	if !isNull || err != nil {
-		return arg0, false, errors.Trace(err)
+		return arg0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalReal(row, sc)
-	return arg1, isNull, errors.Trace(err)
+	return arg1, isNull || err != nil, errors.Trace(err)
 }
 
 type builtinIfNullDecimalSig struct {
@@ -644,10 +644,10 @@ func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecim
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalDecimal(row, sc)
 	if !isNull || err != nil {
-		return arg0, false, errors.Trace(err)
+		return arg0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalDecimal(row, sc)
-	return arg1, isNull, errors.Trace(err)
+	return arg1, isNull || err != nil, errors.Trace(err)
 }
 
 type builtinIfNullStringSig struct {
@@ -658,10 +658,10 @@ func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, er
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalString(row, sc)
 	if !isNull || err != nil {
-		return arg0, false, errors.Trace(err)
+		return arg0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalString(row, sc)
-	return arg1, isNull, errors.Trace(err)
+	return arg1, isNull || err != nil, errors.Trace(err)
 }
 
 type builtinIfNullTimeSig struct {
@@ -672,10 +672,10 @@ func (b *builtinIfNullTimeSig) evalTime(row []types.Datum) (types.Time, bool, er
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalTime(row, sc)
 	if !isNull || err != nil {
-		return arg0, false, errors.Trace(err)
+		return arg0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalTime(row, sc)
-	return arg1, isNull, errors.Trace(err)
+	return arg1, isNull || err != nil, errors.Trace(err)
 }
 
 type builtinIfNullDurationSig struct {
@@ -686,10 +686,10 @@ func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Durati
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalDuration(row, sc)
 	if !isNull || err != nil {
-		return arg0, false, errors.Trace(err)
+		return arg0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalDuration(row, sc)
-	return arg1, isNull, errors.Trace(err)
+	return arg1, isNull || err != nil, errors.Trace(err)
 }
 
 type builtinIfNullJSONSig struct {
@@ -700,8 +700,8 @@ func (b *builtinIfNullJSONSig) evalJSON(row []types.Datum) (json.JSON, bool, err
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalJSON(row, sc)
 	if !isNull {
-		return arg0, false, errors.Trace(err)
+		return arg0, err != nil, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalJSON(row, sc)
-	return arg1, isNull, errors.Trace(err)
+	return arg1, isNull || err != nil, errors.Trace(err)
 }
