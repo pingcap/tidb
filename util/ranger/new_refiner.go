@@ -14,12 +14,12 @@
 package ranger
 
 import (
+	"github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/Sirupsen/logrus"
 )
 
 func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, lengths []int,
@@ -181,7 +181,7 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 	return accessConditions
 }
 
-// detachIndexScanConditions will detach the index filters from table filters.
+// DetachIndexConditions will detach the index filters from table filters.
 func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accessConds []expression.Expression, filterConds []expression.Expression) {
 	accessConds = make([]expression.Expression, len(cols))
@@ -271,6 +271,8 @@ func DetachCondsForSelectivity(conds []expression.Expression, rangeType int, col
 	return nil, conds
 }
 
+// DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for
+// calculating the table range.
 func DetachCondsForTableRange(conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
 		colName: col.ColName,
