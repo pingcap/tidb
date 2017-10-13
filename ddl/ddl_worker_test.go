@@ -216,18 +216,21 @@ func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
 	})
 }
 
-func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
+func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaState) {
 	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
 		c.Assert(historyJob.IsCancelled(), IsTrue, Commentf("histroy job %s", historyJob))
+		if state != nil {
+			c.Assert(historyJob.SchemaState, Equals, *state)
+		}
 		return nil
 	})
 }
 
-func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []interface{},
-	ctx context.Context, d *ddl) *model.Job {
+func doDDLJobErrWithSchemaState(ctx context.Context, d *ddl, c *C, schemaID, tableID int64, tp model.ActionType,
+	args []interface{}, state *model.SchemaState) *model.Job {
 	job := &model.Job{
 		SchemaID:   schemaID,
 		TableID:    tableID,
@@ -238,29 +241,33 @@ func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []inte
 	err := d.doDDLJob(ctx, job)
 	// TODO: Add the detail error check.
 	c.Assert(err, NotNil)
-	testCheckJobCancelled(c, d, job)
+	testCheckJobCancelled(c, d, job, state)
 
 	return job
 }
 
+func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []interface{},
+	ctx context.Context, d *ddl) *model.Job {
+	return doDDLJobErrWithSchemaState(ctx, d, c, schemaID, tableID, tp, args, nil)
+}
+
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
 	var checkErr error
-	if test.cancelState == job.SchemaState {
-		if test.act == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
+	addIndexFirstReorg := test.act == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0
+	// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
+	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
+	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
+		if job.SchemaState == model.StateNone && job.State != model.JobDone {
+			// If the schema state is none, we only test the job is finished.
 		} else {
 			errs, err := inspectkv.CancelJobs(txn, test.jobIDs)
-			if err != test.cancelRetErr {
+			if err != nil {
 				checkErr = errors.Trace(err)
 			}
 			// It only tests cancel one DDL job.
 			if errs[0] != test.cancelRetErrs[0] {
 				checkErr = errors.Trace(errs[0])
 			}
-		}
-	}
-	if test.nextState == job.SchemaState {
-		if test.ddlRetErr != job.Error {
-			checkErr = errors.Trace(job.Error)
 		}
 	}
 	return checkErr
@@ -270,31 +277,26 @@ type testCancelJob struct {
 	act           model.ActionType // act is the job action.
 	jobIDs        []int64
 	cancelRetErrs []error // cancelRetErrs is the first return value of CancelJobs.
-	cancelRetErr  error   // cancelRetErr is the second return value of CancelJobs.
 	cancelState   model.SchemaState
-	nextState     model.SchemaState
 	ddlRetErr     error
 }
 
 func buildCancelJobTests(firstID int64) []testCancelJob {
-	nonexist := model.SchemaState(255)
 	err := errCancelledDDLJob
 	errs := []error{err}
 	noErrs := []error{nil}
 	tests := []testCancelJob{
-		{act: model.ActionCreateTable, jobIDs: []int64{firstID}, cancelRetErr: err, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly, nextState: model.StateWriteOnly, ddlRetErr: err},
+		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 1}, cancelRetErrs: errs, cancelState: model.StateDeleteOnly, ddlRetErr: err},
+		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 2}, cancelRetErrs: errs, cancelState: model.StateWriteOnly, ddlRetErr: err},
+		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 3}, cancelRetErrs: errs, cancelState: model.StateWriteReorganization, ddlRetErr: err},
+		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 4}, cancelRetErrs: noErrs, cancelState: model.StatePublic, ddlRetErr: err},
 
-		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 1}, cancelRetErrs: errs, cancelState: model.StateDeleteOnly, nextState: model.StateWriteOnly, ddlRetErr: err},
-		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 2}, cancelRetErrs: errs, cancelState: model.StateWriteOnly, nextState: model.StateWriteReorganization, ddlRetErr: err},
-		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 3}, cancelRetErrs: errs, cancelState: model.StateWriteReorganization, nextState: model.StatePublic, ddlRetErr: err},
-		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 4}, cancelRetErrs: noErrs, cancelState: model.StatePublic, nextState: nonexist, ddlRetErr: err},
+		{act: model.ActionDropIndex, jobIDs: []int64{firstID + 5}, cancelRetErrs: errs, cancelState: model.StateWriteOnly, ddlRetErr: err},
+		{act: model.ActionDropIndex, jobIDs: []int64{firstID + 6}, cancelRetErrs: errs, cancelState: model.StateDeleteOnly, ddlRetErr: err},
+		{act: model.ActionDropIndex, jobIDs: []int64{firstID + 7}, cancelRetErrs: errs, cancelState: model.StateDeleteReorganization, ddlRetErr: err},
+		{act: model.ActionDropIndex, jobIDs: []int64{firstID + 8}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
 
-		{act: model.ActionDropIndex, jobIDs: []int64{firstID + 5}, cancelRetErrs: errs, cancelState: model.StateWriteOnly, nextState: model.StateDeleteOnly, ddlRetErr: err},
-		{act: model.ActionDropIndex, jobIDs: []int64{firstID + 6}, cancelRetErrs: errs, cancelState: model.StateDeleteOnly, nextState: model.StateDeleteReorganization, ddlRetErr: err},
-		{act: model.ActionDropIndex, jobIDs: []int64{firstID + 7}, cancelRetErrs: errs, cancelState: model.StateDeleteReorganization, nextState: model.StateNone, ddlRetErr: err},
-		{act: model.ActionDropIndex, jobIDs: []int64{firstID + 8}, cancelRetErrs: noErrs, cancelState: model.StateNone, nextState: nonexist, ddlRetErr: err},
-
-		{act: model.ActionCreateTable, jobIDs: []int64{firstID + 9}, cancelRetErrs: noErrs, cancelState: model.StatePublic, nextState: nonexist, ddlRetErr: err},
+		{act: model.ActionCreateTable, jobIDs: []int64{firstID + 9}, cancelRetErrs: noErrs, cancelState: model.StatePublic, ddlRetErr: err},
 	}
 
 	return tests
@@ -328,8 +330,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	firstJobID := job.ID
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
-	// Since this DDL job isn't in the DDL queue, tests[0] is failed to cancel job.
-	test := &tests[0]
+	var test *testCancelJob
 	tc.onJobUpdated = func(job *model.Job) {
 		hookCtx := mock.NewContext()
 		hookCtx.Store = store
@@ -338,18 +339,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
-		switch job.SchemaState {
-		case model.StateDeleteReorganization:
-			checkCancelState(hookCtx.Txn(), job, test)
-		case model.StateDeleteOnly:
-			checkCancelState(hookCtx.Txn(), job, test)
-		case model.StateWriteOnly:
-			checkCancelState(hookCtx.Txn(), job, test)
-		case model.StateWriteReorganization:
-			checkCancelState(hookCtx.Txn(), job, test)
-		case model.StatePublic:
-			checkCancelState(hookCtx.Txn(), job, test)
-		}
+		checkCancelState(hookCtx.Txn(), job, test)
 		err = hookCtx.Txn().Commit()
 		if err != nil {
 			checkErr = errors.Trace(err)
@@ -358,42 +348,44 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	d.SetHook(tc)
 
 	// for adding index
-	test = &tests[1]
+	test = &tests[0]
 	validArgs := []interface{}{false, model.NewCIStr("idx"),
 		[]*ast.IndexColName{{
 			Column: &ast.ColumnName{Name: model.NewCIStr("c1")},
 			Length: -1,
 		}}, nil}
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, ctx, d)
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &test.cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	test = &tests[1]
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &test.cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	test = &tests[2]
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, ctx, d)
+	// When the job satisfies this test case, the option will be rollback, so the job's schema state is none.
+	cancelState := model.StateNone
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	test = &tests[3]
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, ctx, d)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	test = &tests[4]
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(ctx.Txn().Commit(), IsNil)
 
 	// for dropping index
 	idxName := []interface{}{model.NewCIStr("idx")}
+	test = &tests[4]
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, &test.cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	test = &tests[5]
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, ctx, d)
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, &test.cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	test = &tests[6]
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, ctx, d)
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, &test.cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	test = &tests[7]
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, ctx, d)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	test = &tests[8]
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, "idx")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 
 	// for creating table
-	test = &tests[9]
+	test = &tests[8]
 	tblInfo = testTableInfo(c, d, "t1", 3)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 }
