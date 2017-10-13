@@ -277,7 +277,6 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 				return nil
 			}
 			packet.Attrs = attrs
-			offset += int(num)
 		}
 	}
 
@@ -623,7 +622,7 @@ func (cc *mysqlClientConn) writeEOF(more bool) error {
 		if more {
 			status |= mysql.ServerMoreResultsExists
 		}
-		data = append(data, dumpUint16(cc.ctx.Status())...)
+		data = append(data, dumpUint16(status)...)
 	}
 
 	err := cc.writePacket(data)

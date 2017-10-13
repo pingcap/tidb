@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/cache"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -315,6 +316,13 @@ func setGlobalVars() {
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+
+	cache.PlanCacheEnabled = cfg.PlanCache.Enabled
+	if cache.PlanCacheEnabled {
+		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
+		cache.PlanCacheShards = cfg.PlanCache.Shards
+		cache.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	}
 }
 
 func setupLog() {
