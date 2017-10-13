@@ -294,8 +294,8 @@ func DetachCondsForTableRange(ctx context.Context, conds []expression.Expression
 		colName: col.ColName,
 		length:  types.UnspecifiedLength,
 	}
-	for _, cond := range conds {
-		cond = expression.PushDownNot(cond, false, ctx)
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(cond, false, ctx)
 	}
 	return detachColumnCNFConditions(conds, checker)
 }
