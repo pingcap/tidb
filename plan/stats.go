@@ -40,9 +40,10 @@ func (s *statsProfile) collapse(factor float64) *statsProfile {
 
 func (p *basePhysicalPlan) statsProfile() *statsProfile {
 	profile := p.basePlan.profile
-	if p.expectedCnt > 0 && p.expectedCnt < profile.count {
-		factor := p.expectedCnt / profile.count
-		profile.count = p.expectedCnt
+	expectedCnt := p.basePlan.expectedCnt
+	if expectedCnt > 0 && expectedCnt < profile.count {
+		factor := expectedCnt / profile.count
+		profile.count = expectedCnt
 		for i := range profile.cardinality {
 			profile.cardinality[i] = profile.cardinality[i] * factor
 		}
