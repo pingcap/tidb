@@ -525,7 +525,7 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(isTrueSig, NotNil)
 
-		isTrue, err := isTrueSig.eval(nil)
+		isTrue, err := newMockBuiltinFunc(isTrueSig).eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(isTrue, testutil.DatumEquals, types.NewDatum(tc.isTrue))
 	}
@@ -535,7 +535,7 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(isFalseSig, NotNil)
 
-		isFalse, err := isFalseSig.eval(nil)
+		isFalse, err := newMockBuiltinFunc(isFalseSig).eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(isFalse, testutil.DatumEquals, types.NewDatum(tc.isFalse))
 	}

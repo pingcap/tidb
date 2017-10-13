@@ -198,7 +198,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	}
 
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
@@ -376,7 +376,7 @@ func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expressi
 	case types.ETDatetime:
 		sig = &builtinGreatestTimeSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinGreatestIntSig struct {
@@ -544,7 +544,7 @@ func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression)
 	case types.ETDatetime:
 		sig = &builtinLeastTimeSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLeastIntSig struct {
@@ -719,7 +719,7 @@ func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expressi
 	} else {
 		sig = &builtinIntervalRealSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIntervalIntSig struct {
@@ -993,7 +993,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 			return nil, errors.Trace(err)
 		}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 // genCmpSigs generates compare function signatures.
