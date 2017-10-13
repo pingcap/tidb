@@ -415,8 +415,20 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
-func (b *planBuilder) buildProjectionFieldNameFromColumns(c *expression.Column) (model.CIStr, model.CIStr, model.CIStr, model.CIStr) {
-	return c.ColName, c.TblName, c.OrigTblName, c.DBName
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, tblName, origTblName, dbName model.CIStr) {
+	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
+		colName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
+	}
+	if field.AsName.L != "" {
+		colName = field.AsName
+	}
+	if tblName.L == "" {
+		tblName = c.TblName
+	}
+	if dbName.L == "" {
+		dbName = c.DBName
+	}
+	return colName, tblName, c.OrigTblName, c.DBName
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
@@ -465,10 +477,7 @@ func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 	var origTblName, tblName, colName, dbName model.CIStr
 	if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
 		// Field is a column reference.
-		colName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(c)
-		if field.AsName.L != "" {
-			colName = field.AsName
-		}
+		colName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, c)
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
