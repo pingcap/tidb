@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	log "github.com/Sirupsen/logrus"
@@ -273,10 +272,8 @@ func (a *ExecStmt) logSlowQuery() {
 	if len(sql) > cfg.Log.QueryLogMaxLen {
 		// So the truncate won't make the last character an illegal utf8.
 		length := cfg.Log.QueryLogMaxLen
-		for ; length > 0; length-- {
-			if utf8.RuneStart(sql[length]) || sql[length] <= unicode.MaxASCII {
-				break
-			}
+		for !utf8.RuneStart(sql[length]) {
+			length--
 		}
 		sql = sql[:length]
 	}
