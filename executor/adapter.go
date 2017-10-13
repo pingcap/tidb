@@ -16,8 +16,9 @@ package executor
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
@@ -268,15 +269,22 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 func (a *ExecStmt) logSlowQuery() {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
-	sql := []rune(a.Text)
+	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
-		sql = append(sql[:cfg.Log.QueryLogMaxLen], []rune(fmt.Sprintf("(len:%d)", len(sql)))...)
+		// So the truncate won't make the last character an illegal utf8.
+		length := cfg.Log.QueryLogMaxLen
+		for ; length > 0; length-- {
+			if utf8.RuneStart(sql[length]) || sql[length] <= unicode.MaxASCII {
+				break
+			}
+		}
+		sql = sql[:length]
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
 	logEntry := log.WithFields(log.Fields{
 		"connectionId": connID,
 		"costTime":     costTime,
-		"sql":          strconv.Quote(string(sql)),
+		"sql":          fmt.Sprintf("%.*q(len:%d)", len(sql), sql, len(a.Text)),
 	})
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
 		logEntry.WithField("type", "query").Debugf("query")
