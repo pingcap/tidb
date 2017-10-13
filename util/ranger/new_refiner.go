@@ -16,6 +16,7 @@ package ranger
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -135,10 +136,11 @@ func getEQColOffset(expr expression.Expression, cols []*expression.Column) int {
 func detachColumnCNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
 	var accessConditions, filterConditions []expression.Expression
 	for _, cond := range conditions {
-		cond = expression.PushDownNot(cond, false, nil)
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfExprs := expression.ExtractDNFConditions(sf)
 			extractedDNFExprs, hasOthers := detachColumnDNFConditions(dnfExprs, checker)
+			// If this CNF has expression that cannot be resolved as access condition, then the total DNF expression
+			// should be also appended into filter condition.
 			if hasOthers {
 				filterConditions = append(filterConditions, cond)
 			}
@@ -147,6 +149,7 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 			}
 			rebuildDNF := expression.ComposeDNFCondition(nil, extractedDNFExprs...)
 			accessConditions = append(accessConditions, rebuildDNF)
+			continue
 		}
 		if !checker.check(cond) {
 			filterConditions = append(filterConditions, cond)
@@ -167,7 +170,6 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 		accessConditions   []expression.Expression
 	)
 	for _, cond := range conditions {
-		cond = expression.PushDownNot(cond, false, nil)
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfExprs := expression.ExtractCNFConditions(sf)
 			usedCNFExprs, others := detachColumnCNFConditions(cnfExprs, checker)
@@ -287,10 +289,13 @@ func DetachCondsForSelectivity(conds []expression.Expression, rangeType int, col
 
 // DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for
 // calculating the table range.
-func DetachCondsForTableRange(conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
+func DetachCondsForTableRange(ctx context.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
 		colName: col.ColName,
 		length:  types.UnspecifiedLength,
+	}
+	for _, cond := range conds {
+		cond = expression.PushDownNot(cond, false, ctx)
 	}
 	return detachColumnCNFConditions(conds, checker)
 }

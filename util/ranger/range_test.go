@@ -211,7 +211,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 		c.Assert(col, NotNil)
-		conds, _ = ranger.DetachCondsForTableRange(conds, col)
+		conds, _ = ranger.DetachCondsForTableRange(ctx, conds, col)
 		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
