@@ -63,9 +63,8 @@ func (c *databaseFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
-	bf.foldable = false
 	sig := &builtinDatabaseSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinDatabaseSig struct {
@@ -89,9 +88,8 @@ func (c *foundRowsFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
-	bf.foldable = false
 	sig := &builtinFoundRowsSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinFoundRowsSig struct {
@@ -119,9 +117,8 @@ func (c *currentUserFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
-	bf.foldable = false
 	sig := &builtinCurrentUserSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCurrentUserSig struct {
@@ -149,10 +146,9 @@ func (c *userFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
-	bf.foldable = false
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUserSig struct {
@@ -179,10 +175,9 @@ func (c *connectionIDFunctionClass) getFunction(ctx context.Context, args []Expr
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
-	bf.foldable = false
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinConnectionIDSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinConnectionIDSig struct {
@@ -212,14 +207,13 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expr
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argsTp...)
 	bf.tp.Flag |= mysql.UnsignedFlag
-	bf.foldable = false
 
 	if len(args) == 1 {
 		sig = &builtinLastInsertIDWithIDSig{bf}
 	} else {
 		sig = &builtinLastInsertIDSig{bf}
 	}
-	return sig.setSelf(sig), errors.Trace(err)
+	return sig, errors.Trace(err)
 }
 
 type builtinLastInsertIDSig struct {
@@ -260,9 +254,8 @@ func (c *versionFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
-	bf.foldable = false
 	sig := &builtinVersionSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinVersionSig struct {
@@ -286,7 +279,7 @@ func (c *tidbVersionFunctionClass) getFunction(ctx context.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinTiDBVersionSig struct {

@@ -85,9 +85,8 @@ func (c *sleepFunctionClass) getFunction(ctx context.Context, args []Expression)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal)
 	bf.tp.Flen = 21
-	bf.foldable = false
 	sig := &builtinSleepSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSleepSig struct {
@@ -140,7 +139,7 @@ func (c *lockFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETInt)
 	sig := &builtinLockSig{bf}
 	bf.tp.Flen = 1
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLockSig struct {
@@ -166,7 +165,7 @@ func (c *releaseLockFunctionClass) getFunction(ctx context.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	sig := &builtinReleaseLockSig{bf}
 	bf.tp.Flen = 1
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinReleaseLockSig struct {
@@ -214,7 +213,7 @@ func (c *anyValueFunctionClass) getFunction(ctx context.Context, args []Expressi
 	default:
 		panic("unexpected types.EvalType of builtin function ANY_VALUE")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinDecimalAnyValueSig struct {
@@ -307,7 +306,7 @@ func (c *inetAtonFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf.tp.Flen = 21
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinInetAtonSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinInetAtonSig struct {
@@ -374,7 +373,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf.tp.Flen = 93
 	bf.tp.Decimal = 0
 	sig := &builtinInetNtoaSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinInetNtoaSig struct {
@@ -417,7 +416,7 @@ func (c *inet6AtonFunctionClass) getFunction(ctx context.Context, args []Express
 	types.SetBinChsClnFlag(bf.tp)
 	bf.tp.Decimal = 0
 	sig := &builtinInet6AtonSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinInet6AtonSig struct {
@@ -479,7 +478,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx context.Context, args []Express
 	bf.tp.Flen = 117
 	bf.tp.Decimal = 0
 	sig := &builtinInet6NtoaSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinInet6NtoaSig struct {
@@ -524,7 +523,7 @@ func (c *isIPv4FunctionClass) getFunction(ctx context.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIsIPv4Sig struct {
@@ -536,7 +535,7 @@ type builtinIsIPv4Sig struct {
 func (b *builtinIsIPv4Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 	if isIPv4(val) {
 		return 1, false, nil
@@ -582,7 +581,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx context.Context, args []Expr
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4CompatSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIsIPv4CompatSig struct {
@@ -594,7 +593,7 @@ type builtinIsIPv4CompatSig struct {
 func (b *builtinIsIPv4CompatSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 
 	ipAddress := []byte(val)
@@ -621,7 +620,7 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx context.Context, args []Expr
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4MappedSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIsIPv4MappedSig struct {
@@ -633,7 +632,7 @@ type builtinIsIPv4MappedSig struct {
 func (b *builtinIsIPv4MappedSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return int64(0), false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 
 	ipAddress := []byte(val)
@@ -660,7 +659,7 @@ func (c *isIPv6FunctionClass) getFunction(ctx context.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv6Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIsIPv6Sig struct {
@@ -672,7 +671,7 @@ type builtinIsIPv6Sig struct {
 func (b *builtinIsIPv6Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return 0, false, errors.Trace(err)
+		return 0, err != nil, errors.Trace(err)
 	}
 	ip := net.ParseIP(val)
 	if ip != nil && !isIPv4(val) {
@@ -723,9 +722,8 @@ func (c *uuidFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 36
-	bf.foldable = false
 	sig := &builtinUUIDSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUUIDSig struct {

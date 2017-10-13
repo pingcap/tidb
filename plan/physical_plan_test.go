@@ -674,6 +674,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate|flagEliminateProjection, p.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
 		info.p = eliminatePhysicalProjection(info.p)
 		c.Assert(ToString(info.p), Equals, tt.ans, Commentf("for %s", tt.sql))
 		if i == len(tests)-2 {
@@ -838,6 +839,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		lp, err = (&projectionEliminater{}).optimize(lp, nil, nil)
 		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
 		pp := info.p
 		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))

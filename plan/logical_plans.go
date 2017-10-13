@@ -401,13 +401,15 @@ type Delete struct {
 	IsMultiTable bool
 }
 
-// AddChild for parent.
-func addChild(parent Plan, child Plan) {
-	if child == nil || parent == nil {
+// setParentAndChildren sets parent and children relationship.
+func setParentAndChildren(parent Plan, children ...Plan) {
+	if children == nil || parent == nil {
 		return
 	}
-	child.AddParent(parent)
-	parent.AddChild(child)
+	for _, child := range children {
+		child.SetParents(parent)
+	}
+	parent.SetChildren(children...)
 }
 
 // InsertPlan means inserting plan between two plans.

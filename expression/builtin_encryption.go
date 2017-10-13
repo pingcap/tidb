@@ -84,7 +84,7 @@ func (c *aesDecryptFunctionClass) getFunction(ctx context.Context, args []Expres
 	bf.tp.Flen = args[0].GetType().Flen // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesDecryptSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinAesDecryptSig struct {
@@ -126,7 +126,7 @@ func (c *aesEncryptFunctionClass) getFunction(ctx context.Context, args []Expres
 	bf.tp.Flen = aes128ecbBlobkSize * (args[0].GetType().Flen/aes128ecbBlobkSize + 1) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesEncryptSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinAesEncryptSig struct {
@@ -215,7 +215,7 @@ func (c *passwordFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.PWDHashLen + 1
 	sig := &builtinPasswordSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinPasswordSig struct {
@@ -228,7 +228,7 @@ func (b *builtinPasswordSig) evalString(row []types.Datum) (d string, isNull boo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	pass, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
-		return "", false, errors.Trace(err)
+		return "", err != nil, errors.Trace(err)
 	}
 
 	if len(pass) == 0 {
@@ -250,7 +250,7 @@ func (c *randomBytesFunctionClass) getFunction(ctx context.Context, args []Expre
 	bf.tp.Flen = 1024 // Max allowed random bytes
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinRandomBytesSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRandomBytesSig struct {
@@ -269,7 +269,7 @@ func (b *builtinRandomBytesSig) evalString(row []types.Datum) (string, bool, err
 	}
 	buf := make([]byte, len)
 	if n, err := rand.Read(buf); err != nil {
-		return "", false, errors.Trace(err)
+		return "", true, errors.Trace(err)
 	} else if int64(n) != len {
 		return "", false, errors.New("fail to generate random bytes")
 	}
@@ -287,7 +287,7 @@ func (c *md5FunctionClass) getFunction(ctx context.Context, args []Expression) (
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 32
 	sig := &builtinMD5Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinMD5Sig struct {
@@ -317,7 +317,7 @@ func (c *sha1FunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 40
 	sig := &builtinSHA1Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSHA1Sig struct {
@@ -351,7 +351,7 @@ func (c *sha2FunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
 	bf.tp.Flen = 128 // sha512
 	sig := &builtinSHA2Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSHA2Sig struct {
@@ -445,7 +445,7 @@ func (c *compressFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf.tp.Flen = compressBound
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinCompressSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCompressSig struct {
@@ -501,7 +501,7 @@ func (c *uncompressFunctionClass) getFunction(ctx context.Context, args []Expres
 	bf.tp.Flen = mysql.MaxBlobWidth
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinUncompressSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUncompressSig struct {
@@ -543,7 +543,7 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx context.Context, args 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 10
 	sig := &builtinUncompressedLengthSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUncompressedLengthSig struct {

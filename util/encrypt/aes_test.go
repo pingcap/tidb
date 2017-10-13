@@ -119,7 +119,7 @@ func (s *testEncryptSuite) TestUnpad(c *C) {
 	// Invalid padding: padding content invalid
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x04, 0x03, 0x04}
 	//                                             ^^^^
-	p, err = PKCS7Unpad(p, 8)
+	_, err = PKCS7Unpad(p, 8)
 	c.Assert(err, NotNil)
 }
 
