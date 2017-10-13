@@ -181,6 +181,10 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 			accessConditions = append(accessConditions, rebuildCNF)
 		} else if checker.check(cond) {
 			accessConditions = append(accessConditions, cond)
+			if checker.shouldReserve {
+				hasOtherConditions = true
+				checker.shouldReserve = false
+			}
 		} else {
 			return nil, true
 		}

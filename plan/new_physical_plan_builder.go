@@ -732,7 +732,6 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.filterCondition = conds
 		}
 	}
-	p.context()
 	is.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 
 	cop := &copTask{
