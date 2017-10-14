@@ -121,7 +121,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Express
 	if IsHybridType(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -149,7 +149,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Express
 	default:
 		panic("unsupported types.EvalType in castAsIntFunctionClass")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type castAsRealFunctionClass struct {
@@ -167,7 +167,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expres
 	if IsHybridType(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -195,7 +195,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expres
 	default:
 		panic("unsupported types.EvalType in castAsRealFunctionClass")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type castAsDecimalFunctionClass struct {
@@ -213,7 +213,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Exp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -241,7 +241,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Exp
 	default:
 		panic("unsupported types.EvalType in castAsDecimalFunctionClass")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type castAsStringFunctionClass struct {
@@ -259,7 +259,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expr
 	if IsHybridType(args[0]) {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -287,7 +287,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expr
 	default:
 		panic("unsupported types.EvalType in castAsStringFunctionClass")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type castAsTimeFunctionClass struct {
@@ -305,7 +305,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expres
 	if IsHybridType(args[0]) {
 		sig = &builtinCastTimeAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsTime)
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -333,7 +333,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expres
 	default:
 		panic("unsupported types.EvalType in castAsTimeFunctionClass")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type castAsDurationFunctionClass struct {
@@ -351,7 +351,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Ex
 	if IsHybridType(args[0]) {
 		sig = &builtinCastDurationAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDuration)
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -379,7 +379,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Ex
 	default:
 		panic("unsupported types.EvalType in castAsDurationFunctionClass")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type castAsJSONFunctionClass struct {
@@ -397,7 +397,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 	if IsHybridType(args[0]) {
 		sig = &builtinCastJSONAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -425,7 +425,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 	default:
 		panic("unsupported types.EvalType in castAsJSONFunctionClass")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCastIntAsIntSig struct {

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan/cache"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -649,57 +650,102 @@ func (s *session) SetProcessInfo(sql string) {
 	s.processInfo.Store(pi)
 }
 
-func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	s.PrepareTxnCtx()
-	startTS := time.Now()
+func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
+	s.SetValue(context.QueryString, stmt.OriginText())
 
-	charset, collation := s.sessionVars.GetCharsetInfo()
-	connID := s.sessionVars.ConnectionID
-	rawStmts, err := s.ParseSQL(sql, charset, collation)
+	startTS := time.Now()
+	recordSet, err := runStmt(s, stmt)
 	if err != nil {
-		log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
+		if !kv.ErrKeyExists.Equal(err) {
+			log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+		}
 		return nil, errors.Trace(err)
 	}
-	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+	sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
 
-	var rs []ast.RecordSet
-	for _, rst := range rawStmts {
-		s.PrepareTxnCtx()
-		startTS := time.Now()
-		// Some executions are done in compile stage, so we reset them before compile.
-		executor.ResetStmtCtx(s, rst)
-		st, err1 := Compile(s, rst)
-		if err1 != nil {
-			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
-			err2 := s.RollbackTxn()
-			terror.Log(errors.Trace(err2))
-			return nil, errors.Trace(err1)
+	if recordSet != nil {
+		recordSets = append(recordSets, recordSet)
+	}
+	logCrucialStmt(stmtNode, s.sessionVars.User)
+	return recordSets, nil
+}
+
+func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
+	s.PrepareTxnCtx()
+	var (
+		cacheKey      cache.Key
+		cacheValue    cache.Value
+		useCachedPlan = false
+		connID        = s.sessionVars.ConnectionID
+	)
+
+	if cache.PlanCacheEnabled {
+		schemaVersion := sessionctx.GetDomain(s).InfoSchema().SchemaMetaVersion()
+		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
+
+		cacheKey = cache.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
+		cacheValue, useCachedPlan = cache.GlobalPlanCache.Get(cacheKey)
+	}
+
+	if useCachedPlan {
+		stmtNode := cacheValue.(*cache.SQLCacheValue).StmtNode
+		stmt := &executor.ExecStmt{
+			InfoSchema: executor.GetInfoSchema(s),
+			Plan:       cacheValue.(*cache.SQLCacheValue).Plan,
+			Expensive:  cacheValue.(*cache.SQLCacheValue).Expensive,
+			Text:       stmtNode.Text(),
 		}
-		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
-		s.SetValue(context.QueryString, st.OriginText())
-
-		startTS = time.Now()
-		r, err := runStmt(s, st)
-		if err != nil {
-			if !kv.ErrKeyExists.Equal(err) {
-				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
-			}
+		s.PrepareTxnCtx()
+		executor.ResetStmtCtx(s, stmtNode)
+		if recordSets, err = s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)
 		}
-		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
-		if r != nil {
-			rs = append(rs, r)
+	} else {
+		charset, collation := s.sessionVars.GetCharsetInfo()
+
+		// Step1: Compile query string to abstract syntax trees(ASTs).
+		startTS := time.Now()
+		stmtNodes, err := s.ParseSQL(sql, charset, collation)
+		if err != nil {
+			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
+			return nil, errors.Trace(err)
 		}
+		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
-		logCrucialStmt(rst, s.sessionVars.User)
+		compiler := executor.Compiler{}
+		for _, stmtNode := range stmtNodes {
+			s.PrepareTxnCtx()
+
+			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
+			startTS = time.Now()
+			// Some executions are done in compile stage, so we reset them before compile.
+			executor.ResetStmtCtx(s, stmtNode)
+			stmt, err := compiler.Compile(s, stmtNode)
+			if err != nil {
+				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
+				terror.Log(errors.Trace(s.RollbackTxn()))
+				return nil, errors.Trace(err)
+			}
+			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
+
+			// Step3: Cache the physical plan if possible.
+			if cache.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 {
+				cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
+			}
+
+			// Step4: Execute the physical plan.
+			if recordSets, err = s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 	}
 
-	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
+	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
 		// return the first recordset if client doesn't support ClientMultiResults.
-		rs = rs[:1]
+		recordSets = recordSets[:1]
 	}
-	return rs, nil
+	return recordSets, nil
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol

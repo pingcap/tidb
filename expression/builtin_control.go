@@ -200,7 +200,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 		sig = &builtinCaseWhenDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDuration)
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCaseWhenIntSig struct {
@@ -425,7 +425,7 @@ func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIfIntSig struct {
@@ -605,7 +605,7 @@ func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression
 		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinIfNullIntSig struct {

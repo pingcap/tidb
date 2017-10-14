@@ -96,7 +96,7 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 		RecordSet:     s.rs,
 		ColLen:        2,
 		PkID:          -1,
-		MaxSampleSize: 10000,
+		MaxSampleSize: 1000,
 		MaxBucketSize: 256,
 		MaxSketchSize: 1000,
 	}
@@ -105,9 +105,10 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)
 	c.Assert(len(collectors), Equals, 2)
+	collectors[0].IsMerger = true
 	collectors[0].MergeSampleCollector(collectors[1])
 	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(9280))
-	c.Assert(len(collectors[0].Samples), Equals, 10000)
+	c.Assert(len(collectors[0].Samples), Equals, 1000)
 	c.Assert(collectors[0].NullCount, Equals, int64(1000))
 	c.Assert(collectors[0].Count, Equals, int64(19000))
 }
