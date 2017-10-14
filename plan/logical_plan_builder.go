@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/_vendor/src/github.com/Sirupsen/logrus"
 )
 
 const (
@@ -1091,6 +1092,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	} else {
 		p = b.buildTableDual()
 	}
+	logrus.Warnf("The plan build Type is %T" , p)
 	if b.err != nil {
 		return nil
 	}

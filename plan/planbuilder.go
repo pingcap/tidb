@@ -933,6 +933,12 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 				table:     v.ReferTable.Name.L,
 			})
 		}
+	case *ast.CreateViewStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.CreatePriv,
+			db:        v.View.Schema.L,
+			table:     v.View.Name.L,
+		})
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.DropPriv,

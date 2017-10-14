@@ -436,6 +436,44 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type CreateViewStmt struct {
+	ddlNode
+
+	OrReplace	bool
+	View        *TableName
+	Fields      *FieldList
+	Select 		ResultSetNode
+	SelectText	string
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateViewStmt)
+	node, ok := n.View.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.View = node.(*TableName)
+	if n.Fields != nil {
+		node, ok = n.Fields.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Fields = node.(*FieldList)
+	}
+	selnode, ok := n.Select.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Select = selnode.(*SelectStmt)
+	n.SelectText = selnode.Text()
+	return v.Leave(n)
+}
+
 // DropTableStmt is a statement to drop one or more tables.
 // See https://dev.mysql.com/doc/refman/5.7/en/drop-table.html
 type DropTableStmt struct {

@@ -56,6 +56,8 @@ func (e *DDLExec) Next() (Row, error) {
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
+	case *ast.CreateViewStmt:
+		err = e.executeCreateView(x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -145,6 +147,21 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	}
 	if infoschema.ErrTableExists.Equal(err) {
 		if s.IfNotExists {
+			return nil
+		}
+		return err
+	}
+	return errors.Trace(err)
+}
+
+func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
+	ident := ast.Ident{Schema: s.View.Schema, Name: s.View.Name}
+	var err error
+
+	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.SelectText)
+	if infoschema.ErrTableExists.Equal(err) {
+		if s.OrReplace {
+			//TODO alter view
 			return nil
 		}
 		return err

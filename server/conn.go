@@ -733,6 +733,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
+	log.Warnf("After sql execute ,the ResultSet is %v" ,rs)
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(rs[0], false, false)

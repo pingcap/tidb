@@ -64,6 +64,7 @@ func GetInfoSchema(ctx context.Context) infoschema.InfoSchema {
 		log.Infof("[%d] use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
+		log.Warnf("The InfoSchema Type is %T" , is)
 	}
 	return is
 }

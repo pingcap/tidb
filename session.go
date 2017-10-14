@@ -662,6 +662,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 	var rs []ast.RecordSet
 	for _, rst := range rawStmts {
+		log.Warnf("The rst Type is %T" , rst)
 		s.PrepareTxnCtx()
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.

@@ -447,6 +447,7 @@ import (
 	BinlogStmt			"Binlog base64 statement"
 	CommitStmt			"COMMIT statement"
 	CreateTableStmt			"CREATE TABLE statement"
+	CreateViewStmt          "CREATE VIEW  stetement"
 	CreateUserStmt			"CREATE User statement"
 	CreateDatabaseStmt		"Create Database Statement"
 	CreateIndexStmt			"CREATE INDEX statement"
@@ -576,6 +577,7 @@ import (
 	OptFull				"Full or empty"
 	Order				"ORDER BY clause optional collation specification"
 	OrderBy				"ORDER BY clause"
+	OrReplace           "OR REPLACE"
 	ByItem				"BY item"
 	OrderByOptional			"Optional ORDER BY clause optional"
 	ByList				"BY list"
@@ -653,6 +655,8 @@ import (
 	ValuesOpt		"values optional"
 	VariableAssignment	"set variable value"
 	VariableAssignmentList	"set variable value list"
+	ViewName        "View Name"
+	ViewFieldList   "Create View statement field list"
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optional WHERE clause"
 	WhenClause		"When clause"
@@ -1634,6 +1638,44 @@ PartDefStorageOpt:
 |	"ENGINE" eq Identifier
 	{}
 
+/*******************************************************************
+ *
+ *  Create View Statement
+ *
+ *  Example:
+ *      CREATE VIEW viewname as select col1,col2 from table
+ *******************************************************************/
+CreateViewStmt:
+    "CREATE" OrReplace "VIEW" ViewName ViewFieldList "AS" SelectStmt
+    {
+         x := &ast.CreateViewStmt {
+            OrReplace:     $2.(bool),
+            View :         $4.(*ast.TableName),
+            Select:        $7.(*ast.SelectStmt),
+            SelectText:    $7.Text(),
+        }
+        if $5 != nil{
+            x.Fields = $5.(*ast.FieldList)
+        }
+        $$ = x
+    }
+
+ViewName:
+    TableName
+    {
+        $$ = $1.(*ast.TableName)
+    }
+
+ViewFieldList:
+    /* Empty */
+    {
+        $$ = nil
+    }
+|   '(' FieldList ')'
+    {
+        $$ = $2.(*ast.FieldList)
+    }
+
 /******************************************************************
  * Do statement
  * See https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -2264,6 +2306,15 @@ IndexTypeOpt:
 |	IndexType
 	{
 		$$ = $1
+	}
+
+OrReplace:
+	{
+		$$ = false
+	}
+|	"OR" "REPLACE"
+	{
+		$$ = true
 	}
 
 /**********************************Identifier********************************************/
@@ -4794,6 +4845,7 @@ Statement:
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
+|   CreateViewStmt
 |	CreateUserStmt
 |	DoStmt
 |	DropDatabaseStmt
