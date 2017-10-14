@@ -1190,7 +1190,7 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 			}
 		}
 		colMap := make(map[*expression.Column]bool, len(schema.Columns))
-		b.allColFromExprNode(p, field, colMap)
+		allColFromExprNode(p, field, colMap)
 		for col := range colMap {
 			if _, ok := gbyCols[col]; ok {
 				continue
@@ -1219,63 +1219,41 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 		}
 		tblMap[tblInfo] = true
 	}
-
 }
 
-func (b *planBuilder) allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*expression.Column]bool) {
-	switch v := n.(type) {
-	case *ast.BinaryOperationExpr:
-		b.allColFromExprNode(p, v.L, cols)
-		b.allColFromExprNode(p, v.R, cols)
-	case *ast.BetweenExpr:
-		b.allColFromExprNode(p, v.Expr, cols)
-		b.allColFromExprNode(p, v.Left, cols)
-		b.allColFromExprNode(p, v.Right, cols)
-	case *ast.CaseExpr:
-		b.allColFromExprNode(p, v.Value, cols)
-		b.allColFromExprNode(p, v.ElseClause, cols)
-		for _, whenClause := range v.WhenClauses {
-			b.allColFromExprNode(p, whenClause.Expr, cols)
-			b.allColFromExprNode(p, whenClause.Result, cols)
-		}
-	case *ast.CompareSubqueryExpr:
-		b.allColFromExprNode(p, v.L, cols)
-	case *ast.IsNullExpr:
-		b.allColFromExprNode(p, v.Expr, cols)
-	case *ast.IsTruthExpr:
-		b.allColFromExprNode(p, v.Expr, cols)
-	case *ast.ParenthesesExpr:
-		b.allColFromExprNode(p, v.Expr, cols)
-	case *ast.PatternInExpr:
-		b.allColFromExprNode(p, v.Expr, cols)
-		for _, listNode := range v.List {
-			b.allColFromExprNode(p, listNode, cols)
-		}
-	case *ast.PatternLikeExpr:
-		b.allColFromExprNode(p, v.Expr, cols)
-	case *ast.PatternRegexpExpr:
-		b.allColFromExprNode(p, v.Expr, cols)
-	case *ast.UnaryOperationExpr:
-		b.allColFromExprNode(p, v.V, cols)
-	case *ast.SelectField:
-		b.allColFromExprNode(p, v.Expr, cols)
-	case *ast.ColumnNameExpr:
-		col, err := p.Schema().FindColumn(v.Name)
-		if err == nil {
-			cols[col] = true
-			return
-		}
-		col, err = p.Schema().FindColumn(&ast.ColumnName{
-			Schema: v.Refer.DBName,
-			Table:  v.Refer.TableName.Name,
-			Name:   v.Refer.Column.Name,
-		})
-		if err == nil {
-			cols[col] = true
-		}
-	case *ast.ByItem:
-		b.allColFromExprNode(p, v.Expr, cols)
+type colResolver struct {
+	p    LogicalPlan
+	cols map[*expression.Column]bool
+}
+
+func (c *colResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch inNode.(type) {
+	case *ast.BinaryOperationExpr, *ast.BetweenExpr, *ast.CaseExpr, *ast.CompareSubqueryExpr,
+		*ast.IsNullExpr, *ast.IsTruthExpr, *ast.ParenthesesExpr, *ast.PatternInExpr, *ast.PatternLikeExpr,
+		*ast.PatternRegexpExpr, *ast.UnaryOperationExpr, *ast.SelectField, *ast.WhenClause, *ast.ByItem:
+		return inNode, false
 	}
+	return inNode, true
+}
+
+func (c *colResolver) Leave(inNode ast.Node) (ast.Node, bool) {
+	switch v := inNode.(type) {
+	case *ast.ColumnNameExpr:
+		col, err := c.p.Schema().FindColumn(v.Name)
+		if err == nil && col != nil {
+			c.cols[col] = true
+		}
+	}
+	return inNode, true
+}
+
+func allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*expression.Column]bool) {
+	extractor := &colResolver{
+		p:    p,
+		cols: cols,
+	}
+	n.Accept(extractor)
+	return
 }
 
 func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression) {
