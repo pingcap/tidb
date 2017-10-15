@@ -1030,7 +1030,7 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 }
 
 func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
-	p.expectedCnt = prop.expectedCnt
+	p.basePlan.expectedCnt = prop.expectedCnt
 	// By default, physicalPlan can always match the orders.
 	props := make([]*requiredProp, 0, len(p.basePlan.children))
 	for range p.basePlan.children {

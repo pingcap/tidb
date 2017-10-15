@@ -349,49 +349,49 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 	fc := funcs[ast.Repeat]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
+	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "aa")
 
 	args = []interface{}{"a", uint64(2)}
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
+	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "aa")
 
 	args = []interface{}{"a", uint64(16777217)}
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
+	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 
 	args = []interface{}{"a", uint64(16777216)}
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
+	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsFalse)
 
 	args = []interface{}{"a", int64(-1)}
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
+	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "")
 
 	args = []interface{}{"a", int64(0)}
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
+	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "")
 
 	args = []interface{}{"a", uint64(0)}
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
+	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "")
 }
@@ -467,7 +467,7 @@ func (s *testEvaluatorSuite) TestReverse(c *C) {
 	fc := funcs[ast.Reverse]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 
@@ -487,7 +487,7 @@ func (s *testEvaluatorSuite) TestReverse(c *C) {
 		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		d, err = f.eval(nil)
+		d, err = evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 	}
@@ -640,7 +640,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
 		c.Assert(r.GetString(), Equals, v.result)
@@ -659,7 +659,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		_, err = f.eval(nil)
+		_, err = evalBuiltinFunc(f, nil)
 		c.Assert(err, NotNil)
 	}
 }
@@ -800,7 +800,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 	for i, t := range Dtbl {
 		f, err := instr.getFunction(s.ctx, s.datumsToConstants(t["Args"]))
 		c.Assert(err, IsNil)
-		got, err := f.eval(nil)
+		got, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
@@ -823,7 +823,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		types.SetBinChsClnFlag(exprs[1].GetType())
 		f, err := instr.getFunction(s.ctx, exprs)
 		c.Assert(err, IsNil)
-		got, err := f.eval(nil)
+		got, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
@@ -1091,7 +1091,7 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 			f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)))
 			c.Assert(err, IsNil)
 			c.Assert(f, NotNil)
-			r, err := f.eval(nil)
+			r, err := evalBuiltinFunc(f, nil)
 			if err != nil {
 				fmt.Printf("%s\n", err.Error())
 			}
@@ -1110,7 +1110,7 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	fc := funcs[ast.CharFunc]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.iNum, nil)))
 	c.Assert(err, IsNil)
-	r, err := f.eval(nil)
+	r, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 }
@@ -1131,7 +1131,7 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 		fc := funcs[ast.CharLength]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.input)))
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
@@ -1160,7 +1160,7 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		fc := funcs[ast.FindInSet]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.str, t.strlst)))
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("FindInSet(%s, %s)", t.str, t.strlst))
 	}
@@ -1195,7 +1195,7 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.argLst...)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
@@ -1225,7 +1225,7 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length, padStr}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		result, err := f.eval(nil)
+		result, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
 			c.Assert(result.Kind(), Equals, types.KindNull)
@@ -1260,7 +1260,7 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length, padStr}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		result, err := f.eval(nil)
+		result, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
 			c.Assert(result.Kind(), Equals, types.KindNull)
@@ -1310,7 +1310,7 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 		f, err := instr.getFunction(s.ctx, s.datumsToConstants(t["Args"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		got, err := f.eval(nil)
+		got, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
@@ -1337,7 +1337,7 @@ func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.argList...)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
@@ -1378,7 +1378,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
 		c.Assert(f, NotNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		res, err := r.ToString()
 		c.Assert(err, IsNil)
@@ -1387,7 +1387,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	// tt NULL input for sha
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := f.eval(nil)
+	r, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
@@ -1451,7 +1451,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
 	}
@@ -1461,7 +1461,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
 	}
@@ -1470,7 +1470,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	f2, err := fc2.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	c.Assert(err, IsNil)
 	c.Assert(f2, NotNil)
-	r2, err := f2.eval(nil)
+	r2, err := evalBuiltinFunc(f2, nil)
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not implemented")))
 	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatTests2.ret))
 
@@ -1478,7 +1478,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	f3, err := fc3.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
 	c.Assert(err, IsNil)
 	c.Assert(f3, NotNil)
-	r3, err := f3.eval(nil)
+	r3, err := evalBuiltinFunc(f3, nil)
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not support for the specific locale")))
 	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))
 }
@@ -1516,7 +1516,7 @@ func (s *testEvaluatorSuite) TestFromBase64(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.args)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		result, err := f.eval(nil)
+		result, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
 			c.Assert(result.Kind(), Equals, types.KindNull)
@@ -1557,7 +1557,7 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		result, err := f.eval(nil)
+		result, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
 			c.Assert(result.Kind(), Equals, types.KindNull)
@@ -1628,7 +1628,7 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 		fc := funcs[ast.Elt]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.argLst...)))
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
@@ -1657,7 +1657,7 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.argLst...)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		exportSetRes, err := f.eval(nil)
+		exportSetRes, err := evalBuiltinFunc(f, nil)
 		res, err := exportSetRes.ToString()
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, t.res)
@@ -1691,7 +1691,7 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 		f, err := fc.getFunction(ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
 	}
@@ -1721,7 +1721,7 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		r, err := f.eval(nil)
+		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
@@ -1818,7 +1818,7 @@ func (s *testEvaluatorSuite) TestStringRight(c *C) {
 		str := types.NewDatum(test.str)
 		length := types.NewDatum(test.length)
 		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length}))
-		result, err := f.eval(nil)
+		result, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		if result.IsNull() {
 			c.Assert(test.expect, IsNil)
