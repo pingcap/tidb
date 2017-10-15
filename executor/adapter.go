@@ -48,10 +48,15 @@ type recordSet struct {
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 	if len(a.fields) == 0 {
 		for _, col := range a.executor.Schema().Columns {
+			dbName := col.DBName.O
+			if dbName == "" && col.TblName.L != "" {
+				dbName = a.stmt.ctx.GetSessionVars().CurrentDB
+			}
 			rf := &ast.ResultField{
 				ColumnAsName: col.ColName,
 				TableAsName:  col.TblName,
-				DBName:       col.DBName,
+				DBName:       model.NewCIStr(dbName),
+				Table:        &model.TableInfo{Name: col.OrigTblName},
 				Column: &model.ColumnInfo{
 					FieldType: *col.RetType,
 					Name:      col.ColName,
