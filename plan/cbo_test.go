@@ -35,7 +35,7 @@ var _ = Suite(&testAnalyzeSuite{})
 type testAnalyzeSuite struct {
 }
 
-// this function tests the plan with stats that only have count info
+// CBOWithoutAnalyze tests the plan with stats that only have count info.
 func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrapWithStatsLease(10 * time.Millisecond)
@@ -57,7 +57,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 		"TableReader_10 HashLeftJoin_7  root data:TableScan_9 6",
 		"TableScan_11   cop table:t2, range:(-inf,+inf), keep order:false 6",
 		"TableReader_12 HashLeftJoin_7  root data:TableScan_11 6",
-		"HashLeftJoin_7  TableReader_10,TableReader_12 root inner join, small:TableReader_12, equal:[eq(test.t1.a, test.t2.a)] 6",
+		"HashLeftJoin_7  TableReader_10,TableReader_12 root inner join, small:TableReader_12, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
 	))
 }
 
@@ -342,6 +342,7 @@ func newStoreWithBootstrapWithStatsLease(lease time.Duration) (kv.Storage, *doma
 	}
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(lease)
+	domain.RunAutoAnalyze = false
 	dom, err := tidb.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
