@@ -78,7 +78,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_4   cop table:t2, range:(-inf,+inf), keep order:false 8000",
 				"TableReader_5 Sort_3  root data:TableScan_4 8000",
-				"Sort_3  TableReader_5 root t2.c2:asc 8000",
+				"Sort_3  TableReader_5 root test.t2.c2:asc 8000",
 			},
 		},
 		{
