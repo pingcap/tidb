@@ -42,13 +42,13 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	for _, t := range tbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg...)))
 		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
+		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
 	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
+	_, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, NotNil)
 }
 
@@ -82,13 +82,13 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	for _, t := range tbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)))
 		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
+		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
 	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
+	_, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, NotNil)
 	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1, 2)))
 	c.Assert(err, NotNil)

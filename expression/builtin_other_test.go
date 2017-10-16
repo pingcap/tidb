@@ -57,7 +57,7 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		count, err := f.eval(nil)
+		count, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		if count.IsNull() {
 			c.Assert(test.count, IsNil)
@@ -94,7 +94,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := fn.eval(types.MakeDatums(tc.args...))
+		d, err := evalBuiltinFunc(fn, types.MakeDatums(tc.args...))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 		if tc.args[1] != nil {
@@ -135,7 +135,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := fn.eval(types.MakeDatums(tc.args...))
+		d, err := evalBuiltinFunc(fn, types.MakeDatums(tc.args...))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 	}
@@ -148,14 +148,14 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
 	sig, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums()))
 	c.Assert(err, IsNil)
-	_, err = sig.eval(nil)
+	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, "Session current insert values is nil")
 	s.ctx.GetSessionVars().CurrInsertValues = types.MakeDatums("1")
-	_, err = sig.eval(nil)
+	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, fmt.Sprintf("Session current insert values len %d and column's offset %v don't match", 1, 1))
 	currInsertValues := types.MakeDatums("1", "2")
 	s.ctx.GetSessionVars().CurrInsertValues = currInsertValues
-	ret, err := sig.eval(nil)
+	ret, err := evalBuiltinFunc(sig, nil)
 	c.Assert(err, IsNil)
 	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
 	c.Assert(err, IsNil)
