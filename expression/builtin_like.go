@@ -47,7 +47,7 @@ func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf.tp.Flen = 1
 	sig := &builtinLikeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLikeSig struct {
@@ -95,7 +95,7 @@ func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression
 	} else {
 		sig = &builtinRegexpSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRegexpBinarySig struct {

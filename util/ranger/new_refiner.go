@@ -21,28 +21,34 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, lengths []int, inAndEqCount int,
+func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, lengths []int,
 	accessCondition []expression.Expression) ([]*types.IndexRange, error) {
 	rb := builder{sc: sc}
-	var ranges []*types.IndexRange
-	for i := 0; i < inAndEqCount; i++ {
+	var (
+		ranges  []*types.IndexRange
+		eqCount int
+	)
+	for eqCount = 0; eqCount < len(accessCondition) && eqCount < len(cols); eqCount++ {
+		if sf, ok := accessCondition[eqCount].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
+			break
+		}
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[i])
-		if i == 0 {
-			ranges = rb.buildIndexRanges(point, cols[i].RetType)
+		point := rb.build(accessCondition[eqCount])
+		if eqCount == 0 {
+			ranges = rb.buildIndexRanges(point, cols[eqCount].RetType)
 		} else {
-			ranges = rb.appendIndexRanges(ranges, point, cols[i].RetType)
+			ranges = rb.appendIndexRanges(ranges, point, cols[eqCount].RetType)
 		}
 	}
 	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
-	for i := inAndEqCount; i < len(accessCondition); i++ {
+	for i := eqCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
 	}
-	if inAndEqCount == 0 {
+	if eqCount == 0 {
 		ranges = rb.buildIndexRanges(rangePoints, cols[0].RetType)
-	} else if inAndEqCount < len(accessCondition) {
-		ranges = rb.appendIndexRanges(ranges, rangePoints, cols[inAndEqCount].RetType)
+	} else if eqCount < len(accessCondition) {
+		ranges = rb.appendIndexRanges(ranges, rangePoints, cols[eqCount].RetType)
 	}
 
 	// Take prefix index into consideration.
@@ -126,14 +132,15 @@ func getEQColOffset(expr expression.Expression, cols []*expression.Column) int {
 	return -1
 }
 
-// detachIndexScanConditions will detach the index filters from table filters.
-func detachIndexScanConditions(conditions []expression.Expression, cols []*expression.Column, lengths []int) (accessConds []expression.Expression,
-	filterConds []expression.Expression, accessEqualCount int, accessInAndEqCount int) {
+// DetachIndexConditions will detach the index filters from table filters.
+func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column, lengths []int) (accessConds []expression.Expression,
+	filterConds []expression.Expression) {
 	accessConds = make([]expression.Expression, len(cols))
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, cond := range conditions {
 		conditions[i] = expression.PushDownNot(cond, false, nil)
 	}
+	var accessEqualCount int
 	for _, cond := range conditions {
 		offset := getEQColOffset(cond, cols)
 		if offset != -1 {
@@ -153,7 +160,6 @@ func detachIndexScanConditions(conditions []expression.Expression, cols []*expre
 			accessEqualCount = len(accessConds)
 		}
 	}
-	accessInAndEqCount = accessEqualCount
 	// We should remove all accessConds, so that they will not be added to filter conditions.
 	conditions = removeAccessConditions(conditions, accessConds)
 	var curIndex int
@@ -171,7 +177,6 @@ func detachIndexScanConditions(conditions []expression.Expression, cols []*expre
 			accessConds, filterConds = checker.extractAccessAndFilterConds(conditions, accessConds, filterConds)
 			break
 		}
-		accessInAndEqCount++
 		accessConds = append(accessConds, conditions[accessIdx])
 		if lengths[curIndex] != types.UnspecifiedLength {
 			filterConds = append(filterConds, conditions[accessIdx])
@@ -182,7 +187,7 @@ func detachIndexScanConditions(conditions []expression.Expression, cols []*expre
 	if curIndex == len(cols) {
 		filterConds = append(filterConds, conditions...)
 	}
-	return accessConds, filterConds, accessEqualCount, accessInAndEqCount
+	return accessConds, filterConds
 }
 
 // buildColumnRange builds the range for sampling histogram to calculate the row count.
@@ -206,35 +211,42 @@ func buildColumnRange(conds []expression.Expression, sc *variable.StatementConte
 	return ranges, nil
 }
 
+// DetachCondsForSelectivity detaches the conditions used for range calculation from other useless conditions.
+func DetachCondsForSelectivity(conds []expression.Expression, rangeType int, cols []*expression.Column,
+	lengths []int) (accessConditions, otherConditions []expression.Expression) {
+	if rangeType == IntRangeType || rangeType == ColumnRangeType {
+		return DetachColumnConditions(conds, cols[0].ColName)
+	} else if rangeType == IndexRangeType {
+		return DetachIndexConditions(conds, cols, lengths)
+	}
+	return nil, conds
+}
+
 // BuildRange is a method which can calculate IntColumnRange, ColumnRange, IndexRange.
-func BuildRange(sc *variable.StatementContext, conds []expression.Expression, rangeType int, cols []*expression.Column, lengths []int) (retRanges []types.Range,
-	accessConditions, otherConditions []expression.Expression, _ error) {
+func BuildRange(sc *variable.StatementContext, conds []expression.Expression, rangeType int, cols []*expression.Column,
+	lengths []int) (retRanges []types.Range, _ error) {
 	if rangeType == IntRangeType {
-		accessConditions, otherConditions = DetachColumnConditions(conds, cols[0].ColName)
-		ranges, err := BuildTableRange(accessConditions, sc)
+		ranges, err := BuildTableRange(conds, sc)
 		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		retRanges = make([]types.Range, 0, len(ranges))
 		for _, ran := range ranges {
 			retRanges = append(retRanges, ran)
 		}
 	} else if rangeType == ColumnRangeType {
-		accessConditions, otherConditions = DetachColumnConditions(conds, cols[0].ColName)
-		ranges, err := buildColumnRange(accessConditions, sc, cols[0].RetType)
+		ranges, err := buildColumnRange(conds, sc, cols[0].RetType)
 		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		retRanges = make([]types.Range, 0, len(ranges))
 		for _, ran := range ranges {
 			retRanges = append(retRanges, ran)
 		}
 	} else if rangeType == IndexRangeType {
-		var eqAndInCount int
-		accessConditions, otherConditions, _, eqAndInCount = detachIndexScanConditions(conds, cols, lengths)
-		ranges, err := buildIndexRange(sc, cols, lengths, eqAndInCount, accessConditions)
+		ranges, err := buildIndexRange(sc, cols, lengths, conds)
 		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		retRanges = make([]types.Range, 0, len(ranges))
 		for _, ran := range ranges {
