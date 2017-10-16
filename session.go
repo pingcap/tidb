@@ -734,7 +734,7 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 		compiler := executor.Compiler{}
 		for _, stmtNode := range stmtNodes {
 			// Special logic for dashbase related SQL.
-			if !s.IsSystemSession() && domain.Config.Dashbase.Enabled {
+			if !s.IsSystemSession() && domain.Config != nil && domain.Config.Dashbase.Enabled {
 				caught, r, err := dashbase.Execute(stmtNode)
 
 				if caught {
