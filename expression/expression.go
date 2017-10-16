@@ -297,7 +297,7 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
-		Function: bt.setSelf(bt),
+		Function: bt,
 	}
 }
 

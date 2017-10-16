@@ -718,7 +718,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 		if len(idxCols) > 0 {
 			var ranges []types.Range
-			ranges, is.AccessCondition, is.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IndexRangeType, idxCols, colLengths)
+			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(conds, idxCols, colLengths)
+			ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -926,7 +927,8 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 		if pkCol != nil {
 			var ranges []types.Range
-			ranges, ts.AccessCondition, ts.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+			ts.AccessCondition, ts.filterCondition = ranger.DetachColumnConditions(conds, pkCol.ColName)
+			ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 			ts.Ranges = ranger.Ranges2IntRanges(ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1028,7 +1030,7 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 }
 
 func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
-	p.expectedCnt = prop.expectedCnt
+	p.basePlan.expectedCnt = prop.expectedCnt
 	// By default, physicalPlan can always match the orders.
 	props := make([]*requiredProp, 0, len(p.basePlan.children))
 	for range p.basePlan.children {
@@ -1038,6 +1040,7 @@ func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*req
 }
 
 func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
 		return nil
 	}

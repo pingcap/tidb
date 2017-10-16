@@ -266,7 +266,7 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 		sig, err := funcs[ast.Mul].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		val, err := sig.eval(nil)
+		val, err := evalBuiltinFunc(sig, nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}
@@ -328,7 +328,7 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 		sig, err := funcs[ast.Div].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		val, err := sig.eval(nil)
+		val, err := evalBuiltinFunc(sig, nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}
@@ -422,7 +422,7 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 		sig, err := funcs[ast.IntDiv].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		val, err := sig.eval(nil)
+		val, err := evalBuiltinFunc(sig, nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}
@@ -532,7 +532,7 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		sig, err := funcs[ast.Mod].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		val, err := sig.eval(nil)
+		val, err := evalBuiltinFunc(sig, nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}

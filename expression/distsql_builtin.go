@@ -489,7 +489,6 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)
 		return nil, errors.Trace(e)
 	}
-	f.setSelf(f)
 	return f, nil
 }
 

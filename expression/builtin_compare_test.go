@@ -254,7 +254,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		fc := funcs[ast.Interval]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, t.ret)
 	}
