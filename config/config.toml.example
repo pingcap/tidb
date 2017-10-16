@@ -115,6 +115,11 @@ xport = 14000
 # The socket file to use for x protocol connection.
 xsocket = ""
 
+[plan-cache]
+plan-cache-enabled = false
+plan-cache-capacity = 2560
+plan-cache-shards = 256
+
 [dashbase]
 # Whether TiDB is acted as a Dashbase proxy.
 enabled = false

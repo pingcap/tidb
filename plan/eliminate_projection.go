@@ -99,6 +99,7 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 			newCols[i].DBName = oldCol.DBName
 			newCols[i].TblName = oldCol.TblName
 			newCols[i].ColName = oldCol.ColName
+			newCols[i].OrigTblName = oldCol.OrigTblName
 		}
 	}
 	return newRoot

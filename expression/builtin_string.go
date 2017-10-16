@@ -184,7 +184,7 @@ func (c *lengthFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 10
 	sig := &builtinLengthSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLengthSig struct {
@@ -212,7 +212,7 @@ func (c *asciiFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 3
 	sig := &builtinASCIISig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinASCIISig struct {
@@ -259,7 +259,7 @@ func (c *concatFunctionClass) getFunction(ctx context.Context, args []Expression
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 	sig := &builtinConcatSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinConcatSig struct {
@@ -317,7 +317,7 @@ func (c *concatWSFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 
 	sig := &builtinConcatWSSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinConcatWSSig struct {
@@ -371,10 +371,10 @@ func (c *leftFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
 		sig := &builtinLeftBinarySig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	sig := &builtinLeftSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLeftBinarySig struct {
@@ -441,10 +441,10 @@ func (c *rightFunctionClass) getFunction(ctx context.Context, args []Expression)
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
 		sig := &builtinRightBinarySig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	sig := &builtinRightSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRightBinarySig struct {
@@ -510,7 +510,7 @@ func (c *repeatFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	sig := &builtinRepeatSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRepeatSig struct {
@@ -556,7 +556,7 @@ func (c *lowerFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
 	sig := &builtinLowerSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLowerSig struct {
@@ -597,7 +597,7 @@ func (c *reverseFunctionClass) getFunction(ctx context.Context, args []Expressio
 	} else {
 		sig = &builtinReverseSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinReverseBinarySig struct {
@@ -641,7 +641,7 @@ func (c *spaceFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	sig := &builtinSpaceSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSpaceSig struct {
@@ -679,7 +679,7 @@ func (c *upperFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
 	sig := &builtinUpperSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUpperSig struct {
@@ -713,7 +713,7 @@ func (c *strcmpFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf.tp.Flen = 2
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinStrcmpSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinStrcmpSig struct {
@@ -756,7 +756,7 @@ func (c *replaceFunctionClass) getFunction(ctx context.Context, args []Expressio
 		SetBinFlagOrBinStr(a.GetType(), bf.tp)
 	}
 	sig := &builtinReplaceSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 // fixLength calculate the Flen of the return type.
@@ -812,7 +812,7 @@ func (c *convertFunctionClass) getFunction(ctx context.Context, args []Expressio
 	// TODO: Fix #4436 && #4474, set the correct charset and flag of `bf.tp`.
 	bf.tp.Flen = mysql.MaxBlobWidth
 	sig := &builtinConvertSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinConvertSig struct {
@@ -875,7 +875,7 @@ func (c *substringFunctionClass) getFunction(ctx context.Context, args []Express
 		// Should never happens.
 		return nil, errors.Errorf("SUBSTR invalid arg length, expect 2 or 3 but got: %v", len(args))
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSubstringBinary2ArgsSig struct {
@@ -1025,7 +1025,7 @@ func (c *substringIndexFunctionClass) getFunction(ctx context.Context, args []Ex
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
 	sig := &builtinSubstringIndexSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinSubstringIndexSig struct {
@@ -1100,7 +1100,7 @@ func (c *locateFunctionClass) getFunction(ctx context.Context, args []Expression
 	default:
 		sig = &builtinLocate2ArgsSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLocateBinary2ArgsSig struct {
@@ -1245,12 +1245,12 @@ func (c *hexFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		// Use UTF-8 as default
 		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
 		sig := &builtinHexStrArgSig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 		bf.tp.Flen = args[0].GetType().Flen * 2
 		sig := &builtinHexIntArgSig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 	default:
 		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetType())
 	}
@@ -1314,7 +1314,7 @@ func (c *unhexFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf.tp.Flen = retFlen
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinUnHexSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUnHexSig struct {
@@ -1361,14 +1361,14 @@ func (c *trimFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		bf.tp.Flen = argType.Flen
 		SetBinFlagOrBinStr(argType, bf.tp)
 		sig := &builtinTrim1ArgSig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 
 	case 2:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
 		argType := args[0].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
 		sig := &builtinTrim2ArgsSig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 
 	case 3:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString, types.ETInt)
@@ -1376,7 +1376,7 @@ func (c *trimFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		bf.tp.Flen = argType.Flen
 		SetBinFlagOrBinStr(argType, bf.tp)
 		sig := &builtinTrim3ArgsSig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 
 	default:
 		return nil, errors.Trace(c.verifyArgs(args))
@@ -1483,7 +1483,7 @@ func (c *lTrimFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
 	sig := &builtinLTrimSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLTrimSig struct {
@@ -1513,7 +1513,7 @@ func (c *rTrimFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
 	sig := &builtinRTrimSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRTrimSig struct {
@@ -1578,13 +1578,13 @@ func (c *lpadFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
 		sig := &builtinLpadBinarySig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 	sig := &builtinLpadSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLpadBinarySig struct {
@@ -1677,13 +1677,13 @@ func (c *rpadFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
 		sig := &builtinRpadBinarySig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 	sig := &builtinRpadSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRpadBinarySig struct {
@@ -1773,7 +1773,7 @@ func (c *bitLengthFunctionClass) getFunction(ctx context.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 10
 	sig := &builtinBitLengthSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitLengthSig struct {
@@ -1809,7 +1809,7 @@ func (c *charFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	types.SetBinChsClnFlag(bf.tp)
 
 	sig := &builtinCharSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCharSig struct {
@@ -1882,7 +1882,7 @@ func (c *charLengthFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	sig := &builtinCharLengthSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinCharLengthSig struct {
@@ -1910,7 +1910,7 @@ func (c *findInSetFunctionClass) getFunction(ctx context.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
 	bf.tp.Flen = 3
 	sig := &builtinFindInSetSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinFindInSetSig struct {
@@ -1982,7 +1982,7 @@ func (c *fieldFunctionClass) getFunction(ctx context.Context, args []Expression)
 	case types.ETString:
 		sig = &builtinFieldStringSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinFieldIntSig struct {
@@ -2102,7 +2102,7 @@ func (c *makeSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 	sig := &builtinMakeSetSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinMakeSetSig struct {
@@ -2155,7 +2155,7 @@ func (c *octFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		sig = &builtinOctStringSig{bf}
 	}
 
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinOctIntSig struct {
@@ -2220,7 +2220,7 @@ func (c *ordFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 10
 	sig := &builtinOrdSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinOrdSig struct {
@@ -2265,7 +2265,7 @@ func (c *quoteFunctionClass) getFunction(ctx context.Context, args []Expression)
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 	sig := &builtinQuoteSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinQuoteSig struct {
@@ -2316,7 +2316,7 @@ func (c *binFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 	bf.tp.Flen = 64
 	sig := &builtinBinSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBinSig struct {
@@ -2357,7 +2357,7 @@ func (c *eltFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		}
 	}
 	sig := &builtinEltSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinEltSig struct {
@@ -2407,7 +2407,7 @@ func (c *exportSetFunctionClass) getFunction(ctx context.Context, args []Express
 	case 5:
 		sig = &builtinExportSet5ArgSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 // exportSet evals EXPORT_SET(bits,on,off,separator,number_of_bits).
@@ -2547,7 +2547,7 @@ func (c *formatFunctionClass) getFunction(ctx context.Context, args []Expression
 	} else {
 		sig = &builtinFormatSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinFormatWithLocaleSig struct {
@@ -2613,7 +2613,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx context.Context, args []Expres
 	bf.tp.Flen = mysql.MaxBlobWidth
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinFromBase64Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinFromBase64Sig struct {
@@ -2648,7 +2648,7 @@ func (c *toBase64FunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
 	sig := &builtinToBase64Sig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinToBase64Sig struct {
@@ -2732,7 +2732,7 @@ func (c *insertFunctionClass) getFunction(ctx context.Context, args []Expression
 	} else {
 		sig = &builtinInsertSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinInsertBinarySig struct {
@@ -2826,10 +2826,10 @@ func (c *instrFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf.tp.Flen = 11
 	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
 		sig := &builtinInstrBinarySig{bf}
-		return sig.setSelf(sig), nil
+		return sig, nil
 	}
 	sig := &builtinInstrSig{bf}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinInstrSig struct{ baseBuiltinFunc }

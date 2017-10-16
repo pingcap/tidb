@@ -15,6 +15,7 @@ package plan_test
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -32,6 +33,32 @@ import (
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+}
+
+// CBOWithoutAnalyze tests the plan with stats that only have count info.
+func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrapWithStatsLease(10 * time.Millisecond)
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t1 (a int)")
+	testKit.MustExec("create table t2 (a int)")
+	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
+	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
+	time.Sleep(1 * time.Second)
+	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
+		"TableScan_9   cop table:t1, range:(-inf,+inf), keep order:false 6",
+		"TableReader_10 HashLeftJoin_7  root data:TableScan_9 6",
+		"TableScan_11   cop table:t2, range:(-inf,+inf), keep order:false 6",
+		"TableReader_12 HashLeftJoin_7  root data:TableScan_11 6",
+		"HashLeftJoin_7  TableReader_10,TableReader_12 root inner join, small:TableReader_12, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
+	))
 }
 
 func constructInsertSQL(i, n int) string {
@@ -156,6 +183,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
@@ -205,6 +233,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
@@ -290,6 +319,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
@@ -301,6 +331,18 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	}
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
+}
+
+func newStoreWithBootstrapWithStatsLease(lease time.Duration) (kv.Storage, *domain.Domain, error) {
+	store, err := tikv.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(lease)
+	domain.RunAutoAnalyze = false
 	dom, err := tidb.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }

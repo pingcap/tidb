@@ -36,6 +36,7 @@ type Config struct {
 	Status      Status      `toml:"status" json:"status"`
 	Performance Performance `toml:"performance" json:"performance"`
 	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
+	PlanCache   PlanCache   `toml:"plan-cache" json:"plan-cache"`
 	Dashbase    Dashbase    `tomk:"dashbase" json:"dashbase"`
 }
 
@@ -89,6 +90,13 @@ type XProtocol struct {
 	XSocket string `toml:"xsocket" json:"xsocket"`
 }
 
+// PlanCache is the PlanCache section of the config.
+type PlanCache struct {
+	Enabled  bool  `toml:"plan-cache-enabled" json:"plan-cache-enabled"`
+	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`
+	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
+}
+
 // Dashbase is the dashbase section of the config.
 type Dashbase struct {
 	Enabled    bool     `toml:"enabled" json:"enabled"`
@@ -128,6 +136,11 @@ var defaultConf = Config{
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",
 		XPort: 14000,
+	},
+	PlanCache: PlanCache{
+		Enabled:  false,
+		Capacity: 2560,
+		Shards:   256,
 	},
 	Dashbase: Dashbase{
 		Enabled:    false,
