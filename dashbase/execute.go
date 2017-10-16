@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 )
@@ -31,8 +32,32 @@ func Execute(stmt ast.Node) (bool, ast.RecordSet, error) {
 	}
 }
 
+type insertRecordSet struct {
+	insertedRows int
+}
+
+func (rs insertRecordSet) Next() (*ast.Row, error) {
+	return nil, nil
+}
+
+func (rs insertRecordSet) Fields() ([]*ast.ResultField, error) {
+	return nil, nil
+}
+
+func (rs insertRecordSet) Close() error {
+	return nil
+}
+
 func executeInsert(node *ast.InsertStmt) (bool, ast.RecordSet, error) {
-	tableName := node.Table.TableRefs.Left.(*ast.TableSource).AsName.L
+	ts, ok := node.Table.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		return false, nil, nil
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		return false, nil, nil
+	}
+	tableName := tn.Name.L
 	tableSchema := GetTableSchema(tableName)
 	if tableSchema == nil {
 		return false, nil, nil
@@ -145,5 +170,5 @@ func executeInsert(node *ast.InsertStmt) (bool, ast.RecordSet, error) {
 		PublishKafka(strings.ToLower(tableName), message)
 	}
 
-	return true, ast.RecordSet{}, nil
+	return true, insertRecordSet{insertedRows: len(rows)}, nil
 }

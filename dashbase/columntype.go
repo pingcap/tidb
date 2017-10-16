@@ -15,7 +15,7 @@ package dashbase
 
 import (
 	"fmt"
-	"time"
+	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/types"
@@ -62,17 +62,27 @@ var codecs = []*codecDefinition{
 	{
 		TypeNumeric,
 		func(input types.Datum) interface{} {
-			return input.GetFloat64()
+			// return input.GetFloat64()
+			f, err := strconv.ParseFloat(input.GetString(), 64)
+			if err != nil {
+				return 0
+			}
+			return f
 		},
 	},
 	{
 		TypeTime,
 		func(input types.Datum) interface{} {
-			time, err := input.GetMysqlTime().Time.GoTime(time.Local)
+			i, err := strconv.ParseInt(input.GetString(), 10, 64)
 			if err != nil {
 				return 0
 			}
-			return time.Unix() * 1000
+			return i
+			// time, err := input.GetMysqlTime().Time.GoTime(time.Local)
+			// if err != nil {
+			// 	return 0
+			// }
+			// return time.Unix() * 1000
 		},
 	},
 }

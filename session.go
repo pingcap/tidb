@@ -32,6 +32,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/dashbase"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -677,6 +678,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 		return nil, errors.Trace(err)
 	}
+
 	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 	var rs []ast.RecordSet
@@ -685,6 +687,23 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		executor.ResetStmtCtx(s, rst)
+
+		if !s.IsSystemSession() && domain.Config.Dashbase.Enabled {
+			log.Infof("try dashbase execute\n")
+			caught, r, err := dashbase.Execute(rst)
+
+			if caught {
+				if err != nil {
+					log.Warnf("[%d] dashbase session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+					err2 := s.RollbackTxn()
+					terror.Log(errors.Trace(err2))
+					return nil, errors.Trace(err)
+				}
+				rs = append(rs, r)
+				continue
+			}
+		}
+
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)

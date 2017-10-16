@@ -31,7 +31,7 @@ var dashbaseCodec *goavro.Codec
 var dashbaseSchemaChecksum uint64
 
 func makeCRC64Table() {
-	table := make([]uint64, 256)
+	table = make([]uint64, 256)
 	for i := 0; i < 256; i++ {
 		fp := uint64(i)
 		for j := 0; j < 8; j++ {
@@ -67,7 +67,7 @@ func AvroEncode(columns []*ColumnDefinition, values []interface{}) ([]byte, erro
 	for idx, column := range columns {
 		switch column.dataType {
 		case TypeTime:
-			event["timeInMillis"] = values[idx].(uint64)
+			event["timeInMillis"] = values[idx].(int64)
 		case TypeMeta:
 			metaColumns[column.name] = values[idx].(string)
 		case TypeText:

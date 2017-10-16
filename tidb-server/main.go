@@ -307,6 +307,7 @@ func validateConfig() {
 }
 
 func setGlobalVars() {
+	domain.Config = cfg
 	ddlLeaseDuration := parseLease(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
@@ -326,6 +327,9 @@ func setupDashbase() {
 	}
 	if err := dashbase.LoadSchemaFromFile(cfg.Dashbase.SchemaFile); err != nil {
 		log.Fatalf("Unable to load Dashbase schema definition: %s", err.Error())
+	}
+	if err := dashbase.OpenKafka(cfg.Dashbase.KafkaHosts); err != nil {
+		log.Fatalf("Unable to connect to Kafka: %s", err.Error())
 	}
 }
 
