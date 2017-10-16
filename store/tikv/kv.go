@@ -157,7 +157,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (gcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return errMayFallBehind
+		return ErrGCTooEarly
 	}
 
 	if startTime < cachedSafePoint {

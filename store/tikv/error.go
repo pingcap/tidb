@@ -41,6 +41,7 @@ var (
 	ErrPDServerTimeout    = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout]+txnRetryableMark)
 	ErrRegionUnavaiable   = terror.ClassTiKV.New(mysql.ErrRegionUnavaiable, mysql.MySQLErrName[mysql.ErrRegionUnavaiable]+txnRetryableMark)
 	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy]+txnRetryableMark)
+	ErrGCTooEarly	      = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
 )
 
 func init() {
@@ -50,6 +51,7 @@ func init() {
 		mysql.ErrPDServerTimeout:    mysql.ErrPDServerTimeout,
 		mysql.ErrRegionUnavaiable:   mysql.ErrRegionUnavaiable,
 		mysql.ErrTiKVServerBusy:     mysql.ErrTiKVServerBusy,
+		mysql.ErrGCTooEarly:	     mysql.ErrGCTooEarly,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
 }
