@@ -74,7 +74,7 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 	}
 	for i, col := range p.Columns {
 		hist, ok := p.statisticTable.Columns[col.ID]
-		if ok {
+		if ok && hist.NDV > 0 {
 			profile.cardinality[i] = float64(hist.NDV)
 		} else {
 			profile.cardinality[i] = profile.count * distinctFactor
@@ -242,7 +242,7 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 	}
 	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
 	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
-	count := (leftProfile.count * rightProfile.count / leftKeyCardinality / rightKeyCardinality) * math.Min(leftKeyCardinality, rightKeyCardinality)
+	count := leftProfile.count * rightProfile.count / math.Max(leftKeyCardinality, rightKeyCardinality)
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.count)
 	} else if p.JoinType == RightOuterJoin {
