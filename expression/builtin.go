@@ -18,7 +18,6 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -31,12 +30,9 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args []Expression
-	ctx  context.Context
-	tp   *types.FieldType
-	// self points to the built-in function signature which contains this baseBuiltinFunc.
-	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
-	self   builtinFunc
+	args   []Expression
+	ctx    context.Context
+	tp     *types.FieldType
 	pbCode tipb.ScalarFuncSig
 }
 
@@ -155,50 +151,8 @@ func newBaseBuiltinFuncWithTp(ctx context.Context, args []Expression, retType ty
 	}
 }
 
-func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
-	b.self = f
-	return f
-}
-
 func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
-}
-
-// eval should only be called in test files, and it should be removed after all tests being rewritten.
-func (b *baseBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	var (
-		res    interface{}
-		isNull bool
-	)
-	switch b.tp.EvalType() {
-	case types.ETInt:
-		var intRes int64
-		intRes, isNull, err = b.self.evalInt(row)
-		if mysql.HasUnsignedFlag(b.tp.Flag) {
-			res = uint64(intRes)
-		} else {
-			res = intRes
-		}
-	case types.ETReal:
-		res, isNull, err = b.self.evalReal(row)
-	case types.ETDecimal:
-		res, isNull, err = b.self.evalDecimal(row)
-	case types.ETDatetime, types.ETTimestamp:
-		res, isNull, err = b.self.evalTime(row)
-	case types.ETDuration:
-		res, isNull, err = b.self.evalDuration(row)
-	case types.ETJson:
-		res, isNull, err = b.self.evalJSON(row)
-	case types.ETString:
-		res, isNull, err = b.self.evalString(row)
-	}
-
-	if isNull || err != nil {
-		d.SetValue(nil)
-		return d, errors.Trace(err)
-	}
-	d.SetValue(res)
-	return
 }
 
 func (b *baseBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
@@ -263,8 +217,6 @@ func (b *baseBuiltinFunc) getCtx() context.Context {
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
-	// eval evaluates result of builtinFunc by given row.
-	eval(row []types.Datum) (d types.Datum, err error)
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(row []types.Datum) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
@@ -287,8 +239,6 @@ type builtinFunc interface {
 	getCtx() context.Context
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
-	// setSelf sets a pointer to itself.
-	setSelf(builtinFunc) builtinFunc
 	// setPbCode sets pbCode for signature.
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.

@@ -37,6 +37,7 @@ type Context struct {
 	mux         sync.Mutex // fix data race in ddl test.
 	ctx         goctx.Context
 	cancel      goctx.CancelFunc
+	sm          util.SessionManager
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -153,7 +154,12 @@ func (c *Context) GetStore() kv.Storage {
 
 // GetSessionManager implements the context.Context interface.
 func (c *Context) GetSessionManager() util.SessionManager {
-	return nil
+	return c.sm
+}
+
+// SetSessionManager set the session manager.
+func (c *Context) SetSessionManager(sm util.SessionManager) {
+	c.sm = sm
 }
 
 // Cancel implements the Session interface.
