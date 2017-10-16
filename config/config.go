@@ -130,7 +130,7 @@ var defaultConf = Config{
 		XPort: 14000,
 	},
 	Dashbase: Dashbase{
-		Enabled:    true,
+		Enabled:    false,
 		KafkaHosts: []string{"localhost:9092"},
 		SchemaFile: "dashbase-schema.toml",
 	},

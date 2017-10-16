@@ -123,4 +123,4 @@ enabled = false
 kafka-hosts = ["localhost:9092"]
 
 # The path to the file describes table schemas in TOML.
-schema-file = ""
+schema-file = "dashbase-schema.toml"
