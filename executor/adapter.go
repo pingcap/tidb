@@ -180,7 +180,7 @@ func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi pr
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
 	}
-
+	log.Warnf("The Executor type is %T" , e)
 	defer func() {
 		if pi != nil {
 			pi.SetProcessInfo("")

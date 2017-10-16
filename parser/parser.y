@@ -1648,14 +1648,17 @@ PartDefStorageOpt:
 CreateViewStmt:
     "CREATE" OrReplace "VIEW" ViewName ViewFieldList "AS" SelectStmt
     {
+        startOffset := parser.startOffset(&yyS[yypt])
+		selstmt := $7.(*ast.SelectStmt)
+		selstmt.SetText(string(parser.src[startOffset:]))
          x := &ast.CreateViewStmt {
             OrReplace:     $2.(bool),
             View :         $4.(*ast.TableName),
-            Select:        $7.(*ast.SelectStmt),
-            SelectText:    $7.Text(),
+            Select:        selstmt,
+            SelectText:    selstmt.Text(),
         }
         if $5 != nil{
-            x.Fields = $5.(*ast.FieldList)
+            x.Cols = $5.([]*ast.ColumnName)
         }
         $$ = x
     }
@@ -1671,9 +1674,9 @@ ViewFieldList:
     {
         $$ = nil
     }
-|   '(' FieldList ')'
+|   '(' ColumnNameList ')'
     {
-        $$ = $2.(*ast.FieldList)
+        $$ = $2.([]*ast.ColumnName)
     }
 
 /******************************************************************

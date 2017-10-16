@@ -939,6 +939,11 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			db:        v.View.Schema.L,
 			table:     v.View.Name.L,
 		})
+		plan := b.build(v.Select)
+		if _ , ok := plan.(LogicalPlan) ; !ok{
+			b.err = errors.Errorf("select_statement error in create view")
+			return  nil
+		}
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.DropPriv,

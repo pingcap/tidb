@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/_vendor/src/github.com/Sirupsen/logrus"
 )
 
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -178,6 +179,19 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 	return cols, constraints, nil
 }
 
+func buildColumnNames(ctx context.Context, colNames []*ast.ColumnName) ([]*table.Column, error) {
+	var cols []*table.Column
+	for i, colName := range colNames {
+		col, err := buildColumnName(ctx, i, colName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		col.State = model.StatePublic
+		cols = append(cols, col)
+	}
+	return cols, nil
+}
+
 func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
@@ -228,6 +242,14 @@ func buildColumnAndConstraint(ctx context.Context, offset int,
 		return nil, nil, errors.Trace(err)
 	}
 	return col, cts, nil
+}
+
+func buildColumnName(ctx context.Context, offset int, colName *ast.ColumnName) (*table.Column, error){
+	col, err := columnNameToCol(ctx, offset, colName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return col, nil
 }
 
 // checkColumnCantHaveDefaultValue checks the column can have value as default or not.
@@ -344,6 +366,15 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
+}
+
+
+func columnNameToCol(ctx context.Context, offset int, colName *ast.ColumnName) (*table.Column, error) {
+	col := table.ToColumn(&model.ColumnInfo{
+		Offset:    offset,
+		Name:      colName.Name,
+	})
+	return col, nil
 }
 
 func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
@@ -583,7 +614,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, seltext string, ctx context.Context) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
-		SelectText: seltext,
+		ViewSelect: seltext,
 	}
 	tbInfo.ID, err = d.genGlobalID()
 	if err != nil {
@@ -788,7 +819,8 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, seltext string) (err error) {
+func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.ColumnName ,seltext string) (err error) {
+	logrus.Warnf("In CreateView , the seltext is %s" , seltext)
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -800,10 +832,14 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, seltext string) (
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
 	}
-	var cols []*table.Column
+	cols, err := buildColumnNames(ctx, colNames)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	var constraints []*ast.Constraint
 
 	tbInfo, err := d.buildTableInfo(ident.Name, cols, constraints, seltext, ctx)
+	logrus.Warnf("The tbInfo Select Text is %s" , tbInfo.ViewSelect)
 	if err != nil {
 		return errors.Trace(err)
 	}

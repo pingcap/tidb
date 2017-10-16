@@ -651,6 +651,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	s.PrepareTxnCtx()
 	startTS := time.Now()
 
+	log.Warnf("The sql string is %s" , sql)
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
@@ -663,6 +664,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	var rs []ast.RecordSet
 	for _, rst := range rawStmts {
 		log.Warnf("The rst Type is %T" , rst)
+		if st,ok := rst.(*ast.CreateViewStmt) ; ok{
+			log.Warnf("The CreateViewStmt Select Text is %s" , st.SelectText)
+		}
 		s.PrepareTxnCtx()
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.

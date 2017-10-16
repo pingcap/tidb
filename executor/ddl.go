@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/_vendor/src/github.com/Sirupsen/logrus"
 )
 
 // DDLExec represents a DDL executor.
@@ -48,6 +49,7 @@ func (e *DDLExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
+	logrus.Warnf("The statement type is %T" , e.Statement)
 	var err error
 	switch x := e.Statement.(type) {
 	case *ast.TruncateTableStmt:
@@ -156,14 +158,31 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	ident := ast.Ident{Schema: s.View.Schema, Name: s.View.Name}
-	var err error
 
-	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.SelectText)
-	if infoschema.ErrTableExists.Equal(err) {
-		if s.OrReplace {
-			//TODO alter view
-			return nil
+	if s.Cols == nil {
+		selectstmt := s.Select.(*ast.SelectStmt)
+		for _, field := range selectstmt.Fields.Fields{
+			columnexpr,ok := field.Expr.(*ast.ColumnNameExpr)
+			if ok{
+				s.Cols = append(s.Cols,columnexpr.Name)
+			}else {
+				x := &ast.ColumnName{
+					Name: field.AsName,
+				}
+				if field.WildCard != nil{
+					x.Schema = field.WildCard.Schema
+					x.Table = field.WildCard.Table
+				}
+				s.Cols = append(s.Cols,x)
+			}
 		}
+	}
+	for i, col := range s.Cols {
+		logrus.Warnf("The select field[%d] name is %s", i, col)
+	}
+	var err error
+	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, s.SelectText)
+	if infoschema.ErrTableExists.Equal(err) {
 		return err
 	}
 	return errors.Trace(err)

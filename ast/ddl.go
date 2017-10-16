@@ -441,7 +441,7 @@ type CreateViewStmt struct {
 
 	OrReplace	bool
 	View        *TableName
-	Fields      *FieldList
+	Cols        []*ColumnName
 	Select 		ResultSetNode
 	SelectText	string
 }
@@ -458,12 +458,14 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.View = node.(*TableName)
-	if n.Fields != nil {
-		node, ok = n.Fields.Accept(v)
-		if !ok {
-			return n, false
+	if n.Cols != nil {
+		for i , col := range n.Cols {
+			node, ok = col.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Cols[i] = node.(*ColumnName)
 		}
-		n.Fields = node.(*FieldList)
 	}
 	selnode, ok := n.Select.Accept(v)
 	if !ok {

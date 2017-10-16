@@ -1092,7 +1092,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	} else {
 		p = b.buildTableDual()
 	}
-	logrus.Warnf("The plan build Type is %T" , p)
 	if b.err != nil {
 		return nil
 	}
@@ -1207,6 +1206,10 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	tableInfo := tbl.Meta()
+	if tableInfo.ViewSelect != "" {
+		logrus.Warnf("The Table %s is a view" , tableInfo.Name)
+		logrus.Warnf("The ctx type is %T" , b.ctx)
+	}
 
 	p := DataSource{
 		indexHints:     tn.IndexHints,
