@@ -683,26 +683,27 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 	var rs []ast.RecordSet
 	for _, rst := range rawStmts {
-		s.PrepareTxnCtx()
-		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		executor.ResetStmtCtx(s, rst)
 
 		if !s.IsSystemSession() && domain.Config.Dashbase.Enabled {
-			log.Infof("try dashbase execute\n")
 			caught, r, err := dashbase.Execute(rst)
 
 			if caught {
 				if err != nil {
 					log.Warnf("[%d] dashbase session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
-					err2 := s.RollbackTxn()
-					terror.Log(errors.Trace(err2))
 					return nil, errors.Trace(err)
 				}
-				rs = append(rs, r)
+				if r != nil {
+					rs = append(rs, r)
+				}
+				s.SetValue(context.QueryString, rst.Text())
 				continue
 			}
 		}
+
+		s.PrepareTxnCtx()
+		startTS := time.Now()
 
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
