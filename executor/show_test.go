@@ -69,6 +69,32 @@ func (s *testSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// Issue #4684.
+	tk.MustExec("drop table if exists `t1`")
+	testSQL = "create table `t1` (" +
+		"`c1` tinyint unsigned default null," +
+		"`c2` smallint unsigned default null," +
+		"`c3` mediumint unsigned default null," +
+		"`c4` int unsigned default null," +
+		"`c5` bigint unsigned default null);`"
+
+	tk.MustExec(testSQL)
+	testSQL = "show create table t1"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"t1", "CREATE TABLE `t1` (\n" +
+			"  `c1` tinyint(3) UNSIGNED DEFAULT NULL,\n" +
+			"  `c2` smallint(5) UNSIGNED DEFAULT NULL,\n" +
+			"  `c3` mediumint(8) UNSIGNED DEFAULT NULL,\n" +
+			"  `c4` int(10) UNSIGNED DEFAULT NULL,\n" +
+			"  `c5` bigint(20) UNSIGNED DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
@@ -96,7 +122,7 @@ func (s *testSuite) TestShow(c *C) {
 	))
 
 	// For show like with escape
-	testSQL = `show tables like 'show\_test'`
+	testSQL = `show tables like 'SHOW\_test'`
 	result = tk.MustQuery(testSQL)
 	rows := result.Rows()
 	c.Check(rows, HasLen, 1)
@@ -360,4 +386,42 @@ func (s *testSuite) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+}
+
+// TestShow2 is moved from session_test
+func (s *testSuite) TestShow2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set global autocommit=0")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 0"))
+	tk.MustExec("set global autocommit = 1")
+	tk2 := testkit.NewTestKit(c, s.store)
+	// TODO: In MySQL, the result is "autocommit ON".
+	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
+	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
+
+	tk.MustQuery("show tables").Check(testkit.Rows("t"))
+	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE"))
+
+	r, err := tk.Exec("show table status from test like 't'")
+	c.Assert(err, IsNil)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 18)
+	c.Assert(row.Data[0].GetString(), Equals, "t")
+	c.Assert(row.Data[17].GetString(), Equals, "注释")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
+
+	tk.MustExec("grant all on *.* to 'root'@'%'")
+	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"))
 }

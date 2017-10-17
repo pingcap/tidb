@@ -33,11 +33,13 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/cache"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
@@ -135,23 +137,22 @@ func main() {
 }
 
 func registerStores() {
-	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
-	tidb.RegisterStore("tikv", tikv.Driver{})
-	tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+	err := tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	terror.MustNil(err)
+	err = tidb.RegisterStore("tikv", tikv.Driver{})
+	terror.MustNil(err)
+	err = tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+	terror.MustNil(err)
 }
 
 func createStoreAndDomain() {
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
 	storage, err = tidb.NewStore(fullPath)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
+	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
 	dom, err = tidb.BootstrapSession(storage)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
+	terror.MustNil(err)
 }
 
 func setupBinlogClient() {
@@ -162,9 +163,7 @@ func setupBinlogClient() {
 		return net.DialTimeout("unix", addr, timeout)
 	})
 	clientCon, err := grpc.Dial(cfg.BinlogSocket, dialerOpt, grpc.WithInsecure())
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
+	terror.MustNil(err)
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientCon))
 	log.Infof("created binlog client at %s", cfg.BinlogSocket)
 }
@@ -237,9 +236,7 @@ func loadConfig() {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
 		err := cfg.Load(*configPath)
-		if err != nil {
-			log.Fatal(err)
-		}
+		terror.MustNil(err)
 	}
 }
 
@@ -256,9 +253,7 @@ func overrideConfig() {
 	var err error
 	if actualFlags[nmPort] {
 		cfg.Port, err = strconv.Atoi(*port)
-		if err != nil {
-			log.Fatal(err)
-		}
+		terror.MustNil(err)
 	}
 	if actualFlags[nmStore] {
 		cfg.Store = *store
@@ -293,9 +288,7 @@ func overrideConfig() {
 	}
 	if actualFlags[nmStatusPort] {
 		cfg.Status.StatusPort, err = strconv.Atoi(*statusPort)
-		if err != nil {
-			log.Fatal(err)
-		}
+		terror.MustNil(err)
 	}
 	if actualFlags[nmMetricsAddr] {
 		cfg.Status.MetricsAddr = *metricsAddr
@@ -317,18 +310,25 @@ func setGlobalVars() {
 	tidb.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
+	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	ddl.RunWorker = cfg.RunDDL
+	ddl.EnableSplitTableRegion = cfg.SplitTable
 	tidb.SetCommitRetryLimit(cfg.Performance.RetryLimit)
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+
+	cache.PlanCacheEnabled = cfg.PlanCache.Enabled
+	if cache.PlanCacheEnabled {
+		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
+		cache.PlanCacheShards = cfg.PlanCache.Shards
+		cache.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	}
 }
 
 func setupLog() {
 	err := logutil.InitLogger(cfg.Log.ToLogConfig())
-	if err != nil {
-		log.Fatal(err)
-	}
+	terror.MustNil(err)
 }
 
 func printInfo() {
@@ -344,18 +344,14 @@ func createServer() {
 	driver = server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
+	terror.MustNil(err)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
 			Addr:   fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
 			Socket: cfg.XProtocol.XSocket,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
-		if err != nil {
-			log.Fatal(errors.ErrorStack(err))
-		}
+		terror.MustNil(err)
 	}
 }
 
@@ -387,17 +383,16 @@ func setupMetrics() {
 }
 
 func runServer() {
-	if err := svr.Run(); err != nil {
-		log.Error(err)
-	}
+	err := svr.Run()
+	terror.MustNil(err)
 	if cfg.XProtocol.XServer {
-		if err := xsvr.Run(); err != nil {
-			log.Error(err)
-		}
+		err := xsvr.Run()
+		terror.MustNil(err)
 	}
 }
 
 func cleanup() {
 	dom.Close()
-	storage.Close()
+	err := storage.Close()
+	terror.Log(errors.Trace(err))
 }

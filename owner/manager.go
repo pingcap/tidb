@@ -164,19 +164,15 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		select {
 		case <-etcdSession.Done():
 			log.Infof("%s etcd session is done, creates a new one", logPrefix)
+			leaseID := etcdSession.Lease()
 			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
-				log.Infof("%s break campaign loop, err %v", logPrefix, err)
+				log.Infof("%s break campaign loop, NewSession err %v", logPrefix, err)
+				m.revokeSession(logPrefix, leaseID)
 				return
 			}
 		case <-ctx.Done():
-			// Revoke the session lease.
-			// If revoke takes longer than the ttl, lease is expired anyway.
-			cancelCtx, cancel := goctx.WithTimeout(goctx.Background(),
-				time.Duration(ManagerSessionTTL)*time.Second)
-			_, err = m.etcdCli.Revoke(cancelCtx, etcdSession.Lease())
-			cancel()
-			log.Infof("%s break campaign loop err %v", logPrefix, err)
+			m.revokeSession(logPrefix, etcdSession.Lease())
 			return
 		default:
 		}
@@ -203,10 +199,19 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 			continue
 		}
 		m.SetOwner(true)
-
 		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.SetOwner(false)
 	}
+}
+
+func (m *ownerManager) revokeSession(logPrefix string, leaseID clientv3.LeaseID) {
+	// Revoke the session lease.
+	// If revoke takes longer than the ttl, lease is expired anyway.
+	cancelCtx, cancel := goctx.WithTimeout(goctx.Background(),
+		time.Duration(ManagerSessionTTL)*time.Second)
+	_, err := m.etcdCli.Revoke(cancelCtx, leaseID)
+	cancel()
+	log.Infof("%s break campaign loop, revoke err %v", logPrefix, err)
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.

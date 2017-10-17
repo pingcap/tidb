@@ -208,7 +208,15 @@ func (ps *perfSchema) buildTables() {
 			c.ID = autoid.GenLocalSchemaID()
 		}
 		alloc := autoid.NewMemoryAllocator(dbID)
-		ps.mTables[name] = tables.MemoryTableFromMeta(alloc, meta)
+		var tbl table.Table
+		switch name {
+		//@TODO in the future, we need to add many VirtualTable, we may need to add new type for these tables.
+		case TableSessionStatus, TableGlobalStatus:
+			tbl = createVirtualTable(meta, name)
+		default:
+			tbl = tables.MemoryTableFromMeta(alloc, meta)
+		}
+		ps.mTables[name] = tbl
 	}
 	ps.dbInfo = &model.DBInfo{
 		ID:      dbID,
@@ -255,7 +263,7 @@ func buildUsualColumnInfo(offset int, name string, tp byte, size int, flag uint,
 		Collate: mCollation,
 		Tp:      tp,
 		Flen:    size,
-		Flag:    uint(flag),
+		Flag:    flag,
 	}
 	colInfo := &model.ColumnInfo{
 		Name:         model.NewCIStr(name),
@@ -277,7 +285,7 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 		Charset: mCharset,
 		Collate: mCollation,
 		Tp:      mysql.TypeEnum,
-		Flag:    uint(flag),
+		Flag:    flag,
 		Elems:   elems,
 	}
 	colInfo := &model.ColumnInfo{

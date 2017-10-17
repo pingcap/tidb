@@ -318,14 +318,14 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		value := ast.NewValueExpr(val)
 		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
 	}
-	sa := &statement{
-		is:   GetInfoSchema(ctx),
-		plan: execPlan,
+	stmt := &ExecStmt{
+		InfoSchema: GetInfoSchema(ctx),
+		Plan:       execPlan,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*Prepared); ok {
-		sa.text = prepared.Stmt.Text()
+		stmt.Text = prepared.Stmt.Text()
 	}
-	return sa
+	return stmt
 }
 
 // ResetStmtCtx resets the StmtContext.
@@ -336,15 +336,26 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sc.TimeZone = sessVars.GetTimeZone()
 
 	switch stmt := s.(type) {
-	case *ast.UpdateStmt, *ast.DeleteStmt:
+	case *ast.UpdateStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+	case *ast.DeleteStmt:
+		sc.IgnoreTruncate = false
+		sc.OverflowAsWarning = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.InUpdateOrDeleteStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false
@@ -366,8 +377,10 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		// Return warning for truncate error in selection.
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = true
+		sc.IgnoreZeroInDate = true
 		if opts := stmt.SelectStmtOpts; opts != nil {
 			sc.Priority = opts.Priority
+			sc.NotFillCache = !opts.SQLCache
 		}
 	default:
 		sc.IgnoreTruncate = true
@@ -378,6 +391,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 			}
 		}
+		sc.IgnoreZeroInDate = true
 	}
 	if sessVars.LastInsertID > 0 {
 		sessVars.PrevLastInsertID = sessVars.LastInsertID

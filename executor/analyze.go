@@ -37,9 +37,10 @@ type AnalyzeExec struct {
 }
 
 const (
-	maxSampleSize = 10000
-	maxSketchSize = 10000
-	maxBucketSize = 256
+	maxSampleSize       = 10000
+	maxRegionSampleSize = 1000
+	maxSketchSize       = 10000
+	maxBucketSize       = 256
 )
 
 // Schema implements the Executor Schema interface.
@@ -79,8 +80,8 @@ func (e *AnalyzeExec) Next() (Row, error) {
 		for i := 0; i < len(e.tasks); i++ {
 			result := <-resultCh
 			if result.Err != nil {
-				err1 = err
-				log.Error(errors.ErrorStack(err))
+				err1 = result.Err
+				log.Error(errors.ErrorStack(err1))
 				continue
 			}
 			dom.StatsHandle().AnalyzeResultCh() <- &result
@@ -94,8 +95,8 @@ func (e *AnalyzeExec) Next() (Row, error) {
 	for i := 0; i < len(e.tasks); i++ {
 		result := <-resultCh
 		if result.Err != nil {
-			err1 = err
-			log.Error(errors.ErrorStack(err))
+			err1 = result.Err
+			log.Error(errors.ErrorStack(err1))
 			continue
 		}
 		results = append(results, result)
@@ -143,13 +144,18 @@ type analyzeTask struct {
 	PKInfo    *model.ColumnInfo
 	src       Executor
 	idxExec   *AnalyzeIndexExec
+	colExec   *AnalyzeColumnsExec
 }
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
-			resultCh <- e.analyzeColumns(task)
+			if task.colExec != nil {
+				resultCh <- analyzeColumnsPushdown(task.colExec)
+			} else {
+				resultCh <- e.analyzeColumns(task)
+			}
 		case idxTask:
 			if task.idxExec != nil {
 				resultCh <- analyzeIndexPushdown(task.idxExec)
@@ -192,7 +198,7 @@ func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult
 		result.Count = collectors[0].Count + collectors[0].NullCount
 	}
 	for i, col := range task.Columns {
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].Samples)
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i])
 		result.Hist = append(result.Hist, hg)
 		if err != nil && result.Err == nil {
 			result.Err = err

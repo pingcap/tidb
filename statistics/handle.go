@@ -45,9 +45,9 @@ type Handle struct {
 	// analyzeResultCh is a channel to notify an analyze index or column operation has ended.
 	// We need this to avoid updating the stats simultaneously.
 	analyzeResultCh chan *AnalyzeResult
-	// All the stats collector required by session are maintained in this list.
+	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
-	// We collect the delta map and merge them with globalMap.
+	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
 
 	Lease time.Duration

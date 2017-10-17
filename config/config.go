@@ -29,12 +29,14 @@ type Config struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable   bool   `toml:"split-table" json:"split-table"`
 
 	Log         Log         `toml:"log" json:"log"`
 	Security    Security    `toml:"security" json:"security"`
 	Status      Status      `toml:"status" json:"status"`
 	Performance Performance `toml:"performance" json:"performance"`
 	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
+	PlanCache   PlanCache   `toml:"plan-cache" json:"plan-cache"`
 }
 
 // Log is the log section of config.
@@ -76,6 +78,7 @@ type Performance struct {
 	JoinConcurrency int    `toml:"join-concurrency" json:"join-concurrency"`
 	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
 	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
+	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -84,6 +87,13 @@ type XProtocol struct {
 	XHost   string `toml:"xhost" json:"xhost"`
 	XPort   int    `toml:"xport" json:"xport"`
 	XSocket string `toml:"xsocket" json:"xsocket"`
+}
+
+// PlanCache is the PlanCache section of the config.
+type PlanCache struct {
+	Enabled  bool  `toml:"plan-cache-enabled" json:"plan-cache-enabled"`
+	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`
+	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
 }
 
 var defaultConf = Config{
@@ -113,10 +123,16 @@ var defaultConf = Config{
 		JoinConcurrency: 5,
 		CrossJoin:       true,
 		StatsLease:      "3s",
+		RunAutoAnalyze:  true,
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",
 		XPort: 14000,
+	},
+	PlanCache: PlanCache{
+		Enabled:  false,
+		Capacity: 2560,
+		Shards:   256,
 	},
 }
 

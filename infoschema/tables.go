@@ -88,7 +88,7 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 		Collate: mCollation,
 		Tp:      col.tp,
 		Flen:    col.size,
-		Flag:    uint(mFlag),
+		Flag:    mFlag,
 	}
 	return &model.ColumnInfo{
 		Name:      model.NewCIStr(col.name),
@@ -1167,4 +1167,8 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 // Seek is the first method called for table scan, we lazy initialize it here.
 func (it *infoschemaTable) Seek(ctx context.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
+}
+
+func (it *infoschemaTable) Type() table.Type {
+	return table.VirtualTable
 }

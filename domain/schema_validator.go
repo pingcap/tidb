@@ -20,24 +20,32 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
+type checkResult int
+
+const (
+	// ResultSucc means schemaValidator's check is passing.
+	ResultSucc checkResult = iota
+	// ResultFail means schemaValidator's check is fail.
+	ResultFail
+	// ResultUnknown means schemaValidator doesn't know the check would be success or fail.
+	ResultUnknown
+)
+
 // SchemaValidator is the interface for checking the validity of schema version.
 type SchemaValidator interface {
-	// Update the schema validator, add a new item, delete the expired detalItemInfos.
+	// Update the schema validator, add a new item, delete the expired deltaSchemaInfos.
 	// The latest schemaVer is valid within leaseGrantTime plus lease duration.
 	// Add the changed table IDs to the new schema information,
 	// which is produced when the oldSchemaVer is updated to the newSchemaVer.
 	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, changedTableIDs []int64)
-	// Check is it valid for a transaction to use schemaVer, at timestamp txnTS.
-	Check(txnTS uint64, schemaVer int64) bool
-	// Latest returns the latest schema version it knows, but not necessary a valid one.
-	Latest() int64
-	// IsRelatedTablesChanged returns the result whether relatedTableIDs is changed from usedVer to the latest schema version,
-	// and an error.
-	IsRelatedTablesChanged(txnTS uint64, usedVer int64, relatedTableIDs []int64) (bool, error)
+	// Check is it valid for a transaction to use schemaVer and related tables, at timestamp txnTS.
+	Check(txnTS uint64, schemaVer int64, relatedTableIDs []int64) checkResult
 	// Stop stops checking the valid of transaction.
 	Stop()
 	// Restart restarts the schema validator after it is stopped.
 	Restart()
+	// Reset resets SchemaValidator to initial state.
+	Reset()
 }
 
 type deltaSchemaInfo struct {
@@ -51,20 +59,16 @@ type schemaValidator struct {
 	lease              time.Duration
 	latestSchemaVer    int64
 	latestSchemaExpire time.Time
-	// detalItemInfos caches the items' information, and the item will be remove when it's is much older than latest schema version.
-	// It's used to cache the updated table IDs, which is produced when the previous item's version is updated to current item's version.
-	detalItemInfos []*deltaSchemaInfo
-	// itemSchemaVers caches the schema version in detalItemInfos. It's used to quickly find the schema version in detalItemInfos.
-	itemSchemaVers map[int64]struct{}
+	// deltaSchemaInfos is a queue that maintain the history of changes.
+	deltaSchemaInfos []deltaSchemaInfo
 }
 
 // NewSchemaValidator returns a SchemaValidator structure.
 func NewSchemaValidator(lease time.Duration) SchemaValidator {
 	return &schemaValidator{
-		isStarted:      true,
-		lease:          lease,
-		itemSchemaVers: make(map[int64]struct{}),
-		detalItemInfos: make([]*deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
+		isStarted:        true,
+		lease:            lease,
+		deltaSchemaInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
 	}
 }
 
@@ -74,8 +78,7 @@ func (s *schemaValidator) Stop() {
 	defer s.mux.Unlock()
 	s.isStarted = false
 	s.latestSchemaVer = 0
-	s.detalItemInfos = nil
-	s.itemSchemaVers = nil
+	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
 }
 
 func (s *schemaValidator) Restart() {
@@ -83,8 +86,14 @@ func (s *schemaValidator) Restart() {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
-	s.itemSchemaVers = make(map[int64]struct{})
-	s.detalItemInfos = make([]*deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
+}
+
+func (s *schemaValidator) Reset() {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	s.isStarted = true
+	s.latestSchemaVer = 0
+	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
 }
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, changedTableIDs []int64) {
@@ -102,25 +111,11 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 	s.latestSchemaExpire = leaseExpire
 
-	// Update the schema information map and slice.
-	_, hasCurrVerItemInfo := s.itemSchemaVers[currVer]
-	if currVer != oldVer || !hasCurrVerItemInfo {
-		s.itemSchemaVers[currVer] = struct{}{}
-		s.detalItemInfos = append(s.detalItemInfos, &deltaSchemaInfo{schemaVersion: currVer, relatedTableIDs: changedTableIDs})
+	// Update the schema deltaItem information.
+	if currVer != oldVer {
+		log.Debug("update schema validator:", oldVer, currVer, changedTableIDs)
+		s.enqueue(currVer, changedTableIDs)
 	}
-
-	// We cache some schema versions to store recently updated table IDs.
-	// If the schema version is much older than the latest schema version, we will delete it from itemSchemaVers.
-	offset := -1
-	for i, info := range s.detalItemInfos {
-		if !isTooOldSchema(info.schemaVersion, currVer) {
-			break
-		}
-		delete(s.itemSchemaVers, info.schemaVersion)
-		offset = i
-	}
-	// If the schema version is much older than the latest schema version, we will delete it from detalItemInfos.
-	s.detalItemInfos = s.detalItemInfos[offset+1:]
 }
 
 func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
@@ -134,81 +129,72 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 	return false
 }
 
-func (s *schemaValidator) isAllExpired(txnTS uint64) bool {
-	if !s.isStarted {
-		log.Infof("the schema validator stopped before judging")
+// isRelatedTablesChanged returns the result whether relatedTableIDs is changed
+// from usedVer to the latest schema version.
+// NOTE, this function should be called under lock!
+func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
+	if len(s.deltaSchemaInfos) == 0 {
+		log.Infof("schema change history is empty, checking %d", currVer)
 		return true
 	}
-	t := extractPhysicalTime(txnTS)
-	return t.After(s.latestSchemaExpire)
-}
-
-func (s *schemaValidator) IsRelatedTablesChanged(txnTS uint64, currVer int64, tableIDs []int64) (bool, error) {
-	s.mux.RLock()
-	defer s.mux.RUnlock()
-
-	if s.isAllExpired(txnTS) {
-		log.Infof("the schema validator's latest schema version %d is expired", s.latestSchemaVer)
-		return false, ErrInfoSchemaExpired
-	}
-
-	_, isExisting := s.itemSchemaVers[currVer]
-	if !isExisting {
+	newerDeltas := s.findNewerDeltas(currVer)
+	if len(newerDeltas) == len(s.deltaSchemaInfos) {
 		log.Infof("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
-		return false, ErrInfoSchemaChanged
+		return true
 	}
-
-	// Find currVer's offset in detaItemInfos.
-	offset := 0
-	for i, info := range s.detalItemInfos {
-		if info.schemaVersion == currVer {
-			offset = i
-			break
+	for _, item := range newerDeltas {
+		if hasRelatedTableID(item.relatedTableIDs, tableIDs) {
+			return true
 		}
 	}
-	for i := offset + 1; i < len(s.detalItemInfos); i++ {
-		info := s.detalItemInfos[i]
-		if hasRelatedTableID(tableIDs, info.relatedTableIDs) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return false
 }
 
-// Check checks schema validity, returns true if use schemaVer at txnTS is legal.
-func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
+func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
+	q := s.deltaSchemaInfos
+	pos := len(q)
+	for i := len(q) - 1; i >= 0 && q[i].schemaVersion > currVer; i-- {
+		pos = i
+	}
+	return q[pos:]
+}
+
+// Check checks schema validity, returns true if use schemaVer and related tables at txnTS is legal.
+func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs []int64) checkResult {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
 		log.Infof("the schema validator stopped before checking")
-		return false
+		return ResultFail
 	}
-
 	if s.lease == 0 {
-		return true
+		return ResultSucc
 	}
 
+	// Schema changed, result decided by whether related tables change.
 	if schemaVer < s.latestSchemaVer {
-		return false
+		if s.isRelatedTablesChanged(schemaVer, relatedTableIDs) {
+			return ResultFail
+		}
+		return ResultSucc
 	}
 
+	// Schema unchanged, maybe success or the schema validator is unavailable.
 	t := extractPhysicalTime(txnTS)
 	if t.After(s.latestSchemaExpire) {
-		return false
+		return ResultUnknown
 	}
-
-	return true
-}
-
-// Latest returns the latest schema version it knows.
-func (s *schemaValidator) Latest() int64 {
-	s.mux.RLock()
-	ret := s.latestSchemaVer
-	s.mux.RUnlock()
-	return ret
+	return ResultSucc
 }
 
 func extractPhysicalTime(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 for physicalShiftBits
 	return time.Unix(t/1e3, (t%1e3)*1e6)
+}
+
+func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
+	s.deltaSchemaInfos = append(s.deltaSchemaInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
+	if len(s.deltaSchemaInfos) > maxNumberOfDiffsToLoad {
+		s.deltaSchemaInfos = s.deltaSchemaInfos[1:]
+	}
 }

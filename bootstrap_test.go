@@ -41,7 +41,9 @@ func (s *testBootstrapSuite) SetUpSuite(c *C) {
 
 func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer dom.Close()
+	defer store.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
@@ -168,7 +170,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 // TestUpgrade tests upgrading
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store, _ := newStoreWithBootstrap(c, s.dbName)
 	defer store.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
@@ -211,7 +213,9 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(ver, Equals, int64(0))
 
 	// Create a new session then upgrade() will run automatically.
-	BootstrapSession(store)
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	row, err = r.Next()

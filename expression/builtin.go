@@ -18,9 +18,6 @@
 package expression
 
 import (
-	"fmt"
-
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -31,52 +28,12 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// evalTp indicates the specified types that arguments and result of a built-in function should be.
-type evalTp byte
-
-const (
-	tpInt evalTp = iota
-	tpReal
-	tpDecimal
-	tpString
-	tpDatetime
-	tpTimestamp
-	tpDuration
-	tpJSON
-)
-
-func fieldTp2EvalTp(tp *types.FieldType) evalTp {
-	switch tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeBit, mysql.TypeYear:
-		return tpInt
-	case mysql.TypeFloat, mysql.TypeDouble:
-		return tpReal
-	case mysql.TypeNewDecimal:
-		return tpDecimal
-	case mysql.TypeDate, mysql.TypeDatetime:
-		return tpDatetime
-	case mysql.TypeTimestamp:
-		return tpTimestamp
-	case mysql.TypeDuration:
-		return tpDuration
-	case mysql.TypeJSON:
-		return tpJSON
-	}
-	return tpString
-}
-
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args      []Expression
-	argValues []types.Datum
-	ctx       context.Context
-	foldable  bool // Default value is true because many expressions are foldable.
-	tp        *types.FieldType
-	pbCode    tipb.ScalarFuncSig
-	// self points to the built-in function signature which contains this baseBuiltinFunc.
-	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
-	self builtinFunc
+	args   []Expression
+	ctx    context.Context
+	tp     *types.FieldType
+	pbCode tipb.ScalarFuncSig
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -87,94 +44,92 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
 
-func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
+func newBaseBuiltinFunc(ctx context.Context, args []Expression) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:      args,
-		argValues: make([]types.Datum, len(args)),
-		ctx:       ctx,
-		foldable:  true,
-		tp:        types.NewFieldType(mysql.TypeUnspecified),
+		args: args,
+		ctx:  ctx,
+		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc) {
+func newBaseBuiltinFuncWithTp(ctx context.Context, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
 	for i := range args {
 		switch argTps[i] {
-		case tpInt:
-			args[i] = WrapWithCastAsInt(args[i], ctx)
-		case tpReal:
-			args[i] = WrapWithCastAsReal(args[i], ctx)
-		case tpDecimal:
-			args[i] = WrapWithCastAsDecimal(args[i], ctx)
-		case tpString:
-			args[i] = WrapWithCastAsString(args[i], ctx)
-		case tpDatetime:
-			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
-		case tpTimestamp:
-			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
-		case tpDuration:
-			args[i] = WrapWithCastAsDuration(args[i], ctx)
-		case tpJSON:
-			args[i] = WrapWithCastAsJSON(args[i], ctx)
+		case types.ETInt:
+			args[i] = WrapWithCastAsInt(ctx, args[i])
+		case types.ETReal:
+			args[i] = WrapWithCastAsReal(ctx, args[i])
+		case types.ETDecimal:
+			args[i] = WrapWithCastAsDecimal(ctx, args[i])
+		case types.ETString:
+			args[i] = WrapWithCastAsString(ctx, args[i])
+		case types.ETDatetime:
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
+		case types.ETTimestamp:
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
+		case types.ETDuration:
+			args[i] = WrapWithCastAsDuration(ctx, args[i])
+		case types.ETJson:
+			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
 	}
 	var fieldType *types.FieldType
 	switch retType {
-	case tpInt:
+	case types.ETInt:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeLonglong,
 			Flen:    mysql.MaxIntWidth,
 			Decimal: 0,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpReal:
+	case types.ETReal:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDouble,
 			Flen:    mysql.MaxRealWidth,
 			Decimal: types.UnspecifiedLength,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpDecimal:
+	case types.ETDecimal:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeNewDecimal,
 			Flen:    11,
 			Decimal: 0,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpString:
+	case types.ETString:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
 			Flen:    0,
 			Decimal: types.UnspecifiedLength,
 		}
-	case tpDatetime:
+	case types.ETDatetime:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpTimestamp:
+	case types.ETTimestamp:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeTimestamp,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpDuration:
+	case types.ETDuration:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDuration,
 			Flen:    mysql.MaxDurationWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpJSON:
+	case types.ETJson:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeJSON,
 			Flen:    mysql.MaxBlobWidth,
@@ -190,31 +145,10 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
 	return baseBuiltinFunc{
-		args:      args,
-		argValues: make([]types.Datum, len(args)),
-		ctx:       ctx,
-		foldable:  true,
-		tp:        fieldType,
+		args: args,
+		ctx:  ctx,
+		tp:   fieldType,
 	}
-}
-
-func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
-	b.self = f
-	return f
-}
-
-func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
-	for i, arg := range b.args {
-		b.argValues[i], err = arg.Eval(row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return b.argValues, nil
-}
-
-func (b *baseBuiltinFunc) canBeFolded() bool {
-	return b.foldable
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -222,82 +156,49 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 }
 
 func (b *baseBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	val, err := b.self.eval(row)
-	if err != nil || val.IsNull() {
-		return 0, val.IsNull(), errors.Trace(err)
-	}
-	intVal, err := val.ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	return intVal, false, errors.Trace(err)
+	panic("baseBuiltinFunc.evalInt() should never be called.")
 }
 
 func (b *baseBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	val, err := b.self.eval(row)
-	if err != nil || val.IsNull() {
-		return 0, val.IsNull(), errors.Trace(err)
-	}
-	doubleVal, err := val.ToFloat64(b.ctx.GetSessionVars().StmtCtx)
-	return doubleVal, false, errors.Trace(err)
+	panic("baseBuiltinFunc.evalReal() should never be called.")
 }
 
 func (b *baseBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	val, err := b.self.eval(row)
-	if err != nil || val.IsNull() {
-		return "", val.IsNull(), errors.Trace(err)
-	}
-	strVal, err := val.ToString()
-	return strVal, false, errors.Trace(err)
+	panic("baseBuiltinFunc.evalString() should never be called.")
 }
 
 func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	val, err := b.self.eval(row)
-	if err != nil || val.IsNull() {
-		return nil, val.IsNull(), errors.Trace(err)
-	}
-	decVal, err := val.ToDecimal(b.ctx.GetSessionVars().StmtCtx)
-	return decVal, false, errors.Trace(err)
+	panic("baseBuiltinFunc.evalDecimal() should never be called.")
 }
 
 func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	val, err := b.self.eval(row)
-	if err != nil || val.IsNull() {
-		return types.Time{}, val.IsNull(), errors.Trace(err)
-	}
-	if val.Kind() != types.KindMysqlTime {
-		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDatetime, Decimal: types.MaxFsp})
-	}
-	return val.GetMysqlTime(), false, errors.Trace(err)
+	panic("baseBuiltinFunc.evalTime() should never be called.")
 }
 
 func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	val, err := b.self.eval(row)
-	if err != nil || val.IsNull() {
-		return types.Duration{}, val.IsNull(), errors.Trace(err)
-	}
-	if val.Kind() != types.KindMysqlDuration {
-		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDuration, Decimal: types.MaxFsp})
-	}
-	return val.GetMysqlDuration(), false, errors.Trace(err)
+	panic("baseBuiltinFunc.evalDuration() should never be called.")
 }
 
 func (b *baseBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	val, err := b.self.eval(row)
-	if err != nil || val.IsNull() {
-		return json.JSON{}, val.IsNull(), errors.Trace(err)
-	}
-	if val.Kind() != types.KindMysqlJSON {
-		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeJSON})
-	}
-	return val.GetMysqlJSON(), false, errors.Trace(err)
+	panic("baseBuiltinFunc.evalJSON() should never be called.")
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
+	switch b.tp.EvalType() {
+	case types.ETString:
+		if b.tp.Flen >= mysql.MaxBlobWidth {
+			b.tp.Tp = mysql.TypeLongBlob
+		} else if b.tp.Flen >= 65536 {
+			b.tp.Tp = mysql.TypeMediumBlob
+		}
+		if len(b.tp.Charset) <= 0 {
+			b.tp.Charset, b.tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+		}
+	}
 	return b.tp
 }
 
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.canBeFolded() || !fun.canBeFolded() {
-		return false
-	}
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
 		return false
@@ -314,327 +215,8 @@ func (b *baseBuiltinFunc) getCtx() context.Context {
 	return b.ctx
 }
 
-// baseIntBuiltinFunc represents the functions which return int values.
-// TODO: baseIntBuiltinFunc will be removed later after all built-in function signatures been implemented.
-type baseIntBuiltinFunc struct {
-	baseBuiltinFunc
-}
-
-func (b *baseIntBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	res, isNull, err := b.self.evalInt(row)
-	if err != nil || isNull {
-		return d, errors.Trace(err)
-	}
-	if mysql.HasUnsignedFlag(b.tp.Flag) {
-		d.SetUint64(uint64(res))
-	} else {
-		d.SetInt64(res)
-	}
-	return
-}
-
-// evalInt will always be overridden.
-func (b *baseIntBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	return b.self.evalInt(row)
-}
-
-func (b *baseIntBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
-}
-
-func (b *baseIntBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
-}
-
-func (b *baseIntBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
-}
-
-func (b *baseIntBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
-}
-
-func (b *baseIntBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
-}
-
-func (b *baseIntBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
-}
-
-// baseRealBuiltinFunc represents the functions which return real values.
-// TODO: baseRealBuiltinFunc will be removed later after all built-in function signatures been implemented.
-type baseRealBuiltinFunc struct {
-	baseBuiltinFunc
-}
-
-func (b *baseRealBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	res, isNull, err := b.self.evalReal(row)
-	if err != nil || isNull {
-		return d, errors.Trace(err)
-	}
-	d.SetFloat64(res)
-	return
-}
-
-// evalReal will always be overridden.
-func (b *baseRealBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	return b.self.evalReal(row)
-}
-
-func (b *baseRealBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
-}
-
-func (b *baseRealBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
-}
-
-func (b *baseRealBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
-}
-
-func (b *baseRealBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
-}
-
-func (b *baseRealBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
-}
-
-func (b *baseRealBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
-}
-
-// baseDecimalBuiltinFunc represents the functions which return decimal values.
-// TODO: baseDecimalBuiltinFunc will be removed later after all built-in function signatures been implemented.
-type baseDecimalBuiltinFunc struct {
-	baseBuiltinFunc
-}
-
-func (b *baseDecimalBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	res, isNull, err := b.self.evalDecimal(row)
-	if err != nil || isNull {
-		return d, errors.Trace(err)
-	}
-	d.SetMysqlDecimal(res)
-	return
-}
-
-// evalDecimal will always be overridden.
-func (b *baseDecimalBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	return b.self.evalDecimal(row)
-}
-
-func (b *baseDecimalBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
-}
-
-func (b *baseDecimalBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
-}
-
-func (b *baseDecimalBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
-}
-
-func (b *baseDecimalBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
-}
-
-func (b *baseDecimalBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
-}
-
-func (b *baseDecimalBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
-}
-
-// baseStringBuiltinFunc represents the functions which return string values.
-// TODO: baseStringBuiltinFunc will be removed later after all built-in function signatures been implemented.
-type baseStringBuiltinFunc struct {
-	baseBuiltinFunc
-}
-
-func (b *baseStringBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	val, isNull, err := b.self.evalString(row)
-	if err != nil || isNull {
-		return d, errors.Trace(err)
-	}
-	d.SetString(val)
-	return
-}
-
-// evalString will always be overridden.
-func (b *baseStringBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	return b.self.evalString(row)
-}
-
-func (b *baseStringBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
-}
-
-func (b *baseStringBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
-}
-
-func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic(fmt.Sprintf("cannot get DECIMAL result from: %T", b.self))
-}
-
-func (b *baseStringBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
-}
-
-func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
-}
-
-func (b *baseStringBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
-}
-
-func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
-	tp, flen := b.tp, b.tp.Flen
-	if flen >= mysql.MaxBlobWidth {
-		tp.Tp = mysql.TypeLongBlob
-	} else if flen >= 65536 {
-		tp.Tp = mysql.TypeMediumBlob
-	}
-	if len(tp.Charset) <= 0 {
-		tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	}
-
-	return tp
-}
-
-type baseTimeBuiltinFunc struct {
-	baseBuiltinFunc
-}
-
-func (b *baseTimeBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	val, isNull, err := b.self.evalTime(row)
-	if err != nil || isNull {
-		return d, errors.Trace(err)
-	}
-	d.SetMysqlTime(val)
-	return
-}
-
-func (b *baseTimeBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	return b.self.evalTime(row)
-}
-
-func (b *baseTimeBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
-}
-
-func (b *baseTimeBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
-}
-
-func (b *baseTimeBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
-}
-
-func (b *baseTimeBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
-}
-
-func (b *baseTimeBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
-}
-
-func (b *baseTimeBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
-}
-
-type baseDurationBuiltinFunc struct {
-	baseBuiltinFunc
-}
-
-func (b *baseDurationBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	val, isNull, err := b.self.evalDuration(row)
-	if err != nil || isNull {
-		return d, errors.Trace(err)
-	}
-	d.SetMysqlDuration(val)
-	return
-}
-
-func (b *baseDurationBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	return b.self.evalDuration(row)
-}
-
-func (b *baseDurationBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
-}
-
-func (b *baseDurationBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
-}
-
-func (b *baseDurationBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
-}
-
-func (b *baseDurationBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
-}
-
-func (b *baseDurationBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
-}
-
-func (b *baseDurationBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
-}
-
-type baseJSONBuiltinFunc struct {
-	baseBuiltinFunc
-}
-
-func (b *baseJSONBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	val, isNull, err := b.self.evalJSON(row)
-	if err != nil || isNull {
-		return d, errors.Trace(err)
-	}
-	d.SetMysqlJSON(val)
-	return
-}
-
-func (b *baseJSONBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
-}
-
-func (b *baseJSONBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
-}
-
-func (b *baseJSONBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
-}
-
-func (b *baseJSONBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
-}
-
-func (b *baseJSONBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
-}
-
-func (b *baseJSONBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
-}
-
-func (b *baseJSONBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	return b.self.evalJSON(row)
-}
-
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
-	// eval does evaluation by the given row.
-	eval([]types.Datum) (types.Datum, error)
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(row []types.Datum) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
@@ -651,16 +233,12 @@ type builtinFunc interface {
 	evalJSON(row []types.Datum) (val json.JSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
-	// canBeFolded checks whether a function can be folded in constant folding.
-	canBeFolded() bool
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() context.Context
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
-	// setSelf sets a pointer to itself.
-	setSelf(builtinFunc) builtinFunc
 	// setPbCode sets pbCode for signature.
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
@@ -772,10 +350,12 @@ var funcs = map[string]functionClass{
 	ast.SubTime:          &subTimeFunctionClass{baseFunctionClass{ast.SubTime, 2, 2}},
 	ast.Sysdate:          &sysDateFunctionClass{baseFunctionClass{ast.Sysdate, 0, 1}},
 	ast.Time:             &timeFunctionClass{baseFunctionClass{ast.Time, 1, 1}},
+	ast.TimeLiteral:      &timeLiteralFunctionClass{baseFunctionClass{ast.TimeLiteral, 1, 1}},
 	ast.TimeFormat:       &timeFormatFunctionClass{baseFunctionClass{ast.TimeFormat, 2, 2}},
 	ast.TimeToSec:        &timeToSecFunctionClass{baseFunctionClass{ast.TimeToSec, 1, 1}},
 	ast.TimeDiff:         &timeDiffFunctionClass{baseFunctionClass{ast.TimeDiff, 2, 2}},
 	ast.Timestamp:        &timestampFunctionClass{baseFunctionClass{ast.Timestamp, 1, 2}},
+	ast.TimestampLiteral: &timestampLiteralFunctionClass{baseFunctionClass{ast.TimestampLiteral, 1, 2}},
 	ast.TimestampAdd:     &timestampAddFunctionClass{baseFunctionClass{ast.TimestampAdd, 3, 3}},
 	ast.TimestampDiff:    &timestampDiffFunctionClass{baseFunctionClass{ast.TimestampDiff, 3, 3}},
 	ast.ToDays:           &toDaysFunctionClass{baseFunctionClass{ast.ToDays, 1, 1}},
@@ -783,7 +363,7 @@ var funcs = map[string]functionClass{
 	ast.UnixTimestamp:    &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
 	ast.UTCDate:          &utcDateFunctionClass{baseFunctionClass{ast.UTCDate, 0, 0}},
 	ast.UTCTime:          &utcTimeFunctionClass{baseFunctionClass{ast.UTCTime, 0, 1}},
-	ast.UTCTimestamp:     &utcTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
+	ast.UTCTimestamp:     &utcTimestampFunctionClass{baseFunctionClass{ast.UTCTimestamp, 0, 1}},
 	ast.Week:             &weekFunctionClass{baseFunctionClass{ast.Week, 1, 2}},
 	ast.Weekday:          &weekDayFunctionClass{baseFunctionClass{ast.Weekday, 1, 1}},
 	ast.WeekOfYear:       &weekOfYearFunctionClass{baseFunctionClass{ast.WeekOfYear, 1, 1}},
@@ -903,7 +483,7 @@ var funcs = map[string]functionClass{
 	ast.NullEQ:     &compareFunctionClass{baseFunctionClass{ast.NullEQ, 2, 2}, opcode.NullEQ},
 	ast.Plus:       &arithmeticPlusFunctionClass{baseFunctionClass{ast.Plus, 2, 2}},
 	ast.Minus:      &arithmeticMinusFunctionClass{baseFunctionClass{ast.Minus, 2, 2}},
-	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
+	ast.Mod:        &arithmeticModFunctionClass{baseFunctionClass{ast.Mod, 2, 2}},
 	ast.Div:        &arithmeticDivideFunctionClass{baseFunctionClass{ast.Div, 2, 2}},
 	ast.Mul:        &arithmeticMultiplyFunctionClass{baseFunctionClass{ast.Mul, 2, 2}},
 	ast.IntDiv:     &arithmeticIntDivideFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}},
@@ -917,7 +497,7 @@ var funcs = map[string]functionClass{
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
 	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
-	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 2, 3}},
+	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
 	ast.Regexp:     &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
 	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:    &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},

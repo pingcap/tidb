@@ -37,20 +37,14 @@ func Validate(node ast.Node, inPrepare bool) error {
 // validator is an ast.Visitor that validates
 // ast Nodes parsed from parser.
 type validator struct {
-	err           error
-	wildCardCount int
-	inPrepare     bool
-	inAggregate   bool
+	err         error
+	inPrepare   bool
+	inAggregate bool
 }
 
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.AggregateFuncExpr:
-		if v.inAggregate {
-			// Aggregate function can not contain aggregate function.
-			v.err = ErrInvalidGroupFuncUse
-			return in, true
-		}
 		v.inAggregate = true
 	case *ast.CreateTableStmt:
 		v.checkCreateTableGrammar(node)
@@ -115,6 +109,20 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if count > math.MaxUint64-offset {
 			x.Count.SetValue(math.MaxUint64 - offset)
 		}
+	case *ast.ExplainStmt:
+		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
+			break
+		}
+		valid := false
+		for i, length := 0, len(ast.ExplainFormats); i < length; i++ {
+			if strings.ToLower(x.Format) == ast.ExplainFormats[i] {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			v.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
+		}
 	}
 
 	return in, v.err == nil
@@ -150,8 +158,6 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
 
 func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
 	for _, c := range constraints {
-		if len(c.Keys) < 1 {
-		}
 		// If the constraint as follows: primary key(c1, c2)
 		// we only support c1 column can be auto_increment.
 		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
@@ -224,14 +230,12 @@ func (v *validator) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
 		v.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
 	}
-	return
 }
 
 func (v *validator) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
 		v.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
 	}
-	return
 }
 
 func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
@@ -292,7 +296,6 @@ func (v *validator) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			return
 		}
 	}
-	return
 }
 
 func isPrimary(ops []*ast.ColumnOption) int {
@@ -311,7 +314,6 @@ func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	v.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
-	return
 }
 
 func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {

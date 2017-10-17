@@ -46,9 +46,9 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Abs]
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -94,7 +94,7 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 	runCasesOn := func(funcName string, cases []testCase, exps []Expression) {
 		for _, test := range cases {
-			f, err := newFunctionForTest(s.ctx, funcName, primitiveValsToConstants([]interface{}{test.arg})...)
+			f, err := newFunctionForTest(s.ctx, funcName, s.primitiveValsToConstants([]interface{}{test.arg})...)
 			c.Assert(err, IsNil)
 
 			result, err := f.Eval(nil)
@@ -111,9 +111,8 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 		}
 
 		for _, exp := range exps {
-			f, err := funcs[funcName].getFunction(s.ctx, []Expression{exp})
+			_, err := funcs[funcName].getFunction(s.ctx, []Expression{exp})
 			c.Assert(err, IsNil)
-			c.Assert(f.canBeFolded(), IsTrue)
 		}
 	}
 
@@ -146,7 +145,7 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Exp, primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Exp, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -165,9 +164,8 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Exp].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Exp].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestFloor(c *C) {
@@ -213,7 +211,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 		{genDuration(0, 12, 34), float64(1234), false, false},
 		{genTime(2017, 7, 19), float64(20170719000000), false, false},
 	} {
-		f, err := newFunctionForTest(s.ctx, ast.Floor, primitiveValsToConstants([]interface{}{test.arg})...)
+		f, err := newFunctionForTest(s.ctx, ast.Floor, s.primitiveValsToConstants([]interface{}{test.arg})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -239,9 +237,8 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 			RetType: types.NewFieldType(mysql.TypeFloat),
 		},
 	} {
-		f, err := funcs[ast.Floor].getFunction(s.ctx, []Expression{exp})
+		_, err := funcs[ast.Floor].getFunction(s.ctx, []Expression{exp})
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
 	}
 }
 
@@ -267,7 +264,7 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Log, primitiveValsToConstants(test.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Log, s.primitiveValsToConstants(test.args)...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -283,9 +280,8 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Log].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Log].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLog2(c *C) {
@@ -306,7 +302,7 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Log2, primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Log2, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -322,9 +318,8 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Log2].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Log2].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLog10(c *C) {
@@ -345,7 +340,7 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Log10, primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Log10, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -361,9 +356,8 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Log10].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Log10].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
@@ -371,8 +365,7 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	v, err := f.eval(nil)
+	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
@@ -382,7 +375,7 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	c.Assert(err, IsNil)
 	randGen := rand.New(rand.NewSource(20160101))
 	for i := 0; i < 3; i++ {
-		v, err = f2.eval(nil)
+		v, err = evalBuiltinFunc(f2, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.GetFloat64(), Equals, randGen.Float64())
 	}
@@ -404,10 +397,9 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Pow]
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -423,9 +415,9 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	errDtbl := tblToDtbl(errTbl)
 	for _, t := range errDtbl {
 		fc := funcs[ast.Pow]
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		_, err = f.eval(nil)
+		_, err = evalBuiltinFunc(f, nil)
 		c.Assert(err, NotNil)
 	}
 }
@@ -458,9 +450,9 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Round]
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -498,11 +490,10 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Truncate]
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -527,10 +518,9 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.CRC32]
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -561,7 +551,7 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Conv, primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Conv, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		tp := f.GetType()
 		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
@@ -596,9 +586,8 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		c.Assert(r, Equals, t.ret)
 	}
 
-	f, err := funcs[ast.Conv].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err := funcs[ast.Conv].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSign(c *C) {
@@ -629,10 +618,9 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 		{[]interface{}{uint64(9223372036854775808)}, int64(1)},
 	} {
 		fc := funcs[ast.Sign]
-		f, err := fc.getFunction(s.ctx, primitiveValsToConstants(t.num))
+		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.num))
 		c.Assert(err, IsNil, Commentf("%v", t))
-		c.Assert(f.canBeFolded(), IsTrue)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil, Commentf("%v", t))
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("%v", t))
 	}
@@ -661,7 +649,7 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Degrees, primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Degrees, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
 		if t.getErr {
@@ -675,9 +663,8 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 			}
 		}
 	}
-	f, err := funcs[ast.Degrees].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Degrees].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
@@ -696,10 +683,9 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 
 	for _, t := range tbl {
 		fc := funcs[ast.Sqrt]
-		f, err := fc.getFunction(s.ctx, primitiveValsToConstants(t.Arg))
+		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.Arg))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Ret), Commentf("%v", t))
 	}
@@ -709,9 +695,8 @@ func (s *testEvaluatorSuite) TestPi(c *C) {
 	defer testleak.AfterTest(c)()
 	f, err := funcs[ast.PI].getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 
-	pi, err := f.eval(nil)
+	pi, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))
 }
@@ -732,20 +717,19 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 	Dtbl := tblToDtbl(tbl)
 	for _, t := range Dtbl {
 		fc := funcs[ast.Radians]
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		v, err := f.eval(nil)
+		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 
 	invalidArg := "notNum"
 	fc := funcs[ast.Radians]
-	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
+	_, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, NotNil)
 }
 
@@ -771,7 +755,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Sin, primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Sin, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(nil)
@@ -787,9 +771,8 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Sin].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Sin].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
@@ -811,7 +794,7 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Cos, primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Cos, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(nil)
@@ -827,9 +810,8 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Cos].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Cos].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
@@ -850,7 +832,7 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Acos, primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Acos, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -866,9 +848,8 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Acos].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Acos].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAsin(c *C) {
@@ -889,7 +870,7 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Asin, primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Asin, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -905,9 +886,8 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Asin].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Asin].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAtan(c *C) {
@@ -928,7 +908,7 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Atan, primitiveValsToConstants(test.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Atan, s.primitiveValsToConstants(test.args)...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -944,9 +924,8 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Atan].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Atan].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestTan(c *C) {
@@ -967,7 +946,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Tan, primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Tan, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(nil)
@@ -983,9 +962,8 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Tan].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Tan].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCot(c *C) {
@@ -1009,7 +987,7 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Cot, primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Cot, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(nil)
@@ -1028,7 +1006,6 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Cot].getFunction(s.ctx, []Expression{One})
+	_, err := funcs[ast.Cot].getFunction(s.ctx, []Expression{One})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsTrue)
 }

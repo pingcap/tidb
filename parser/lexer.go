@@ -90,7 +90,7 @@ func (s *Scanner) Errors() []error {
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	s.r = reader{s: sql}
+	s.r = reader{s: sql, p: Pos{Line: 1}}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.stmtStartPos = 0
@@ -136,7 +136,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 		tok = handleIdent(v)
 	}
 	if tok == identifier {
-		if tok1 := isTokenIdentifier(lit, &s.buf); tok1 != 0 {
+		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
 			tok = tok1
 		}
 	}
@@ -157,7 +157,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toHex(s, v, lit)
 	case bitLit:
 		return toBit(s, v, lit)
-	case singleAtIdentifier, doubleAtIdentifier, cast, curDate, extract:
+	case singleAtIdentifier, doubleAtIdentifier, cast, extract:
 		v.item = lit
 		return tok
 	case null:
@@ -324,7 +324,8 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		for {
 			ch0 = s.r.readByte()
 			if ch0 == unicode.ReplacementChar && s.r.eof() {
-				tok = unicode.ReplacementChar
+				// unclosed comment
+				s.errs = append(s.errs, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
 				return
 			}
 			if ch0 == '*' && s.r.readByte() == '/' {
@@ -412,7 +413,7 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		s.r.incAsLongAs(isIdentChar)
 		tok, lit = doubleAtIdentifier, s.r.data(&pos)
 	} else {
-		tok = at
+		tok = int('@')
 	}
 	return
 }

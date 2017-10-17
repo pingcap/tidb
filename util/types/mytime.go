@@ -162,16 +162,16 @@ func datetimeToUint64(t TimeInternal) uint64 {
 
 // dateToUint64 converts time value to integer in YYYYMMDD format.
 func dateToUint64(t TimeInternal) uint64 {
-	return (uint64)(uint64(t.Year())*10000 +
+	return uint64(t.Year())*10000 +
 		uint64(t.Month())*100 +
-		uint64(t.Day()))
+		uint64(t.Day())
 }
 
 // timeToUint64 converts time value to integer in HHMMSS format.
 func timeToUint64(t TimeInternal) uint64 {
-	return uint64(uint64(t.Hour())*10000 +
+	return uint64(t.Hour())*10000 +
 		uint64(t.Minute())*100 +
-		uint64(t.Second()))
+		uint64(t.Second())
 }
 
 // calcDaynr calculates days since 0000-00-00.
@@ -247,7 +247,7 @@ func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 	weekYear := wb.test(weekBehaviourYear)
 	firstWeekday := wb.test(weekBehaviourFirstWeekday)
 
-	weekday := calcWeekday(int(firstDaynr), !mondayFirst)
+	weekday := calcWeekday(firstDaynr, !mondayFirst)
 
 	year = int(t.year)
 
@@ -299,7 +299,7 @@ func mixDateAndTime(date, time *mysqlTime, neg bool) {
 	if neg {
 		sign = 1
 	}
-	seconds, microseconds, neg := calcTimeDiff(date, time, sign)
+	seconds, microseconds, _ := calcTimeDiff(date, time, sign)
 
 	// If we want to use this function with arbitrary dates, this code will need
 	// to cover cases when time is negative and "date < -time".
@@ -323,7 +323,7 @@ func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
 
 	year = daynr * 100 / 36525
 	temp := (((year-1)/100 + 1) * 3) / 4
-	dayOfYear := uint(daynr-year*365) - (year-1)/4 + temp
+	dayOfYear := daynr - year*365 - (year-1)/4 + temp
 
 	daysInYear := calcDaysInYear(int(year))
 	for dayOfYear > uint(daysInYear) {

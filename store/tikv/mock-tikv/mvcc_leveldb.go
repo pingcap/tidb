@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/storage"
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -71,7 +72,7 @@ func mvccEncode(key []byte, ver uint64) []byte {
 // just returns the origin key.
 func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
 	// Skip DataPrefix
-	remainBytes, key, err := codec.DecodeBytes([]byte(encodedKey))
+	remainBytes, key, err := codec.DecodeBytes(encodedKey)
 	if err != nil {
 		// should never happen
 		return nil, 0, errors.Trace(err)
@@ -410,7 +411,9 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 	defer iter.Release()
 
 	succ := iter.Last()
-	currKey, _, _ := mvccDecode(iter.Key())
+	currKey, _, err := mvccDecode(iter.Key())
+	// TODO: return error.
+	terror.Log(errors.Trace(err))
 	helper := reverseScanHelper{
 		startTS:  startTS,
 		isoLevel: isoLevel,
@@ -818,4 +821,9 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 		currKey = skip.currKey
 	}
 	return mvcc.db.Write(batch, nil)
+}
+
+// Close calls leveldb's Close to free resources.
+func (mvcc *MVCCLevelDB) Close() error {
+	return mvcc.db.Close()
 }

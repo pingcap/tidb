@@ -14,11 +14,11 @@
 package plan
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -107,14 +107,12 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			}
 			apply.attachOnConds(newConds)
 			innerPlan = sel.children[0].(LogicalPlan)
-			apply.SetChildren(outerPlan, innerPlan)
-			innerPlan.SetParents(apply)
+			setParentAndChildren(apply, outerPlan, innerPlan)
 			return s.optimize(p, nil, nil)
 		} else if m, ok := innerPlan.(*MaxOneRow); ok {
 			if m.children[0].Schema().MaxOneRow {
 				innerPlan = m.children[0].(LogicalPlan)
-				innerPlan.SetParents(apply)
-				apply.SetChildren(outerPlan, innerPlan)
+				setParentAndChildren(apply, outerPlan, innerPlan)
 				return s.optimize(p, nil, nil)
 			}
 		} else if proj, ok := innerPlan.(*Projection); ok {
@@ -123,16 +121,17 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			}
 			apply.columnSubstitute(proj.Schema(), proj.Exprs)
 			innerPlan = proj.children[0].(LogicalPlan)
-			apply.SetChildren(outerPlan, innerPlan)
-			innerPlan.SetParents(apply)
+			setParentAndChildren(apply, outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin {
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				proj.SetParents(apply.Parents()...)
-				np, _ := s.optimize(p, nil, nil)
-				proj.SetChildren(np)
-				np.SetParents(proj)
+				np, err := s.optimize(p, nil, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				setParentAndChildren(proj, np)
 				return proj, nil
 			}
 			return s.optimize(p, nil, nil)
@@ -140,86 +139,36 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0].(LogicalPlan)
 				apply.JoinType = LeftOuterJoin
-				apply.SetChildren(outerPlan, innerPlan)
-				innerPlan.SetParents(apply)
+				setParentAndChildren(apply, outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
-				newAggFuncs := make([]expression.AggregationFunction, 0, apply.Schema().Len())
+				newAggFuncs := make([]aggregation.Aggregation, 0, apply.Schema().Len())
 				for _, col := range outerPlan.Schema().Columns {
-					first := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					first := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false)
 					newAggFuncs = append(newAggFuncs, first)
 				}
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
 				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				agg.SetParents(apply.Parents()...)
-				np, _ := s.optimize(p, nil, nil)
-				agg.SetChildren(np)
-				np.SetParents(agg)
+				np, err := s.optimize(p, nil, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				setParentAndChildren(agg, np)
 				agg.collectGroupByColumns()
 				return agg, nil
 			}
 		}
 	}
-	if sel, ok := p.(*Selection); ok && len(sel.extractCorrelatedCols()) > 0 {
-		if _, ok := p.Children()[0].(*DataSource); ok {
-			sel.controllerStatus = sel.checkScanController()
-		}
-	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
+		np, err := s.optimize(child.(LogicalPlan), nil, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		newChildren = append(newChildren, np)
-		np.SetParents(p)
 	}
-	p.SetChildren(newChildren...)
+	setParentAndChildren(p, newChildren...)
 	return p, nil
-}
-
-func (p *Selection) checkScanController() int {
-	var (
-		corColConds []expression.Expression
-		pkCol       *expression.Column
-	)
-	ds := p.children[0].(*DataSource)
-	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
-	for _, expr := range p.Conditions {
-		if !expr.IsCorrelated() {
-			continue
-		}
-		cond := expression.PushDownNot(expr, false, nil)
-		corCols := extractCorColumns(cond)
-		for _, col := range corCols {
-			*col.Data = expression.One.Value
-		}
-		newCond, _ := expression.SubstituteCorCol2Constant(cond)
-		corColConds = append(corColConds, newCond)
-	}
-	if ds.tableInfo.PKIsHandle && includeTableScan {
-		for i, col := range ds.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkCol = ds.schema.Columns[i]
-				break
-			}
-		}
-	}
-	if pkCol != nil {
-		access, _ := ranger.DetachColumnConditions(corColConds, pkCol.ColName)
-		for _, cond := range access {
-			if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-				return controlTableScan
-			}
-		}
-	}
-	for _, idx := range indices {
-		condsBackUp := make([]expression.Expression, 0, len(corColConds))
-		for _, cond := range corColConds {
-			condsBackUp = append(condsBackUp, cond.Clone())
-		}
-		_, _, eqCount, _ := ranger.DetachIndexScanConditions(condsBackUp, idx)
-		if eqCount > 0 {
-			return controlIndexScan
-		}
-	}
-	return notController
 }

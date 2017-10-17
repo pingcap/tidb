@@ -24,7 +24,7 @@ import (
 func (expr *ScalarFunction) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", expr.FuncName.L))
 	for i, arg := range expr.GetArgs() {
-		buffer.WriteString(fmt.Sprintf("%s", arg.ExplainInfo()))
+		buffer.WriteString(arg.ExplainInfo())
 		if i+1 < len(expr.GetArgs()) {
 			buffer.WriteString(", ")
 		}
@@ -49,22 +49,6 @@ func (expr *Constant) ExplainInfo() string {
 		}
 	}
 	return valStr
-}
-
-// ExplainAggFunc generates explain information for a aggregation function.
-func ExplainAggFunc(agg AggregationFunction) string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.GetName()))
-	if agg.IsDistinct() {
-		buffer.WriteString("distinct ")
-	}
-	for i, arg := range agg.GetArgs() {
-		buffer.WriteString(arg.ExplainInfo())
-		if i+1 < len(agg.GetArgs()) {
-			buffer.WriteString(", ")
-		}
-	}
-	buffer.WriteString(")")
-	return buffer.String()
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.

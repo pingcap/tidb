@@ -24,9 +24,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -36,6 +34,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	case *Column:
 		return []*Column{v}
 	case *ScalarFunction:
+		cols = make([]*Column, 0, len(v.GetArgs()))
 		for _, arg := range v.GetArgs() {
 			cols = append(cols, ExtractColumns(arg)...)
 		}
@@ -63,110 +62,9 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
 		}
-		fun, _ := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
-		return fun
+		return NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
 	}
 	return expr
-}
-
-func datumsToConstants(datums []types.Datum) []Expression {
-	constants := make([]Expression, 0, len(datums))
-	for _, d := range datums {
-		ft := kindToFieldType(d.Kind())
-		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
-		constants = append(constants, &Constant{Value: d, RetType: &ft})
-	}
-	return constants
-}
-
-func primitiveValsToConstants(args []interface{}) []Expression {
-	cons := datumsToConstants(types.MakeDatums(args...))
-	for i, arg := range args {
-		types.DefaultTypeForValue(arg, cons[i].GetType())
-	}
-	return cons
-}
-
-func kindToFieldType(kind byte) types.FieldType {
-	ft := types.FieldType{}
-	switch kind {
-	case types.KindNull:
-		ft.Tp = mysql.TypeNull
-	case types.KindInt64:
-		ft.Tp = mysql.TypeLonglong
-	case types.KindUint64:
-		ft.Tp = mysql.TypeLonglong
-		ft.Flag |= mysql.UnsignedFlag
-	case types.KindMinNotNull:
-		ft.Tp = mysql.TypeLonglong
-	case types.KindMaxValue:
-		ft.Tp = mysql.TypeLonglong
-	case types.KindFloat32:
-		ft.Tp = mysql.TypeDouble
-	case types.KindFloat64:
-		ft.Tp = mysql.TypeDouble
-	case types.KindString:
-		ft.Tp = mysql.TypeVarString
-	case types.KindBytes:
-		ft.Tp = mysql.TypeVarString
-	case types.KindMysqlEnum:
-		ft.Tp = mysql.TypeEnum
-	case types.KindMysqlSet:
-		ft.Tp = mysql.TypeSet
-	case types.KindInterface:
-		ft.Tp = mysql.TypeVarString
-	case types.KindMysqlDecimal:
-		ft.Tp = mysql.TypeNewDecimal
-	case types.KindMysqlDuration:
-		ft.Tp = mysql.TypeDuration
-	case types.KindMysqlTime:
-		ft.Tp = mysql.TypeDatetime
-	case types.KindBinaryLiteral:
-		ft.Tp = mysql.TypeVarString
-	case types.KindMysqlBit:
-		ft.Tp = mysql.TypeBit
-	}
-	return ft
-}
-
-// calculateSum adds v to sum.
-func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
-	// for avg and sum calculation
-	// avg and sum use decimal for integer and decimal type, use float for others
-	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
-
-	switch v.Kind() {
-	case types.KindNull:
-	case types.KindInt64, types.KindUint64:
-		var d *types.MyDecimal
-		d, err = v.ToDecimal(sc)
-		if err == nil {
-			data = types.NewDecimalDatum(d)
-		}
-	case types.KindMysqlDecimal:
-		data = v
-	default:
-		var f float64
-		f, err = v.ToFloat64(sc)
-		if err == nil {
-			data = types.NewFloat64Datum(f)
-		}
-	}
-
-	if err != nil {
-		return data, errors.Trace(err)
-	}
-	if data.IsNull() {
-		return sum, nil
-	}
-	switch sum.Kind() {
-	case types.KindNull:
-		return data, nil
-	case types.KindFloat64, types.KindMysqlDecimal:
-		return types.ComputePlus(sum, data)
-	default:
-		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
-	}
 }
 
 // getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.
@@ -208,35 +106,6 @@ Loop:
 	return s[:validLen]
 }
 
-// createDistinctChecker creates a new distinct checker.
-func createDistinctChecker() *distinctChecker {
-	return &distinctChecker{
-		existingKeys: mvmap.NewMVMap(),
-	}
-}
-
-// distinctChecker stores existing keys and checks if given data is distinct.
-type distinctChecker struct {
-	existingKeys *mvmap.MVMap
-	buf          []byte
-}
-
-// Check checks if values is distinct.
-func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
-	d.buf = d.buf[:0]
-	var err error
-	d.buf, err = codec.EncodeValue(d.buf, values...)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	v := d.existingKeys.Get(d.buf)
-	if v != nil {
-		return false, nil
-	}
-	d.existingKeys.Put(d.buf, []byte{})
-	return true, nil
-}
-
 // SubstituteCorCol2Constant will substitute correlated column to constant value which it contains.
 // If the args of one scalar function are all constant, we will substitute it to constant.
 func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
@@ -262,9 +131,9 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		}
 		var newSf Expression
 		if x.FuncName.L == ast.Cast {
-			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+			newSf = BuildCastFunction(x.GetCtx(), newArgs[0], x.RetType)
 		} else {
-			newSf, _ = NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+			newSf = NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
 		return newSf, nil
 	case *CorrelatedColumn:
@@ -286,9 +155,9 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 		}
 		var newSf Expression
 		if x.FuncName.L == ast.Cast {
-			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+			newSf = BuildCastFunction(x.GetCtx(), newArgs[0], x.RetType)
 		} else {
-			newSf, _ = NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+			newSf = NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
 		return newSf
 	case *Column:
@@ -308,8 +177,10 @@ func timeZone2Duration(tz string) time.Duration {
 	}
 
 	i := strings.Index(tz, ":")
-	h, _ := strconv.Atoi(tz[1:i])
-	m, _ := strconv.Atoi(tz[i+1:])
+	h, err := strconv.Atoi(tz[1:i])
+	terror.Log(errors.Trace(err))
+	m, err := strconv.Atoi(tz[i+1:])
+	terror.Log(errors.Trace(err))
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
@@ -341,8 +212,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 			return PushDownNot(f.GetArgs()[0], !not, f.GetCtx())
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				nf, _ := NewFunction(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
-				return nf
+				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
@@ -354,8 +224,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
-				return nf
+				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
@@ -367,8 +236,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
-				return nf
+				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
@@ -377,7 +245,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 		}
 	}
 	if not {
-		expr, _ = NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr
 }

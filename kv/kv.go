@@ -38,6 +38,10 @@ const (
 	IsolationLevel
 	// Priority marks the priority of this transaction.
 	Priority
+	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
+	NotFillCache
+	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
+	SyncLog
 )
 
 // Priority value for transaction priority.
@@ -155,12 +159,14 @@ const (
 	ReqSubTypeTopN       = 10002
 	ReqSubTypeSignature  = 10003
 	ReqSubTypeAnalyzeIdx = 10004
+	ReqSubTypeAnalyzeCol = 10005
 )
 
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
 	Tp        int64
+	StartTs   uint64
 	Data      []byte
 	KeyRanges []KeyRange
 	// KeepOrder is true, if the response should be returned in order.
@@ -175,6 +181,10 @@ type Request struct {
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
+	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
+	NotFillCache bool
+	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
+	SyncLog bool
 }
 
 // Response represents the response returned from KV layer.

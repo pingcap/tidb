@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -421,66 +420,11 @@ func (e *TableDualExec) Next() (Row, error) {
 type SelectionExec struct {
 	baseExecutor
 
-	// scanController will tell whether this selection need to
-	// control the condition of below scan executor.
-	scanController bool
-	controllerInit bool
-	Conditions     []expression.Expression
-}
-
-// initController will init the conditions of the below scan executor.
-// It will first substitute the correlated column to constant, then build range and filter by new conditions.
-func (e *SelectionExec) initController() error {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	client := e.ctx.GetClient()
-	newConds := make([]expression.Expression, 0, len(e.Conditions))
-	for _, cond := range e.Conditions {
-		newCond, err := expression.SubstituteCorCol2Constant(cond.Clone())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		newConds = append(newConds, newCond)
-	}
-
-	switch x := e.children[0].(type) {
-	case *XSelectTableExec:
-		accessCondition, restCondtion := ranger.DetachColumnConditions(newConds, x.tableInfo.GetPkName())
-		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
-		ranges, err := ranger.BuildTableRange(accessCondition, sc)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		x.ranges = ranges
-	case *XSelectIndexExec:
-		var (
-			accessCondition    []expression.Expression
-			accessInAndEqCount int
-		)
-		accessCondition, newConds, _, accessInAndEqCount = ranger.DetachIndexScanConditions(newConds, x.index)
-		idxConds, tblConds := ranger.DetachIndexFilterConditions(newConds, x.index.Columns, x.tableInfo)
-		x.indexConditionPBExpr, _, _ = expression.ExpressionsToPB(sc, idxConds, client)
-		tableConditionPBExpr, _, _ := expression.ExpressionsToPB(sc, tblConds, client)
-		var err error
-		x.ranges, err = ranger.BuildIndexRange(sc, x.tableInfo, x.index, accessInAndEqCount, accessCondition)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		x.where = tableConditionPBExpr
-	default:
-		return errors.Errorf("Error type of Executor: %T", x)
-	}
-	return nil
+	Conditions []expression.Expression
 }
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next() (Row, error) {
-	if e.scanController && !e.controllerInit {
-		err := e.initController()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.controllerInit = true
-	}
 	for {
 		srcRow, err := e.children[0].Next()
 		if err != nil {
@@ -499,14 +443,6 @@ func (e *SelectionExec) Next() (Row, error) {
 	}
 }
 
-// Open implements the Executor Open interface.
-func (e *SelectionExec) Open() error {
-	if e.scanController {
-		e.controllerInit = false
-	}
-	return e.children[0].Open()
-}
-
 // TableScanExec is a table scan executor without result fields.
 type TableScanExec struct {
 	baseExecutor
@@ -521,9 +457,9 @@ type TableScanExec struct {
 	schema     *expression.Schema
 	columns    []*model.ColumnInfo
 
-	isInfoSchema     bool
-	infoSchemaRows   [][]types.Datum
-	infoSchemaCursor int
+	isVirtualTable     bool
+	virtualTableRows   [][]types.Datum
+	virtualTableCursor int
 }
 
 // Schema implements the Executor Schema interface.
@@ -533,7 +469,7 @@ func (e *TableScanExec) Schema() *expression.Schema {
 
 // Next implements the Executor interface.
 func (e *TableScanExec) Next() (Row, error) {
-	if e.isInfoSchema {
+	if e.isVirtualTable {
 		return e.nextForInfoSchema()
 	}
 	for {
@@ -576,24 +512,24 @@ func (e *TableScanExec) Next() (Row, error) {
 }
 
 func (e *TableScanExec) nextForInfoSchema() (Row, error) {
-	if e.infoSchemaRows == nil {
+	if e.virtualTableRows == nil {
 		columns := make([]*table.Column, e.schema.Len())
 		for i, v := range e.columns {
 			columns[i] = table.ToColumn(v)
 		}
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
-			e.infoSchemaRows = append(e.infoSchemaRows, rec)
+			e.virtualTableRows = append(e.virtualTableRows, rec)
 			return true, nil
 		})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	if e.infoSchemaCursor >= len(e.infoSchemaRows) {
+	if e.virtualTableCursor >= len(e.virtualTableRows) {
 		return nil, nil
 	}
-	row := e.infoSchemaRows[e.infoSchemaCursor]
-	e.infoSchemaCursor++
+	row := e.virtualTableRows[e.virtualTableCursor]
+	e.virtualTableCursor++
 	return row, nil
 }
 

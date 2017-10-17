@@ -27,16 +27,28 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// Type , the type of table, store data in different ways.
+type Type int16
+
+const (
+	// NormalTable , store data in tikv, mocktikv and so on.
+	NormalTable Type = iota
+	// VirtualTable , store no data, just extract data from the memory struct.
+	VirtualTable
+	// MemoryTable , store data only in local memory.
+	MemoryTable
+)
+
 var (
-	// errNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
-	// and it doesn't have a default value.
-	errNoDefaultValue  = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
 	errColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, "column can not be null")
 	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
 	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
 
 	errGetDefaultFailed = terror.ClassTable.New(codeGetDefaultFailed, "get default value fail")
 
+	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
+	// and it doesn't have a default value.
+	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
 	// ErrIndexOutBound returns for index column offset out of bound.
 	ErrIndexOutBound = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
 	// ErrUnsupportedOp returns for unsupported operation.
@@ -124,6 +136,9 @@ type Table interface {
 
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx context.Context, h int64) (handle int64, found bool, err error)
+
+	// Type returns the type of table
+	Type() Type
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

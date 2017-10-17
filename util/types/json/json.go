@@ -20,6 +20,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/hack"
@@ -134,7 +135,8 @@ func (j *JSON) UnmarshalJSON(data []byte) (err error) {
 
 // String implements fmt.Stringer interface.
 func (j JSON) String() string {
-	bytes, _ := json.Marshal(j)
+	bytes, err := json.Marshal(j)
+	terror.Log(errors.Trace(err))
 	return strings.TrimSpace(hack.String(bytes))
 }
 

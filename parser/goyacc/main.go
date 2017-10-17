@@ -356,9 +356,9 @@ func main1(in string) (err error) {
 
 	// ----------------------------------------------------------- Prologue
 	f := strutil.IndentFormatter(out, "\t")
-	f.Format("// CAUTION: Generated file - DO NOT EDIT.\n\n")
-	f.Format("%s", injectImport(p.Prologue))
-	f.Format(`
+	mustFormat(f, "// CAUTION: Generated file - DO NOT EDIT.\n\n")
+	mustFormat(f, "%s", injectImport(p.Prologue))
+	mustFormat(f, `
 type %[1]sSymType %i%s%u
 
 type %[1]sXError struct {
@@ -379,7 +379,7 @@ type %[1]sXError struct {
 		nsyms[nm] = sym
 	}
 	sort.Strings(a)
-	f.Format("\nconst (%i\n")
+	mustFormat(f, "\nconst (%i\n")
 	for _, v := range a {
 		nm := v
 		switch nm {
@@ -388,20 +388,20 @@ type %[1]sXError struct {
 		case "$default":
 			nm = *oPref + "Default"
 		case "$end":
-			nm = *oPref + "EofCode"
+			nm = *oPref + "EOFCode"
 		}
-		f.Format("%s%s = %d\n", nm, strings.Repeat(" ", maxTokName-len(nm)+1), nsyms[v].Value)
+		mustFormat(f, "%s%s = %d\n", nm, strings.Repeat(" ", maxTokName-len(nm)+1), nsyms[v].Value)
 	}
 	minArg-- // eg: [-13, 42], minArg -14 maps -13 to 1 so zero cell values -> empty.
-	f.Format("\n%sMaxDepth = 200\n", *oPref)
-	f.Format("%sTabOfs   = %d\n", *oPref, minArg)
-	f.Format("%u)")
+	mustFormat(f, "\n%sMaxDepth = 200\n", *oPref)
+	mustFormat(f, "%sTabOfs   = %d\n", *oPref, minArg)
+	mustFormat(f, "%u)")
 
 	// ---------------------------------------------------------- Variables
-	f.Format("\n\nvar (%i\n")
+	mustFormat(f, "\n\nvar (%i\n")
 
 	// Lex translation table
-	f.Format("%sXLAT = map[int]int{%i\n", *oPref)
+	mustFormat(f, "%sXLAT = map[int]int{%i\n", *oPref)
 	xlat := make(map[int]int, len(su))
 	var errSym int
 	for i, v := range su {
@@ -409,35 +409,35 @@ type %[1]sXError struct {
 			errSym = i
 		}
 		xlat[v.sym.Value] = i
-		f.Format("%6d: %3d, // %s (%dx)\n", v.sym.Value, i, v.sym.Name, msu[v.sym])
+		mustFormat(f, "%6d: %3d, // %s (%dx)\n", v.sym.Value, i, v.sym.Name, msu[v.sym])
 	}
-	f.Format("%u}\n")
+	mustFormat(f, "%u}\n")
 
 	// Symbol names
-	f.Format("\n%sSymNames = []string{%i\n", *oPref)
+	mustFormat(f, "\n%sSymNames = []string{%i\n", *oPref)
 	for _, v := range su {
-		f.Format("%q,\n", v.sym.Name)
+		mustFormat(f, "%q,\n", v.sym.Name)
 	}
-	f.Format("%u}\n")
+	mustFormat(f, "%u}\n")
 
 	// Reduction table
-	f.Format("\n%sReductions = []struct{xsym, components int}{%i\n", *oPref)
+	mustFormat(f, "\n%sReductions = []struct{xsym, components int}{%i\n", *oPref)
 	for _, rule := range p.Rules {
-		f.Format("{%d, %d},\n", xlat[rule.Sym.Value], len(rule.Components))
+		mustFormat(f, "{%d, %d},\n", xlat[rule.Sym.Value], len(rule.Components))
 	}
-	f.Format("%u}\n")
+	mustFormat(f, "%u}\n")
 
 	// XError table
-	f.Format("\n%[1]sXErrors = map[%[1]sXError]string{%i\n", *oPref)
+	mustFormat(f, "\n%[1]sXErrors = map[%[1]sXError]string{%i\n", *oPref)
 	for _, xerr := range p.XErrors {
 		state := xerr.Stack[len(xerr.Stack)-1]
 		xsym := -1
 		if xerr.Lookahead != nil {
 			xsym = xlat[xerr.Lookahead.Value]
 		}
-		f.Format("%[1]sXError{%d, %d}: \"%s\",\n", *oPref, state, xsym, xerr.Msg)
+		mustFormat(f, "%[1]sXError{%d, %d}: \"%s\",\n", *oPref, state, xsym, xerr.Msg)
 	}
-	f.Format("%u}\n\n")
+	mustFormat(f, "%u}\n\n")
 
 	// Parse table
 	tbits := 32
@@ -447,7 +447,7 @@ type %[1]sXError struct {
 	case n < 16:
 		tbits = 16
 	}
-	f.Format("%sParseTab = [%d][]uint%d{%i\n", *oPref, len(p.Table), tbits)
+	mustFormat(f, "%sParseTab = [%d][]uint%d{%i\n", *oPref, len(p.Table), tbits)
 	nCells := 0
 	var tabRow sortutil.Uint64Slice
 	for si, state := range p.Table {
@@ -474,26 +474,26 @@ type %[1]sXError struct {
 		tabRow.Sort()
 		col := -1
 		if si%5 == 0 {
-			f.Format("// %d\n", si)
+			mustFormat(f, "// %d\n", si)
 		}
-		f.Format("{")
+		mustFormat(f, "{")
 		for i, v := range tabRow {
 			xsym := int(uint32(v >> 32))
 			arg := int(uint32(v))
 			if col+1 != xsym {
-				f.Format("%d: ", xsym)
+				mustFormat(f, "%d: ", xsym)
 			}
 			switch {
 			case i == len(tabRow)-1:
-				f.Format("%d", arg)
+				mustFormat(f, "%d", arg)
 			default:
-				f.Format("%d, ", arg)
+				mustFormat(f, "%d, ", arg)
 			}
 			col = xsym
 		}
-		f.Format("},\n")
+		mustFormat(f, "},\n")
 	}
-	f.Format("%u}\n")
+	mustFormat(f, "%u}\n")
 	fmt.Fprintf(os.Stderr, "Parse table entries: %d of %d, x %d bits == %d bytes\n", nCells, len(p.Table)*len(msu), tbits, nCells*tbits/8)
 	if n := p.ConflictsSR; n != 0 {
 		fmt.Fprintf(os.Stderr, "conflicts: %d shift/reduce\n", n)
@@ -502,7 +502,7 @@ type %[1]sXError struct {
 		fmt.Fprintf(os.Stderr, "conflicts: %d reduce/reduce\n", n)
 	}
 
-	f.Format(`%u)
+	mustFormat(f, `%u)
 
 var %[1]sDebug = 0
 
@@ -529,7 +529,7 @@ func %[1]sSymName(c int) (s string) {
 func %[1]slex1(yylex %[1]sLexer, lval *%[1]sSymType) (n int) {
 	n = yylex.Lex(lval)
 	if n <= 0 {
-		n = %[1]sEofCode
+		n = %[1]sEOFCode
 	}
 	if %[1]sDebug >= 3 {
 		__yyfmt__.Printf("\nlex %%s(%%#x %%d), %[4]s: %[3]s\n", %[1]sSymName(n), n, n, %[4]s)
@@ -548,7 +548,7 @@ func %[1]sParse(yylex %[1]sLexer, parser *Parser) int {
 
 	Nerrs := 0   /* number of errors */
 	Errflag := 0 /* error recovery flag */
-	yyerrok := func() { 
+	yyerrok := func() {
 		if %[1]sDebug >= 2 {
 			__yyfmt__.Printf("yyerrok()\n")
 		}
@@ -681,7 +681,7 @@ yynewstate:
 			if %[1]sDebug >= 2 {
 				__yyfmt__.Printf("error recovery discards %%s\n", %[1]sSymName(yychar))
 			}
-			if yychar == %[1]sEofCode {
+			if yychar == %[1]sEOFCode {
 				goto ret1
 			}
 
@@ -744,14 +744,14 @@ yynewstate:
 			max = rule.MaxParentDlr
 			components = p1.Components
 		}
-		f.Format("case %d: ", r)
+		mustFormat(f, "case %d: ", r)
 		for _, part := range action {
 			num := part.Num
 			switch part.Type {
 			case parser.ActionValueGo:
-				f.Format("%s", part.Src)
+				mustFormat(f, "%s", part.Src)
 			case parser.ActionValueDlrDlr:
-				f.Format("parser.yyVAL.%s", typ)
+				mustFormat(f, "parser.yyVAL.%s", typ)
 				if typ == "" {
 					panic("internal error 002")
 				}
@@ -760,16 +760,16 @@ yynewstate:
 				if typ == "" {
 					panic("internal error 003")
 				}
-				f.Format("yyS[yypt-%d].%s", max-num, typ)
+				mustFormat(f, "yyS[yypt-%d].%s", max-num, typ)
 			case parser.ActionValueDlrTagDlr:
-				f.Format("parser.yyVAL.%s", part.Tag)
+				mustFormat(f, "parser.yyVAL.%s", part.Tag)
 			case parser.ActionValueDlrTagNum:
-				f.Format("yyS[yypt-%d].%s", max-num, part.Tag)
+				mustFormat(f, "yyS[yypt-%d].%s", max-num, part.Tag)
 			}
 		}
-		f.Format("\n")
+		mustFormat(f, "\n")
 	}
-	f.Format(`%u
+	mustFormat(f, `%u
 	}
 
 	if yyEx != nil && yyEx.Reduced(r, exState, &parser.yyVAL) {
@@ -808,5 +808,12 @@ import __yyfmt__ "fmt"
 			ofs := file.Offset(pos)
 			return src[:ofs] + inj + src[ofs:]
 		}
+	}
+}
+
+func mustFormat(f strutil.Formatter, format string, args ...interface{}) {
+	_, err := f.Format(format, args...)
+	if err != nil {
+		log.Fatalf("format error %v", err)
 	}
 }

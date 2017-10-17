@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/terror"
 )
 
 // UserIdentity represents username and hostname.
@@ -51,8 +52,10 @@ func (user *UserIdentity) String() string {
 //            // this three steps are done in check_scramble()
 func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 	crypt := sha1.New()
-	crypt.Write(salt)
-	crypt.Write(hpwd)
+	_, err := crypt.Write(salt)
+	terror.Log(errors.Trace(err))
+	_, err = crypt.Write(hpwd)
+	terror.Log(errors.Trace(err))
 	hash := crypt.Sum(nil)
 	// token = scrambleHash XOR stage1Hash
 	for i := range hash {
@@ -65,7 +68,8 @@ func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 // Sha1Hash is an util function to calculate sha1 hash.
 func Sha1Hash(bs []byte) []byte {
 	crypt := sha1.New()
-	crypt.Write(bs)
+	_, err := crypt.Write(bs)
+	terror.Log(errors.Trace(err))
 	return crypt.Sum(nil)
 }
 

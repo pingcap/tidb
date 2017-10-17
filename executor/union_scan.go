@@ -151,7 +151,7 @@ func (us *UnionScanExec) twoRowsAreEqual(a, b Row) (bool, error) {
 	}
 	sc := us.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(a); i++ {
-		cmp, err := a[i].CompareDatum(sc, b[i])
+		cmp, err := a[i].CompareDatum(sc, &b[i])
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -227,7 +227,7 @@ func (us *UnionScanExec) compare(a, b Row) (int, error) {
 	for _, colOff := range us.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err := aColumn.CompareDatum(sc, bColumn)
+		cmp, err := aColumn.CompareDatum(sc, &bColumn)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

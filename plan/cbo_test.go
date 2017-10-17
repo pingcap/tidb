@@ -20,7 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -46,13 +46,12 @@ func constructInsertSQL(i, n int) string {
 }
 
 func (s *testAnalyzeSuite) TestIndexRead(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
+		dom.Close()
 		store.Close()
 	}()
 	testKit.MustExec("use test")
@@ -97,7 +96,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 20",
-			best: "IndexLookUp(Index(t.b_c)[[-inf <nil>,20 +inf]], Table(t)->HashAgg)->HashAgg",
+			best: "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 30",
@@ -156,21 +155,19 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
-		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
+		dom.Close()
 		store.Close()
 	}()
 	testKit.MustExec("use test")
@@ -208,21 +205,19 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
-		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testAnalyzeSuite) TestAnalyze(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
+		dom.Close()
 		store.Close()
 	}()
 	testKit.MustExec("use test")
@@ -252,7 +247,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(true, t3.a),Table(false, t3.b)}",
+			best: "Analyze{Index(true, t3.a),Table(true, t3.b)}",
 		},
 		// Test analyze full table.
 		{
@@ -296,20 +291,19 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
-		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
-func newStoreWithBootstrap() (kv.Storage, error) {
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
-	_, err = tidb.BootstrapSession(store)
-	return store, errors.Trace(err)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
 }

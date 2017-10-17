@@ -25,12 +25,14 @@ type testExplainSuite struct {
 }
 
 func (s *testExplainSuite) TestExplain(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
 	defer func() {
-		testleak.AfterTest(c)()
+		dom.Close()
+		store.Close()
 	}()
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2))")
@@ -204,7 +206,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"IndexScan_23   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 1.25",
 				"TableScan_24   cop table:t2, keep order:false 1.25",
 				"IndexLookUp_25 Selection_4  root index:IndexScan_23, table:TableScan_24 1.25",
-				"Selection_4 Limit_16 IndexLookUp_25 root eq(test.t1.c1, test.t2.c1) 6400",
+				"Selection_4 Limit_16 IndexLookUp_25 root eq(test.t1.c1, test.t2.c1) 1",
 				"Limit_16 MaxOneRow_9 Selection_4 root offset:0, count:1 1",
 				"MaxOneRow_9 Apply_13 Limit_16 root  1",
 				"Apply_13 Projection_2 TableReader_15,MaxOneRow_9 root left outer join, small:MaxOneRow_9, right:MaxOneRow_9 8000",
@@ -222,6 +224,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		},
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
+	tk.MustExec("set @@session.tidb_opt_agg_push_down = 1")
 	for _, tt := range tests {
 		result := tk.MustQuery("explain " + tt.sql)
 		result.Check(testkit.Rows(tt.expect...))
@@ -250,19 +253,20 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"TableScan_10 Selection_11  cop table:t2, range:(-inf,+inf), keep order:false 10",
 				"Selection_11  TableScan_10 cop eq(1, test.t2.c2) 10",
 				"TableReader_12 HashSemiJoin_7  root data:Selection_11 10",
-				"HashSemiJoin_7  TableReader_9,TableReader_12 root right:TableReader_12, aux 8000",
+				"HashSemiJoin_7 Projection_2 TableReader_9,TableReader_12 root right:TableReader_12, aux 8000",
+				"Projection_2  HashSemiJoin_7 root 5_aux_0 8000",
 			},
 		},
 		{
 			"select sum(6 in (select c2 from t2)) from t1",
 			[]string{
-				"TableScan_10   cop table:t1, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_11 HashSemiJoin_9  root data:TableScan_10 8000",
-				"TableScan_12 Selection_13  cop table:t2, range:(-inf,+inf), keep order:false 10",
-				"Selection_13  TableScan_12 cop eq(6, test.t2.c2) 10",
-				"TableReader_14 HashSemiJoin_9  root data:Selection_13 10",
-				"HashSemiJoin_9 HashAgg_8 TableReader_11,TableReader_14 root right:TableReader_14, aux 8000",
-				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(5_aux_0) 1",
+				"TableScan_22   cop table:t1, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_23 HashSemiJoin_20  root data:TableScan_22 8000",
+				"TableScan_13 Selection_14  cop table:t2, range:(-inf,+inf), keep order:false 10",
+				"Selection_14  TableScan_13 cop eq(6, test.t2.c2) 10",
+				"TableReader_15 HashSemiJoin_20  root data:Selection_14 10",
+				"HashSemiJoin_20 StreamAgg_9 TableReader_23,TableReader_15 root right:TableReader_15, aux 8000",
+				"StreamAgg_9  HashSemiJoin_20 root type:stream, funcs:sum(5_aux_0) 1",
 			},
 		},
 	}
@@ -270,5 +274,71 @@ func (s *testExplainSuite) TestExplain(c *C) {
 	for _, tt := range insubqueryFoldTests {
 		result := tk.MustQuery("explain " + tt.sql)
 		result.Check(testkit.Rows(tt.expect...))
+	}
+
+	dotFormatTests := []struct {
+		sql    string
+		expect string
+	}{
+		{
+			sql: "select sum(t1.c1 in (select c1 from t2)) from t1",
+			expect: "\n" +
+				"digraph StreamAgg_9 {\n" +
+				"subgraph cluster9{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"root\"\n" +
+				"\"StreamAgg_9\" -> \"HashSemiJoin_16\"\n" +
+				"\"HashSemiJoin_16\" -> \"TableReader_19\"\n" +
+				"\"HashSemiJoin_16\" -> \"TableReader_15\"\n" +
+				"}\n" +
+				"subgraph cluster18{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_18\"\n" +
+				"}\n" +
+				"subgraph cluster14{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_14\"\n" +
+				"}\n" +
+				"\"TableReader_19\" -> \"TableScan_18\"\n" +
+				"\"TableReader_15\" -> \"TableScan_14\"\n" +
+				"}\n",
+		},
+		{
+			sql: "select 1 in (select c2 from t2) from t1",
+			expect: "\n" +
+				"digraph Projection_2 {\n" +
+				"subgraph cluster2{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"root\"\n" +
+				"\"Projection_2\" -> \"HashSemiJoin_7\"\n" +
+				"\"HashSemiJoin_7\" -> \"TableReader_9\"\n" +
+				"\"HashSemiJoin_7\" -> \"TableReader_12\"\n" +
+				"}\n" +
+				"subgraph cluster8{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_8\"\n" +
+				"}\n" +
+				"subgraph cluster11{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"Selection_11\" -> \"TableScan_10\"\n" +
+				"}\n" +
+				"\"TableReader_9\" -> \"TableScan_8\"\n" +
+				"\"TableReader_12\" -> \"Selection_11\"\n" +
+				"}\n",
+		},
+	}
+	for i, length := 0, len(dotFormatTests); i < length; i++ {
+		result := tk.MustQuery(`explain format = "dot" ` + dotFormatTests[i].sql)
+		result.Check(testkit.Rows(dotFormatTests[i].expect))
 	}
 }

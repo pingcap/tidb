@@ -56,7 +56,7 @@ func (b *SortedBuilder) Hist() *Histogram {
 
 // Iterate updates the histogram incrementally.
 func (b *SortedBuilder) Iterate(data types.Datum) error {
-	cmp, err := b.hist.Buckets[b.bucketIdx].UpperBound.CompareDatum(b.sc, data)
+	cmp, err := b.hist.Buckets[b.bucketIdx].UpperBound.CompareDatum(b.sc, &data)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -133,26 +133,32 @@ func BuildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 }
 
 // BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int64, nullCount int64, samples []types.Datum) (*Histogram, error) {
+func BuildColumn(ctx context.Context, numBuckets, id int64, collector *SampleCollector) (*Histogram, error) {
+	count := collector.Count
 	if count == 0 {
-		return &Histogram{ID: id, NullCount: nullCount}, nil
+		return &Histogram{ID: id, NullCount: collector.NullCount}, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
+	samples := collector.Samples
 	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ndv := collector.Sketch.NDV()
+	if ndv > count {
+		ndv = count
+	}
 	hg := &Histogram{
 		ID:        id,
 		NDV:       ndv,
-		NullCount: nullCount,
+		NullCount: collector.NullCount,
 		Buckets:   make([]Bucket, 1, numBuckets),
 	}
 	valuesPerBucket := float64(count)/float64(numBuckets) + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
-	ndvFactor := float64(count) / float64(ndv)
+	ndvFactor := float64(count) / float64(hg.NDV)
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
@@ -160,7 +166,7 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int
 	var lastCount int64
 	hg.Buckets[0].LowerBound = samples[0]
 	for i := int64(0); i < int64(len(samples)); i++ {
-		cmp, err := hg.Buckets[bucketIdx].UpperBound.CompareDatum(sc, samples[i])
+		cmp, err := hg.Buckets[bucketIdx].UpperBound.CompareDatum(sc, &samples[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

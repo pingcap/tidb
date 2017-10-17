@@ -33,12 +33,11 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 	ctx.GetSessionVars().CurrentDB = "test"
-	d, err = f.eval(nil)
+	d, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 
@@ -47,7 +46,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(fc, NotNil)
 	f, err = fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err = f.eval(types.MakeDatums())
+	d, err = evalBuiltinFunc(f, types.MakeDatums())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }
@@ -61,8 +60,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(2))
 }
@@ -76,8 +74,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	fc := funcs[ast.User]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -91,8 +88,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -106,8 +102,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	fc := funcs[ast.ConnectionID]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(1))
 }
@@ -117,8 +112,7 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	v, err := f.eval(nil)
+	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }
@@ -126,7 +120,7 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Benchmark]
-	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil, nil)))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
 }
@@ -134,7 +128,7 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 func (s *testEvaluatorSuite) TestCharset(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Charset]
-	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION CHARSET does not exist")
 }
@@ -142,7 +136,7 @@ func (s *testEvaluatorSuite) TestCharset(c *C) {
 func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Coercibility]
-	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION COERCIBILITY does not exist")
 }
@@ -150,7 +144,7 @@ func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 func (s *testEvaluatorSuite) TestCollation(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Collation]
-	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION COLLATION does not exist")
 }
@@ -158,7 +152,7 @@ func (s *testEvaluatorSuite) TestCollation(c *C) {
 func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RowCount]
-	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums()))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums()))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION ROW_COUNT does not exist")
 }
@@ -166,7 +160,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 // Test case for tidb_server().
 func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
 	defer testleak.AfterTest(c)()
-	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, primitiveValsToConstants([]interface{}{})...)
+	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, s.primitiveValsToConstants([]interface{}{})...)
 	c.Assert(err, IsNil)
 	v, err := f.Eval(nil)
 	c.Assert(err, IsNil)
@@ -202,7 +196,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		}
 
 		if t.args != nil {
-			f, err = newFunctionForTest(s.ctx, ast.LastInsertId, primitiveValsToConstants([]interface{}{t.args})...)
+			f, err = newFunctionForTest(s.ctx, ast.LastInsertId, s.primitiveValsToConstants([]interface{}{t.args})...)
 		} else {
 			f, err = newFunctionForTest(s.ctx, ast.LastInsertId)
 		}
@@ -226,7 +220,6 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
 }

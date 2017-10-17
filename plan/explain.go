@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 )
 
 func setParents4FinalPlan(plan PhysicalPlan) {
@@ -89,7 +90,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	}
 	buffer.WriteString(fmt.Sprintf(", out of order:%v", p.OutOfOrder))
 	if p.Desc {
-		buffer.WriteString(fmt.Sprint(", desc"))
+		buffer.WriteString(", desc")
 	}
 	return buffer.String()
 }
@@ -116,7 +117,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	}
 	buffer.WriteString(fmt.Sprintf(", keep order:%v", p.KeepOrder))
 	if p.Desc {
-		buffer.WriteString(fmt.Sprint(", desc"))
+		buffer.WriteString(", desc")
 	}
 	return buffer.String()
 }
@@ -186,7 +187,7 @@ func (p *PhysicalAggregation) ExplainInfo() string {
 	}
 	buffer.WriteString(", funcs:")
 	for i, agg := range p.AggFuncs {
-		buffer.WriteString(expression.ExplainAggFunc(agg))
+		buffer.WriteString(aggregation.ExplainAggFunc(agg))
 		if i+1 < len(p.AggFuncs) {
 			buffer.WriteString(", ")
 		}

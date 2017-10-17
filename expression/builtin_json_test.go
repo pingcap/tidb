@@ -39,10 +39,9 @@ func (s *testEvaluatorSuite) TestJSONType(c *C) {
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Input"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		d, err := f.eval(nil)
+		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
@@ -69,10 +68,9 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Input"]))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		d, err := f.eval(nil)
+		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
@@ -93,12 +91,11 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
+		d, err := evalBuiltinFunc(f, nil)
 		if t.Success {
 			c.Assert(err, IsNil)
-			c.Assert(f.canBeFolded(), IsTrue)
 			switch x := t.Expected.(type) {
 			case string:
 				var j1 json.JSON
@@ -140,11 +137,10 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 	var d types.Datum
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err = t.fc.getFunction(s.ctx, datumsToConstants(args))
+		f, err = t.fc.getFunction(s.ctx, s.datumsToConstants(args))
 		if t.BuildSuccess {
 			c.Assert(err, IsNil)
-			c.Assert(f.canBeFolded(), IsTrue)
-			d, err = f.eval(nil)
+			d, err = evalBuiltinFunc(f, nil)
 			if t.Success {
 				c.Assert(err, IsNil)
 				switch x := t.Expected.(type) {
@@ -178,10 +174,9 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		d, err := f.eval(nil)
+		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 
 		switch x := t.Expected.(type) {
@@ -208,10 +203,9 @@ func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		d, err := f.eval(nil)
+		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 
 		j1, err := json.ParseFromString(t.Expected)
@@ -244,11 +238,10 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 	var d types.Datum
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err = fc.getFunction(s.ctx, datumsToConstants(args))
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(args))
 		if t.BuildSuccess {
 			c.Assert(err, IsNil)
-			c.Assert(f.canBeFolded(), IsTrue)
-			d, err = f.eval(nil)
+			d, err = evalBuiltinFunc(f, nil)
 			if t.Success {
 				c.Assert(err, IsNil)
 				switch x := t.Expected.(type) {
@@ -297,9 +290,9 @@ func (s *testEvaluatorSuite) TestJSONORemove(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
+		d, err := evalBuiltinFunc(f, nil)
 
 		if t.Success {
 			c.Assert(err, IsNil)

@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -118,8 +119,6 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err           error
-	hasAgg        bool
-	obj           interface{}
 	allocator     *idAllocator
 	ctx           context.Context
 	is            infoschema.InfoSchema
@@ -205,7 +204,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	}
 	dual.SetSchema(expression.NewSchema())
 	p := Projection{Exprs: exprs}.init(b.allocator, b.ctx)
-	addChild(p, dual)
+	setParentAndChildren(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
 	return p
@@ -341,7 +340,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
 	selectLock := SelectLock{Lock: lock}.init(b.allocator, b.ctx)
-	addChild(selectLock, src)
+	setParentAndChildren(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
@@ -422,13 +421,14 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	pushdownIdx := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx)
+	pushdownCol := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeCol)
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		for _, idx := range idxInfo {
 			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx, PushDown: pushdownIdx})
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo, PushDown: pushdownCol})
 		}
 	}
 	p.SetSchema(&expression.Schema{})
@@ -490,7 +490,7 @@ func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 		Collate: cl,
 		Tp:      tp,
 		Flen:    size,
-		Flag:    uint(flag),
+		Flag:    flag,
 	}
 	return &expression.Column{
 		ColName: model.NewCIStr(name),
@@ -569,7 +569,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	if len(conditions) != 0 {
 		sel := Selection{Conditions: conditions}.init(b.allocator, b.ctx)
-		addChild(sel, p)
+		setParentAndChildren(sel, p)
 		sel.SetSchema(p.Schema())
 		resultPlan = sel
 	}
@@ -614,10 +614,8 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "")
 	}
 
-	if allPrivs != nil {
-		for _, priv := range allPrivs {
-			vi = appendVisitInfo(vi, priv, dbName, tableName, "")
-		}
+	for _, priv := range allPrivs {
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "")
 	}
 
 	return vi
@@ -649,11 +647,20 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
+
+		colExpr, _, err := mockPlan.findColumn(columnName)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+
 		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return
 		}
+		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
 		if onDups == nil {
@@ -661,12 +668,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
-				col, _, err := mockPlan.findColumn(columnName)
-				if err != nil {
-					b.err = errors.Trace(err)
-					return
-				}
-				assign := &expression.Assignment{Col: col, Expr: expr.Clone()}
+				assign := &expression.Assignment{Col: colExpr, Expr: expr.Clone()}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
 				break
 			}
@@ -687,7 +689,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		return nil
 	}
 	tableInfo := tn.TableInfo
-	schema := expression.TableInfo2Schema(tableInfo)
+	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
+	schema := expression.TableInfo2SchemaWithDBName(tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
@@ -727,6 +730,20 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan.SetSchema(schema)
+
+	checkRefColumn := func(n ast.Node) ast.Node {
+		if insertPlan.NeedFillDefaultValue {
+			return n
+		}
+		switch n.(type) {
+		case *ast.ColumnName, *ast.ColumnNameExpr:
+			insertPlan.NeedFillDefaultValue = true
+		}
+		return n
+	}
+
 	cols := insertPlan.Table.Cols()
 	maxValuesItemLength := 0 // the max length of items in VALUES list.
 	for _, valuesItem := range insert.Lists {
@@ -746,7 +763,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 					RetType: &val.Type,
 				}
 			} else {
-				expr, _, err = b.rewrite(valueItem, nil, nil, true)
+				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				b.err = errors.Trace(err)
@@ -778,8 +795,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
-	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
-	mockTablePlan.SetSchema(expression.NewSchema())
 	for _, assign := range insert.Setlist {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -795,9 +810,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
-		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
-		// It's unreasonable.
-		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
@@ -807,8 +820,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Expr: expr,
 		})
 	}
-
-	mockTablePlan.SetSchema(schema)
 
 	onDupCols := make(map[string]struct{}, len(insert.OnDuplicate))
 	for _, assign := range insert.OnDuplicate {
@@ -854,7 +865,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				return nil
 			}
 		}
-		addChild(insertPlan, selectPlan)
+		setParentAndChildren(insertPlan, selectPlan)
 	}
 
 	// Calculate generated columns.
@@ -977,22 +988,39 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	setParents4FinalPlan(targetPlan.(PhysicalPlan))
 	p := &Explain{StmtPlan: targetPlan}
 	if UseDAGPlanBuilder(b.ctx) {
-		retFields := []string{"id", "parents", "children", "task", "operator info"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		switch strings.ToLower(explain.Format) {
+		case ast.ExplainFormatROW:
+			retFields := []string{"id", "parents", "children", "task", "operator info"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
+			p.SetSchema(schema)
+			p.explainedPlans = map[int]bool{}
+			p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		case ast.ExplainFormatDOT:
+			retFields := []string{"dot contents"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			p.SetSchema(schema)
+			p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
+		default:
+			b.err = errors.Errorf("explain format '%s' is not supported now", explain.Format)
 		}
-		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
-		p.SetSchema(schema)
-		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
 	} else {
 		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
 		schema.Append(buildColumn("", "ID", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "Json", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "ParentID", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
-		p.prepareExplainInfo(p.StmtPlan, nil)
+		err := p.prepareExplainInfo(p.StmtPlan, nil)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
 	}
 	return p
 }
@@ -1058,39 +1086,6 @@ func buildShowWarningsSchema() *expression.Schema {
 	schema.Append(buildColumn(tblName, "Level", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn(tblName, "Code", mysql.TypeLong, 19))
 	schema.Append(buildColumn(tblName, "Message", mysql.TypeVarchar, 64))
-	return schema
-}
-
-func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
-	for i, name := range names {
-		col := &expression.Column{
-			ColName: model.NewCIStr(name),
-		}
-		var retTp byte
-		if len(ftypes) == 0 || ftypes[i] == 0 {
-			// Use varchar as the default return column type.
-			retTp = mysql.TypeVarchar
-		} else {
-			retTp = ftypes[i]
-		}
-		retType := types.NewFieldType(retTp)
-		if retTp == mysql.TypeVarchar || retTp == mysql.TypeString {
-			retType.Flen = 256
-		} else if retTp == mysql.TypeDatetime {
-			retType.Flen = 19
-		}
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(retType.Tp)
-		if retType.Flen == types.UnspecifiedLength {
-			retType.Flen = defaultFlen
-		}
-		if retType.Decimal == types.UnspecifiedLength {
-			retType.Decimal = defaultDecimal
-		}
-		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
-		col.RetType = retType
-		schema.Append(col)
-	}
 	return schema
 }
 
@@ -1166,5 +1161,22 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
-	return composeShowSchema(names, ftypes)
+
+	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
+	for i := range names {
+		col := &expression.Column{
+			ColName: model.NewCIStr(names[i]),
+		}
+		// User varchar as the default return column type.
+		tp := mysql.TypeVarchar
+		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
+			tp = ftypes[0]
+		}
+		fieldType := types.NewFieldType(tp)
+		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		col.RetType = fieldType
+		schema.Append(col)
+	}
+	return schema
 }

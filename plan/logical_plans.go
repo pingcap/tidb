@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
@@ -177,7 +178,7 @@ type LogicalAggregation struct {
 	*basePlan
 	baseLogicalPlan
 
-	AggFuncs     []expression.AggregationFunction
+	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
@@ -400,13 +401,15 @@ type Delete struct {
 	IsMultiTable bool
 }
 
-// AddChild for parent.
-func addChild(parent Plan, child Plan) {
-	if child == nil || parent == nil {
+// setParentAndChildren sets parent and children relationship.
+func setParentAndChildren(parent Plan, children ...Plan) {
+	if children == nil || parent == nil {
 		return
 	}
-	child.AddParent(parent)
-	parent.AddChild(child)
+	for _, child := range children {
+		child.SetParents(parent)
+	}
+	parent.SetChildren(children...)
 }
 
 // InsertPlan means inserting plan between two plans.

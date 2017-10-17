@@ -795,7 +795,7 @@ type DeleteStmt struct {
 	Order        *OrderByClause
 	Limit        *Limit
 	LowPriority  bool
-	Ignore       bool
+	IgnoreErr    bool
 	Quick        bool
 	IsMultiTable bool
 	BeforeFrom   bool

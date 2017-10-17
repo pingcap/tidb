@@ -219,9 +219,6 @@ type SessionVars struct {
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
-
-	// CBO indicates if we use new planner with cbo.
-	CBO bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -236,7 +233,7 @@ func NewSessionVars() *SessionVars {
 		StrictSQLMode:              true,
 		Status:                     mysql.ServerStatusAutocommit,
 		StmtCtx:                    new(StatementContext),
-		AllowAggPushDown:           true,
+		AllowAggPushDown:           false,
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
 		IndexJoinBatchSize:         DefIndexJoinBatchSize,
 		IndexLookupSize:            DefIndexLookupSize,
@@ -244,14 +241,8 @@ func NewSessionVars() *SessionVars {
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
-		CBO:                        true,
 	}
 }
-
-const (
-	characterSetConnection = "character_set_connection"
-	collationConnection    = "collation_connection"
-)
 
 // GetCharsetInfo gets charset and collation for current context.
 // What character set should the server translate a statement to after receiving it?
@@ -263,8 +254,8 @@ const (
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
-	charset = s.Systems[characterSetConnection]
-	collation = s.Systems[collationConnection]
+	charset = s.Systems[CharacterSetConnection]
+	collation = s.Systems[CollationConnection]
 	return
 }
 
@@ -336,13 +327,15 @@ type TableDelta struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
-	InInsertStmt         bool
-	InUpdateOrDeleteStmt bool
-	InSelectStmt         bool
-	IgnoreTruncate       bool
-	TruncateAsWarning    bool
-	OverflowAsWarning    bool
-	InShowWarning        bool
+	InInsertStmt           bool
+	InUpdateOrDeleteStmt   bool
+	InSelectStmt           bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	DividedByZeroAsWarning bool
+	TruncateAsWarning      bool
+	OverflowAsWarning      bool
+	InShowWarning          bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -353,8 +346,9 @@ type StatementContext struct {
 	}
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone *time.Location
-	Priority mysql.PriorityEnum
+	TimeZone     *time.Location
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
 }
 
 // AddAffectedRows adds affected rows.
