@@ -252,7 +252,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 	if job.IsCancelling() {
 		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			d.notifyCancelReorgJob <- struct{}{}
+			log.Infof("[ddl] run the cancelling DDL job %s", job)
+			asyncNotify(d.notifyCancelReorgJob)
 		} else {
 			job.State = model.JobCancelled
 			job.Error = errCancelledDDLJob
@@ -261,7 +262,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 		}
 	}
 
-	if job.State != model.JobRollback {
+	if !job.IsRollbacking() && !job.IsCancelling() {
 		job.State = model.JobRunning
 	}
 

@@ -328,6 +328,13 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	if kv.ErrKeyExists.Equal(err) {
 		return ver, kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
 	}
+
+	// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+	select {
+	case <-d.notifyCancelReorgJob:
+	default:
+	}
+
 	return ver, errors.Trace(err)
 }
 

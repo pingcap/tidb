@@ -263,10 +263,12 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 			errs, err := inspectkv.CancelJobs(txn, test.jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
+				return checkErr
 			}
 			// It only tests cancel one DDL job.
 			if errs[0] != test.cancelRetErrs[0] {
 				checkErr = errors.Trace(errs[0])
+				return checkErr
 			}
 		}
 	}
@@ -332,17 +334,22 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	var checkErr error
 	var test *testCancelJob
 	tc.onJobUpdated = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		hookCtx := mock.NewContext()
 		hookCtx.Store = store
 		var err error
 		err = hookCtx.NewTxn()
 		if err != nil {
 			checkErr = errors.Trace(err)
+			return
 		}
 		checkCancelState(hookCtx.Txn(), job, test)
 		err = hookCtx.Txn().Commit()
 		if err != nil {
 			checkErr = errors.Trace(err)
+			return
 		}
 	}
 	d.SetHook(tc)

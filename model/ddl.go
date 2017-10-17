@@ -263,6 +263,8 @@ func (s JobState) String() string {
 		return "done"
 	case JobCancelled:
 		return "cancelled"
+	case JobCancelling:
+		return "cancelling"
 	case JobSynced:
 		return "synced"
 	default:

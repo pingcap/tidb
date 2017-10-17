@@ -178,6 +178,8 @@ type DDL interface {
 	WorkerVars() *variable.SessionVars
 	// SetHook sets the hook. It's exported for testing.
 	SetHook(h Callback)
+	// GetHook gets the hook. It's exported for testing.
+	GetHook() Callback
 }
 
 // Event is an event that a ddl operation happened.
@@ -504,6 +506,14 @@ func (d *ddl) SetHook(h Callback) {
 	defer d.hookMu.Unlock()
 
 	d.hook = h
+}
+
+// GetHook implements DDL.GetHook interface.
+func (d *ddl) GetHook() Callback {
+	d.hookMu.RLock()
+	defer d.hookMu.RUnlock()
+
+	return d.hook
 }
 
 func (d *ddl) WorkerVars() *variable.SessionVars {
