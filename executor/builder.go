@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -1132,6 +1133,44 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 	return dagReq
 }
 
+func (b *executorBuilder) constructTableRanges(tbl *model.TableInfo, schema *expression.Schema, conds []expression.Expression) (newRanges []types.IntColumnRange) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	newRanges = ranger.FullIntRange()
+	var pkCol *expression.Column
+	if tbl.PKIsHandle {
+		if pkColInfo := tbl.GetPkColInfo(); pkColInfo != nil {
+			pkCol = expression.ColInfo2Col(schema.Columns, pkColInfo)
+		}
+	}
+	if pkCol != nil {
+		var ranges []types.Range
+		ranges, b.err = ranger.BuildRange(sc, conds, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+		newRanges = ranger.Ranges2IntRanges(ranges)
+	}
+	if b.err != nil {
+		return nil
+	}
+	return newRanges
+}
+
+func (b *executorBuilder) constructIndexRanges(idx *model.IndexInfo, schema *expression.Schema, conds []expression.Expression) (newRanges []*types.IndexRange) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	idxCols, colLengths := expression.IndexInfo2Cols(schema.Columns, idx)
+	newRanges = ranger.FullIndexRange()
+	if len(idxCols) > 0 {
+		var ranges []types.Range
+		ranges, b.err = ranger.BuildRange(sc, conds, ranger.IndexRangeType, idxCols, colLengths)
+		if b.err != nil {
+			return nil
+		}
+		newRanges = ranger.Ranges2IndexRanges(ranges)
+	}
+	if b.err != nil {
+		return nil
+	}
+	return newRanges
+}
+
 func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 	batchSize := 1
 	if !v.KeepOrder {
@@ -1158,6 +1197,10 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
+	newRanges := b.constructTableRanges(ts.Table, ts.Schema(), ts.AccessCondition)
+	if b.err != nil {
+		return nil
+	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1166,7 +1209,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		table:     table,
 		keepOrder: ts.KeepOrder,
 		desc:      ts.Desc,
-		ranges:    ts.Ranges,
+		ranges:    newRanges,
 		columns:   ts.Columns,
 		priority:  b.priority,
 	}
@@ -1184,6 +1227,10 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		return nil
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	newRanges := b.constructIndexRanges(is.Index, is.SourceSchema(), is.AccessCondition)
+	if b.err != nil {
+		return nil
+	}
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
 		ctx:       b.ctx,
@@ -1194,7 +1241,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		index:     is.Index,
 		keepOrder: !is.OutOfOrder,
 		desc:      is.Desc,
-		ranges:    is.Ranges,
+		ranges:    newRanges,
 		columns:   is.Columns,
 		priority:  b.priority,
 	}
@@ -1241,8 +1288,12 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
-	ranges := make([]*types.IndexRange, 0, len(is.Ranges))
-	for _, rangeInPlan := range is.Ranges {
+	newRanges := b.constructIndexRanges(is.Index, is.SourceSchema(), is.AccessCondition)
+	if b.err != nil {
+		return nil
+	}
+	ranges := make([]*types.IndexRange, 0, len(newRanges))
+	for _, rangeInPlan := range newRanges {
 		ranges = append(ranges, rangeInPlan.Clone())
 	}
 
