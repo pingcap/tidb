@@ -488,6 +488,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
+	_, err = se.Execute("use test")
+	c.Assert(err, IsNil)
 
 	tests := []struct {
 		sql  string
