@@ -132,6 +132,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatsBuckets()
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
+	case ast.ShowProfiles:
+		// empty result
 	}
 	return nil
 }
