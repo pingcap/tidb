@@ -1196,15 +1196,6 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
-	var statisticTable *statistics.Table
-	if handle == nil {
-		// When the first session is created, the handle hasn't been initialized.
-		statisticTable = statistics.PseudoTable(tn.TableInfo.ID)
-	} else {
-		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
-	}
-
 	schemaName := tn.Schema
 	if schemaName.L == "" {
 		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -1215,6 +1206,15 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	tableInfo := tbl.Meta()
+
+	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
+	var statisticTable *statistics.Table
+	if handle == nil {
+		// When the first session is created, the handle hasn't been initialized.
+		statisticTable = statistics.PseudoTable(tableInfo.ID)
+	} else {
+		statisticTable = handle.GetTableStats(tableInfo.ID)
+	}
 
 	p := DataSource{
 		indexHints:     tn.IndexHints,
