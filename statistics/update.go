@@ -187,6 +187,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 				return errors.Trace(h.execAutoAnalyze(sql))
 			}
 			for _, idx := range tblInfo.Indices {
+				if idx.State != model.StatePublic {
+					continue
+				}
 				if _, ok := statsTbl.Indices[idx.ID]; !ok {
 					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
 					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
