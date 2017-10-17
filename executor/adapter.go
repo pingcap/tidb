@@ -274,7 +274,7 @@ func (a *ExecStmt) logSlowQuery() {
 	costTime := time.Since(a.startTime)
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
-		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
 	logEntry := log.WithFields(log.Fields{
