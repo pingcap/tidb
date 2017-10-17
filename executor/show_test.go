@@ -232,6 +232,26 @@ func (s *testSuite) TestShow(c *C) {
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
+
+	// for issue #4740
+	testSQL = `drop table if exists t`
+	tk.MustExec(testSQL)
+	testSQL = `create table t (a int1, b int2, c int3, d int4, e int8)`
+	tk.MustExec(testSQL)
+	testSQL = `show create table t;`
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"t",
+		"CREATE TABLE `t` (\n" +
+			"  `a` tinyint(4) DEFAULT NULL,\n" +
+			"  `b` smallint(6) DEFAULT NULL,\n" +
+			"  `c` mediumint(9) DEFAULT NULL,\n" +
+			"  `d` int(11) DEFAULT NULL,\n" +
+			"  `e` bigint(20) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	}
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
