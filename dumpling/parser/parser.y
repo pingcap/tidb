@@ -139,6 +139,11 @@ import (
 	is			"IS"
 	insert			"INSERT"
 	intType			"INT"
+	int1Type		"INT1"
+	int2Type		"INT2"
+	int3Type		"INT3"
+	int4Type		"INT4"
+	int8Type		"INT8"
 	join			"JOIN"
 	key			"KEY"
 	keys			"KEYS"
@@ -428,12 +433,12 @@ import (
 	FunctionCallKeyword		"Function call with keyword as function name"
 	FunctionCallNonKeyword		"Function call with nonkeyword as function name"
 	Literal				"literal value"
-	Variable		"User or system variable"
+	Variable			"User or system variable"
 	SystemVariable			"System defined variable name"
-	UserVariable		"User defined variable name"
+	UserVariable			"User defined variable name"
 	SubSelect			"Sub Select"
 	StringLiteral			"text literal"
-	ExpressionOpt		"Optional expression"
+	ExpressionOpt			"Optional expression"
 	SignedLiteral			"Literal or NumLiteral with sign"
 	DefaultValueExpr		"DefaultValueExpr(Now or Signed Literal)"
 	NowSymOptionFraction		"NowSym with optional fraction part"
@@ -5129,6 +5134,26 @@ IntegerType:
 |	"INT"
 	{
 		$$ = mysql.TypeLong
+	}
+|	"INT1"
+	{
+		$$ = mysql.TypeTiny
+	}
+| 	"INT2"
+	{
+		$$ = mysql.TypeShort
+	}
+| 	"INT3"
+	{
+		$$ = mysql.TypeInt24
+	}
+|	"INT4"
+	{
+		$$ = mysql.TypeLong
+	}
+|	"INT8"
+	{
+		$$ = mysql.TypeLonglong
 	}
 |	"INTEGER"
 	{

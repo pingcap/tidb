@@ -1486,6 +1486,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for issue 4538
 		{"create table a (process double)", true},
+
+		// for issue 4740
+		{"create table t (a int1, b int2, c int3, d int4, e int8)", true},
 	}
 	s.RunTest(c, table)
 }
