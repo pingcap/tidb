@@ -1206,7 +1206,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	tableInfo := tbl.Meta()
-	if tableInfo.ViewSelect != "" {
+	if tableInfo.ViewSelectStmt != "" {
 		logrus.Warnf("The Table %s is a view" , tableInfo.Name)
 		logrus.Warnf("The ctx type is %T" , b.ctx)
 	}

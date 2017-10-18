@@ -439,11 +439,11 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 type CreateViewStmt struct {
 	ddlNode
 
-	OrReplace	bool
-	View        *TableName
-	Cols        []*ColumnName
-	Select 		ResultSetNode
-	SelectText	string
+	OrReplace		bool
+	View        	*TableName
+	Cols        	[]*ColumnName
+	Select 			ResultSetNode
+	SelectText		string
 }
 
 // Accept implements Node Accept interface.

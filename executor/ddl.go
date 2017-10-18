@@ -158,22 +158,23 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	ident := ast.Ident{Schema: s.View.Schema, Name: s.View.Name}
+	var selectFieldExprs []string
+	selectstmt := s.Select.(*ast.SelectStmt)
+	fields := selectstmt.Fields.Fields
+	for _ , field := range fields{
+		selectFieldExprs = append(selectFieldExprs, field.Expr.Text())
+	}
 
 	if s.Cols == nil {
-		selectstmt := s.Select.(*ast.SelectStmt)
-		for _, field := range selectstmt.Fields.Fields{
-			columnexpr,ok := field.Expr.(*ast.ColumnNameExpr)
-			if ok{
-				s.Cols = append(s.Cols,columnexpr.Name)
-			}else {
-				x := &ast.ColumnName{
-					Name: field.AsName,
-				}
-				if field.WildCard != nil{
-					x.Schema = field.WildCard.Schema
-					x.Table = field.WildCard.Table
-				}
-				s.Cols = append(s.Cols,x)
+		for _, field := range fields {
+			if field.AsName.O != "" {
+				s.Cols = append(s.Cols , &ast.ColumnName{
+					Name:	field.AsName,
+				})
+			} else {
+				s.Cols = append(s.Cols , &ast.ColumnName{
+					Name:	model.NewCIStr(field.Expr.Text()),
+				})
 			}
 		}
 	}
@@ -181,7 +182,7 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 		logrus.Warnf("The select field[%d] name is %s", i, col)
 	}
 	var err error
-	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, s.SelectText)
+	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFieldExprs, s.SelectText)
 	if infoschema.ErrTableExists.Equal(err) {
 		return err
 	}

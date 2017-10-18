@@ -667,6 +667,14 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		if st,ok := rst.(*ast.CreateViewStmt) ; ok{
 			log.Warnf("The CreateViewStmt Select Text is %s" , st.SelectText)
 		}
+		if st ,ok := rst.(*ast.SelectStmt) ; ok{
+			fields := st.Fields.Fields
+			for i,field := range fields {
+				if field.Expr != nil{
+					log.Warningf("Field expr[%d] : %s",i,field.Expr.Text())
+				}
+			}
+		}
 		s.PrepareTxnCtx()
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
