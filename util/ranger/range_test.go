@@ -241,6 +241,12 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			filterConds: "[or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))]",
 			resultStr:   "[[1,1] [2,2]]",
 		},
+		{
+			exprStr:     "a = 1 or a = 3 or a = 4 or (b > 1 and (a = -1 or a = 5))",
+			accessConds: "[or(or(eq(test.t.a, 1), eq(test.t.a, 3)), or(eq(test.t.a, 4), or(eq(test.t.a, -1), eq(test.t.a, 5))))]",
+			filterConds: "[or(or(or(eq(test.t.a, 1), eq(test.t.a, 3)), eq(test.t.a, 4)), and(gt(test.t.b, 1), or(eq(test.t.a, -1), eq(test.t.a, 5))))]",
+			resultStr:   "[[-1,-1] [1,1] [3,3] [4,4] [5,5]]",
+		},
 	}
 
 	for _, tt := range tests {
