@@ -2661,7 +2661,7 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	result.Check(testkit.Rows("2.00"))
 	tk.MustExec("INSERT INTO t (id,count)VALUES('abc',265.0) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count)")
 	result = tk.MustQuery("select count from t where id = 'abc'")
-	result.Check(testkit.Rows("256.00"))
+	result.Check(testkit.Rows("265.00"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
