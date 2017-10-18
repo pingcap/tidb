@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/inspectkv"
+	"github.com/pingcap/tidb/admin"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -161,7 +161,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 		return nil
 	}
 
-	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
+	ddlInfo, err := admin.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -177,12 +177,12 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	}
 
 	var err error
-	e.jobs, err = inspectkv.GetDDLJobs(e.ctx.Txn())
+	e.jobs, err = admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	historyJobs, err := inspectkv.GetHistoryDDLJobs(e.ctx.Txn())
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
