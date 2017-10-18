@@ -24,6 +24,7 @@ import (
 )
 
 var (
+	_ functionClass = &inFunctionClass{}
 	_ functionClass = &rowFunctionClass{}
 	_ functionClass = &setVarFunctionClass{}
 	_ functionClass = &getVarFunctionClass{}
@@ -35,6 +36,13 @@ var (
 
 var (
 	_ builtinFunc = &builtinSleepSig{}
+	_ builtinFunc = &builtinInIntSig{}
+	_ builtinFunc = &builtinInStringSig{}
+	_ builtinFunc = &builtinInDecimalSig{}
+	_ builtinFunc = &builtinInRealSig{}
+	_ builtinFunc = &builtinInTimeSig{}
+	_ builtinFunc = &builtinInDurationSig{}
+	_ builtinFunc = &builtinInJSONSig{}
 	_ builtinFunc = &builtinRowSig{}
 	_ builtinFunc = &builtinSetVarSig{}
 	_ builtinFunc = &builtinGetVarSig{}
@@ -49,6 +57,244 @@ var (
 	_ builtinFunc = &builtinValuesJSONSig{}
 	_ builtinFunc = &builtinBitCountSig{}
 )
+
+type inFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *inFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]types.EvalType, len(args))
+	for i := range args {
+		argTps[i] = args[i].GetType().EvalType()
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	switch args[0].GetType().EvalType() {
+	case types.ETInt:
+		sig = &builtinInIntSig{baseBuiltinFunc: bf}
+	case types.ETString:
+		sig = &builtinInStringSig{baseBuiltinFunc: bf}
+	case types.ETReal:
+		sig = &builtinInRealSig{baseBuiltinFunc: bf}
+	case types.ETDecimal:
+		sig = &builtinInDecimalSig{baseBuiltinFunc: bf}
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinInTimeSig{baseBuiltinFunc: bf}
+	case types.ETDuration:
+		sig = &builtinInDurationSig{baseBuiltinFunc: bf}
+	case types.ETJson:
+		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
+	}
+	return sig, nil
+}
+
+type builtinInIntSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
+	arg0, isNull0, err := args[0].EvalInt(row, sc)
+	isUnsigned0 := mysql.HasUnsignedFlag(args[0].GetType().Flag)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range args[1:] {
+		evaledArg, isNull, err := arg.EvalInt(row, sc)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().Flag)
+		if isUnsigned0 && isUnsigned {
+			if evaledArg == arg0 {
+				return 1, false, nil
+			}
+		} else if !isUnsigned0 && !isUnsigned {
+			if evaledArg == arg0 {
+				return 1, false, nil
+			}
+		} else if !isUnsigned && isUnsigned {
+			if arg0 >= 0 && uint64(evaledArg) == uint64(arg0) {
+				return 1, false, nil
+			}
+		} else {
+			if evaledArg >= 0 && uint64(evaledArg) == uint64(arg0) {
+				return 1, false, nil
+			}
+		}
+	}
+	return 0, hasNull, nil
+}
+
+type builtinInStringSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInStringSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
+	arg0, isNull0, err := args[0].EvalString(row, sc)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range args[1:] {
+		evaledArg, isNull, err := arg.EvalString(row, sc)
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if arg0 == evaledArg {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+type builtinInRealSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInRealSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
+	arg0, isNull0, err := args[0].EvalReal(row, sc)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range args[1:] {
+		evaledArg, isNull, err := arg.EvalReal(row, sc)
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if arg0 == evaledArg {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+type builtinInDecimalSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
+	arg0, isNull0, err := args[0].EvalDecimal(row, sc)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range args[1:] {
+		evaledArg, isNull, err := arg.EvalDecimal(row, sc)
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if arg0 == evaledArg {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+type builtinInTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInTimeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
+	arg0, isNull0, err := args[0].EvalTime(row, sc)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range args[1:] {
+		evaledArg, isNull, err := arg.EvalTime(row, sc)
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if arg0.Compare(evaledArg) == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+type builtinInDurationSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInDurationSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
+	arg0, isNull0, err := args[0].EvalDuration(row, sc)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range args[1:] {
+		evaledArg, isNull, err := arg.EvalDuration(row, sc)
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if arg0.Compare(evaledArg) == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+type builtinInJSONSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInJSONSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
+	arg0, isNull0, err := args[0].EvalJSON(row, sc)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range args[1:] {
+		evaledArg, isNull, err := arg.EvalJSON(row, sc)
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		result, err := json.CompareJSON(evaledArg, arg0)
+		if result == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
 
 type rowFunctionClass struct {
 	baseFunctionClass
