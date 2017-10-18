@@ -69,6 +69,13 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
+func cleanNotify(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+	}
+}
+
 func (d *ddl) isOwner() bool {
 	isOwner := d.ownerManager.IsOwner()
 	log.Debugf("[ddl] it's the job owner %v, self id %s", isOwner, d.uuid)

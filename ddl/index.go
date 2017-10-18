@@ -287,14 +287,12 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
 				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
+			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+			cleanNotify(d.notifyCancelReorgJob)
 			return ver, errors.Trace(err)
 		}
-
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		select {
-		case <-d.notifyCancelReorgJob:
-		default:
-		}
+		cleanNotify(d.notifyCancelReorgJob)
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
