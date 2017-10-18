@@ -123,7 +123,7 @@ func (t backoffType) TError() *terror.Error {
 	case boTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case boPDRPC:
-		return ErrPDServerTimeout
+		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
 	case boRegionMiss:
 		return ErrRegionUnavaiable
 	case boServerBusy:
