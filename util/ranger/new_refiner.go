@@ -139,17 +139,17 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 	var accessConditions, filterConditions []expression.Expression
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			dnfItems := expression.ExtractDNFItems(sf)
-			extractedDNFItems, hasResidual := detachColumnDNFConditions(dnfItems, checker)
+			dnfItems := expression.FlattenDNFConditions(sf)
+			colulmnDNFItems, hasResidual := detachColumnDNFConditions(dnfItems, checker)
 			// If this CNF has expression that cannot be resolved as access condition, then the total DNF expression
 			// should be also appended into filter condition.
 			if hasResidual {
 				filterConditions = append(filterConditions, cond)
 			}
-			if len(extractedDNFItems) == 0 {
+			if len(colulmnDNFItems) == 0 {
 				continue
 			}
-			rebuildDNF := expression.ComposeDNFCondition(nil, extractedDNFItems...)
+			rebuildDNF := expression.ComposeDNFCondition(nil, colulmnDNFItems...)
 			accessConditions = append(accessConditions, rebuildDNF)
 			continue
 		}
@@ -175,15 +175,15 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 	)
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
-			cnfItems := expression.ExtractCNFItems(sf)
-			extractedCNFItems, others := detachColumnCNFConditions(cnfItems, checker)
+			cnfItems := expression.FlattenCNFConditions(sf)
+			columnCNFItems, others := detachColumnCNFConditions(cnfItems, checker)
 			if len(others) > 0 {
 				hasResidualConditions = true
 			}
-			if len(extractedCNFItems) == 0 {
+			if len(columnCNFItems) == 0 {
 				continue
 			}
-			rebuildCNF := expression.ComposeCNFCondition(nil, extractedCNFItems...)
+			rebuildCNF := expression.ComposeCNFCondition(nil, columnCNFItems...)
 			accessConditions = append(accessConditions, rebuildCNF)
 		} else if checker.check(cond) {
 			accessConditions = append(accessConditions, cond)
@@ -195,10 +195,7 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 			return nil, true
 		}
 	}
-	if !hasResidualConditions {
-		return accessConditions, false
-	}
-	return accessConditions, true
+	return accessConditions, hasResidualConditions
 }
 
 // DetachIndexConditions will detach the index filters from table filters.

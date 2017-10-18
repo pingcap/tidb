@@ -157,15 +157,15 @@ func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Express
 	return ret
 }
 
-// ExtractDNFItems extracts DNF expression's leaf item.
+// FlattenDNFConditions extracts DNF expression's leaf item.
 // e.g. or(or(a=1, a=2), or(a=3, a=4)), we'll get [a=1, a=2, a=3, a=4].
-func ExtractDNFItems(DNFCondition *ScalarFunction) []Expression {
+func FlattenDNFConditions(DNFCondition *ScalarFunction) []Expression {
 	return extractBinaryOpItems(DNFCondition, ast.LogicOr)
 }
 
-// ExtractCNFItems extracts CNF expression's leaf item.
+// FlattenCNFConditions extracts CNF expression's leaf item.
 // e.g. and(and(a>1, a>2), and(a>3, a>4)), we'll get [a>1, a>2, a>3, a>4].
-func ExtractCNFItems(CNFCondition *ScalarFunction) []Expression {
+func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
 	return extractBinaryOpItems(CNFCondition, ast.LogicAnd)
 }
 
