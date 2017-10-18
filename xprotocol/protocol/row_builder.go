@@ -158,7 +158,7 @@ func DumpDatumToBinary(alloc arena.Allocator, val types.Datum) ([]byte, error) {
 		return nil, nil
 	case types.KindInt64:
 		return dumpIntBinary(val.GetInt64()), nil
-	case types.KindUint64:
+	case types.KindUint64, types.KindMysqlBit:
 		return dumpUintBinary(val.GetUint64()), nil
 	case types.KindFloat32:
 		data := make([]byte, 4)
@@ -180,7 +180,9 @@ func DumpDatumToBinary(alloc arena.Allocator, val types.Datum) ([]byte, error) {
 		return dumpStringBinary(hack.Slice(val.GetMysqlSet().String()), alloc), nil
 	case types.KindMysqlEnum:
 		return dumpStringBinary(hack.Slice(val.GetMysqlEnum().String()), alloc), nil
-	case types.KindBinaryLiteral, types.KindMysqlBit:
+	case types.KindMysqlJSON:
+		return dumpStringBinary(hack.Slice(val.GetMysqlJSON().String()), alloc), nil
+	case types.KindBinaryLiteral:
 		return dumpStringBinary(hack.Slice(val.GetBinaryLiteral().ToString()), alloc), nil
 	default:
 		return nil, errors.Errorf("unknown datum type %d", val.Kind())

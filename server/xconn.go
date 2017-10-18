@@ -286,8 +286,7 @@ func (xcc *mysqlXClientConn) id() uint32 {
 }
 
 func (xcc *mysqlXClientConn) showProcess() util.ProcessInfo {
-	//return xcc.ctx.ShowProcess()
-	return util.ProcessInfo{}
+	return xcc.ctx.ShowProcess()
 }
 
 func (xcc *mysqlXClientConn) useDB(db string) (err error) {

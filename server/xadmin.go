@@ -247,6 +247,7 @@ func (xsql *xSQL) listObjects(args []*Mysqlx_Datatypes.Any) error {
 	}
 
 	sql += " GROUP BY name ORDER BY name"
+	log.Infof("sql: %s", sql)
 	return xsql.executeStmt(sql)
 }
 

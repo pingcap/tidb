@@ -126,13 +126,13 @@ func (dbt *DBTest) fail(method, query string, err error) {
 
 func (dbt *DBTest) mustExec(query string, args ...interface{}) (res sql.Result) {
 	res, err := dbt.db.Exec(query, args...)
-	dbt.Assert(err, IsNil, Commentf("Exec %s", query))
+	dbt.Assert(err, IsNil, Commentf("Exec %s, Error %v", query, err))
 	return res
 }
 
 func (dbt *DBTest) mustQuery(query string, args ...interface{}) (rows *sql.Rows) {
 	rows, err := dbt.db.Query(query, args...)
-	dbt.Assert(err, IsNil, Commentf("Query %s", query))
+	dbt.Assert(err, IsNil, Commentf("Query %s, Error %v", query, err))
 	return rows
 }
 
