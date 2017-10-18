@@ -290,6 +290,12 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, errors.Trace(err)
 		}
 
+		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+		select {
+		case <-d.notifyCancelReorgJob:
+		default:
+		}
+
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
@@ -299,7 +305,6 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
@@ -327,12 +332,6 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 
 	if kv.ErrKeyExists.Equal(err) {
 		return ver, kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
-	}
-
-	// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-	select {
-	case <-d.notifyCancelReorgJob:
-	default:
 	}
 
 	return ver, errors.Trace(err)
