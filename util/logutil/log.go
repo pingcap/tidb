@@ -189,7 +189,8 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 	return nil
 }
 
-var SlowQueryLogger *log.Logger
+// SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
+var SlowQueryLogger = log.StandardLogger()
 
 // InitLogger initalizes PD's logger.
 func InitLogger(cfg *LogConfig) error {
@@ -216,8 +217,6 @@ func InitLogger(cfg *LogConfig) error {
 			return errors.Trace(err)
 		}
 		SlowQueryLogger.Formatter = formatter
-	} else {
-		SlowQueryLogger = log.StandardLogger()
 	}
 
 	return nil
