@@ -1222,7 +1222,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableReaderSchema *expression.Schema
 	)
 	table, _ := b.is.TableByID(is.Table.ID)
-	len := v.Schema().Len()
+	length := v.Schema().Len()
 	if v.NeedColHandle {
 		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
 	} else if !is.OutOfOrder {
@@ -1234,11 +1234,16 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		}
 		tableReaderSchema.Append(handleCol)
-		len = tableReaderSchema.Len()
+		length = tableReaderSchema.Len()
 	}
 
-	for i := 0; i < len; i++ {
+	for i := 0; i < length; i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
+	}
+
+	ranges := make([]*types.IndexRange, 0, len(is.Ranges))
+	for _, rangeInPlan := range is.Ranges {
+		ranges = append(ranges, rangeInPlan.Clone())
 	}
 
 	e := &IndexLookUpExecutor{
@@ -1250,7 +1255,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		index:             is.Index,
 		keepOrder:         !is.OutOfOrder,
 		desc:              is.Desc,
-		ranges:            is.Ranges,
+		ranges:            ranges,
 		tableRequest:      tableReq,
 		columns:           is.Columns,
 		handleCol:         handleCol,

@@ -68,7 +68,7 @@ func (c *logicAndFunctionClass) getFunction(ctx context.Context, args []Expressi
 	sig := &builtinLogicAndSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalAnd)
 	sig.tp.Flen = 1
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLogicAndSig struct {
@@ -104,7 +104,7 @@ func (c *logicOrFunctionClass) getFunction(ctx context.Context, args []Expressio
 	bf.tp.Flen = 1
 	sig := &builtinLogicOrSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalOr)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLogicOrSig struct {
@@ -146,7 +146,7 @@ func (c *logicXorFunctionClass) getFunction(ctx context.Context, args []Expressi
 	sig := &builtinLogicXorSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LogicalXor)
 	sig.tp.Flen = 1
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLogicXorSig struct {
@@ -182,7 +182,7 @@ func (c *bitAndFunctionClass) getFunction(ctx context.Context, args []Expression
 	sig := &builtinBitAndSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitAndSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitAndSig struct {
@@ -215,7 +215,7 @@ func (c *bitOrFunctionClass) getFunction(ctx context.Context, args []Expression)
 	sig := &builtinBitOrSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitOrSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitOrSig struct {
@@ -248,7 +248,7 @@ func (c *bitXorFunctionClass) getFunction(ctx context.Context, args []Expression
 	sig := &builtinBitXorSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitXorSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitXorSig struct {
@@ -280,7 +280,7 @@ func (c *leftShiftFunctionClass) getFunction(ctx context.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinLeftShiftSig{bf}
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLeftShiftSig struct {
@@ -312,7 +312,7 @@ func (c *rightShiftFunctionClass) getFunction(ctx context.Context, args []Expres
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinRightShiftSig{bf}
 	sig.tp.Flag |= mysql.UnsignedFlag
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRightShiftSig struct {
@@ -377,7 +377,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx context.Context, args []Exp
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 		}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRealIsTrueSig struct {
@@ -482,7 +482,7 @@ func (c *bitNegFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinBitNegSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitNegSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinBitNegSig struct {
@@ -512,7 +512,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx context.Context, args []Expressi
 
 	sig := &builtinUnaryNotSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UnaryNot)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinUnaryNotSig struct {
@@ -618,7 +618,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx context.Context, args []Expres
 		}
 	}
 	bf.tp.Flen = argExprTp.Flen + 1
-	return sig.setSelf(sig), errors.Trace(err)
+	return sig, errors.Trace(err)
 }
 
 type builtinUnaryMinusIntSig struct {
@@ -714,7 +714,7 @@ func (c *isNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	default:
 		panic("unexpected types.EvalType")
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinDecimalIsNullSig struct {
