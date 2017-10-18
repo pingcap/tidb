@@ -445,6 +445,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		{`SHOW PLUGINS`, true},
+		{`SHOW PROFILES`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
@@ -1486,6 +1487,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for issue 4538
 		{"create table a (process double)", true},
+
+		// for issue 4740
+		{"create table t (a int1, b int2, c int3, d int4, e int8)", true},
 	}
 	s.RunTest(c, table)
 }
