@@ -366,6 +366,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
+		{"admin cancel ddl jobs 1", true},
+		{"admin cancel ddl jobs 1, 2", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
@@ -445,6 +447,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		{`SHOW PLUGINS`, true},
+		{`SHOW PROFILES`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
@@ -1486,6 +1489,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for issue 4538
 		{"create table a (process double)", true},
+
+		// for issue 4740
+		{"create table t (a int1, b int2, c int3, d int4, e int8)", true},
 	}
 	s.RunTest(c, table)
 }

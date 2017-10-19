@@ -1040,6 +1040,7 @@ func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*req
 }
 
 func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
 		return nil
 	}
