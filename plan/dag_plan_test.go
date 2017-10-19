@@ -16,6 +16,9 @@ package plan_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testleak"
@@ -489,6 +492,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
+	_, err = se.Execute("use test")
+	c.Assert(err, IsNil)
+
 	tests := []struct {
 		sql  string
 		best string
@@ -540,18 +546,20 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 			best: "Dual",
 		},
 		// Test show.
-		// This case will be reuse after resolver.go be removed.
-		//{
-		//	sql:  "show tables",
-		//	best: "*plan.Show",
-		//},
+		{
+			sql:  "show tables",
+			best: "*plan.Show",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
+		is := infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})
+		err = plan.Preprocess(se.(context.Context), stmt, is, false)
+		c.Assert(err, IsNil)
+		_, err = plan.MockResolve(stmt)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)

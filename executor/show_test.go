@@ -232,6 +232,11 @@ func (s *testSuite) TestShow(c *C) {
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
+
+	result = tk.MustQuery("show function status like '%'")
+	result.Check(result.Rows())
+	result = tk.MustQuery("show plugins status like '%'")
+	result.Check(result.Rows())
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
