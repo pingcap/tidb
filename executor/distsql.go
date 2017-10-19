@@ -110,11 +110,13 @@ func tableRangesToKVRanges(tid int64, tableRanges []types.IntColumnRange) []kv.K
 	krs := make([]kv.KeyRange, 0, len(tableRanges))
 	for _, tableRange := range tableRanges {
 		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
-		hi := tableRange.HighVal
-		if hi != math.MaxInt64 {
-			hi++
+
+		var endKey kv.Key
+		if tableRange.HighVal != math.MaxInt64 {
+			endKey = tablecodec.EncodeRowKeyWithHandle(tid, tableRange.HighVal+1)
+		} else {
+			endKey = tablecodec.EncodeRowKeyWithHandle(tid, tableRange.HighVal).Next()
 		}
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, hi)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
