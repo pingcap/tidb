@@ -22,71 +22,49 @@ import (
 )
 
 var unsignedXType = map[byte]Mysqlx_Resultset.ColumnMetaData_FieldType{
-	// Unsigned numeric type
-	mysql.TypeTiny:     Mysqlx_Resultset.ColumnMetaData_UINT,
-	mysql.TypeShort:    Mysqlx_Resultset.ColumnMetaData_UINT,
-	mysql.TypeInt24:    Mysqlx_Resultset.ColumnMetaData_UINT,
-	mysql.TypeLong:     Mysqlx_Resultset.ColumnMetaData_UINT,
-	mysql.TypeLonglong: Mysqlx_Resultset.ColumnMetaData_UINT,
-
-	// TODO: Remove the following types when TiDB deals with unsigned flag properly.
-	// Clarified type
-	mysql.TypeDouble:    Mysqlx_Resultset.ColumnMetaData_DOUBLE,
-	mysql.TypeFloat:     Mysqlx_Resultset.ColumnMetaData_FLOAT,
-	mysql.TypeDecimal:   Mysqlx_Resultset.ColumnMetaData_DECIMAL,
-	mysql.TypeVarchar:   Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeString:    Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeGeometry:  Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeDuration:  Mysqlx_Resultset.ColumnMetaData_TIME,
-	mysql.TypeDate:      Mysqlx_Resultset.ColumnMetaData_DATETIME,
-	mysql.TypeDatetime:  Mysqlx_Resultset.ColumnMetaData_DATETIME,
-	mysql.TypeYear:      Mysqlx_Resultset.ColumnMetaData_UINT,
-	mysql.TypeTimestamp: Mysqlx_Resultset.ColumnMetaData_DATETIME,
-	mysql.TypeSet:       Mysqlx_Resultset.ColumnMetaData_SET,
-	mysql.TypeEnum:      Mysqlx_Resultset.ColumnMetaData_ENUM,
-	mysql.TypeNull:      Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeBit:       Mysqlx_Resultset.ColumnMetaData_BIT,
-
-	// TODO: Clarify type mapping below.
-	mysql.TypeNewDate:    Mysqlx_Resultset.ColumnMetaData_DATETIME,
-	mysql.TypeJSON:       Mysqlx_Resultset.ColumnMetaData_BYTES,
+	// could be unsigned numric type
+	mysql.TypeTiny:       Mysqlx_Resultset.ColumnMetaData_UINT,
+	mysql.TypeShort:      Mysqlx_Resultset.ColumnMetaData_UINT,
+	mysql.TypeInt24:      Mysqlx_Resultset.ColumnMetaData_UINT,
+	mysql.TypeLong:       Mysqlx_Resultset.ColumnMetaData_UINT,
+	mysql.TypeLonglong:   Mysqlx_Resultset.ColumnMetaData_UINT,
+	mysql.TypeDouble:     Mysqlx_Resultset.ColumnMetaData_DOUBLE,
+	mysql.TypeFloat:      Mysqlx_Resultset.ColumnMetaData_FLOAT,
+	mysql.TypeDecimal:    Mysqlx_Resultset.ColumnMetaData_DECIMAL,
 	mysql.TypeNewDecimal: Mysqlx_Resultset.ColumnMetaData_DECIMAL,
-	mysql.TypeTinyBlob:   Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeMediumBlob: Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeLongBlob:   Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeBlob:       Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeVarString:  Mysqlx_Resultset.ColumnMetaData_BYTES,
+
+	// should be unsigned type
+	mysql.TypeYear: Mysqlx_Resultset.ColumnMetaData_UINT,
+	mysql.TypeBit:  Mysqlx_Resultset.ColumnMetaData_BIT,
 }
 
 var commonXType = map[byte]Mysqlx_Resultset.ColumnMetaData_FieldType{
 	// Signed numeric type
-	mysql.TypeTiny:     Mysqlx_Resultset.ColumnMetaData_SINT,
-	mysql.TypeShort:    Mysqlx_Resultset.ColumnMetaData_SINT,
-	mysql.TypeInt24:    Mysqlx_Resultset.ColumnMetaData_SINT,
-	mysql.TypeLong:     Mysqlx_Resultset.ColumnMetaData_SINT,
-	mysql.TypeLonglong: Mysqlx_Resultset.ColumnMetaData_SINT,
+	mysql.TypeTiny:       Mysqlx_Resultset.ColumnMetaData_SINT,
+	mysql.TypeShort:      Mysqlx_Resultset.ColumnMetaData_SINT,
+	mysql.TypeInt24:      Mysqlx_Resultset.ColumnMetaData_SINT,
+	mysql.TypeLong:       Mysqlx_Resultset.ColumnMetaData_SINT,
+	mysql.TypeLonglong:   Mysqlx_Resultset.ColumnMetaData_SINT,
+	mysql.TypeDouble:     Mysqlx_Resultset.ColumnMetaData_DOUBLE,
+	mysql.TypeFloat:      Mysqlx_Resultset.ColumnMetaData_FLOAT,
+	mysql.TypeDecimal:    Mysqlx_Resultset.ColumnMetaData_DECIMAL,
+	mysql.TypeNewDecimal: Mysqlx_Resultset.ColumnMetaData_DECIMAL,
 
 	// Clarified type
-	mysql.TypeDouble:    Mysqlx_Resultset.ColumnMetaData_DOUBLE,
-	mysql.TypeFloat:     Mysqlx_Resultset.ColumnMetaData_FLOAT,
-	mysql.TypeDecimal:   Mysqlx_Resultset.ColumnMetaData_DECIMAL,
 	mysql.TypeVarchar:   Mysqlx_Resultset.ColumnMetaData_BYTES,
 	mysql.TypeString:    Mysqlx_Resultset.ColumnMetaData_BYTES,
 	mysql.TypeGeometry:  Mysqlx_Resultset.ColumnMetaData_BYTES,
 	mysql.TypeDuration:  Mysqlx_Resultset.ColumnMetaData_TIME,
 	mysql.TypeDate:      Mysqlx_Resultset.ColumnMetaData_DATETIME,
 	mysql.TypeDatetime:  Mysqlx_Resultset.ColumnMetaData_DATETIME,
-	mysql.TypeYear:      Mysqlx_Resultset.ColumnMetaData_UINT,
 	mysql.TypeTimestamp: Mysqlx_Resultset.ColumnMetaData_DATETIME,
 	mysql.TypeSet:       Mysqlx_Resultset.ColumnMetaData_SET,
 	mysql.TypeEnum:      Mysqlx_Resultset.ColumnMetaData_ENUM,
 	mysql.TypeNull:      Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeBit:       Mysqlx_Resultset.ColumnMetaData_BIT,
 
 	// TODO: Clarify type mapping below.
 	mysql.TypeNewDate:    Mysqlx_Resultset.ColumnMetaData_DATETIME,
 	mysql.TypeJSON:       Mysqlx_Resultset.ColumnMetaData_BYTES,
-	mysql.TypeNewDecimal: Mysqlx_Resultset.ColumnMetaData_DECIMAL,
 	mysql.TypeTinyBlob:   Mysqlx_Resultset.ColumnMetaData_BYTES,
 	mysql.TypeMediumBlob: Mysqlx_Resultset.ColumnMetaData_BYTES,
 	mysql.TypeLongBlob:   Mysqlx_Resultset.ColumnMetaData_BYTES,

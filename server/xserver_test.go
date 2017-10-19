@@ -317,7 +317,8 @@ func runXTestValue(c *C) {
 				c_blob_d blob,
 				c_set set('a', 'b', 'c'),
 				c_enum enum('a', 'b', 'c'),
-				c_json JSON
+				c_json JSON,
+				c_year year
 			)`
 		_ = dbt.mustExec(sql)
 		sql = `insert into xtest values (
@@ -352,7 +353,8 @@ func runXTestValue(c *C) {
 			        'abc',
 			        'b',
 			        'b',
-			        CAST(CAST(1 AS UNSIGNED) AS JSON)
+			        CAST(CAST(1 AS UNSIGNED) AS JSON),
+			        11
 				);`
 		_ = dbt.mustExec(sql)
 		sql = `select * from xtest;`
@@ -392,6 +394,7 @@ func runXTestValue(c *C) {
 			cSet        string
 			cEnum       string
 			cJSON       string
+			cYear       int
 		)
 		err := rows.Scan(
 			&cBit,
@@ -426,6 +429,7 @@ func runXTestValue(c *C) {
 			&cSet,
 			&cEnum,
 			&cJSON,
+			&cYear,
 		)
 		dbt.Check(err, IsNil)
 		dbt.Check(cBit, DeepEquals, []byte{})
@@ -460,6 +464,7 @@ func runXTestValue(c *C) {
 		dbt.Check(cSet, DeepEquals, "b")
 		dbt.Check(cEnum, DeepEquals, "b")
 		dbt.Check(cJSON, DeepEquals, "1")
+		dbt.Check(cYear, DeepEquals, 4022)
 
 		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
 		rows.Close()
