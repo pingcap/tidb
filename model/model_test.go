@@ -201,7 +201,7 @@ func (testModelSuite) TestState(c *C) {
 		JobRunning,
 		JobDone,
 		JobCancelled,
-		JobRollback,
+		JobRollingback,
 		JobRollbackDone,
 		JobSynced,
 	}

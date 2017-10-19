@@ -79,6 +79,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildPrepare(v)
 	case *plan.SelectLock:
 		return b.buildSelectLock(v)
+	case *plan.CancelDDLJobs:
+		return b.buildCancelDDLJobs(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
 	case *plan.ShowDDLJobs:
@@ -141,6 +143,19 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
 	}
+}
+
+func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
+	e := &CancelDDLJobsExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		JobIDs:       v.JobIDs,
+	}
+	e.errs, b.err = inspectkv.CancelJobs(e.ctx.Txn(), e.JobIDs)
+	if b.err != nil {
+		return nil
+	}
+
+	return e
 }
 
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
