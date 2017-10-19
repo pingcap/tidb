@@ -196,37 +196,37 @@ func (job *Job) String() string {
 // IsFinished returns whether job is finished or not.
 // If the job state is Done or Cancelled, it is finished.
 func (job *Job) IsFinished() bool {
-	return job.State == JobDone || job.State == JobRollbackDone || job.State == JobCancelled
+	return job.State == JobStateDone || job.State == JobStateRollbackDone || job.State == JobStateCancelled
 }
 
 // IsCancelled returns whether the job is cancelled or not.
 func (job *Job) IsCancelled() bool {
-	return job.State == JobCancelled || job.State == JobRollbackDone
+	return job.State == JobStateCancelled || job.State == JobStateRollbackDone
 }
 
 // IsRollingback returns whether the job is rolling back or not.
 func (job *Job) IsRollingback() bool {
-	return job.State == JobRollingback
+	return job.State == JobStateRollingback
 }
 
 // IsCancelling returns whether the job is cancelling or not.
 func (job *Job) IsCancelling() bool {
-	return job.State == JobCancelling
+	return job.State == JobStateCancelling
 }
 
 // IsSynced returns whether the DDL modification is synced among all TiDB servers.
 func (job *Job) IsSynced() bool {
-	return job.State == JobSynced
+	return job.State == JobStateSynced
 }
 
 // IsDone returns whether job is done.
 func (job *Job) IsDone() bool {
-	return job.State == JobDone
+	return job.State == JobStateDone
 }
 
 // IsRunning returns whether job is still running or not.
 func (job *Job) IsRunning() bool {
-	return job.State == JobRunning
+	return job.State == JobStateRunning
 }
 
 // JobState is for job state.
@@ -234,38 +234,38 @@ type JobState byte
 
 // List job states.
 const (
-	JobNone JobState = iota
-	JobRunning
+	JobStateNone JobState = iota
+	JobStateRunning
 	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
-	// JobRollingback is the state to do the rolling back job.
-	JobRollingback
-	JobRollbackDone
-	JobDone
-	JobCancelled
-	// JobSynced is used to mark the information about the completion of this job
+	// JobStateRollingback is the state to do the rolling back job.
+	JobStateRollingback
+	JobStateRollbackDone
+	JobStateDone
+	JobStateCancelled
+	// JobStateSynced is used to mark the information about the completion of this job
 	// has been synchronized to all servers.
-	JobSynced
-	// JobCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
-	JobCancelling
+	JobStateSynced
+	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
+	JobStateCancelling
 )
 
 // String implements fmt.Stringer interface.
 func (s JobState) String() string {
 	switch s {
-	case JobRunning:
+	case JobStateRunning:
 		return "running"
-	case JobRollingback:
+	case JobStateRollingback:
 		return "rollingback"
-	case JobRollbackDone:
+	case JobStateRollbackDone:
 		return "rollback done"
-	case JobDone:
+	case JobStateDone:
 		return "done"
-	case JobCancelled:
+	case JobStateCancelled:
 		return "cancelled"
-	case JobCancelling:
+	case JobStateCancelling:
 		return "cancelling"
-	case JobSynced:
+	case JobStateSynced:
 		return "synced"
 	default:
 		return "none"
