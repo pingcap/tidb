@@ -11,14 +11,12 @@
 package mysql
 
 import (
+	"database/sql/driver"
 	"encoding/binary"
-	"fmt"
 	"math"
 
-	"database/sql/driver"
-
 	"github.com/golang/protobuf/proto"
-
+	"github.com/juju/errors"
 	"github.com/pingcap/tipb/go-mysqlx/Resultset"
 )
 
@@ -34,11 +32,9 @@ func decodeZigzag64(x uint64) int64 {
 func mysqlSintToInt(data []byte) (signed int64, e error) {
 	myint, num := proto.DecodeVarint(data)
 	if num == 0 {
-		e = fmt.Errorf("Unable to decode '% x' as varint...", data)
+		e = errors.Errorf("Unable to decode '%x' as varint", data)
 	}
-
 	signed = decodeZigzag64(myint)
-
 	return signed, e
 }
 
@@ -46,23 +42,20 @@ func mysqlSintToInt(data []byte) (signed int64, e error) {
 func mysqlUintToUint(data []byte) (unsigned uint64, e error) {
 	unsigned, num := proto.DecodeVarint(data)
 	if num == 0 {
-		e = fmt.Errorf("Unable to decode '% x' as varint. unsigned: %+v", data, unsigned)
+		e = errors.Errorf("Unable to decode '% x' as varint. unsigned: %+v", data, unsigned)
 	}
-
 	return unsigned, e
 }
 
 // MySQL float to float32
 func mysqlFloatToFloat32(data []byte) (float32, error) {
 	f := math.Float32frombits(binary.LittleEndian.Uint32(data[:]))
-
 	return f, nil
 }
 
 // MySQL double to float64
 func mysqlDoubleToFloat64(data []byte) (float64, error) {
 	f := math.Float64frombits(binary.LittleEndian.Uint64(data[:]))
-
 	return f, nil
 }
 
@@ -71,18 +64,12 @@ func mysqlBytesToBytes(data []byte) ([]byte, error) {
 	// 012345
 	// ABCDEF\x00 (len 7)
 	dest := data[0 : len(data)-1] // not copying to avoid overhead (is this ok?), just using a shorter slice
-
 	return dest, nil
 }
 
 // for handling stuff we haven't done yet. Should become obsolete as I finish the code...
 func noConversion(typeName string, data []byte) ([]byte, error) {
 	dest := data
-
-	//	if len(data) == 0 {
-	//		return nil, nil // this is a NULL result
-	//	}
-
 	return dest[0 : len(data)-1], nil // chop off last character
 }
 
@@ -91,7 +78,7 @@ func convertColumnData(column *Mysqlx_Resultset.ColumnMetaData, data []byte) (de
 
 	// We don't expect data to be nil. Probably a bug?
 	if data == nil {
-		return nil, fmt.Errorf("convertColumnData: data == nil. Unexpected. Returning dest = nil")
+		return nil, errors.Errorf("convertColumnData: data == nil. Unexpected. Returning dest = nil")
 	}
 	// An empty slice implies NULL
 	if len(data) == 0 {
@@ -120,6 +107,4 @@ func convertColumnData(column *Mysqlx_Resultset.ColumnMetaData, data []byte) (de
 	default:
 		return noConversion("BYTES", data)
 	}
-
-	return dest, nil
 }
