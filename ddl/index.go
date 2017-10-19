@@ -174,8 +174,8 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	// Handle rollback job.
-	if job.State == model.JobRollback {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
 		ver, err = d.onDropIndex(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -314,7 +314,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 }
 
 func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (ver int64, _ error) {
-	job.State = model.JobRollback
+	job.State = model.JobRollingback
 	job.Args = []interface{}{indexInfo.Name}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
@@ -390,7 +390,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 
 		// Finish this job.
-		if job.State == model.JobRollback {
+		if job.IsRollingback() {
 			job.State = model.JobRollbackDone
 		} else {
 			job.State = model.JobDone

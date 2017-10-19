@@ -269,7 +269,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 		}
 	}
 
-	if !job.IsRollbacking() && !job.IsCancelling() {
+	if !job.IsRollingback() && !job.IsCancelling() {
 		job.State = model.JobRunning
 	}
 

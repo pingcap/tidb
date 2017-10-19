@@ -90,8 +90,8 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.New("This job is finished, so can't be cancelled")
 				continue
 			}
-			// If the state is rollbacking, it means the work is cleaning the data after cancelling the job.
-			if job.IsCancelled() || job.IsRollbacking() {
+			// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
+			if job.IsCancelled() || job.IsRollingback() {
 				continue
 			}
 			job.State = model.JobCancelling

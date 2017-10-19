@@ -204,9 +204,9 @@ func (job *Job) IsCancelled() bool {
 	return job.State == JobCancelled || job.State == JobRollbackDone
 }
 
-// IsRollbacking returns whether the job is rollbacking or not.
-func (job *Job) IsRollbacking() bool {
-	return job.State == JobRollback
+// IsRollingback returns whether the job is rolling back or not.
+func (job *Job) IsRollingback() bool {
+	return job.State == JobRollingback
 }
 
 // IsCancelling returns whether the job is cancelling or not.
@@ -238,8 +238,8 @@ const (
 	JobRunning
 	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
-	// JobRollback is the state to do rollback work.
-	JobRollback
+	// JobRollingback is the state to do the rolling back job.
+	JobRollingback
 	JobRollbackDone
 	JobDone
 	JobCancelled
@@ -255,8 +255,8 @@ func (s JobState) String() string {
 	switch s {
 	case JobRunning:
 		return "running"
-	case JobRollback:
-		return "rollback"
+	case JobRollingback:
+		return "rollingback"
 	case JobRollbackDone:
 		return "rollback done"
 	case JobDone:

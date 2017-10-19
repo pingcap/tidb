@@ -254,7 +254,7 @@ func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []inte
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
 	var checkErr error
 	addIndexFirstReorg := test.act == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0
-	// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
+	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
 		if job.SchemaState == model.StateNone && job.State != model.JobDone {

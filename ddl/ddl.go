@@ -229,7 +229,7 @@ type ddl struct {
 	reorgDoneCh chan error
 	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
 	reorgRowCount int64
-	// notifyCancelReorgJob is for reorganization, it used to notify the fill-back goroutine if the DDL job is cancelled.
+	// notifyCancelReorgJob is for reorganization, it used to notify the backfilling goroutine if the DDL job is cancelled.
 	notifyCancelReorgJob chan struct{}
 
 	quitCh chan struct{}
