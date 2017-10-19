@@ -202,6 +202,10 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into test(p) value(1)")
 	tk.MustQuery("select * from test").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from test use index (id) where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into test values(NULL, 2)")
+	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2"))
+	tk.MustExec("insert into test values(2, 3)")
+	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2", "2 3"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {

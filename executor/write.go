@@ -1116,7 +1116,6 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		} else {
 			row[i].SetInt64(recordID)
 		}
-		row[i].SetInt64(recordID)
 		retryInfo.AddAutoIncrementID(recordID)
 		return nil
 	}
