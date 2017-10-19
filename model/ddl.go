@@ -204,6 +204,16 @@ func (job *Job) IsCancelled() bool {
 	return job.State == JobCancelled || job.State == JobRollbackDone
 }
 
+// IsRollingback returns whether the job is rolling back or not.
+func (job *Job) IsRollingback() bool {
+	return job.State == JobRollingback
+}
+
+// IsCancelling returns whether the job is cancelling or not.
+func (job *Job) IsCancelling() bool {
+	return job.State == JobCancelling
+}
+
 // IsSynced returns whether the DDL modification is synced among all TiDB servers.
 func (job *Job) IsSynced() bool {
 	return job.State == JobSynced
@@ -228,14 +238,16 @@ const (
 	JobRunning
 	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
-	// JobRollback is the state to do rollback work.
-	JobRollback
+	// JobRollingback is the state to do the rolling back job.
+	JobRollingback
 	JobRollbackDone
 	JobDone
 	JobCancelled
 	// JobSynced is used to mark the information about the completion of this job
 	// has been synchronized to all servers.
 	JobSynced
+	// JobCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
+	JobCancelling
 )
 
 // String implements fmt.Stringer interface.
@@ -243,14 +255,16 @@ func (s JobState) String() string {
 	switch s {
 	case JobRunning:
 		return "running"
-	case JobRollback:
-		return "rollback"
+	case JobRollingback:
+		return "rollingback"
 	case JobRollbackDone:
 		return "rollback done"
 	case JobDone:
 		return "done"
 	case JobCancelled:
 		return "cancelled"
+	case JobCancelling:
+		return "cancelling"
 	case JobSynced:
 		return "synced"
 	default:
