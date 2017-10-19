@@ -198,20 +198,20 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	)
 	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
 	if err != nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errDupKeyName.Gen("index already exist %s", indexName)
 	}
 
 	if indexInfo == nil {
 		indexInfo, err = buildIndexInfo(tblInfo, indexName, idxColNames, model.StateNone)
 		if err != nil {
-			job.State = model.JobCancelled
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		if indexOption != nil {
@@ -304,7 +304,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.State = model.JobDone
+		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	default:
 		err = ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
@@ -314,7 +314,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 }
 
 func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (ver int64, _ error) {
-	job.State = model.JobRollingback
+	job.State = model.JobStateRollingback
 	job.Args = []interface{}{indexInfo.Name}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
@@ -344,13 +344,13 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	var indexName model.CIStr
 	if err = job.DecodeArgs(&indexName); err != nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
@@ -391,9 +391,9 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		// Finish this job.
 		if job.IsRollingback() {
-			job.State = model.JobRollbackDone
+			job.State = model.JobStateRollbackDone
 		} else {
-			job.State = model.JobDone
+			job.State = model.JobStateDone
 			d.asyncNotifyEvent(&Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
