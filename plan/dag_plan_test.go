@@ -540,10 +540,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 			best: "Dual",
 		},
 		// Test show.
-		{
-			sql:  "show tables",
-			best: "*plan.Show",
-		},
+		// This case will be reuse after resolver.go be removed.
+		//{
+		//	sql:  "show tables",
+		//	best: "*plan.Show",
+		//},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)

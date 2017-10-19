@@ -145,7 +145,7 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.Preprocess(stmt, e.IS, e.Ctx)
+	err = plan.ResolveName(stmt, e.IS, e.Ctx)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
