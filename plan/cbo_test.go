@@ -351,6 +351,36 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}
 }
 
+func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (id int, KEY id (id))")
+	testKit.MustExec("insert into t values (1), (2), (3)")
+
+	sql := "select * from t where id = ?"
+	best := "IndexReader(Index(t.id)[])"
+
+	ctx := testKit.Se.(context.Context)
+	stmts, err := tidb.Parse(ctx, sql)
+	stmt := stmts[0]
+
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	err = plan.ResolveName(stmt, is, ctx)
+	c.Assert(err, IsNil)
+	p, err := plan.Optimize(ctx, stmt, is)
+	c.Assert(err, IsNil)
+
+	c.Assert(plan.ToString(p), Equals, best, Commentf("for %s", sql))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {

@@ -393,7 +393,7 @@ func (b *builtinGetParamStringSig) evalString(row []types.Datum) (string, bool, 
 	dt := v.(types.Datum)
 	str, err := (&dt).ToString()
 	if err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, nil
 	}
 	return str, false, nil
 }

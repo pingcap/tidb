@@ -143,7 +143,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Express
 	case types.ETJson:
 		sig = &builtinCastJSONAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsInt)
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinCastStringAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsInt)
 	default:
@@ -189,7 +189,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expres
 	case types.ETJson:
 		sig = &builtinCastJSONAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsReal)
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinCastStringAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsReal)
 	default:
@@ -235,7 +235,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Exp
 	case types.ETJson:
 		sig = &builtinCastJSONAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsDecimal)
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinCastStringAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsDecimal)
 	default:
@@ -281,7 +281,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expr
 	case types.ETJson:
 		sig = &builtinCastJSONAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
@@ -327,7 +327,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expres
 	case types.ETJson:
 		sig = &builtinCastJSONAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsTime)
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinCastStringAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsTime)
 	default:
@@ -373,7 +373,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Ex
 	case types.ETJson:
 		sig = &builtinCastJSONAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsDuration)
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinCastStringAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsDuration)
 	default:
@@ -419,7 +419,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 	case types.ETJson:
 		sig = &builtinCastJSONAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinCastStringAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsJson)
 	default:
@@ -1325,7 +1325,7 @@ func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType
 		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETJson:
 		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
@@ -1387,7 +1387,7 @@ func WrapWithCastAsDecimal(ctx context.Context, expr Expression) Expression {
 // of expr is not type string,
 // otherwise, returns `expr` directly.
 func WrapWithCastAsString(ctx context.Context, expr Expression) Expression {
-	if expr.GetType().EvalType() == types.ETString {
+	if expr.GetType().EvalType() == types.ETString || expr.GetType().EvalType() == types.ETParam {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)

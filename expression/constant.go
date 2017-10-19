@@ -91,6 +91,9 @@ func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 			if err != nil {
 				return c.Value, err
 			}
+			if dt.IsNull() {
+				return c.Value, nil
+			}
 			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
 			if err != nil {
 				return c.Value, err
@@ -103,19 +106,23 @@ func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(_ types.Row, sc *variable.StatementContext) (int64, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-		return 0, true, nil
-	}
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
 			return 0, true, errors.Trace(err)
+		}
+		if dt.IsNull() {
+			return 0, true, nil
 		}
 		val, err := dt.ToInt64(sc)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
 		c.Value.SetInt64(val)
+	} else {
+		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+			return 0, true, nil
+		}
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToInt64(sc)
@@ -126,19 +133,23 @@ func (c *Constant) EvalInt(_ types.Row, sc *variable.StatementContext) (int64, b
 
 // EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(_ types.Row, sc *variable.StatementContext) (float64, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-		return 0, true, nil
-	}
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
 			return 0, true, errors.Trace(err)
+		}
+		if dt.IsNull() {
+			return 0, true, nil
 		}
 		val, err := dt.ToFloat64(sc)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
 		c.Value.SetFloat64(val)
+	} else {
+		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+			return 0, true, nil
+		}
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToFloat64(sc)
@@ -149,19 +160,23 @@ func (c *Constant) EvalReal(_ types.Row, sc *variable.StatementContext) (float64
 
 // EvalString returns string representation of Constant.
 func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (string, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-		return "", true, nil
-	}
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
 			return "", true, errors.Trace(err)
+		}
+		if dt.IsNull() {
+			return "", true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
 			return "", true, errors.Trace(err)
 		}
 		c.Value.SetString(val)
+	} else {
+		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+			return "", true, nil
+		}
 	}
 	res, err := c.Value.ToString()
 	return res, err != nil, errors.Trace(err)
@@ -169,15 +184,19 @@ func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (strin
 
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(_ types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-		return nil, true, nil
-	}
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
 			return nil, true, errors.Trace(err)
 		}
+		if dt.IsNull() {
+			return nil, true, nil
+		}
 		c.Value.SetValue(dt.GetValue())
+	} else {
+		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+			return nil, true, nil
+		}
 	}
 	res, err := c.Value.ToDecimal(sc)
 	return res, err != nil, errors.Trace(err)
@@ -185,13 +204,13 @@ func (c *Constant) EvalDecimal(_ types.Row, sc *variable.StatementContext) (*typ
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
 func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
-	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-		return types.Time{}, true, nil
-	}
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
 			return types.Time{}, true, errors.Trace(err)
+		}
+		if dt.IsNull() {
+			return types.Time{}, true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
@@ -202,19 +221,23 @@ func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val typ
 			return types.Time{}, true, errors.Trace(err)
 		}
 		c.Value.SetMysqlTime(tim)
+	} else {
+		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+			return types.Time{}, true, nil
+		}
 	}
 	return c.Value.GetMysqlTime(), false, nil
 }
 
 // EvalDuration returns Duration representation of Constant.
 func (c *Constant) EvalDuration(_ types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
-	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-		return types.Duration{}, true, nil
-	}
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
 			return types.Duration{}, true, errors.Trace(err)
+		}
+		if dt.IsNull() {
+			return types.Duration{}, true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
@@ -225,25 +248,34 @@ func (c *Constant) EvalDuration(_ types.Row, sc *variable.StatementContext) (val
 			return types.Duration{}, true, errors.Trace(err)
 		}
 		c.Value.SetMysqlDuration(dur)
+	} else {
+		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+			return types.Duration{}, true, nil
+		}
 	}
 	return c.Value.GetMysqlDuration(), false, nil
 }
 
 // EvalJSON returns JSON representation of Constant.
 func (c *Constant) EvalJSON(_ types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-		return json.JSON{}, true, nil
-	}
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
 			return json.JSON{}, true, errors.Trace(err)
+		}
+		if dt.IsNull() {
+			return json.JSON{}, true, nil
 		}
 		val, err := dt.ConvertTo(sc, types.NewFieldType(mysql.TypeJSON))
 		if err != nil {
 			return json.JSON{}, true, errors.Trace(err)
 		}
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
+		c.GetType().Tp = mysql.TypeJSON
+	} else {
+		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+			return json.JSON{}, true, nil
+		}
 	}
 	return c.Value.GetMysqlJSON(), false, nil
 }

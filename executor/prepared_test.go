@@ -116,3 +116,19 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	_, err = tk.Se.ExecutePreparedStmt(stmtID, 1)
 	c.Assert(err, IsNil)
 }
+
+func (s *testSuite) TestPreparedNullParam(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, KEY id (id))")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec(`prepare stmt from 'select * from t where id = ?'`)
+
+	r := tk.MustQuery(`execute stmt using @id;`)
+	r.Check(nil)
+
+	tk.MustExec(`set @id="1"`)
+	r = tk.MustQuery(`execute stmt using @id;`)
+	r.Check(testkit.Rows("1"))
+}

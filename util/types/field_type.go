@@ -81,7 +81,7 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 			continue
 		}
 		et := ft.EvalType()
-		if (IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeChar(ft.Tp)) && mysql.HasBinaryFlag(ft.Flag) {
+		if (IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeChar(ft.Tp) || IsTypeParam(ft.Tp)) && mysql.HasBinaryFlag(ft.Flag) {
 			gotBinString = true
 		}
 		if !gotFirst {
@@ -92,6 +92,9 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 			aggregatedEvalType = mergeEvalType(aggregatedEvalType, et, unsigned, mysql.HasUnsignedFlag(ft.Flag))
 			unsigned = unsigned && mysql.HasUnsignedFlag(ft.Flag)
 		}
+	}
+	if aggregatedEvalType == ETParam {
+		aggregatedEvalType = ETString
 	}
 	setTypeFlag(flag, mysql.UnsignedFlag, unsigned)
 	setTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
@@ -105,6 +108,13 @@ func mergeEvalType(lhs, rhs EvalType, isLHSUnsigned, isRHSUnsigned bool) EvalTyp
 		return ETReal
 	} else if lhs == ETDecimal || rhs == ETDecimal || isLHSUnsigned != isRHSUnsigned {
 		return ETDecimal
+	} else if lhs == ETParam || rhs == ETParam {
+		if lhs == rhs {
+			return ETString
+		} else if lhs == ETParam {
+			return mergeEvalType(rhs, rhs, isLHSUnsigned, isRHSUnsigned)
+		}
+		return mergeEvalType(lhs, lhs, isLHSUnsigned, isRHSUnsigned)
 	}
 	return ETInt
 }
@@ -135,6 +145,8 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETDuration
 	case mysql.TypeJSON:
 		return ETJson
+	case mysql.TypeUnspecified:
+		return ETParam
 	}
 	return ETString
 }
@@ -238,8 +250,23 @@ func (ft *FieldType) String() string {
 			strs = append(strs, fmt.Sprintf("COLLATE %s", ft.Collate))
 		}
 	}
+	if IsTypeParam(ft.Tp) {
+		strs = append(strs, "PARAM")
+	}
 
 	return strings.Join(strs, " ")
+}
+
+// DefaultParamTypeForValue returns the default FieldType for the parameterized value.
+func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
+	switch value.(type) {
+	case nil:
+		tp.Tp = mysql.TypeUnspecified
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = UnspecifiedLength
+	default:
+		DefaultTypeForValue(value, tp)
+	}
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.

@@ -187,7 +187,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	case types.ETDecimal:
 		sig = &builtinCoalesceDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDecimal)
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinCoalesceStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case types.ETDatetime, types.ETTimestamp:
@@ -371,7 +371,7 @@ func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expressi
 		sig = &builtinGreatestRealSig{bf}
 	case types.ETDecimal:
 		sig = &builtinGreatestDecimalSig{bf}
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinGreatestStringSig{bf}
 	case types.ETDatetime:
 		sig = &builtinGreatestTimeSig{bf}
@@ -539,7 +539,7 @@ func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression)
 		sig = &builtinLeastRealSig{bf}
 	case types.ETDecimal:
 		sig = &builtinLeastDecimalSig{bf}
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		sig = &builtinLeastStringSig{bf}
 	case types.ETDatetime:
 		sig = &builtinLeastTimeSig{bf}
@@ -830,6 +830,13 @@ func getCmpType(lhs, rhs types.EvalType) types.EvalType {
 	} else if (lhs == types.ETInt || lhs == types.ETDecimal) &&
 		(rhs == types.ETInt || rhs == types.ETDecimal) {
 		return types.ETDecimal
+	} else if lhs == types.ETParam || rhs == types.ETParam {
+		if lhs == rhs {
+			return types.ETString
+		} else if lhs == types.ETParam {
+			return getCmpType(rhs, rhs)
+		}
+		return getCmpType(lhs, lhs)
 	}
 	return types.ETReal
 }
@@ -913,13 +920,7 @@ func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression
 	arg0IsInt := args[0].GetType().EvalType() == types.ETInt
 	arg1IsInt := args[1].GetType().EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
-	if arg0IsCon && arg0.DeferredExpr != nil {
-		arg0IsCon = false
-	}
 	arg1, arg1IsCon := args[1].(*Constant)
-	if arg1IsCon && arg1.DeferredExpr != nil {
-		arg1IsCon = false
-	}
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1 = refineConstantArg(ctx, arg1, c.op)
@@ -1089,7 +1090,7 @@ func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expre
 			sig = &builtinNullEQDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQDecimal)
 		}
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTStringSig{bf}

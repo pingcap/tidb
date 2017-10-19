@@ -2315,12 +2315,12 @@ func (c *addDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 
 	dateEvalTp := args[0].GetType().EvalType()
-	if dateEvalTp != types.ETString && dateEvalTp != types.ETInt {
+	if dateEvalTp != types.ETString && dateEvalTp != types.ETParam && dateEvalTp != types.ETInt {
 		dateEvalTp = types.ETDatetime
 	}
 
 	intervalEvalTp := args[1].GetType().EvalType()
-	if intervalEvalTp != types.ETString {
+	if intervalEvalTp != types.ETString && intervalEvalTp != types.ETParam {
 		intervalEvalTp = types.ETInt
 	}
 
@@ -2329,17 +2329,18 @@ func (c *addDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
 
 	switch {
-	case dateEvalTp == types.ETString && intervalEvalTp == types.ETString:
+	case (dateEvalTp == types.ETString || dateEvalTp == types.ETParam) &&
+		(intervalEvalTp == types.ETString || intervalEvalTp == types.ETParam):
 		sig = &builtinAddDateStringStringSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
-	case dateEvalTp == types.ETString && intervalEvalTp == types.ETInt:
+	case (dateEvalTp == types.ETString || dateEvalTp == types.ETParam) && intervalEvalTp == types.ETInt:
 		sig = &builtinAddDateStringIntSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
-	case dateEvalTp == types.ETInt && intervalEvalTp == types.ETString:
+	case dateEvalTp == types.ETInt && (intervalEvalTp == types.ETString || intervalEvalTp == types.ETParam):
 		sig = &builtinAddDateIntStringSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
@@ -2349,7 +2350,7 @@ func (c *addDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
-	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETString:
+	case dateEvalTp == types.ETDatetime && (intervalEvalTp == types.ETString || intervalEvalTp == types.ETParam):
 		sig = &builtinAddDateDatetimeStringSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
@@ -2547,12 +2548,12 @@ func (c *subDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 
 	dateEvalTp := args[0].GetType().EvalType()
-	if dateEvalTp != types.ETString && dateEvalTp != types.ETInt {
+	if dateEvalTp != types.ETString && dateEvalTp != types.ETParam && dateEvalTp != types.ETInt {
 		dateEvalTp = types.ETDatetime
 	}
 
 	intervalEvalTp := args[1].GetType().EvalType()
-	if intervalEvalTp != types.ETString {
+	if intervalEvalTp != types.ETString && intervalEvalTp != types.ETParam {
 		intervalEvalTp = types.ETInt
 	}
 
@@ -2561,17 +2562,18 @@ func (c *subDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
 
 	switch {
-	case dateEvalTp == types.ETString && intervalEvalTp == types.ETString:
+	case (dateEvalTp == types.ETString || dateEvalTp == types.ETParam) &&
+		(intervalEvalTp == types.ETString || intervalEvalTp == types.ETParam):
 		sig = &builtinSubDateStringStringSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
-	case dateEvalTp == types.ETString && intervalEvalTp == types.ETInt:
+	case (dateEvalTp == types.ETString || dateEvalTp == types.ETParam) && intervalEvalTp == types.ETInt:
 		sig = &builtinSubDateStringIntSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
-	case dateEvalTp == types.ETInt && intervalEvalTp == types.ETString:
+	case dateEvalTp == types.ETInt && (intervalEvalTp == types.ETString || intervalEvalTp == types.ETParam):
 		sig = &builtinSubDateIntStringSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
@@ -2581,7 +2583,7 @@ func (c *subDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
-	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETString:
+	case dateEvalTp == types.ETDatetime && (intervalEvalTp == types.ETString || intervalEvalTp == types.ETParam):
 		sig = &builtinSubDateDatetimeStringSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
@@ -2832,7 +2834,7 @@ func (c *unixTimestampFunctionClass) getFunction(ctx context.Context, args []Exp
 		argTps = []types.EvalType{types.ETDatetime}
 		argType := args[0].GetType()
 		argEvaltp := argType.EvalType()
-		if argEvaltp == types.ETString {
+		if argEvaltp == types.ETString || argEvaltp == types.ETParam {
 			// Treat types.ETString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
 		} else {
@@ -2967,7 +2969,7 @@ func (c *timestampFunctionClass) getDefaultFsp(tp *types.FieldType) int {
 	switch cls := tp.EvalType(); cls {
 	case types.ETInt:
 		return types.MinFsp
-	case types.ETReal, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson, types.ETString:
+	case types.ETReal, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson, types.ETString, types.ETParam:
 		return types.MaxFsp
 	case types.ETDecimal:
 		if tp.Decimal < types.MaxFsp {
@@ -3171,7 +3173,7 @@ func getBf4TimeAddSub(ctx context.Context, args []Expression) (tp1, tp2 *types.F
 	}
 	bf = newBaseBuiltinFuncWithTp(ctx, args, retTp, argTp1, argTp2)
 	bf.tp.Decimal = tp1.Decimal
-	if retTp == types.ETString {
+	if retTp == types.ETString || retTp == types.ETParam {
 		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
 	}
 	return
@@ -3571,7 +3573,7 @@ func (c *convertTzFunctionClass) getDecimal(ctx context.Context, arg Expression)
 			decimal = 0
 		case types.ETReal, types.ETDecimal:
 			decimal = arg.GetType().Decimal
-		case types.ETString:
+		case types.ETString, types.ETParam:
 			str, isNull, err := dt.EvalString(nil, ctx.GetSessionVars().StmtCtx)
 			if err == nil && !isNull {
 				decimal = types.DateFSP(str)
@@ -3970,7 +3972,7 @@ func (c *secToTimeFunctionClass) getFunction(ctx context.Context, args []Express
 	var retFlen, retFsp int
 	argType := args[0].GetType()
 	argEvalTp := argType.EvalType()
-	if argEvalTp == types.ETString {
+	if argEvalTp == types.ETString || argEvalTp == types.ETParam {
 		retFsp = types.UnspecifiedLength
 	} else {
 		retFsp = argType.Decimal

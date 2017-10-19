@@ -204,7 +204,7 @@ func (c *anyValueFunctionClass) getFunction(ctx context.Context, args []Expressi
 		sig = &builtinJSONAnyValueSig{bf}
 	case types.ETReal:
 		sig = &builtinRealAnyValueSig{bf}
-	case types.ETString:
+	case types.ETString, types.ETParam:
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinStringAnyValueSig{bf}
 	case types.ETDatetime, types.ETTimestamp:
