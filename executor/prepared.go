@@ -397,6 +397,17 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sessVars.PrevLastInsertID = sessVars.LastInsertID
 		sessVars.LastInsertID = 0
 	}
+	if sessVars.StmtCtx != nil {
+		if sessVars.StmtCtx.InUpdateOrDeleteStmt || sessVars.StmtCtx.InInsertStmt {
+			sessVars.PrevAffectedRows = int64(sessVars.StmtCtx.AffectedRows())
+		} else if sessVars.StmtCtx.InSelectStmt {
+			sessVars.PrevAffectedRows = -1
+		} else {
+			sessVars.PrevAffectedRows = 0
+		}
+	} else {
+		sessVars.PrevAffectedRows = 0
+	}
 	sessVars.InsertID = 0
 	sessVars.StmtCtx = sc
 }

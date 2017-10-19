@@ -125,6 +125,8 @@ type SessionVars struct {
 	PrevLastInsertID uint64 // PrevLastInsertID is the last insert ID of previous statement.
 	LastInsertID     uint64 // LastInsertID is the auto-generated ID in the current statement.
 	InsertID         uint64 // InsertID is the given insert ID of an auto_increment column.
+	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
+	PrevAffectedRows int64
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32
