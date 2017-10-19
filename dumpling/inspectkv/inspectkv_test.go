@@ -194,6 +194,45 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite) TestCancelJobs(c *C) {
+	defer testleak.AfterTest(c)()
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	cnt := 10
+	ids := make([]int64, cnt)
+	for i := 0; i < cnt; i++ {
+		job := &model.Job{
+			ID:       int64(i),
+			SchemaID: 1,
+			Type:     model.ActionCreateTable,
+		}
+		if i == 0 {
+			job.State = model.JobDone
+		}
+		if i == 1 {
+			job.State = model.JobCancelled
+		}
+		ids[i] = int64(i)
+		err = t.EnQueueDDLJob(job)
+		c.Assert(err, IsNil)
+	}
+
+	errs, err := CancelJobs(txn, ids)
+	c.Assert(err, IsNil)
+	for i, err := range errs {
+		if i == 0 {
+			c.Assert(err, NotNil)
+			continue
+		}
+		c.Assert(err, IsNil)
+	}
+
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 	defer testleak.AfterTest(c)()
 
