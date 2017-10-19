@@ -174,8 +174,8 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	// Handle rollback job.
-	if job.State == model.JobRollback {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
 		ver, err = d.onDropIndex(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -231,7 +231,6 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}
-
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
@@ -284,12 +283,16 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 				// if timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if kv.ErrKeyExists.Equal(err) {
+			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
-				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
+				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
+			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+			cleanNotify(d.notifyCancelReorgJob)
 			return ver, errors.Trace(err)
 		}
+		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+		cleanNotify(d.notifyCancelReorgJob)
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
@@ -300,7 +303,6 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
@@ -311,8 +313,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (ver int64, _ error) {
-	job.State = model.JobRollback
+func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (ver int64, _ error) {
+	job.State = model.JobRollingback
 	job.Args = []interface{}{indexInfo.Name}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
@@ -321,11 +323,16 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	indexInfo.State = model.StateDeleteOnly
 	originalState := indexInfo.State
 	job.SchemaState = model.StateDeleteOnly
-	_, err := updateTableInfo(t, job, tblInfo, originalState)
-	if err != nil {
-		return ver, errors.Trace(err)
+	_, err1 := updateTableInfo(t, job, tblInfo, originalState)
+	if err1 != nil {
+		return ver, errors.Trace(err1)
 	}
-	return ver, kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
+
+	if kv.ErrKeyExists.Equal(err) {
+		return ver, kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
+	}
+
+	return ver, errors.Trace(err)
 }
 
 func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -383,7 +390,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 
 		// Finish this job.
-		if job.State == model.JobRollback {
+		if job.IsRollingback() {
 			job.State = model.JobRollbackDone
 		} else {
 			job.State = model.JobDone
