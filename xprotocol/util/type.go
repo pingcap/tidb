@@ -14,10 +14,11 @@
 package util
 
 import (
+	"unicode"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tipb/go-mysqlx/Resultset"
-	"unicode"
 )
 
 var unsignedXType = map[byte]Mysqlx_Resultset.ColumnMetaData_FieldType{
