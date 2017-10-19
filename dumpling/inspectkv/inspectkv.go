@@ -94,7 +94,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			if job.IsCancelled() || job.IsRollingback() {
 				continue
 			}
-			job.State = model.JobCancelling
+			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
 			err := job.DecodeArgs(job.RawArgs)
 			if err != nil {

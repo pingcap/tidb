@@ -257,7 +257,7 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
-		if job.SchemaState == model.StateNone && job.State != model.JobDone {
+		if job.SchemaState == model.StateNone && job.State != model.JobStateDone {
 			// If the schema state is none, we only test the job is finished.
 		} else {
 			errs, err := inspectkv.CancelJobs(txn, test.jobIDs)

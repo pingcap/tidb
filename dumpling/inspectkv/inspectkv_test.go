@@ -209,10 +209,10 @@ func (s *testSuite) TestCancelJobs(c *C) {
 			Type:     model.ActionCreateTable,
 		}
 		if i == 0 {
-			job.State = model.JobDone
+			job.State = model.JobStateDone
 		}
 		if i == 1 {
-			job.State = model.JobCancelled
+			job.State = model.JobStateCancelled
 		}
 		ids[i] = int64(i)
 		err = t.EnQueueDDLJob(job)
