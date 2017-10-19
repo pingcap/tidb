@@ -13,19 +13,18 @@ import (
 	"crypto/tls"
 	"database/sql/driver"
 	"encoding/binary"
-	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/juju/errors"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
 )
 
 var (
-	tlsConfigRegister map[string]*tls.Config // Register for custom tls.Configs
-
+	tlsConfigRegister            map[string]*tls.Config // Register for custom tls.Configs
 	errInvalidDSNUnescaped       = errors.New("Invalid DSN: Did you forget to escape a param value?")
 	errInvalidDSNAddr            = errors.New("Invalid DSN: Network Address not terminated (missing closing brace)")
 	errInvalidDSNNoSlash         = errors.New("Invalid DSN: Missing the slash separating the database name")
@@ -61,7 +60,7 @@ func init() {
 //
 func RegisterTLSConfig(key string, config *tls.Config) error {
 	if _, isBool := readBool(key); isBool || strings.ToLower(key) == "skip-verify" {
-		return fmt.Errorf("Key '%s' is reserved", key)
+		return errors.Errorf("Key '%s' is reserved", key)
 	}
 
 	tlsConfigRegister[key] = config
@@ -162,7 +161,6 @@ func parseDSN(dsn string) (cfg *config, err error) {
 		case "tcp":
 			if cfg.useXProtocol {
 				cfg.addr = "127.0.0.1:33060" // Xprotocol default port 33060
-				//				fmt.Printf("DEBUG: cfg.addr=%s\n", cfg.addr)
 			} else {
 				cfg.addr = "127.0.0.1:3306"
 			}
@@ -193,7 +191,7 @@ func parseDSNParams(cfg *config, params string) (err error) {
 			var isBool bool
 			cfg.interpolateParams, isBool = readBool(value)
 			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
+				return errors.Errorf("Invalid Bool value: %s", value)
 			}
 
 		// Disable INFILE whitelist / enable all files
@@ -201,7 +199,7 @@ func parseDSNParams(cfg *config, params string) (err error) {
 			var isBool bool
 			cfg.allowAllFiles, isBool = readBool(value)
 			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
+				return errors.Errorf("Invalid Bool value: %s", value)
 			}
 
 		// Use cleartext authentication mode (MySQL 5.5.10+)
@@ -209,7 +207,7 @@ func parseDSNParams(cfg *config, params string) (err error) {
 			var isBool bool
 			cfg.allowCleartextPasswords, isBool = readBool(value)
 			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
+				return errors.Errorf("Invalid Bool value: %s", value)
 			}
 
 		// Collation
@@ -229,7 +227,7 @@ func parseDSNParams(cfg *config, params string) (err error) {
 			var isBool bool
 			cfg.columnsWithAlias, isBool = readBool(value)
 			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
+				return errors.Errorf("Invalid Bool value: %s", value)
 			}
 
 		// Time Location
@@ -261,15 +259,15 @@ func parseDSNParams(cfg *config, params string) (err error) {
 					cfg.tls = &tls.Config{InsecureSkipVerify: true}
 				} else if tlsConfig, ok := tlsConfigRegister[value]; ok {
 					if len(tlsConfig.ServerName) == 0 && !tlsConfig.InsecureSkipVerify {
-						host, _, err := net.SplitHostPort(cfg.addr)
-						if err == nil {
+						host, _, err1 := net.SplitHostPort(cfg.addr)
+						if err1 == nil {
 							tlsConfig.ServerName = host
 						}
 					}
 
 					cfg.tls = tlsConfig
 				} else {
-					return fmt.Errorf("Invalid value / unknown config name: %s", value)
+					return errors.Errorf("Invalid value / unknown config name: %s", value)
 				}
 			}
 
@@ -277,22 +275,18 @@ func parseDSNParams(cfg *config, params string) (err error) {
 		case "xprotocol":
 			var isBool bool
 			if cfg.useXProtocol, isBool = readBool(value); !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
+				return errors.Errorf("Invalid Bool value: %s", value)
 			}
-			//			fmt.Printf("DEBUG: cfg.useXProtocol=%v\n", cfg.useXProtocol)
-
 		default:
 			// lazy init
 			if cfg.params == nil {
 				cfg.params = make(map[string]string)
 			}
-
 			if cfg.params[param[0]], err = url.QueryUnescape(value); err != nil {
 				return
 			}
 		}
 	}
-
 	return
 }
 
@@ -305,7 +299,6 @@ func readBool(input string) (value bool, valid bool) {
 	case "0", "false", "FALSE", "False":
 		return false, true
 	}
-
 	// Not a valid bool value
 	return
 }
@@ -322,19 +315,27 @@ func scramblePassword(scramble, password []byte) []byte {
 
 	// stage1Hash = SHA1(password)
 	crypt := sha1.New()
-	crypt.Write(password)
+	if _, err := crypt.Write(password); err != nil {
+		panic(err)
+	}
 	stage1 := crypt.Sum(nil)
 
 	// scrambleHash = SHA1(scramble + SHA1(stage1Hash))
 	// inner Hash
 	crypt.Reset()
-	crypt.Write(stage1)
+	if _, err := crypt.Write(stage1); err != nil {
+		panic(err)
+	}
 	hash := crypt.Sum(nil)
 
 	// outer Hash
 	crypt.Reset()
-	crypt.Write(scramble)
-	crypt.Write(hash)
+	if _, err := crypt.Write(scramble); err != nil {
+		panic(err)
+	}
+	if _, err := crypt.Write(hash); err != nil {
+		panic(err)
+	}
 	scramble = crypt.Sum(nil)
 
 	// token = scrambleHash XOR stage1Hash
@@ -470,7 +471,7 @@ func (nt *NullTime) Scan(value interface{}) (err error) {
 	}
 
 	nt.Valid = false
-	return fmt.Errorf("Can't convert %T to time.Time", value)
+	return errors.Errorf("Can't convert %T to time.Time", value)
 }
 
 // Value implements the driver Valuer interface.
@@ -490,7 +491,7 @@ func parseDateTime(str string, loc *time.Location) (t time.Time, err error) {
 		}
 		t, err = time.Parse(timeFormat[:len(str)], str)
 	default:
-		err = fmt.Errorf("Invalid Time-String: %s", str)
+		err = errors.Errorf("Invalid Time-String: %s", str)
 		return
 	}
 
@@ -500,7 +501,6 @@ func parseDateTime(str string, loc *time.Location) (t time.Time, err error) {
 		h, mi, s := t.Clock()
 		t, err = time.Date(y, mo, d, h, mi, s, t.Nanosecond(), loc), nil
 	}
-
 	return
 }
 
@@ -539,7 +539,7 @@ func parseBinaryDateTime(num uint64, data []byte, loc *time.Location) (driver.Va
 			loc,
 		), nil
 	}
-	return nil, fmt.Errorf("Invalid DATETIME-packet length %d", num)
+	return nil, errors.Errorf("Invalid DATETIME-packet length %d", num)
 }
 
 // zeroDateTime is used in formatBinaryDateTime to avoid an allocation
@@ -569,12 +569,12 @@ func formatBinaryDateTime(src []byte, length uint8, justTime bool) (driver.Value
 			8,                      // time (can be up to 10 when negative and 100+ hours)
 			10, 11, 12, 13, 14, 15: // time with fractional seconds
 		default:
-			return nil, fmt.Errorf("illegal TIME length %d", length)
+			return nil, errors.Errorf("illegal TIME length %d", length)
 		}
 		switch len(src) {
 		case 8, 12:
 		default:
-			return nil, fmt.Errorf("Invalid TIME-packet length %d", len(src))
+			return nil, errors.Errorf("Invalid TIME-packet length %d", len(src))
 		}
 		// +2 to enable negative time and 100+ hours
 		dst = make([]byte, 0, length+2)
@@ -599,7 +599,7 @@ func formatBinaryDateTime(src []byte, length uint8, justTime bool) (driver.Value
 			if length > 10 {
 				t += "TIME"
 			}
-			return nil, fmt.Errorf("illegal %s length %d", t, length)
+			return nil, errors.Errorf("illegal %s length %d", t, length)
 		}
 		switch len(src) {
 		case 4, 7, 11:
@@ -608,7 +608,7 @@ func formatBinaryDateTime(src []byte, length uint8, justTime bool) (driver.Value
 			if length > 10 {
 				t += "TIME"
 			}
-			return nil, fmt.Errorf("illegal %s-packet length %d", t, len(src))
+			return nil, errors.Errorf("illegal %s-packet length %d", t, len(src))
 		}
 		dst = make([]byte, 0, length)
 		// start with the date

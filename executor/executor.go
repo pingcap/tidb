@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -146,6 +147,30 @@ type Executor interface {
 	Close() error
 	Open() error
 	Schema() *expression.Schema
+}
+
+// CancelDDLJobsExec represents a cancel DDL jobs executor.
+type CancelDDLJobsExec struct {
+	baseExecutor
+
+	cursor int
+	JobIDs []int64
+	errs   []error
+}
+
+// Next implements the Executor Next interface.
+func (e *CancelDDLJobsExec) Next() (Row, error) {
+	var row Row
+	if e.cursor < len(e.JobIDs) {
+		ret := "successful"
+		if e.errs[e.cursor] != nil {
+			ret = fmt.Sprintf("error: %v", e.errs[e.cursor])
+		}
+		row = types.MakeDatums(e.JobIDs[e.cursor], ret)
+		e.cursor++
+	}
+
+	return row, nil
 }
 
 // ShowDDLExec represents a show DDL executor.

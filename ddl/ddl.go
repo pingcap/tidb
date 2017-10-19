@@ -64,7 +64,8 @@ var (
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
-	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid ddl job")
+	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid DDL job")
+	errCancelledDDLJob       = terror.ClassDDL.New(codeCancelledDDLJob, "cancelled DDL job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
 	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
@@ -177,6 +178,8 @@ type DDL interface {
 	WorkerVars() *variable.SessionVars
 	// SetHook sets the hook. It's exported for testing.
 	SetHook(h Callback)
+	// GetHook gets the hook. It's exported for testing.
+	GetHook() Callback
 }
 
 // Event is an event that a ddl operation happened.
@@ -226,6 +229,8 @@ type ddl struct {
 	reorgDoneCh chan error
 	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
 	reorgRowCount int64
+	// notifyCancelReorgJob is for reorganization, it used to notify the backfilling goroutine if the DDL job is cancelled.
+	notifyCancelReorgJob chan struct{}
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
@@ -290,16 +295,17 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
-		infoHandle:   infoHandle,
-		hook:         hook,
-		store:        store,
-		uuid:         id,
-		lease:        lease,
-		ddlJobCh:     make(chan struct{}, 1),
-		ddlJobDoneCh: make(chan struct{}, 1),
-		ownerManager: manager,
-		schemaSyncer: syncer,
-		workerVars:   variable.NewSessionVars(),
+		infoHandle:           infoHandle,
+		hook:                 hook,
+		store:                store,
+		uuid:                 id,
+		lease:                lease,
+		ddlJobCh:             make(chan struct{}, 1),
+		ddlJobDoneCh:         make(chan struct{}, 1),
+		notifyCancelReorgJob: make(chan struct{}, 1),
+		ownerManager:         manager,
+		schemaSyncer:         syncer,
+		workerVars:           variable.NewSessionVars(),
 	}
 	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
@@ -502,6 +508,14 @@ func (d *ddl) SetHook(h Callback) {
 	d.hook = h
 }
 
+// GetHook implements DDL.GetHook interface.
+func (d *ddl) GetHook() Callback {
+	d.hookMu.RLock()
+	defer d.hookMu.RUnlock()
+
+	return d.hook
+}
+
 func (d *ddl) WorkerVars() *variable.SessionVars {
 	return d.workerVars
 }
@@ -525,6 +539,7 @@ const (
 	codeUnknownTypeLength                    = 9
 	codeUnknownFractionLength                = 10
 	codeInvalidJobVersion                    = 11
+	codeCancelledDDLJob                      = 12
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101

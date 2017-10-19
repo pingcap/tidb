@@ -119,9 +119,19 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
-	r, err := tk.Exec("admin show ddl")
-	c.Assert(err, IsNil)
+
+	// cancel DDL jobs test
+	r, err := tk.Exec("admin cancel ddl jobs 1")
+	c.Assert(err, IsNil, Commentf("err %v", err))
 	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 2)
+	c.Assert(row.Data[0].GetInt64(), Equals, int64(1))
+	c.Assert(row.Data[1].GetString(), Equals, "error: Can't find this job")
+
+	r, err = tk.Exec("admin show ddl")
+	c.Assert(err, IsNil)
+	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, HasLen, 4)
 	txn, err := s.store.Begin()
@@ -140,7 +150,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
-	// show ddl jobs test
+	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
 	row, err = r.Next()
