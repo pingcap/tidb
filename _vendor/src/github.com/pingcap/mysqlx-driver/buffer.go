@@ -8,7 +8,11 @@
 
 package mysql
 
-import "io"
+import (
+	"io"
+
+	"github.com/juju/errors"
+)
 
 const defaultBufSize = 4096
 
@@ -73,7 +77,7 @@ func (b *buffer) fill(need int) error {
 			return io.ErrUnexpectedEOF
 
 		default:
-			return err
+			return errors.Trace(err)
 		}
 	}
 }
@@ -84,7 +88,7 @@ func (b *buffer) readNext(need int) ([]byte, error) {
 	if b.length < need {
 		// refill
 		if err := b.fill(need); err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 	}
 

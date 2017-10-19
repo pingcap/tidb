@@ -149,8 +149,13 @@ imports:
   - pkg/pdpb
   - pkg/raft_serverpb
   - pkg/tikvpb
+<<<<<<< HEAD
+=======
+- name: github.com/pingcap/mysqlx-driver
+  version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
+>>>>>>> master
 - name: github.com/pingcap/mysqlx_driver
-  version: 2d8314d333881ae8b5947623d6ff49741707a31a
+  version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
   repo: git@github.com:pingcap/mysqlx-driver.git
 - name: github.com/pingcap/pd
   version: 91e4257196bb714005f80a6e075bc1e19a9687b1

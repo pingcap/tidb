@@ -195,6 +195,17 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("set sql_mode = 'strict_all_tables';")
 	r = tk.MustQuery("SELECT * FROM t;")
 	r.Check(testkit.Rows("2017-00-00 00:00:00"))
+
+	// test auto_increment with unsigned.
+	tk.MustExec("drop table if exists test")
+	tk.MustExec("CREATE TABLE test(id int(10) UNSIGNED NOT NULL AUTO_INCREMENT, p int(10) UNSIGNED NOT NULL, PRIMARY KEY(p), KEY(id))")
+	tk.MustExec("insert into test(p) value(1)")
+	tk.MustQuery("select * from test").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from test use index (id) where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into test values(NULL, 2)")
+	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2"))
+	tk.MustExec("insert into test values(2, 3)")
+	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2", "2 3"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
