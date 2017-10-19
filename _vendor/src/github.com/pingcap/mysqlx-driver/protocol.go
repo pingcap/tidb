@@ -13,10 +13,10 @@ package mysql
 import (
 	"database/sql/driver"
 	"fmt"
-	"log"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/golang/protobuf/proto"
-
+	"github.com/juju/errors"
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Connection"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
@@ -46,8 +46,9 @@ func (mc *mysqlXConn) readMsg() (*netProtobuf, error) {
 	// Read packet header
 	data, err := mc.buf.readNext(4)
 	if err != nil {
-		errLog.Print(err)
-		mc.Close()
+		if err = mc.Close(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		return nil, driver.ErrBadConn
 	}
 
@@ -55,16 +56,18 @@ func (mc *mysqlXConn) readMsg() (*netProtobuf, error) {
 	pktLen := int(uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24)
 
 	if pktLen < minPacketSize {
-		errLog.Print(ErrMalformPkt)
-		mc.Close()
+		if err = mc.Close(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		return nil, driver.ErrBadConn
 	}
 
 	// Read body which is 1-byte msg type and 0+ bytes payload
 	data, err = mc.buf.readNext(pktLen)
 	if err != nil {
-		errLog.Print(err)
-		mc.Close()
+		if err := mc.Close(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		return nil, driver.ErrBadConn
 	}
 
@@ -81,7 +84,9 @@ func (mc *mysqlXConn) readMsg() (*netProtobuf, error) {
 // Write packet buffer 'data'
 func (mc *mysqlXConn) writeProtobufPacket(pb *netProtobuf) error {
 	if pb == nil || pb.msgType > 255 {
-		mc.Close()
+		if err := mc.Close(); err != nil {
+			return errors.Trace(err)
+		}
 		return ErrMalformPkt
 	}
 
@@ -100,18 +105,22 @@ func (mc *mysqlXConn) writeProtobufPacket(pb *netProtobuf) error {
 	data[2] = byte(pktLen >> 16)
 	data[3] = byte(pktLen >> 24)
 	data[4] = byte(pb.msgType)
-	size = pktLen
+	size = pktLen - 1
 
 	// Write header
 	n, err := mc.netConn.Write(data)
-	if err != nil || n != 5 {
-		return fmt.Errorf("Error writing protobuf header to socket, wrote %d of 5 bytes: %v", n, err)
+	if err != nil {
+		return errors.Trace(err)
+	} else if n != 5 {
+		return errors.Errorf("Expect write 5 bytes but write %d bytes", n)
 	}
 
 	// Write payload
 	n, err = mc.netConn.Write(pb.payload)
-	if err != nil && n != size {
-		return fmt.Errorf("Error writing protobuf body to socket, wrote %d of %d bytes: %v", n, size, err)
+	if err != nil {
+		return errors.Trace(err)
+	} else if n != size {
+		return errors.Errorf("Expect write %d bytes but write %d bytes", size, n)
 	}
 	return nil
 }
@@ -190,7 +199,7 @@ func arrayString(value *Mysqlx_Datatypes.Any) []string {
 func (mc *mysqlXConn) getCapabilities() error {
 
 	if err := mc.writeConnCapabilitiesGet(); err != nil {
-		return fmt.Errorf("getCapabilities: %v", err)
+		return errors.Trace(err)
 	}
 
 	var pb *netProtobuf
@@ -202,32 +211,34 @@ func (mc *mysqlXConn) getCapabilities() error {
 			return err
 		}
 		if pb == nil {
-			return fmt.Errorf("getCapabilities() pb = nil (not expected to happen ever)")
+			return errors.Errorf("getCapabilities() pb = nil (not expected to happen ever)")
 		}
 
 		switch Mysqlx.ServerMessages_Type(pb.msgType) {
 		case Mysqlx.ServerMessages_ERROR:
-			return fmt.Errorf("getCapabilities returned: %+v", errorMsg(pb.payload))
+			return errors.Errorf("getCapabilities returned: %+v", errorMsg(pb.payload))
 		case Mysqlx.ServerMessages_CONN_CAPABILITIES:
 			done = true
 		case Mysqlx.ServerMessages_NOTICE: // we don't expect a notice here so just print it.
-			mc.pb = pb                          // hack though maybe should always use mc
-			mc.processNotice("getCapabilities") // process the notice message
-		default:
+			mc.pb = pb // hack though maybe should always use mc
+			// process the notice message
+			if err := mc.processNotice("getCapabilities"); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
 	if pb == nil {
-		return fmt.Errorf("BUG: Empty pb")
+		return errors.Errorf("BUG: Empty pb")
 	}
 	if pb.payload == nil {
-		return fmt.Errorf("BUG: Empty pb.payload")
+		return errors.Errorf("BUG: Empty pb.payload")
 	}
 
 	// get the capabilities info
 	capabilities := &Mysqlx_Connection.Capabilities{}
 	if err := proto.Unmarshal(pb.payload, capabilities); err != nil {
-		return fmt.Errorf("unmarshaling error with capabilities: %v", err)
+		return errors.Trace(err)
 	}
 
 	for i := range capabilities.GetCapabilities() {
@@ -236,17 +247,22 @@ func (mc *mysqlXConn) getCapabilities() error {
 		if isScalar(value) {
 			if isScalarString(value) {
 				scalar := scalarString(value)
-				mc.capabilities.AddScalarString(name, scalar)
+				if err := mc.capabilities.AddScalarString(name, scalar); err != nil {
+					return errors.Trace(err)
+				}
 			} else if isScalarBool(value) {
 				scalar := scalarBool(value)
-				mc.capabilities.AddScalarBool(name, scalar)
+				if err := mc.capabilities.AddScalarBool(name, scalar); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		} else if isArrayString(value) {
 			values := arrayString(value)
-			mc.capabilities.AddArrayString(name, values)
+			if err := mc.capabilities.AddArrayString(name, values); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
-
 	return nil
 }
 
@@ -310,12 +326,12 @@ func (mc *mysqlXConn) setScalarBoolCapability(name string, value bool) error {
 	pb := new(netProtobuf)
 	pb.msgType = int(Mysqlx.ClientMessages_CON_CAPABILITIES_SET)
 	if pb.payload, err = proto.Marshal(capabilitiesSet); err != nil {
-		return fmt.Errorf("SetScalarBoolCapability(%q,%v) failed to create marshalled message: %v", err)
+		return errors.Trace(err)
 	}
 
 	// Send the message
 	if err = mc.writeProtobufPacket(pb); err != nil {
-		return fmt.Errorf("SetScalarBoolCapability(%q,%v) failed: %v", name, value, err)
+		return errors.Trace(err)
 	}
 
 	// wait for the answer (I expect it to be OK / ERROR)
@@ -326,27 +342,28 @@ func (mc *mysqlXConn) setScalarBoolCapability(name string, value bool) error {
 			return err
 		}
 		if pb == nil {
-			return fmt.Errorf("setScalarBoolCapability() pb = nil (not expected to happen ever)")
+			return errors.Errorf("setScalarBoolCapability() pb = nil (not expected to happen ever)")
 		}
 
 		switch Mysqlx.ServerMessages_Type(pb.msgType) {
 		case Mysqlx.ServerMessages_OK:
 			return nil
 		case Mysqlx.ServerMessages_ERROR:
-			return fmt.Errorf("setScalarBoolCapability failed: %v", mc.processErrorMsg())
+			return errors.Errorf("setScalarBoolCapability failed: %v", mc.processErrorMsg())
 		case Mysqlx.ServerMessages_NOTICE:
 			// we don't expect a notice here so just print it.
 			mc.pb = pb // should use just mc.pb ??
-			mc.processNotice("setScalarBoolCapability")
-		default:
+			if err := mc.processNotice("setScalarBoolCapability"); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
 	if pb == nil {
-		return fmt.Errorf("BUG: Empty pb")
+		return errors.Errorf("BUG: Empty pb")
 	}
 	if pb.payload == nil {
-		return fmt.Errorf("BUG: Empty pb.payload")
+		return errors.Errorf("BUG: Empty pb.payload")
 	}
 
 	return nil
@@ -355,23 +372,23 @@ func (mc *mysqlXConn) setScalarBoolCapability(name string, value bool) error {
 // generate an error based on the Mysql.Error message
 func errorText(e *Mysqlx.Error) error {
 	if e == nil {
-		return fmt.Errorf("errorText: ERROR e == nil")
+		return errors.Errorf("errorText: ERROR e == nil")
 	}
-	return fmt.Errorf("%v: %04d [%s] %s", e.Severity, *(e.Code), *(e.SqlState), *(e.Msg))
+	return errors.Errorf("%v: %04d [%s] %s", e.Severity, *(e.Code), *(e.SqlState), *(e.Msg))
 }
 
 // return an error message type as an error
 // - pb MUST BE a protobuf message of type Error
 func (pb *netProtobuf) errorMsg() error {
 	if pb == nil {
-		return fmt.Errorf("errorMsg: ERROR pb == nil")
+		return errors.Errorf("errorMsg: ERROR pb == nil")
 	}
 	if pb.msgType != int(Mysqlx.ServerMessages_ERROR) {
-		return fmt.Errorf("errorMsg: ERROR msgType = %d, expecting ERROR (%d)", pb.msgType, Mysqlx.ServerMessages_ERROR)
+		return errors.Errorf("errorMsg: ERROR msgType = %d, expecting ERROR (%d)", pb.msgType, Mysqlx.ServerMessages_ERROR)
 	}
 	e := new(Mysqlx.Error)
 	if err := proto.Unmarshal(pb.payload, e); err != nil {
-		return fmt.Errorf("unmarshaling error with e: %+v", err)
+		return errors.Trace(err)
 	}
 	return errorText(e)
 }
@@ -381,7 +398,7 @@ func (pb *netProtobuf) errorMsg() error {
 func errorMsg(data []byte) error {
 	e := new(Mysqlx.Error)
 	if err := proto.Unmarshal(data, e); err != nil {
-		log.Fatal("unmarshaling error with e: ", err)
+		return errors.Trace(err)
 	}
 	return errorText(e)
 }
@@ -395,10 +412,10 @@ func printAuthenticateOk(data []byte) {
 
 func (mc *mysqlXConn) processNotice(where string) error {
 	if mc == nil {
-		log.Fatalf("mysqlXConn.processNotice(%q): mc == nil", where)
+		return errors.Errorf("mysqlXConn.processNotice(%q): mc == nil", where)
 	}
 	if mc.pb == nil {
-		log.Fatalf("mysqlXConn.processNotice(%q): mc.pb == nil", where)
+		return errors.Errorf("mysqlXConn.processNotice(%q): mc.pb == nil", where)
 	}
 
 	f := new(Mysqlx_Notice.Frame)
@@ -408,30 +425,21 @@ func (mc *mysqlXConn) processNotice(where string) error {
 
 	switch f.GetType() {
 	case 1: // warning
-		{
-			w := new(Mysqlx_Notice.Warning)
-			if err := proto.Unmarshal(f.Payload, w); err != nil {
-				log.Fatalf("error unmarshaling Warning w: %v", err)
-			}
+		w := new(Mysqlx_Notice.Warning)
+		if err := proto.Unmarshal(f.Payload, w); err != nil {
+			return errors.Trace(err)
 		}
 	case 2: // session variable change
-		{
-
-			s := new(Mysqlx_Notice.SessionVariableChanged)
-			if err := proto.Unmarshal(f.Payload, s); err != nil {
-				log.Fatalf("error unmarshaling SessionVariableChanged s: %v", err)
-			}
+		s := new(Mysqlx_Notice.SessionVariableChanged)
+		if err := proto.Unmarshal(f.Payload, s); err != nil {
+			return errors.Trace(err)
 		}
 	case 3: // SessionStateChanged
-		{
-			s := new(Mysqlx_Notice.SessionStateChanged)
-			if err := proto.Unmarshal(f.Payload, s); err != nil {
-				log.Fatalf("error unmarshaling SessionStateChanged s: %v", err)
-			}
+		s := new(Mysqlx_Notice.SessionStateChanged)
+		if err := proto.Unmarshal(f.Payload, s); err != nil {
+			return errors.Trace(err)
 		}
-	default:
 	}
-
 	mc.pb = nil // reset message (as now processed)
 	return nil
 }
@@ -440,7 +448,6 @@ func (mc *mysqlXConn) writeConnCapabilitiesGet() error {
 	pb := new(netProtobuf)
 	pb.msgType = int(Mysqlx.ClientMessages_CON_CAPABILITIES_GET)
 	// EMPTY PAYLOAD
-
 	return mc.writeProtobufPacket(pb)
 }
 
@@ -451,9 +458,8 @@ func (mc *mysqlXConn) writeSessAuthenticateStart(m *Mysqlx_Session.AuthenticateS
 	pb.msgType = int(Mysqlx.ClientMessages_SESS_AUTHENTICATE_START)
 	pb.payload, err = proto.Marshal(m)
 	if err != nil {
-		return fmt.Errorf("Failed to marshall SesstionAuthenticateStart: %v", err)
+		return errors.Trace(err)
 	}
-
 	return mc.writeProtobufPacket(pb)
 }
 
@@ -464,7 +470,7 @@ func (mc *mysqlXConn) writeSessAuthenticateContinue(m *Mysqlx_Session.Authentica
 	pb.msgType = int(Mysqlx.ClientMessages_SESS_AUTHENTICATE_CONTINUE)
 	pb.payload, err = proto.Marshal(m)
 	if err != nil {
-		return fmt.Errorf("Failed to marshall SessAuthenticateContinue: %v", err)
+		return errors.Trace(err)
 	}
 	return mc.writeProtobufPacket(pb)
 }
@@ -480,7 +486,6 @@ func readSessAuthenticateContinue(pb *netProtobuf) *Mysqlx_Session.AuthenticateC
 
 // AuthenticateMySQL41 uses MYSQL41 authentication method
 func (mc *mysqlXConn) AuthenticateMySQL41() error {
-	var err error
 	// ------------------------------------------------------------------------
 	// C -> S   SESS_AUTHENTICATE_START
 	// ------------------------------------------------------------------------
@@ -491,9 +496,8 @@ func (mc *mysqlXConn) AuthenticateMySQL41() error {
 		MechName: proto.String("MYSQL41"),
 		AuthData: []byte(authInfo.GetInitialAuthData()),
 	}
-	mc.writeSessAuthenticateStart(msg)
-	if err != nil {
-		return fmt.Errorf("AuthenticateMySQL41: %v", err)
+	if err := mc.writeSessAuthenticateStart(msg); err != nil {
+		return errors.Trace(err)
 	}
 
 	// ------------------------------------------------------------------------
@@ -507,16 +511,15 @@ func (mc *mysqlXConn) AuthenticateMySQL41() error {
 	}
 
 	if Mysqlx.ServerMessages_Type(pb.msgType) != Mysqlx.ServerMessages_SESS_AUTHENTICATE_CONTINUE {
-		return fmt.Errorf("Got unexpected message type back: %s, expecting: %s",
+		return errors.Errorf("Got unexpected message type back: %s, expecting: %s",
 			printableMsgTypeIn(Mysqlx.ServerMessages_Type(pb.msgType)),
 			printableMsgTypeIn(Mysqlx.ServerMessages_SESS_AUTHENTICATE_CONTINUE))
 	}
 
 	authenticateContinue := readSessAuthenticateContinue(pb)
-
 	authData := []byte(authenticateContinue.GetAuthData())
 	if len(authData) != 20 {
-		return fmt.Errorf("Received %d bytes from server, expecting: 20", len(authData))
+		return errors.Errorf("Received %d bytes from server, expecting: 20", len(authData))
 	}
 
 	// ------------------------------------------------------------------------
@@ -526,12 +529,12 @@ func (mc *mysqlXConn) AuthenticateMySQL41() error {
 		authenticateContinue := &Mysqlx_Session.AuthenticateContinue{}
 		response, err := authInfo.GetNextAuthData(authData)
 		if err != nil {
-			return fmt.Errorf("authInfo.GetNextAuthData() gave an error: %v", err)
+			return errors.Trace(err)
 		}
 		authenticateContinue.AuthData = []byte(response)
 
 		if err := mc.writeSessAuthenticateContinue(authenticateContinue); err != nil {
-			return fmt.Errorf("AuthenticateMySQL41: failed writing AuthenticateContinue: %v", err)
+			return errors.Trace(err)
 		}
 	}
 
@@ -539,13 +542,12 @@ func (mc *mysqlXConn) AuthenticateMySQL41() error {
 	// S -> C   SESS_AUTHENTICATE_OK / ERROR / NOTICE
 	// ------------------------------------------------------------------------
 	if err := mc.waitingForAuthenticateOk(); err != nil {
-		return fmt.Errorf("Failed to read message response from our SESS_AUTHENTICATE_CONTINUE: %v", err)
+		return errors.Trace(err)
 	}
 
 	printAuthenticateOk(mc.pb.payload)
 	mc.pb = nil // treat the incoming message as processsed
-
-	return nil // supposedly we have done the right thing
+	return nil  // supposedly we have done the right thing
 }
 
 // waitingForAuthenticateOk is expecting to receive SESS_AUTHENTICATE_OK indicating success.
@@ -557,29 +559,23 @@ func (mc *mysqlXConn) waitingForAuthenticateOk() error {
 	for !done {
 		mc.pb, err = mc.readMsg()
 		if err != nil {
-			return fmt.Errorf("Failed to read message response from our SESS_AUTHENTICATE_CONTINUE: %v", err)
+			return errors.Trace(err)
 		}
 
 		switch Mysqlx.ServerMessages_Type(mc.pb.msgType) {
 		case Mysqlx.ServerMessages_SESS_AUTHENTICATE_OK:
-			{
-				done = true /* fall through */
-			}
+			done = true /* fall through */
 		case Mysqlx.ServerMessages_ERROR:
-			{
-				return errorMsg(mc.pb.payload)
-			}
+			return errorMsg(mc.pb.payload)
 		case Mysqlx.ServerMessages_NOTICE:
-			{
-				// Not currently documented (explicitly) but we always get this type of message prior to SESS_AUTHENTICATE_OK
-				_ = mc.processNotice("waitingForAuthenticateOk")
+			// Not currently documented (explicitly) but we always get this type of message prior to SESS_AUTHENTICATE_OK
+			if err := mc.processNotice("waitingForAuthenticateOk"); err != nil {
+				return errors.Trace(err)
 			}
 		default:
-			{
-				log.Fatalf("mysqlXConn.waitingfor_SESS_AUTHENTICATE_OK: Received unexpected message type: %s, expecting: %s",
-					printableMsgTypeIn(Mysqlx.ServerMessages_Type(mc.pb.msgType)),
-					printableMsgTypeIn(Mysqlx.ServerMessages_OK))
-			}
+			log.Fatalf("mysqlXConn.waitingfor_SESS_AUTHENTICATE_OK: Received unexpected message type: %s, expecting: %s",
+				printableMsgTypeIn(Mysqlx.ServerMessages_Type(mc.pb.msgType)),
+				printableMsgTypeIn(Mysqlx.ServerMessages_OK))
 		}
 	}
 	return nil
@@ -605,7 +601,6 @@ func noticeTypeToName(t uint32) string {
 // Gets the value of the given MySQL System Variable
 // The returned byte slice is only valid until the next read
 func getSystemVarXProtocol(name string, mc *mysqlXConn) ([]byte, error) {
-
 	return nil, nil
 }
 
@@ -623,9 +618,8 @@ func (mc *mysqlXConn) writeStmtExecute(stmtExecute *Mysqlx_Sql.StmtExecute) erro
 
 	err = mc.writeProtobufPacket(pb)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-
 	return nil
 }
 
@@ -633,7 +627,7 @@ func (mc *mysqlXConn) writeStmtExecute(stmtExecute *Mysqlx_Sql.StmtExecute) erro
 func (mc *mysqlXConn) writeClose() error {
 	payload, err := proto.Marshal(new(Mysqlx_Session.Close))
 	if err != nil {
-		return fmt.Errorf("mysqlXConn.writeClose: Failed to marshall close message: %v", err)
+		return errors.Trace(err)
 	}
 	pb := &netProtobuf{
 		msgType: int(Mysqlx.ClientMessages_SESS_CLOSE),
@@ -642,29 +636,27 @@ func (mc *mysqlXConn) writeClose() error {
 
 	err = mc.writeProtobufPacket(pb)
 	if err != nil {
-		return fmt.Errorf("mysqlXConn.writeClose: Failed to write message: %v", err)
+		return errors.Trace(err)
 	}
-
 	return nil
 }
 
 // show the error msg and eat it up
 func (mc *mysqlXConn) processErrorMsg() error {
 	if mc == nil {
-		return fmt.Errorf("processErrorMsg mc == nil")
+		return errors.Errorf("processErrorMsg mc == nil")
 	}
 	if mc.pb == nil {
-		return fmt.Errorf("processErrorMsg mc.pb == nil")
+		return errors.Errorf("processErrorMsg mc.pb == nil")
 	}
 	if mc.pb.payload == nil {
-		return fmt.Errorf("processErrorMsg mc.pb.payload == nil")
+		return errors.Errorf("processErrorMsg mc.pb.payload == nil")
 	}
 	e := new(Mysqlx.Error)
 	if err := proto.Unmarshal(mc.pb.payload, e); err != nil {
-		return fmt.Errorf("unmarshaling error with e: %v", err)
+		return errors.Trace(err)
 	}
 	mc.pb = nil
-
 	return nil
 }
 

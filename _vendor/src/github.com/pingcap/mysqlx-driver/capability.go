@@ -1,7 +1,7 @@
 package mysql
 
 import (
-	"fmt"
+	"github.com/juju/errors"
 )
 
 // Capabilities are indexed by name and can be one of 7 protobuf types (including nesting...).
@@ -61,8 +61,8 @@ type Values []capability
 // ServerCapabilities is a named map of capability values
 type ServerCapabilities map[string]Values
 
-// NewServerCapabilities returns a structure containing the named capabilities of the server
-func NewServerCapabilities() ServerCapabilities {
+// newServerCapabilities returns a structure containing the named capabilities of the server
+func newServerCapabilities() ServerCapabilities {
 	return make(map[string]Values)
 }
 
@@ -93,9 +93,8 @@ func (sc ServerCapabilities) Values(name string) Values {
 
 // AddScalarString adds the given string value to the named capability
 func (sc ServerCapabilities) AddScalarString(name string, value string) error {
-	// debug.Msg("ServerCapabilities.AddScalarString(%q,%q)", name, value)
 	if sc == nil {
-		return fmt.Errorf("ServerCapabilities.AddScalarString() on nil value")
+		return errors.Errorf("ServerCapabilities.AddScalarString() on nil value")
 	}
 	values := sc.Values(name)
 	values = append(values, capability{capabilityType: CapabilityString, capabilityString: value})
@@ -106,9 +105,8 @@ func (sc ServerCapabilities) AddScalarString(name string, value string) error {
 
 // AddScalarBool adds the given boolean value to the named capability
 func (sc ServerCapabilities) AddScalarBool(name string, value bool) error {
-	// debug.Msg("ServerCapabilities.AddScalar(%q,%+v)", name, value)
 	if sc == nil {
-		return fmt.Errorf("ServerCapabilities.AddScalarBool() on nil value")
+		return errors.Errorf("ServerCapabilities.AddScalarBool() on nil value")
 	}
 	values := sc.Values(name)
 	values = append(values, capability{capabilityType: CapabilityBool, capabilityBool: value})
@@ -119,13 +117,12 @@ func (sc ServerCapabilities) AddScalarBool(name string, value bool) error {
 
 // AddArrayString adds the given array of strings to the named capability
 func (sc ServerCapabilities) AddArrayString(name string, values []string) error {
-	// debug.Msg("ServerCapabilities.AddArrayString(%q,%+v)", name, values)
 	if sc == nil {
-		return fmt.Errorf("ServerCapabilities.AddArrayString() on nil value")
+		return errors.Errorf("ServerCapabilities.AddArrayString() on nil value")
 	}
 	for i := range values {
 		if err := sc.AddScalarString(name, values[i]); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
