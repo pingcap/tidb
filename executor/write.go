@@ -1088,7 +1088,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row[i].SetInt64(id)
+		if mysql.HasUnsignedFlag(c.Flag) {
+			row[i].SetUint64(uint64(id))
+		} else {
+			row[i].SetInt64(id)
+		}
 		return nil
 	}
 
@@ -1107,7 +1111,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 			return errors.Trace(err)
 		}
 		e.ctx.GetSessionVars().InsertID = uint64(recordID)
-		row[i].SetInt64(recordID)
+		if mysql.HasUnsignedFlag(c.Flag) {
+			row[i].SetUint64(uint64(recordID))
+		} else {
+			row[i].SetInt64(recordID)
+		}
 		retryInfo.AddAutoIncrementID(recordID)
 		return nil
 	}
@@ -1125,7 +1133,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		}
 	}
 
-	row[i].SetInt64(recordID)
+	if mysql.HasUnsignedFlag(c.Flag) {
+		row[i].SetUint64(uint64(recordID))
+	} else {
+		row[i].SetInt64(recordID)
+	}
 	retryInfo.AddAutoIncrementID(recordID)
 	return nil
 }
