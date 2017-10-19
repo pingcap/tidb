@@ -69,6 +69,13 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
+func cleanNotify(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+	}
+}
+
 func (d *ddl) isOwner() bool {
 	isOwner := d.ownerManager.IsOwner()
 	log.Debugf("[ddl] it's the job owner %v, self id %s", isOwner, d.uuid)
@@ -248,8 +255,21 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 	if job.IsFinished() {
 		return
 	}
+	// The cause of this job state is that the job is cancelled by client.
+	if job.IsCancelling() {
+		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
+		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+			log.Infof("[ddl] run the cancelling DDL job %s", job)
+			asyncNotify(d.notifyCancelReorgJob)
+		} else {
+			job.State = model.JobCancelled
+			job.Error = errCancelledDDLJob
+			job.ErrorCount++
+			return
+		}
+	}
 
-	if job.State != model.JobRollback {
+	if !job.IsRollingback() && !job.IsCancelling() {
 		job.State = model.JobRunning
 	}
 
