@@ -1206,9 +1206,36 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	tableInfo := tbl.Meta()
+
 	if tableInfo.ViewSelectStmt != "" {
 		logrus.Warnf("The Table %s is a view" , tableInfo.Name)
-		logrus.Warnf("The ctx type is %T" , b.ctx)
+		logrus.Warnf("The view selectstmt is %s", tableInfo.ViewSelectStmt)
+
+		FieldMap := make (map[string]model.CIStr)
+		for i , col := range tableInfo.Columns {
+			logrus.Warnf("The col name is %s" , col.Name.O)
+			logrus.Warnf("The viewselectfield is %s" , tableInfo.ViewSelectField[i])
+			FieldMap[strings.ToLower(tableInfo.ViewSelectField[i])] = col.Name
+		}
+
+		charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+		stmts, err := parser.New().Parse(tableInfo.ViewSelectStmt, charset, collation)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return  nil
+		}
+		selectStmt := stmts[0].(*ast.SelectStmt)
+		if err := Preprocess(selectStmt , b.is , b.ctx) ; err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		p := b.buildSelect(selectStmt)
+		cols := p.Schema().Columns
+		for _, col := range cols {
+			col.ColName = FieldMap[col.ColName.L]
+			col.TblName = tableInfo.Name
+		}
+		return p
 	}
 
 	p := DataSource{

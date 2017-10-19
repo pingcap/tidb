@@ -500,6 +500,18 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkDuplicateColumnName(colNames []*ast.ColumnName) error {
+	colNamesMap := map[string]bool{}
+	for _, colName := range colNames {
+		nameLower := colName.Name.L
+		if colNamesMap[nameLower] {
+			return infoschema.ErrColumnExists.GenByArgs(colName.Name)
+		}
+		colNamesMap[nameLower] = true
+	}
+	return nil
+}
+
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	for i, colDef := range colDefs {
@@ -535,8 +547,24 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkTooLongColumnName(colNames []*ast.ColumnName) error {
+	for _, colName := range colNames {
+		if len(colName.Name.O) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.Gen("too long column %s", colName.Name)
+		}
+	}
+	return nil
+}
+
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	if len(colDefs) > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
+func checkTooManyColumnNames(colNames []*ast.ColumnName) error {
+	if len(colNames) > TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil
@@ -832,6 +860,15 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.C
 		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkDuplicateColumnName(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooLongColumnName(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooManyColumnNames(colNames); err != nil {
 		return errors.Trace(err)
 	}
 	cols, err := buildColumnNames(colNames)

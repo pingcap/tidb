@@ -178,6 +178,10 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 			}
 		}
 	}
+
+	if len(s.Cols) != len(selectFieldExprs) {
+
+	}
 	for i, col := range s.Cols {
 		logrus.Warnf("The select field[%d] name is %s", i, col)
 	}
