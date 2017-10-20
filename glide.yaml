@@ -200,3 +200,46 @@ import:
 - package: github.com/pingcap/mysqlx_driver
   version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
   repo: git@github.com:pingcap/mysqlx-driver.git
+- package: github.com/apache/thrift
+  version: ">=0.9.3, <0.11.0"
+  subpackages:
+  - lib/go/thrift
+- package: github.com/opentracing/opentracing-go
+  version: ^1
+  subpackages:
+  - ext
+  - log
+- package: github.com/uber/tchannel-go
+  version: ^1.1.0
+  subpackages:
+  - atomic
+  - thrift
+  - thrift/gen-go/meta
+  - tnet
+  - trace/thrift/gen-go/tcollector
+  - typed
+- package: github.com/stretchr/testify
+  version: ^1.1.3
+  subpackages:
+  - assert
+  - require
+  - suite
+- package: github.com/crossdock/crossdock-go
+- package: github.com/uber/jaeger-lib
+  version: ^1.0.0
+  subpackages:
+  - metrics
+- package: github.com/uber/jaeger-client-go
+  version: d021e646f5187d77b55592c3efee1a2810e895d7
+  subpackages:
+  - config
+  - internal/spanlog
+  - log
+  - rpcmetrics
+  - thrift-gen/agent
+  - thrift-gen/jaeger
+  - thrift-gen/sampling
+  - thrift-gen/zipkincore
+  - utils
+- package: github.com/codahale/hdrhistogram
+  version: f8ad88b59a584afeee9d334eff879b104439117b

@@ -122,7 +122,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	childFlag := canEliminate
 	if _, isUnion := p.(*Union); isUnion {
 		childFlag = false
-	} else if isProj {
+	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
 		childFlag = true
 	}
 	for _, child := range p.Children() {
