@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -179,7 +179,7 @@ type ShowDDLExec struct {
 
 	ddlOwnerID string
 	selfID     string
-	ddlInfo    *inspectkv.DDLInfo
+	ddlInfo    *admin.DDLInfo
 	done       bool
 }
 
@@ -253,7 +253,7 @@ func (e *CheckTableExec) Next() (Row, error) {
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
-			err = inspectkv.CompareIndexData(txn, tb, idx)
+			err = admin.CompareIndexData(txn, tb, idx)
 			if err != nil {
 				return nil, errors.Errorf("%v err:%v", t.Name, err)
 			}
