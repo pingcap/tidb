@@ -19,6 +19,7 @@ import (
 	"strings"
 	"unicode"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -1101,12 +1102,14 @@ func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.Ta
 				funcDepend = false
 				break
 			}
-			iCol, err := p.Schema().FindColumn(&ast.ColumnName{
+			cn := &ast.ColumnName{
 				Schema: col.DBName,
 				Table:  col.TblName,
 				Name:   iColInfo.Name,
-			})
+			}
+			iCol, err := p.Schema().FindColumn(cn)
 			if err != nil {
+				log.Errorf("Can't find column %s.%s.%s from schema %s.", cn.Schema.L, cn.Table.L, cn.Name.L, p.Schema())
 				funcDepend = false
 				break
 			}
