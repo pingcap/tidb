@@ -2652,6 +2652,16 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec(`set @varname = "Abc"`)
 	result = tk.MustQuery(`select @varname, @VARNAME`)
 	result.Check(testkit.Rows("Abc Abc"))
+
+	// for values
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (`id` varchar(32) NOT NULL, `count` decimal(18,2), PRIMARY KEY (`id`));")
+	tk.MustExec("INSERT INTO t (id,count)VALUES('abc',2) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count)")
+	result = tk.MustQuery("select count from t where id = 'abc'")
+	result.Check(testkit.Rows("2.00"))
+	tk.MustExec("INSERT INTO t (id,count)VALUES('abc',265.0) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count)")
+	result = tk.MustQuery("select count from t where id = 'abc'")
+	result.Check(testkit.Rows("265.00"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {

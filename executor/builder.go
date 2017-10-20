@@ -23,13 +23,13 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -79,6 +79,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildPrepare(v)
 	case *plan.SelectLock:
 		return b.buildSelectLock(v)
+	case *plan.CancelDDLJobs:
+		return b.buildCancelDDLJobs(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
 	case *plan.ShowDDLJobs:
@@ -143,6 +145,19 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	}
 }
 
+func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
+	e := &CancelDDLJobsExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		JobIDs:       v.JobIDs,
+	}
+	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.JobIDs)
+	if b.err != nil {
+		return nil
+	}
+
+	return e
+}
+
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	// We get DDLInfo here because for Executors that returns result set,
 	// next will be called after transaction has been committed.
@@ -161,7 +176,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 		return nil
 	}
 
-	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
+	ddlInfo, err := admin.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -177,12 +192,12 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	}
 
 	var err error
-	e.jobs, err = inspectkv.GetDDLJobs(e.ctx.Txn())
+	e.jobs, err = admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	historyJobs, err := inspectkv.GetHistoryDDLJobs(e.ctx.Txn())
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil

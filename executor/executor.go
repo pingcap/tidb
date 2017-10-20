@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -148,13 +149,37 @@ type Executor interface {
 	Schema() *expression.Schema
 }
 
+// CancelDDLJobsExec represents a cancel DDL jobs executor.
+type CancelDDLJobsExec struct {
+	baseExecutor
+
+	cursor int
+	JobIDs []int64
+	errs   []error
+}
+
+// Next implements the Executor Next interface.
+func (e *CancelDDLJobsExec) Next() (Row, error) {
+	var row Row
+	if e.cursor < len(e.JobIDs) {
+		ret := "successful"
+		if e.errs[e.cursor] != nil {
+			ret = fmt.Sprintf("error: %v", e.errs[e.cursor])
+		}
+		row = types.MakeDatums(e.JobIDs[e.cursor], ret)
+		e.cursor++
+	}
+
+	return row, nil
+}
+
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
 	baseExecutor
 
 	ddlOwnerID string
 	selfID     string
-	ddlInfo    *inspectkv.DDLInfo
+	ddlInfo    *admin.DDLInfo
 	done       bool
 }
 
@@ -228,7 +253,7 @@ func (e *CheckTableExec) Next() (Row, error) {
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
-			err = inspectkv.CompareIndexData(txn, tb, idx)
+			err = admin.CompareIndexData(txn, tb, idx)
 			if err != nil {
 				return nil, errors.Errorf("%v err:%v", t.Name, err)
 			}

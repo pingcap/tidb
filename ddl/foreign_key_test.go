@@ -134,7 +134,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	var hookErr error
 	tc := &TestDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
-		if job.State != model.JobDone {
+		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()
@@ -174,7 +174,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	checkOK = false
 	mu.Unlock()
 	tc.onJobUpdated = func(job *model.Job) {
-		if job.State != model.JobDone {
+		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()

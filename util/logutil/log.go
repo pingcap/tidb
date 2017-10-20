@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/coreos/pkg/capnslog"
 	"github.com/juju/errors"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
@@ -58,37 +57,9 @@ type LogConfig struct {
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
 	// File log config.
 	File FileLogConfig `toml:"file" json:"file"`
+	// SlowQueryFile filename, default to File log config on empty.
+	SlowQueryFile string
 }
-
-// redirectFormatter will redirect etcd logs to logrus logs.
-type redirectFormatter struct{}
-
-// Format implements capnslog.Formatter hook.
-func (rf *redirectFormatter) Format(pkg string, level capnslog.LogLevel, depth int, entries ...interface{}) {
-	if pkg != "" {
-		pkg = fmt.Sprint(pkg, ": ")
-	}
-
-	logStr := fmt.Sprint(pkg, entries)
-
-	switch level {
-	case capnslog.CRITICAL:
-		log.Fatalf(logStr)
-	case capnslog.ERROR:
-		log.Errorf(logStr)
-	case capnslog.WARNING:
-		log.Warningf(logStr)
-	case capnslog.NOTICE:
-		log.Infof(logStr)
-	case capnslog.INFO:
-		log.Infof(logStr)
-	case capnslog.DEBUG, capnslog.TRACE:
-		log.Debugf(logStr)
-	}
-}
-
-// Flush only for implementing Formatter.
-func (rf *redirectFormatter) Flush() {}
 
 // isSKippedPackageName tests wether path name is on log library calling stack.
 func isSkippedPackageName(name string) bool {
@@ -190,8 +161,8 @@ func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 	}
 }
 
-// InitFileLog initializes file based logging options.
-func InitFileLog(cfg *FileLogConfig) error {
+// initFileLog initializes file based logging options.
+func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 	if st, err := os.Stat(cfg.Filename); err == nil {
 		if st.IsDir() {
 			return errors.New("can't use directory as log file name")
@@ -210,9 +181,16 @@ func InitFileLog(cfg *FileLogConfig) error {
 		LocalTime:  true,
 	}
 
-	log.SetOutput(output)
+	if logger == nil {
+		log.SetOutput(output)
+	} else {
+		logger.Out = output
+	}
 	return nil
 }
+
+// SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
+var SlowQueryLogger = log.StandardLogger()
 
 // InitLogger initalizes PD's logger.
 func InitLogger(cfg *LogConfig) error {
@@ -222,18 +200,26 @@ func InitLogger(cfg *LogConfig) error {
 	if cfg.Format == "" {
 		cfg.Format = defaultLogFormat
 	}
-	log.SetFormatter(stringToLogFormatter(cfg.Format, cfg.DisableTimestamp))
+	formatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
+	log.SetFormatter(formatter)
 
-	// etcd log
-	capnslog.SetFormatter(&redirectFormatter{})
-
-	if len(cfg.File.Filename) == 0 {
-		return nil
+	if len(cfg.File.Filename) != 0 {
+		if err := initFileLog(&cfg.File, nil); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	err := InitFileLog(&cfg.File)
-	if err != nil {
-		return errors.Trace(err)
+	if len(cfg.SlowQueryFile) != 0 {
+		SlowQueryLogger = log.New()
+		tmp := cfg.File
+		tmp.Filename = cfg.SlowQueryFile
+		if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
+			return errors.Trace(err)
+		}
+		hooks := make(log.LevelHooks)
+		hooks.Add(&contextHook{})
+		SlowQueryLogger.Hooks = hooks
+		SlowQueryLogger.Formatter = formatter
 	}
 
 	return nil
