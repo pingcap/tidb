@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -304,7 +304,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	}
 
 	s.tk.Se.NewTxn()
-	jobs, err := inspectkv.GetHistoryDDLJobs(s.tk.Se.Txn())
+	jobs, err := admin.GetHistoryDDLJobs(s.tk.Se.Txn())
 	c.Assert(err, IsNil)
 	jobIDs := []int64{jobs[len(jobs)-1].ID}
 	var checkErr error
@@ -333,7 +333,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 			checkErr = errors.Trace(err)
 			return
 		}
-		errs, err := inspectkv.CancelJobs(hookCtx.Txn(), jobIDs)
+		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package inspectkv
+package admin
 
 import (
 	"io"
@@ -548,7 +548,7 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 	return nil
 }
 
-// inspectkv error codes.
+// admin error codes.
 const (
 	codeDataNotEqual       terror.ErrCode = 1
 	codeRepeatHandle                      = 2
@@ -556,7 +556,7 @@ const (
 )
 
 var (
-	errDateNotEqual       = terror.ClassInspectkv.New(codeDataNotEqual, "data isn't equal")
-	errRepeatHandle       = terror.ClassInspectkv.New(codeRepeatHandle, "handle is repeated")
-	errInvalidColumnState = terror.ClassInspectkv.New(codeInvalidColumnState, "invalid column state")
+	errDateNotEqual       = terror.ClassAdmin.New(codeDataNotEqual, "data isn't equal")
+	errRepeatHandle       = terror.ClassAdmin.New(codeRepeatHandle, "handle is repeated")
+	errInvalidColumnState = terror.ClassAdmin.New(codeInvalidColumnState, "invalid column state")
 )
