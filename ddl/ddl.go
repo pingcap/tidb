@@ -92,6 +92,7 @@ var (
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 	errTooManyFields         = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
+	errViewWrongList	 	 = terror.ClassDDL.New(codeViewWrongList, "View's SELECT and view's field list have different column counts")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -560,6 +561,7 @@ const (
 	codeWrongKeyColumn               = 1167
 	codeBlobKeyWithoutLength         = 1170
 	codeInvalidOnUpdate              = 1294
+	codeViewWrongList    			 = 1353
 	codeUnsupportedOnGeneratedColumn = 3106
 	codeGeneratedColumnNonPrior      = 3107
 	codeDependentByGeneratedColumn   = 3108
@@ -596,6 +598,7 @@ func init() {
 		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
 		codeTooManyFields:                mysql.ErrTooManyFields,
 		codeErrTooLongIndexComment:       mysql.ErrTooLongIndexComment,
+		codeViewWrongList:				  mysql.ErrViewWrongList,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

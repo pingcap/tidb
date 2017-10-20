@@ -570,6 +570,13 @@ func checkTooManyColumnNames(colNames []*ast.ColumnName) error {
 	return nil
 }
 
+func checkViewDiffColCounts(colNames []*ast.ColumnName, selectFieldExprs []string) error{
+	if len(colNames) != len(selectFieldExprs){
+		return errViewWrongList
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
@@ -869,6 +876,9 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.C
 		return errors.Trace(err)
 	}
 	if err = checkTooManyColumnNames(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkViewDiffColCounts(colNames , selectFieldExprs) ; err != nil {
 		return errors.Trace(err)
 	}
 	cols, err := buildColumnNames(colNames)
