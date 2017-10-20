@@ -603,6 +603,13 @@ func (s *testSuite) TestUpdate(c *C) {
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1062 key already exist"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id))")
+	tk.MustExec("insert into t(t1, t2) values('2000-10-01 01:01:01', '2017-01-01 10:10:10')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2000-10-01 01:01:01 2017-01-01 10:10:10"))
+	tk.MustExec("update t set t1 = '2017-10-01 10:10:11', t2 = date_add(t1, INTERVAL 10 MINUTE) where id = 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2017-10-01 10:20:11"))
 }
 
 // For issue #4514.
