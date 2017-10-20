@@ -50,12 +50,20 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, errors.Trace(err)
 	}
 
+	st, readOnly := stmtNode.(*ast.SelectStmt)
+	if readOnly {
+		if st.LockTp == ast.SelectLockForUpdate {
+			readOnly = false
+		}
+	}
+
 	return &ExecStmt{
 		InfoSchema: infoSchema,
 		Plan:       finalPlan,
 		Expensive:  stmtCount(stmtNode, finalPlan, ctx.GetSessionVars().InRestrictedSQL),
 		Cacheable:  plan.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
+		isReadOnly: readOnly,
 	}, nil
 }
 

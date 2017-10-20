@@ -427,6 +427,9 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
+			if st.IsReadOnly() {
+				continue
+			}
 			txt := st.OriginText()
 			if infoSchemaChanged {
 				st, err = updateStatement(st, s, txt)
