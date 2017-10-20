@@ -19,7 +19,6 @@ const (
 
 // MySQL constants documentation:
 // http://dev.mysql.com/doc/internals/en/client-server-protocol.html
-
 // https://dev.mysql.com/doc/internals/en/capability-flags.html#packet-Protocol::CapabilityFlags
 type clientFlag uint32
 

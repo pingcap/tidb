@@ -10,12 +10,12 @@ package mysql
 
 type mysqlResult struct {
 	affectedRows int64
-	insertId     int64
+	insertID     int64
 }
 
 // LastInsertId should return the last MySQL insert id
 func (res *mysqlResult) LastInsertId() (int64, error) {
-	return res.insertId, nil
+	return res.insertID, nil
 }
 
 // RowsAffected indicate how many rows were affected by the command
