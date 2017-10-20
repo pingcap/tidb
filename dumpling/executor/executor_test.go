@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -41,6 +40,7 @@ import (
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -136,7 +136,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.Data, HasLen, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	ddlInfo, err := inspectkv.GetDDLInfo(txn)
+	ddlInfo, err := admin.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[0].GetInt64(), Equals, ddlInfo.SchemaVer)
 	// TODO: Pass this test.
@@ -158,7 +158,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.Data, HasLen, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	historyJobs, err := inspectkv.GetHistoryDDLJobs(txn)
+	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
 	c.Assert(len(row.Data[0].GetString()), Greater, 0)
 	c.Assert(err, IsNil)
