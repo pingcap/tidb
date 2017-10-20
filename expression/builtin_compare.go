@@ -322,16 +322,19 @@ func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	if isTemporalWithDate {
 		datetimeFound = true
 	}
+	lft := args[0].GetType()
 	for i := range args {
+		rft := args[i].GetType()
 		var tp types.EvalType
-		tp, isStr, isTemporalWithDate = temporalWithDateAsNumEvalType(args[i].GetType())
+		tp, isStr, isTemporalWithDate = temporalWithDateAsNumEvalType(rft)
 		if isTemporalWithDate {
 			datetimeFound = true
 		}
 		if !isStr {
 			isAllStr = false
 		}
-		cmpEvalType = getCmpType(cmpEvalType, tp)
+		cmpEvalType = getCmpType(cmpEvalType, tp, lft, rft)
+		lft = rft
 	}
 	argTp = cmpEvalType
 	if cmpEvalType.IsStringKind() {
@@ -822,7 +825,17 @@ type compareFunctionClass struct {
 }
 
 // getCmpType gets the ClassType that the two args will be treated as when comparing.
-func getCmpType(lhs, rhs types.EvalType) types.EvalType {
+func getCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
+	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
+		if lft.Tp == rft.Tp {
+			return types.ETString
+		}
+		if lft.Tp == mysql.TypeUnspecified {
+			lhs = rhs
+		} else {
+			rhs = lhs
+		}
+	}
 	if lhs.IsStringKind() && rhs.IsStringKind() {
 		return types.ETString
 	} else if lhs == types.ETInt && rhs == types.ETInt {
@@ -935,7 +948,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 	args := c.refineArgs(ctx, rawArgs)
 	lhsFieldType, rhsFieldType := args[0].GetType(), args[1].GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
-	cmpType := getCmpType(lhsEvalType, rhsEvalType)
+	cmpType := getCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
 	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
 		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
 		sig, err = c.generateCmpSigs(ctx, args, types.ETJson)
