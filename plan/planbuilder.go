@@ -371,6 +371,9 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminShowDDLJobs:
 		p = &ShowDDLJobs{}
 		p.SetSchema(buildShowDDLJobsFields())
+	case ast.AdminCancelDDLJobs:
+		p = &CancelDDLJobs{JobIDs: as.JobIDs}
+		p.SetSchema(buildCancelDDLJobsFields())
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
@@ -472,6 +475,14 @@ func buildShowDDLJobsFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
+
+	return schema
+}
+
+func buildCancelDDLJobsFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "JOB_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "RESULT", mysql.TypeVarchar, 128))
 
 	return schema
 }
@@ -1160,6 +1171,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			"Repeats", "Lower_Bound", "Upper_Bound"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProfiles: // ShowProfiles is deprecated.
+		names = []string{"Query_ID", "Duration", "Query"}
+		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
