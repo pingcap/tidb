@@ -21,7 +21,6 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
