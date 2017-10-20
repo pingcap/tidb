@@ -24,7 +24,8 @@ type xconfig struct {
 	useGetCapabilities      bool // for X protocol, do we send a GetCapabilities message to query server capabilities?  default: true
 }
 
-func NewXconfigFromConfig(cfg *config) *xconfig {
+// newXconfigFromConfig return a new x config.
+func newXconfigFromConfig(cfg *config) *xconfig {
 	return &xconfig{
 		user:                    cfg.user,
 		passwd:                  cfg.passwd,
