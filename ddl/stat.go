@@ -15,9 +15,9 @@ package ddl
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/admin"
 )
 
 var (
@@ -49,11 +49,11 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
-	var ddlInfo *inspectkv.DDLInfo
+	var ddlInfo *admin.DDLInfo
 
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		var err1 error
-		ddlInfo, err1 = inspectkv.GetDDLInfo(txn)
+		ddlInfo, err1 = admin.GetDDLInfo(txn)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
