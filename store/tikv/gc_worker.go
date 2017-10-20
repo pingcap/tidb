@@ -130,15 +130,17 @@ func (w *GCWorker) StartSafePointChecker() {
 		for {
 			select {
 			case spCachedTime := <-time.After(d):
+				gcWorkerCounter.WithLabelValues("check_safepoint").Inc()
+
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
 				if err == nil {
 					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
 					d = gcSafePointUpdateInterval
 				} else {
-					log.Error("The read fails:", errors.ErrorStack(err))
+					log.Errorf("[gc worker] fail to load safepoint: %v", err)
 					d = gcSafePointQuickRepeatInterval
 				}
-			case <-w.store.spMsg:
+			case <-w.store.closed:
 				return
 			}
 		}
@@ -163,6 +165,9 @@ func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
+
+	worker.StartSafePointChecker()
+
 	var ctx goctx.Context
 	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
 	var wg sync.WaitGroup
@@ -172,8 +177,6 @@ func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 		go worker.start(ctx, &wg)
 		wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
 	}
-
-	worker.StartSafePointChecker()
 
 	return worker, nil
 }
