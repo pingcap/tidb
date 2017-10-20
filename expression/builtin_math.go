@@ -1447,7 +1447,7 @@ func (c *truncateFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 
 	argTp := args[0].GetType().EvalType()
-	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString || argTp == types.ETParam {
+	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString {
 		argTp = types.ETReal
 	}
 

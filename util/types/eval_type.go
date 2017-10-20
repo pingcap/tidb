@@ -33,8 +33,6 @@ const (
 	ETDuration
 	// ETJson represents type JSON in evaluation.
 	ETJson
-	// ETParam represents type Param in evaluation.
-	ETParam
 )
 
 // IsStringKind returns true for ETString, ETDatetime, ETTimestamp, ETDuration, ETJson EvalTypes.

@@ -187,7 +187,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	case types.ETDecimal:
 		sig = &builtinCoalesceDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDecimal)
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		sig = &builtinCoalesceStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case types.ETDatetime, types.ETTimestamp:
@@ -371,7 +371,7 @@ func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expressi
 		sig = &builtinGreatestRealSig{bf}
 	case types.ETDecimal:
 		sig = &builtinGreatestDecimalSig{bf}
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
 	case types.ETDatetime:
 		sig = &builtinGreatestTimeSig{bf}
@@ -539,7 +539,7 @@ func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression)
 		sig = &builtinLeastRealSig{bf}
 	case types.ETDecimal:
 		sig = &builtinLeastDecimalSig{bf}
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		sig = &builtinLeastStringSig{bf}
 	case types.ETDatetime:
 		sig = &builtinLeastTimeSig{bf}
@@ -830,13 +830,6 @@ func getCmpType(lhs, rhs types.EvalType) types.EvalType {
 	} else if (lhs == types.ETInt || lhs == types.ETDecimal) &&
 		(rhs == types.ETInt || rhs == types.ETDecimal) {
 		return types.ETDecimal
-	} else if lhs == types.ETParam || rhs == types.ETParam {
-		if lhs == rhs {
-			return types.ETString
-		} else if lhs == types.ETParam {
-			return getCmpType(rhs, rhs)
-		}
-		return getCmpType(lhs, lhs)
 	}
 	return types.ETReal
 }
@@ -1090,7 +1083,7 @@ func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expre
 			sig = &builtinNullEQDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQDecimal)
 		}
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTStringSig{bf}

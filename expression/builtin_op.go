@@ -708,7 +708,7 @@ func (c *isNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	case types.ETDuration:
 		sig = &builtinDurationIsNullSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_DurationIsNull)
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		sig = &builtinStringIsNullSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StringIsNull)
 	default:

@@ -1240,7 +1240,7 @@ func (c *hexFunctionClass) getFunction(ctx context.Context, args []Expression) (
 
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson, types.ETParam:
+	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 		// Use UTF-8 as default
 		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
@@ -1300,7 +1300,7 @@ func (c *unhexFunctionClass) getFunction(ctx context.Context, args []Expression)
 	argType := args[0].GetType()
 	argEvalTp := argType.EvalType()
 	switch argEvalTp {
-	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson, types.ETParam:
+	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
 		// Use UTF-8 as default charset, so there're (Flen * 3 + 1) / 2 byte-pairs
 		retFlen = (argType.Flen*3 + 1) / 2
 	case types.ETInt, types.ETReal, types.ETDecimal:
@@ -1958,7 +1958,7 @@ func (c *fieldFunctionClass) getFunction(ctx context.Context, args []Expression)
 	isAllString, isAllNumber := true, true
 	for i, length := 0, len(args); i < length; i++ {
 		argTp := args[i].GetType().EvalType()
-		isAllString = isAllString && (argTp == types.ETString || argTp == types.ETParam)
+		isAllString = isAllString && (argTp == types.ETString)
 		isAllNumber = isAllNumber && (argTp == types.ETInt)
 	}
 
@@ -1979,7 +1979,7 @@ func (c *fieldFunctionClass) getFunction(ctx context.Context, args []Expression)
 		sig = &builtinFieldRealSig{bf}
 	case types.ETInt:
 		sig = &builtinFieldIntSig{bf}
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		sig = &builtinFieldStringSig{bf}
 	}
 	return sig, nil

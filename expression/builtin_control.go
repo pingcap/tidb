@@ -124,7 +124,7 @@ func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	resultEvalType := resultFieldType.EvalType()
 	if resultEvalType == types.ETInt {
 		resultFieldType.Decimal = 0
-	} else if resultEvalType == types.ETString || resultEvalType == types.ETParam {
+	} else if resultEvalType == types.ETString {
 		if lhs.Tp != mysql.TypeNull || rhs.Tp != mysql.TypeNull {
 			resultFieldType.Decimal = types.UnspecifiedLength
 		}
@@ -189,7 +189,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 	case types.ETDecimal:
 		sig = &builtinCaseWhenDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinCaseWhenStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenString)
@@ -412,7 +412,7 @@ func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 	case types.ETDecimal:
 		sig = &builtinIfDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		sig = &builtinIfStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfString)
 	case types.ETDatetime, types.ETTimestamp:
@@ -592,7 +592,7 @@ func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	case types.ETDecimal:
 		sig = &builtinIfNullDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		sig = &builtinIfNullStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
 	case types.ETDatetime, types.ETTimestamp:

@@ -130,7 +130,7 @@ func (sf *ScalarFunction) Clone() Expression {
 			offset = sf.Function.(*builtinValuesRealSig).offset
 		case types.ETDecimal:
 			offset = sf.Function.(*builtinValuesDecimalSig).offset
-		case types.ETString, types.ETParam:
+		case types.ETString:
 			offset = sf.Function.(*builtinValuesStringSig).offset
 		case types.ETDatetime, types.ETTimestamp:
 			offset = sf.Function.(*builtinValuesTimeSig).offset
@@ -206,7 +206,7 @@ func (sf *ScalarFunction) Eval(row types.Row) (d types.Datum, err error) {
 		res, isNull, err = sf.EvalDuration(row, sc)
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(row, sc)
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		res, isNull, err = sf.EvalString(row, sc)
 	}
 

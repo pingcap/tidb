@@ -67,7 +67,7 @@ func newBaseBuiltinFuncWithTp(ctx context.Context, args []Expression, retType ty
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETDecimal:
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
-		case types.ETString, types.ETParam:
+		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
@@ -102,7 +102,7 @@ func newBaseBuiltinFuncWithTp(ctx context.Context, args []Expression, retType ty
 			Decimal: 0,
 			Flag:    mysql.BinaryFlag,
 		}
-	case types.ETString, types.ETParam:
+	case types.ETString:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
 			Flen:    0,
