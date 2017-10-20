@@ -2268,3 +2268,19 @@ func (s *testSuite) TestSubqueryInValues(c *C) {
 	tk.MustExec("insert into t (id, name) value ((select gid from t1) ,'asd')")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
 }
+
+// Issue #4810
+func (s *testSuite) TestMaxInt64Handle(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id bigint, PRIMARY KEY (id))")
+	tk.MustExec("insert into t values(9223372036854775807)")
+	tk.MustExec("select * from t where id = 9223372036854775807")
+	tk.MustQuery("select * from t where id = 9223372036854775807;").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("9223372036854775807"))
+	_, err := tk.Exec("insert into t values(9223372036854775807)")
+	c.Assert(err, NotNil)
+	tk.MustExec("delete from t where id = 9223372036854775807")
+	tk.MustQuery("select * from t").Check(nil)
+}
