@@ -2435,6 +2435,8 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 
 	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
 	c.Assert(terror.ErrorEqual(err, expression.ErrDivisionByZero), IsTrue)
+
+	tk.MustQuery("select sum(1.2e2) * 0.1").Check(testkit.Rows("12.0"))
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
