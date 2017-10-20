@@ -216,6 +216,9 @@ func InitLogger(cfg *LogConfig) error {
 		if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
 			return errors.Trace(err)
 		}
+		hooks := make(log.LevelHooks)
+		hooks.Add(&contextHook{})
+		SlowQueryLogger.Hooks = hooks
 		SlowQueryLogger.Formatter = formatter
 	}
 
