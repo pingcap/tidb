@@ -75,7 +75,7 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 	for i, col := range p.Columns {
 		hist, ok := p.statisticTable.Columns[col.ID]
 		if ok && hist.NDV > 0 {
-			factor := float64(p.statisticTable.Count) / float64(hist.Buckets[len(hist.Buckets)-1].Count)
+			factor := float64(p.statisticTable.Count) / float64(hist.Count)
 			profile.cardinality[i] = float64(hist.NDV) * factor
 		} else {
 			profile.cardinality[i] = profile.count * distinctFactor

@@ -17,10 +17,12 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -119,14 +121,27 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 			col := table.Columns[histID]
 			for _, colInfo := range tableInfo.Columns {
 				if histID == colInfo.ID {
+					isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
+					needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
+					if h.Lease > 0 && !isHandle && needNotLoad {
+						count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						col = &Column{
+							Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, LastUpdateVersion: histVer},
+							Info:      colInfo,
+							Count:     count}
+						break
+					}
 					if col == nil || col.LastUpdateVersion < histVer {
 						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						col = &Column{Histogram: *hg, Info: colInfo}
+						col = &Column{Histogram: *hg, Info: colInfo, Count: int64(hg.totalRowCount())}
+						break
 					}
-					break
 				}
 			}
 			if col != nil {
@@ -155,54 +170,67 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-// ColumnIsInvalid checks if this column is invalid.
-func (t *Table) ColumnIsInvalid(colInfo *model.ColumnInfo) bool {
+type neededColumnMap struct {
+	m    sync.Mutex
+	cols map[int64][]*Column
+}
+
+var neededColumns = neededColumnMap{cols: map[int64][]*Column{}}
+
+// ColumnIsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
+// as need histogram.
+func (t *Table) ColumnIsInvalid(colID int64) bool {
 	if t.Pseudo {
 		return true
 	}
-	col, ok := t.Columns[colInfo.ID]
+	col, ok := t.Columns[colID]
+	if ok && col.NDV > 0 && len(col.Buckets) == 0 {
+		neededColumns.m.Lock()
+		neededColumns.cols[t.TableID] = append(neededColumns.cols[t.TableID], col)
+		neededColumns.m.Unlock()
+	}
 	return !ok || len(col.Buckets) == 0
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.ColumnIsInvalid(colInfo) {
+func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+	if t.ColumnIsInvalid(colID) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
-	hist := t.Columns[colInfo.ID]
+	hist := t.Columns[colID]
 	result, err := hist.greaterRowCount(sc, value)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
-func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.ColumnIsInvalid(colInfo) {
+func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+	if t.ColumnIsInvalid(colID) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
-	hist := t.Columns[colInfo.ID]
+	hist := t.Columns[colID]
 	result, err := hist.lessRowCount(sc, value)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.ColumnIsInvalid(colInfo) {
+func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colID int64) (float64, error) {
+	if t.ColumnIsInvalid(colID) {
 		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	hist := t.Columns[colInfo.ID]
+	hist := t.Columns[colID]
 	result, err := hist.betweenRowCount(sc, a, b)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
-func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.ColumnIsInvalid(colInfo) {
+func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+	if t.ColumnIsInvalid(colID) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	hist := t.Columns[colInfo.ID]
+	hist := t.Columns[colID]
 	result, err := hist.equalRowCount(sc, value)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
@@ -210,19 +238,19 @@ func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.D
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
 func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []types.IntColumnRange) (float64, error) {
-	c := t.Columns[colID]
-	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
+	if t.ColumnIsInvalid(colID) {
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
+	c := t.Columns[colID]
 	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
 func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID int64, colRanges []*types.ColumnRange) (float64, error) {
-	c := t.Columns[colID]
-	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
+	if t.ColumnIsInvalid(colID) {
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
 	}
+	c := t.Columns[colID]
 	return c.getColumnRowCount(sc, colRanges)
 }
 

@@ -14,6 +14,8 @@
 package statistics_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -33,7 +35,7 @@ type testStatsUpdateSuite struct {
 func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
-	s.store, s.do, err = newStoreWithBootstrap()
+	s.store, s.do, err = newStoreWithBootstrap(0)
 	c.Assert(err, IsNil)
 }
 
@@ -90,7 +92,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 
 	// Test IncreaseFactor.
-	count, err := stats1.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo1.Columns[0])
+	count, err := stats1.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(rowCount1*2))
 
@@ -281,4 +283,36 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(hg.NDV, Equals, int64(1))
 	c.Assert(len(hg.Buckets), Equals, 1)
+}
+
+func (s *testStatsUpdateSuite) TestLoadHistogram(c *C) {
+	store, do, err := newStoreWithBootstrap(10 * time.Millisecond)
+	c.Assert(err, IsNil)
+	defer store.Close()
+	defer do.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	testKit.MustExec("analyze table t")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	time.Sleep(1 * time.Second)
+	stat := h.GetTableStats(tableInfo.ID)
+	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
+	c.Assert(len(hg.Buckets), Greater, 0)
+	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
+	c.Assert(len(hg.Buckets), Greater, 0)
+	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+	c.Assert(len(hg.Buckets), Equals, 0)
+	_, err = stat.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo.Columns[2].ID)
+	c.Assert(err, IsNil)
+	time.Sleep(1 * time.Second)
+	stat = h.GetTableStats(tableInfo.ID)
+	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+	c.Assert(len(hg.Buckets), Greater, 0)
 }

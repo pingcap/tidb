@@ -209,3 +209,30 @@ func (h *Handle) execAutoAnalyze(sql string) error {
 	}
 	return errors.Trace(err)
 }
+
+// LoadNeededHistograms will load histograms for those needed columns.
+func (h *Handle) LoadNeededHistograms() error {
+	neededColumns.m.Lock()
+	colsMap := make(map[int64][]*Column)
+	for id, cols := range neededColumns.cols {
+		colsMap[id] = cols
+		delete(neededColumns.cols, id)
+	}
+	neededColumns.m.Unlock()
+	for tableID, cols := range colsMap {
+		tbl := h.GetTableStats(tableID).copy()
+		for _, col := range cols {
+			c, ok := tbl.Columns[col.ID]
+			if ok && len(c.Buckets) > 0 {
+				continue
+			}
+			hg, err := histogramFromStorage(h.ctx, tableID, col.ID, &col.Info.FieldType, col.NDV, 0, col.LastUpdateVersion, col.NullCount)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbl.Columns[col.ID] = &Column{Histogram: *hg, Info: col.Info, Count: int64(hg.totalRowCount())}
+		}
+		h.UpdateTableStats([]*Table{tbl}, nil)
+	}
+	return nil
+}
