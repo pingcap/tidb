@@ -58,7 +58,7 @@ type logicalOptRule interface {
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	allocator := new(idAllocator)
-	builder := &planBuilder{
+	builder := &logicalPlanBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -85,7 +85,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 
 // BuildLogicalPlan is exported and only used for test.
 func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
-	builder := &planBuilder{
+	builder := &logicalPlanBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
