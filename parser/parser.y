@@ -327,6 +327,7 @@ import (
 	national	"NATIONAL"
 	no		"NO"
 	none		"NONE"
+	nulls		"NULLS"
 	offset		"OFFSET"
 	only		"ONLY"
 	password	"PASSWORD"
@@ -343,6 +344,7 @@ import (
 	quick		"QUICK"
 	redundant	"REDUNDANT"
 	repeatable	"REPEATABLE"
+	respect		"RESPECT"
 	reverse		"REVERSE"
 	rollback	"ROLLBACK"
 	rowCount	"ROW_COUNT"
@@ -2312,7 +2314,7 @@ UnReservedKeyword:
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED"
-| "FOLLOWING" | "PRECEDING" | "UNBOUNDED"
+| "FOLLOWING" | "PRECEDING" | "UNBOUNDED" | "RESPECT" | "NULLS"
 
 TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
