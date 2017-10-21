@@ -89,7 +89,7 @@ func (c *Chunk) GetRow(i int) Row {
 	}
 }
 
-// ApppendRow appends a row to the chunk.
+// AppendRow appends a row to the chunk.
 func (c *Chunk) AppendRow(row Row) {
 	rowOffset := row.getRealOffset(row.idx)
 	chunkOffset := int32(len(c.data))
@@ -112,13 +112,13 @@ func (c *Chunk) AppendRow(row Row) {
 	c.data = append(c.data, row.chunk.data[rowOffset:rowEnd]...)
 }
 
-// ApppendNull appends a null value to the chunk.
+// AppendNull appends a null value to the chunk.
 func (c *Chunk) AppendNull() {
 	c.offsets = append(c.offsets, -int32(len(c.data))-1)
 	c.data = append(c.data, nullVal)
 }
 
-// ApppendInt64 appends a int64 value to the chunk.
+// AppendInt64 appends a int64 value to the chunk.
 func (c *Chunk) AppendInt64(i int64) {
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	var buf [8]byte
@@ -126,7 +126,7 @@ func (c *Chunk) AppendInt64(i int64) {
 	c.data = append(c.data, buf[:]...)
 }
 
-// ApppendUint64 appends a uint64 value to the chunk.
+// AppendUint64 appends a uint64 value to the chunk.
 func (c *Chunk) AppendUint64(u uint64) {
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	var buf [8]byte
@@ -134,7 +134,7 @@ func (c *Chunk) AppendUint64(u uint64) {
 	c.data = append(c.data, buf[:]...)
 }
 
-// ApppendFloat32 appends a float32 value to the chunk.
+// AppendFloat32 appends a float32 value to the chunk.
 func (c *Chunk) AppendFloat32(f float32) {
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	var buf [4]byte
@@ -142,7 +142,7 @@ func (c *Chunk) AppendFloat32(f float32) {
 	c.data = append(c.data, buf[:]...)
 }
 
-// ApppendFloat64 appends a float64 value to the chunk.
+// AppendFloat64 appends a float64 value to the chunk.
 func (c *Chunk) AppendFloat64(f float64) {
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	var buf [8]byte
@@ -150,13 +150,13 @@ func (c *Chunk) AppendFloat64(f float64) {
 	c.data = append(c.data, buf[:]...)
 }
 
-// ApppendString appends a string value to the chunk.
+// AppendString appends a string value to the chunk.
 func (c *Chunk) AppendString(s string) {
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	c.data = append(c.data, s...)
 }
 
-// ApppendBytes appends a bytes value to the chunk.
+// AppendBytes appends a bytes value to the chunk.
 func (c *Chunk) AppendBytes(bin []byte) {
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	c.data = append(c.data, bin...)
@@ -175,7 +175,7 @@ func (c *Chunk) AppendTime(t types.Time) {
 	c.appendObject(t)
 }
 
-// AppendDurations appends a Duration value to the chunk.
+// AppendDuration appends a Duration value to the chunk.
 func (c *Chunk) AppendDuration(dur types.Duration) {
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	var buf [16]byte
@@ -183,7 +183,7 @@ func (c *Chunk) AppendDuration(dur types.Duration) {
 	c.data = append(c.data, buf[:]...)
 }
 
-// ApppendMyDecimal appends a MyDecimal value to the chunk.
+// AppendMyDecimal appends a MyDecimal value to the chunk.
 func (c *Chunk) AppendMyDecimal(dec *types.MyDecimal) {
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	var buf [types.MyDecimalStructSize]byte
