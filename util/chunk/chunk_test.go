@@ -107,6 +107,19 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	c.Assert(enum, DeepEquals, enumVal)
 	set, _ := row.GetSet(5)
 	c.Assert(set, DeepEquals, setVal)
+
+	// AppendRow can be different number of columns, useful for join.
+	chk.Reset(2)
+	chk2.Reset(1)
+	chk2.AppendInt64(1)
+	chk2.AppendInt64(-1)
+	chk.AppendRow(chk2.GetRow(0))
+	chk.AppendRow(chk2.GetRow(0))
+	iVal, _ := chk.GetRow(0).GetInt64(0)
+	c.Assert(iVal, Equals, int64(1))
+	iVal, _ = chk.GetRow(0).GetInt64(1)
+	c.Assert(iVal, Equals, int64(1))
+	c.Assert(chk.NumRows(), Equals, 1)
 }
 
 func BenchmarkAppendInt(b *testing.B) {

@@ -94,7 +94,7 @@ func (c *Chunk) AppendRow(row Row) {
 	rowOffset := row.getRealOffset(row.idx)
 	chunkOffset := int32(len(c.data))
 	offsetDiff := chunkOffset - rowOffset
-	endIdx := row.idx + c.nCols
+	endIdx := row.idx + row.chunk.nCols
 	for i := row.idx; i < endIdx; i++ {
 		colOff := row.chunk.offsets[i]
 		if colOff >= 0 {
