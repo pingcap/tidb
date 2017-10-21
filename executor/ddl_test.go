@@ -260,3 +260,22 @@ func (s *testSuite) TestUnsupportedCharset(c *C) {
 	}
 	tk.MustExec("drop database " + dbName)
 }
+
+func (s *testSuite) TestCreateView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	//create an source table
+	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+
+	//test create a exist view
+	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	_, err = tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
+	c.Assert(err, NotNil)
+
+
+
+}
