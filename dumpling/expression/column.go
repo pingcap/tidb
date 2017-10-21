@@ -243,7 +243,12 @@ func (col *Column) EvalDecimal(row []types.Datum, sc *variable.StatementContext)
 		res, err := val.ToDecimal(sc)
 		return res, err != nil, errors.Trace(err)
 	}
-	return val.GetMysqlDecimal(), false, nil
+	// We can not use val.GetMyDecimal() here directly,
+	// for sql like: `select sum(1.2e2) * 0.1` may cause an panic here,
+	// since we infer the result type of `SUM` as `mysql.TypeNewDecimal`,
+	// but what we actually get is store as float64 in Datum.
+	res, err := val.ToDecimal(sc)
+	return res, false, errors.Trace(err)
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
