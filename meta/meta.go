@@ -272,6 +272,7 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 

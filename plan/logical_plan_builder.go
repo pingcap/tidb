@@ -1214,7 +1214,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		FieldMap := make (map[string]model.CIStr)
 		for i , col := range tableInfo.Columns {
 			logrus.Warnf("The col name is %s" , col.Name.O)
-		//	logrus.Warnf("The viewselectfield is %s" , tableInfo.ViewSelectField[i])
+			logrus.Warnf("The viewselectfield is %s" , tableInfo.ViewSelectField[i])
 			FieldMap[strings.ToLower(tableInfo.ViewSelectField[i])] = col.Name
 		}
 

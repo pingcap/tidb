@@ -160,11 +160,15 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	ident := ast.Ident{Schema: s.View.Schema, Name: s.View.Name}
-	var selectFieldExprs []string
+	var selectFields []string
 	selectstmt := s.Select.(*ast.SelectStmt)
 	fields := selectstmt.Fields.Fields
 	for _ , field := range fields{
-		selectFieldExprs = append(selectFieldExprs, field.Expr.Text())
+		if field.AsName.O == "" {
+			selectFields = append(selectFields, field.Expr.Text())
+		} else {
+			selectFields = append(selectFields, field.AsName.O)
+		}
 	}
 
 	if s.Cols == nil {
@@ -181,14 +185,11 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 		}
 	}
 
-	if len(s.Cols) != len(selectFieldExprs) {
-
-	}
 	for i, col := range s.Cols {
 		logrus.Warnf("The select field[%d] name is %s", i, col)
 	}
 	var err error
-	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFieldExprs, s.SelectText)
+	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFields, s.SelectText)
 	if infoschema.ErrTableExists.Equal(err) {
 		return err
 	}
