@@ -125,6 +125,7 @@ import (
 	generated		"GENERATED"
 	grant			"GRANT"
 	group			"GROUP"
+	groups			"GROUPS"
 	having			"HAVING"
 	highPriority		"HIGH_PRIORITY"
 	hourMicrosecond		"HOUR_MICROSECOND"
@@ -278,6 +279,7 @@ import (
 	compression	"COMPRESSION"
 	connection 	"CONNECTION"
 	consistent	"CONSISTENT"
+	current		"CURRENT"
 	day		"DAY"
 	data 		"DATA"
 	dateType	"DATE"
@@ -314,6 +316,7 @@ import (
 	jsonType	"JSON"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
+	last		"LAST"
 	less		"LESS"
 	level		"LEVEL"
 	microsecond	"MICROSECOND"
@@ -2310,7 +2313,7 @@ UnReservedKeyword:
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED"
-| "FOLLOWING" | "PRECEDING" | "UNBOUNDED" | "RESPECT" | "NULLS"
+| "FOLLOWING" | "PRECEDING" | "UNBOUNDED" | "RESPECT" | "NULLS" | "CURRENT" | "LAST"
 
 TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
