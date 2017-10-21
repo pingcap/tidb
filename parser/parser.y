@@ -1779,9 +1779,13 @@ DropTableStmt:
 	}
 
 DropViewStmt:
-	"DROP" "VIEW" "IF" "EXISTS" TableNameList
+    "DROP" "VIEW" TableNameList
+    {
+        $$ = &ast.DropViewStmt{Views: $3.([]*ast.TableName)}
+    }
+|	"DROP" "VIEW" "IF" "EXISTS" TableNameList
 	{
-		$$ = &ast.DoStmt{}
+		$$ = &ast.DropViewStmt{IfExists: true, Views: $5.([]*ast.TableName)}
 	}
 
 DropUserStmt:

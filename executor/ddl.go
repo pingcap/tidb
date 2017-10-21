@@ -68,6 +68,8 @@ func (e *DDLExec) Next() (Row, error) {
 		err = e.executeDropTable(x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
+	case *ast.DropViewStmt:
+		err = e.executeDropView(x)
 	case *ast.AlterTableStmt:
 		err = e.executeAlterTable(x)
 	case *ast.RenameTableStmt:
@@ -227,6 +229,38 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 	var notExistTables []string
 	for _, tn := range s.Tables {
+		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
+		_, ok := e.is.SchemaByName(tn.Schema)
+		if !ok {
+			// TODO: we should return special error for table not exist, checking "not exist" is not enough,
+			// because some other errors may contain this error string too.
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		}
+		_, err := e.is.TableByName(tn.Schema, tn.Name)
+		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		} else if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = sessionctx.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			notExistTables = append(notExistTables, fullti.String())
+		} else if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if len(notExistTables) > 0 && !s.IfExists {
+		return infoschema.ErrTableDropExists.GenByArgs(strings.Join(notExistTables, ","))
+	}
+	return nil
+}
+
+func (e *DDLExec) executeDropView(s *ast.DropViewStmt) error {
+	var notExistTables []string
+	for _, tn := range s.Views {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		_, ok := e.is.SchemaByName(tn.Schema)
 		if !ok {

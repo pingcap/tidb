@@ -502,6 +502,30 @@ func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type DropViewStmt struct {
+	ddlNode
+
+	IfExists bool
+	Views   []*TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *DropViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropViewStmt)
+	for i, val := range n.Views {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Views[i] = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
 // RenameTableStmt is a statement to rename a table.
 // See http://dev.mysql.com/doc/refman/5.7/en/rename-table.html
 type RenameTableStmt struct {
