@@ -35,20 +35,19 @@ type testChunkSuite struct{}
 func (s *testChunkSuite) TestChunk(c *C) {
 	numCols := 6
 	numRows := 10
-	chk := NewChunk(numCols)
+	chk := newChunk(8, 8, 0, 0, 40, -1)
 	strFmt := "%d.12345"
 	for i := 0; i < numRows; i++ {
-		chk.AppendNull()
-		chk.AppendInt64(int64(i))
+		chk.AppendNull(0)
+		chk.AppendInt64(1, int64(i))
 		str := fmt.Sprintf(strFmt, i)
-		chk.AppendString(str)
-		chk.AppendBytes([]byte(str))
-		chk.AppendMyDecimal(types.NewDecFromStringForTest(str))
-		chk.AppendJSON(json.CreateJSON(str))
+		chk.AppendString(2, str)
+		chk.AppendBytes(3, []byte(str))
+		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
+		chk.AppendJSON(5, json.CreateJSON(str))
 	}
 	c.Assert(chk.NumCols(), Equals, numCols)
 	c.Assert(chk.NumRows(), Equals, numRows)
-	c.Assert(chk.DataSize(), Equals, len(chk.data))
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
 		intV, isNull := row.GetInt64(0)
@@ -71,28 +70,30 @@ func (s *testChunkSuite) TestChunk(c *C) {
 		c.Assert(jsonV.Str, Equals, str)
 	}
 
-	chk2 := NewChunk(numCols)
+	chk2 := newChunk(8, 8, 0, 0, 40, -1)
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
-		chk2.AppendRow(row)
+		chk2.AppendRow(0, row)
 	}
-	c.Assert(chk2.offsets, DeepEquals, chk.offsets)
-	c.Assert(chk2.data, BytesEquals, chk.data)
-	c.Assert(len(chk2.objMap), Equals, len(chk.objMap))
+	for i := 0; i < numCols; i++ {
+		col2, col1 := chk2.columns[i], chk.columns[i]
+		col2.elemBuf, col1.elemBuf = nil, nil
+		c.Assert(col2, DeepEquals, col1)
+	}
 
-	chk.Reset(6)
+	chk = newChunk(4, 8, -1, 16, 0, 0)
 	f32Val := float32(1.2)
-	chk.AppendFloat32(f32Val)
+	chk.AppendFloat32(0, f32Val)
 	f64Val := 1.3
-	chk.AppendFloat64(f64Val)
+	chk.AppendFloat64(1, f64Val)
 	tVal := types.TimeFromDays(1)
-	chk.AppendTime(tVal)
+	chk.AppendTime(2, tVal)
 	durVal := types.Duration{Duration: time.Hour, Fsp: 6}
-	chk.AppendDuration(durVal)
+	chk.AppendDuration(3, durVal)
 	enumVal := types.Enum{Name: "abc", Value: 100}
-	chk.AppendEnum(enumVal)
+	chk.AppendEnum(4, enumVal)
 	setVal := types.Set{Name: "def", Value: 101}
-	chk.AppendSet(setVal)
+	chk.AppendSet(5, setVal)
 
 	row := chk.GetRow(0)
 	f32, _ := row.GetFloat32(0)
@@ -109,12 +110,12 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	c.Assert(set, DeepEquals, setVal)
 
 	// AppendRow can be different number of columns, useful for join.
-	chk.Reset(2)
-	chk2.Reset(1)
-	chk2.AppendInt64(1)
-	chk2.AppendInt64(-1)
-	chk.AppendRow(chk2.GetRow(0))
-	chk.AppendRow(chk2.GetRow(0))
+	chk = newChunk(8, 8)
+	chk2 = newChunk(8)
+	chk2.AppendInt64(0, 1)
+	chk2.AppendInt64(0, -1)
+	chk.AppendRow(0, chk2.GetRow(0))
+	chk.AppendRow(1, chk2.GetRow(0))
 	iVal, _ := chk.GetRow(0).GetInt64(0)
 	c.Assert(iVal, Equals, int64(1))
 	iVal, _ = chk.GetRow(0).GetInt64(1)
@@ -122,70 +123,86 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	c.Assert(chk.NumRows(), Equals, 1)
 }
 
+// newChunk creates a new chunk and initialize columns with element length.
+// 0 adds an varlen column, positive len add a fixed length column, negative len adds a interface column.
+func newChunk(elemLen ...int) *Chunk {
+	chk := &Chunk{}
+	for _, l := range elemLen {
+		if l > 0 {
+			chk.AddFixedLenColumn(l)
+		} else if l == 0 {
+			chk.AddVarLenColumn()
+		} else {
+			chk.AddInterfaceColumn()
+		}
+	}
+	return chk
+}
+
 func BenchmarkAppendInt(b *testing.B) {
 	b.ReportAllocs()
-	chk := NewChunk(1)
+	chk := newChunk(8)
 	for i := 0; i < b.N; i++ {
 		appendInt(chk)
 	}
 }
 
 func appendInt(chk *Chunk) {
-	resetChunk(chk)
+	chk.Reset()
 	for i := 0; i < 1000; i++ {
-		chk.AppendInt64(int64(i))
+		chk.AppendInt64(0, int64(i))
 	}
 }
 
 func BenchmarkAppendString(b *testing.B) {
 	b.ReportAllocs()
-	chk := NewChunk(1)
+	chk := newChunk(0)
 	for i := 0; i < b.N; i++ {
 		appendString(chk)
 	}
 }
 
 func appendString(chk *Chunk) {
-	resetChunk(chk)
+	chk.Reset()
 	for i := 0; i < 1000; i++ {
-		chk.AppendString("abcd")
+		chk.AppendString(0, "abcd")
 	}
 }
 
 func BenchmarkAppendRow(b *testing.B) {
 	b.ReportAllocs()
-	rowChk := NewChunk(4)
-	rowChk.AppendNull()
-	rowChk.AppendInt64(1)
-	rowChk.AppendString("abcd")
-	rowChk.AppendBytes([]byte("abcd"))
+	rowChk := newChunk(8, 8, 0, 0)
+	rowChk.AppendNull(0)
+	rowChk.AppendInt64(1, 1)
+	rowChk.AppendString(2, "abcd")
+	rowChk.AppendBytes(3, []byte("abcd"))
 
-	chk := NewChunk(4)
+	chk := newChunk(8, 8, 0, 0)
 	for i := 0; i < b.N; i++ {
 		appendRow(chk, rowChk.GetRow(0))
 	}
 }
 
 func appendRow(chk *Chunk, row Row) {
-	resetChunk(chk)
+	chk.Reset()
 	for i := 0; i < 1000; i++ {
-		chk.AppendRow(row)
+		chk.AppendRow(0, row)
 	}
 }
 
-func resetChunk(chk *Chunk) {
-	chk.offsets = chk.offsets[:0]
-	chk.data = chk.data[:0]
-}
-
 func BenchmarkAccess(b *testing.B) {
-	rowChk := NewChunk(4)
-	rowChk.AppendNull()
-	rowChk.AppendInt64(math.MaxUint16)
-	row := rowChk.GetRow(0)
+	b.StopTimer()
+	rowChk := newChunk(8)
+	for i := 0; i < 8192; i++ {
+		rowChk.AppendInt64(0, math.MaxUint16)
+	}
+	b.StartTimer()
 	var sum int64
 	for i := 0; i < b.N; i++ {
-		v, _ := row.GetInt64(1)
+		var v int64
+		for j := 0; j < 8192; j++ {
+			v, _ = rowChk.GetRow(j).GetInt64(0)
+		}
 		sum += v
 	}
 	fmt.Println(sum)
