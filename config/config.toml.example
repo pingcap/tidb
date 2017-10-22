@@ -37,6 +37,9 @@ format = "text"
 # Disable automatic timestamps in output
 disable-timestamp = false
 
+# Stores slow query log into seperate files.
+#slow-query-file = ""
+
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
 
