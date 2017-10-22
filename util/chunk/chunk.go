@@ -33,7 +33,7 @@ type Chunk struct {
 func (c *Chunk) AddFixedLenColumn(elemLen, initCap int) {
 	c.columns = append(c.columns, &column{
 		elemBuf: make([]byte, elemLen),
-		data: make([]byte, 0, initCap),
+		data:    make([]byte, 0, initCap),
 	})
 }
 
@@ -41,7 +41,7 @@ func (c *Chunk) AddFixedLenColumn(elemLen, initCap int) {
 func (c *Chunk) AddVarLenColumn(initCap int) {
 	c.columns = append(c.columns, &column{
 		offsets: []int32{0},
-		data: make([]byte, 0, initCap),
+		data:    make([]byte, 0, initCap),
 	})
 }
 
