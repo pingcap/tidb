@@ -42,7 +42,7 @@ func (af *avgFunction) GetType() *types.FieldType {
 	return ft
 }
 
-func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
+func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
 	a := af.Args[1]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -73,7 +73,7 @@ func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.Statement
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
+func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
 	if af.mode == FinalMode {
 		return af.updateAvg(ctx, sc, row)
 	}
