@@ -29,17 +29,19 @@ type Chunk struct {
 	columns []*column
 }
 
-// AddFixedLenColumn adds a fixed length column with elemLen.
-func (c *Chunk) AddFixedLenColumn(elemLen int) {
+// AddFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
+func (c *Chunk) AddFixedLenColumn(elemLen, initCap int) {
 	c.columns = append(c.columns, &column{
 		elemBuf: make([]byte, elemLen),
+		data: make([]byte, 0, initCap),
 	})
 }
 
-// AddVarLenColumn adds a variable length column.
-func (c *Chunk) AddVarLenColumn() {
+// AddVarLenColumn adds a variable length column with initial data capacity.
+func (c *Chunk) AddVarLenColumn(initCap int) {
 	c.columns = append(c.columns, &column{
 		offsets: []int32{0},
+		data: make([]byte, 0, initCap),
 	})
 }
 

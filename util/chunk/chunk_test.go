@@ -129,9 +129,9 @@ func newChunk(elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.AddFixedLenColumn(l)
+			chk.AddFixedLenColumn(l, 0)
 		} else if l == 0 {
-			chk.AddVarLenColumn()
+			chk.AddVarLenColumn(0)
 		} else {
 			chk.AddInterfaceColumn()
 		}
