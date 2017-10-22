@@ -50,6 +50,19 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			checker.cacheable = false
 			return in, true
 		}
+	case *ast.Limit:
+		if node.Count != nil {
+			if _, isParamMarker := node.Count.(*ast.ParamMarkerExpr); isParamMarker {
+				checker.cacheable = false
+				return in, true
+			}
+		}
+		if node.Offset != nil {
+			if _, isParamMarker := node.Offset.(*ast.ParamMarkerExpr); isParamMarker {
+				checker.cacheable = false
+				return in, true
+			}
+		}
 	}
 	return in, false
 }

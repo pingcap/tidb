@@ -746,24 +746,6 @@ func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
 }
 
-// paramToExpression rewrites ParamMarkerExpr to a function expression, GetParam.
-// GetParam function should be evaluated whenever execute the statement because
-// the parameter values are given just when executing the prepared statement generally.
-func (er *expressionRewriter) paramToExpression(v *ast.ParamMarkerExpr) {
-	stkLen := len(er.ctxStack)
-	f, err := expression.NewFunction(er.ctx,
-		ast.GetParam,
-		&v.Type,
-		datumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
-	if err != nil {
-		er.err = errors.Trace(err)
-		return
-	}
-	f.GetType().Tp = v.Type.Tp
-	er.ctxStack[stkLen-1], er.err = f, err
-	return
-}
-
 func (er *expressionRewriter) getParamExpression(v *ast.ParamMarkerExpr) expression.Expression {
 	f, err := expression.NewFunction(er.ctx,
 		ast.GetParam,

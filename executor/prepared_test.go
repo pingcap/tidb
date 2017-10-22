@@ -128,7 +128,16 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 	r := tk.MustQuery(`execute stmt using @id;`)
 	r.Check(nil)
 
+	r = tk.MustQuery(`execute stmt using @id;`)
+	r.Check(nil)
+
 	tk.MustExec(`set @id="1"`)
+	r = tk.MustQuery(`execute stmt using @id;`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`execute stmt using @id2;`)
+	r.Check(nil)
+
 	r = tk.MustQuery(`execute stmt using @id;`)
 	r.Check(testkit.Rows("1"))
 }

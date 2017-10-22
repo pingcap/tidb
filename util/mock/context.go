@@ -101,11 +101,6 @@ func (c *Context) PlanCache() *kvcache.SimpleLRUCache {
 	return c.pcache
 }
 
-// EnablePlanCache implements the context.Context interface.
-func (c *Context) EnablePlanCache() bool {
-	return c.enablePCache
-}
-
 // NewTxn implements the context.Context interface.
 func (c *Context) NewTxn() error {
 	if c.Store == nil {

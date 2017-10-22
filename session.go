@@ -133,7 +133,6 @@ type session struct {
 
 	parser *parser.Parser
 
-	enablePlanCache   bool
 	preparedPlanCache *kvcache.SimpleLRUCache
 
 	sessionVars    *variable.SessionVars
@@ -208,10 +207,6 @@ func (s *session) SetCollation(coID int) error {
 	}
 	s.sessionVars.Systems[variable.CollationConnection] = co
 	return nil
-}
-
-func (s *session) EnablePlanCache() bool {
-	return s.enablePlanCache
 }
 
 func (s *session) PlanCache() *kvcache.SimpleLRUCache {
@@ -1052,11 +1047,12 @@ func createSession(store kv.Storage) (*session, error) {
 		return nil, errors.Trace(err)
 	}
 	s := &session{
-		store:             store,
-		parser:            parser.New(),
-		sessionVars:       variable.NewSessionVars(),
-		enablePlanCache:   enablePreparedPlanCache,
-		preparedPlanCache: kvcache.NewSimpleLRUCache(int64(preparedPlanCacheSize)),
+		store:       store,
+		parser:      parser.New(),
+		sessionVars: variable.NewSessionVars(),
+	}
+	if cache.PreparedPlanCacheEnabled {
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(cache.PreparedPlanCacheCapacity)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)

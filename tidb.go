@@ -108,12 +108,6 @@ var (
 
 	// The maximum number of retries to recover from retryable errors.
 	commitRetryLimit = 10
-
-	// The flag represents whether or not the plan cache is enabled.
-	enablePreparedPlanCache = true
-
-	// The maximum number of plans to be cached for each session.
-	preparedPlanCacheSize = 100
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -135,16 +129,6 @@ func SetStatsLease(lease time.Duration) {
 // so on.
 func SetCommitRetryLimit(limit int) {
 	commitRetryLimit = limit
-}
-
-// SetEnablePlanCacheForPrepared enable or disable the plan cache for prepared statements.
-func SetEnablePlanCacheForPrepared(flag bool) {
-	enablePreparedPlanCache = flag
-}
-
-// SetPreparedPlanCacheSize setups the maximum number of plans to be cached in each session.
-func SetPreparedPlanCacheSize(size int) {
-	preparedPlanCacheSize = size
 }
 
 // Parse parses a query string to raw ast.StmtNode.

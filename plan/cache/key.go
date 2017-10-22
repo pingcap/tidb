@@ -91,10 +91,13 @@ func NewSQLCacheKey(sessionVars *variable.SessionVars, sql string, schemaVersion
 }
 
 type pstmtPlanCacheKey struct {
-	database      string
-	connID        uint64
-	pstmtID       uint32
-	schemaVersion int64
+	database       string
+	connID         uint64
+	pstmtID        uint32
+	snapshot       uint64
+	schemaVersion  int64
+	sqlMode        mysql.SQLMode
+	timezoneOffset int
 
 	hash []byte
 }
@@ -104,23 +107,33 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 	if key.hash == nil {
 		var (
 			dbBytes    = hack.Slice(key.database)
-			bufferSize = len(dbBytes) + 8*3
+			bufferSize = len(dbBytes) + 8*6
 		)
 		key.hash = make([]byte, 0, bufferSize)
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
+		key.hash = codec.EncodeInt(key.hash, int64(key.snapshot))
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
+		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
+		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
 	}
 	return key.hash
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
 func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+	timezoneOffset := 0
+	if sessionVars.TimeZone != nil {
+		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
+	}
 	return &pstmtPlanCacheKey{
-		database:      sessionVars.CurrentDB,
-		connID:        sessionVars.ConnectionID,
-		pstmtID:       pstmtID,
-		schemaVersion: schemaVersion,
+		database:       sessionVars.CurrentDB,
+		connID:         sessionVars.ConnectionID,
+		pstmtID:        pstmtID,
+		snapshot:       sessionVars.SnapshotTS,
+		schemaVersion:  schemaVersion,
+		sqlMode:        sessionVars.SQLMode,
+		timezoneOffset: timezoneOffset,
 	}
 }

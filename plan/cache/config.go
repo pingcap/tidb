@@ -26,4 +26,9 @@ var (
 	PlanCacheCapacity int64
 	// GlobalPlanCache stores the global plan cache for every session in a tidb-server.
 	GlobalPlanCache *kvcache.ShardedLRUCache
+
+	// PreparedPlanCacheEnabled stores the global config "prepared-plan-cache-enabled".
+	PreparedPlanCacheEnabled bool
+	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
+	PreparedPlanCacheCapacity int64
 )

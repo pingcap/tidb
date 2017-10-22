@@ -92,6 +92,7 @@ func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 				return c.Value, err
 			}
 			if dt.IsNull() {
+				c.Value.SetNull()
 				return c.Value, nil
 			}
 			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)

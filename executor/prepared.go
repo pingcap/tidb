@@ -171,7 +171,7 @@ func (e *PrepareExec) DoPrepare() {
 		Params:        sorter.markers,
 		SchemaVersion: e.IS.SchemaMetaVersion(),
 	}
-	prepared.UseCache = e.Ctx.EnablePlanCache() && plan.IsCacheable(stmt, true)
+	prepared.UseCache = cache.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
 	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
 	if err != nil {
