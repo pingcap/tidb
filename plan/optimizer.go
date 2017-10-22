@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/_vendor/src/github.com/Sirupsen/logrus"
 )
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
@@ -109,7 +108,6 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 }
 
 func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
-	logrus.Warnf("In doOptimize")
 	logic, err := logicalOptimize(flag, logic, ctx, allocator)
 	if err != nil {
 		return nil, errors.Trace(err)

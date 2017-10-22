@@ -139,7 +139,6 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Warnf("The Executor Type is %T" , e)
 	if err := e.Open(); err != nil {
 		return nil, errors.Trace(err)
 	}
