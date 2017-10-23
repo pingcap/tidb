@@ -374,7 +374,6 @@ func (p *LogicalJoin) getMergeJoin() []PhysicalPlan {
 			DefaultValues:   p.DefaultValues,
 			leftKeys:        leftKeys,
 			rightKeys:       rightKeys,
-			WithAux:         p.JoinType == LeftOuterSemiJoin,
 			Anti:            p.anti,
 		}.init(p.allocator, p.ctx)
 		mergeJoin.SetSchema(p.schema)
