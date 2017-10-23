@@ -258,6 +258,10 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 				case plan.LeftOuterJoin, plan.RightOuterJoin:
 					// as all right join converted to left, we only output left side if no match and continue
 					e.outputJoinRow(lRow, e.defaultRightRow)
+				case plan.SemiJoin:
+					if e.isAntiMode {
+						e.outputBuf = append(e.outputBuf, lRow)
+					}
 				case plan.LeftOuterSemiJoin:
 					result := append(lRow, types.NewDatum(e.isAntiMode))
 					e.outputBuf = append(e.outputBuf, result)
@@ -268,7 +272,9 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 		// Do the real cross product calculation
 		initInnerLen := len(e.outputBuf)
 		if e.joinType == plan.SemiJoin {
-			e.outputBuf = append(e.outputBuf, lRow)
+			if !e.isAntiMode {
+				e.outputBuf = append(e.outputBuf, lRow)
+			}
 		} else if e.joinType == plan.LeftOuterSemiJoin {
 			result := append(lRow, types.NewDatum(!e.isAntiMode))
 			e.outputBuf = append(e.outputBuf, result)
@@ -286,6 +292,10 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 			switch e.joinType {
 			case plan.LeftOuterJoin, plan.RightOuterJoin:
 				e.outputJoinRow(lRow, e.defaultRightRow)
+			case plan.SemiJoin:
+				if e.isAntiMode {
+					e.outputBuf = append(e.outputBuf, lRow)
+				}
 			case plan.LeftOuterSemiJoin:
 				result := append(lRow, types.NewDatum(e.isAntiMode))
 				e.outputBuf = append(e.outputBuf, result)
