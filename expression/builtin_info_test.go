@@ -155,12 +155,16 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.PrevAffectedRows = 10
 
-	fc := funcs[ast.RowCount]
-	f, err := fc.getFunction(ctx, nil)
+	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	c.Assert(f, NotNil)
+	sig, ok := f.(*builtinRowCountSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(sig, NotNil)
+	intResult, isNull, err := sig.evalInt(nil)
 	c.Assert(err, IsNil)
-	c.Assert(d.GetInt64(), Equals, int64(10))
+	c.Assert(isNull, IsFalse)
+	c.Assert(intResult, Equals, int64(10))
 }
 
 // Test case for tidb_server().
