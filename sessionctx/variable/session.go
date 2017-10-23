@@ -418,12 +418,14 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Unlock()
 }
 
+// SetHistogramsNotLoad sets histogramsNotLoad.
 func (sc *StatementContext) SetHistogramsNotLoad() {
 	sc.mu.Lock()
 	sc.mu.histogramsNotLoad = true
 	sc.mu.Unlock()
 }
 
+// HistogramsNotLoad gets histogramsNotLoad.
 func (sc *StatementContext) HistogramsNotLoad() bool {
 	sc.mu.Lock()
 	notLoad := sc.mu.histogramsNotLoad
