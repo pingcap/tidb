@@ -1553,8 +1553,8 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				return expr
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
-			newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		}
+		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
