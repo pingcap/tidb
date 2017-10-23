@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"unicode"
 
@@ -691,7 +692,9 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 			return nil
 		}
 	}
-
+	if count > math.MaxUint64-offset {
+		count = math.MaxUint64 - offset
+	}
 	li := Limit{
 		Offset: offset,
 		Count:  count,

@@ -43,22 +43,28 @@ type preprocessor struct {
 	ctx       context.Context
 	err       error
 	inPrepare bool
-
-	contextStack []*resolverContext
+	// When visiting create/drop table statement.
+	inCreateOrDropTable bool
+	// When visiting multi-table delete stmt table list.
+	inDeleteTableList bool
+	/* For Select Statement. */
+	// table map to lookup and check table name conflict.
+	tableMap map[string]int
+	// tables indicates tableSources collected in from clause.
+	tables []*ast.TableSource
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
-		p.resolveCreateDropRenameTableStmt()
+		p.inCreateOrDropTable = true
 		p.checkCreateTableGrammar(node)
 	case *ast.DropTableStmt:
-		p.resolveCreateDropRenameTableStmt()
+		p.inCreateOrDropTable = true
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
-		p.resolveCreateDropRenameTableStmt()
+		p.inCreateOrDropTable = true
 	case *ast.CreateIndexStmt:
-		p.pushContext()
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
 		p.resolveAlterTableStmt(node)
@@ -69,8 +75,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.AdminStmt, *ast.DropIndexStmt, *ast.AnalyzeTableStmt, *ast.DropStatsStmt, *ast.DoStmt, *ast.SetStmt:
-		p.pushContext()
+	case *ast.DeleteTableList:
+		p.inDeleteTableList = true
+	case *ast.DeleteStmt:
+		return in, true
 	}
 	return in, p.err != nil
 }
@@ -78,30 +86,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
-		p.popContext()
+		p.inCreateOrDropTable = false
 		p.checkAutoIncrement(x)
+	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
+		p.inCreateOrDropTable = false
 	case *ast.ParamMarkerExpr:
 		if !p.inPrepare {
 			p.err = parser.ErrSyntax.Gen("syntax error, unexpected '?'")
 			return
-		}
-	case *ast.Limit:
-		if x.Count == nil {
-			break
-		}
-		if _, isParamMarker := x.Count.(*ast.ParamMarkerExpr); isParamMarker {
-			break
-		}
-		// We only accept ? and uint64 for count/offset in parser.y
-		var count, offset uint64
-		if x.Count != nil {
-			count, _ = x.Count.GetValue().(uint64)
-		}
-		if x.Offset != nil {
-			offset, _ = x.Offset.GetValue().(uint64)
-		}
-		if count > math.MaxUint64-offset {
-			x.Count.SetValue(math.MaxUint64 - offset)
 		}
 	case *ast.ExplainStmt:
 		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
@@ -117,13 +109,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if !valid {
 			p.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
 		}
-	case *ast.SetStmt, *ast.ShowStmt, *ast.AdminStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt,
-		*ast.CreateIndexStmt, *ast.DropIndexStmt, *ast.AnalyzeTableStmt, *ast.DropStatsStmt, *ast.DoStmt:
-		p.popContext()
 	case *ast.TableName:
-		if p.currentContext() != nil {
-			p.handleTableName(x)
-		}
+		p.handleTableName(x)
 	}
 
 	return in, p.err == nil
@@ -511,19 +498,18 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		}
 		tn.Schema = model.NewCIStr(currentDB)
 	}
-	ctx := p.currentContext()
-	if ctx.inCreateOrDropTable {
+	if p.inCreateOrDropTable {
 		// The table may not exist in create table or drop table statement.
 		// Skip resolving the table to avoid error.
 		return
 	}
-	if ctx.inDeleteTableList {
-		idx, ok := ctx.tableMap[p.tableUniqueName(tn.Schema, tn.Name)]
+	if p.inDeleteTableList {
+		idx, ok := p.tableMap[p.tableUniqueName(tn.Schema, tn.Name)]
 		if !ok {
 			p.err = errors.Errorf("Unknown table %s", tn.Name.O)
 			return
 		}
-		ts := ctx.tables[idx]
+		ts := p.tables[idx]
 		tableName := ts.Source.(*ast.TableName)
 		tn.DBInfo = tableName.DBInfo
 		tn.TableInfo = tableName.TableInfo
@@ -572,31 +558,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	tn.SetResultFields(rfs)
 }
 
-// currentContext gets the current resolverContext.
-func (p *preprocessor) currentContext() *resolverContext {
-	stackLen := len(p.contextStack)
-	if stackLen == 0 {
-		return nil
-	}
-	return p.contextStack[stackLen-1]
-}
-
-// pushContext is called when we enter a statement.
-func (p *preprocessor) pushContext() {
-	p.contextStack = append(p.contextStack, &resolverContext{
-		tableMap:        map[string]int{},
-		derivedTableMap: map[string]int{},
-	})
-}
-
-// popContext is called when we leave a statement.
-func (p *preprocessor) popContext() {
-	p.contextStack = p.contextStack[:len(p.contextStack)-1]
-}
-
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
-	p.pushContext()
-	p.currentContext().inShow = true
 	if node.DBName == "" {
 		if node.Table != nil && node.Table.Schema.L != "" {
 			node.DBName = node.Table.Schema.O
@@ -608,16 +570,10 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 	}
 }
 
-func (p *preprocessor) resolveCreateDropRenameTableStmt() {
-	p.pushContext()
-	p.currentContext().inCreateOrDropTable = true
-}
-
 func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
-	p.pushContext()
 	for _, spec := range node.Specs {
 		if spec.Tp == ast.AlterTableRenameTable {
-			p.currentContext().inCreateOrDropTable = true
+			p.inCreateOrDropTable = true
 			break
 		}
 	}
