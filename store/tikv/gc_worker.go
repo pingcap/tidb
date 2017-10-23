@@ -130,13 +130,13 @@ func (w *GCWorker) StartSafePointChecker() {
 		for {
 			select {
 			case spCachedTime := <-time.After(d):
-				gcWorkerCounter.WithLabelValues("check_safepoint").Inc()
-
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
 				if err == nil {
+					gcWorkerCounter.WithLabelValues("check_safepoint_ok").Inc()
 					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
 					d = gcSafePointUpdateInterval
 				} else {
+					gcWorkerCounter.WithLabelValues("check_safepoint_fail").Inc()
 					log.Errorf("[gc worker] fail to load safepoint: %v", err)
 					d = gcSafePointQuickRepeatInterval
 				}
