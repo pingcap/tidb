@@ -170,31 +170,38 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-type neededColumnMap struct {
-	m    sync.Mutex
-	cols map[int64][]*Column
+type tableColumnID struct {
+	tableID  int64
+	columnID int64
 }
 
-var neededColumns = neededColumnMap{cols: map[int64][]*Column{}}
+type neededColumnMap struct {
+	m    sync.Mutex
+	cols map[tableColumnID]struct{}
+}
+
+var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 
 // ColumnIsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
-func (t *Table) ColumnIsInvalid(colID int64) bool {
+func (t *Table) ColumnIsInvalid(sc *variable.StatementContext, colID int64) bool {
 	if t.Pseudo {
 		return true
 	}
 	col, ok := t.Columns[colID]
 	if ok && col.NDV > 0 && len(col.Buckets) == 0 {
-		neededColumns.m.Lock()
-		neededColumns.cols[t.TableID] = append(neededColumns.cols[t.TableID], col)
-		neededColumns.m.Unlock()
+		sc.SetHistogramsNotLoad()
+		histogramNeededColumns.m.Lock()
+		key := tableColumnID{tableID: t.TableID, columnID: colID}
+		histogramNeededColumns.cols[key] = struct{}{}
+		histogramNeededColumns.m.Unlock()
 	}
 	return !ok || len(col.Buckets) == 0
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
 func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
-	if t.ColumnIsInvalid(colID) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
 	hist := t.Columns[colID]
@@ -205,7 +212,7 @@ func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types
 
 // ColumnLessRowCount estimates the row count where the column less than value.
 func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
-	if t.ColumnIsInvalid(colID) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
 	hist := t.Columns[colID]
@@ -216,7 +223,7 @@ func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Da
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colID int64) (float64, error) {
-	if t.ColumnIsInvalid(colID) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoBetweenRate, nil
 	}
 	hist := t.Columns[colID]
@@ -227,7 +234,7 @@ func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
 func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
-	if t.ColumnIsInvalid(colID) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
 	hist := t.Columns[colID]
@@ -238,7 +245,7 @@ func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.D
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
 func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []types.IntColumnRange) (float64, error) {
-	if t.ColumnIsInvalid(colID) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
 	c := t.Columns[colID]
@@ -247,7 +254,7 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colI
 
 // GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
 func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID int64, colRanges []*types.ColumnRange) (float64, error) {
-	if t.ColumnIsInvalid(colID) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
 	}
 	c := t.Columns[colID]

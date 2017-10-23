@@ -340,9 +340,10 @@ type StatementContext struct {
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
-		affectedRows uint64
-		foundRows    uint64
-		warnings     []error
+		affectedRows      uint64
+		foundRows         uint64
+		warnings          []error
+		histogramsNotLoad bool
 	}
 
 	// Copied from SessionVars.TimeZone.
@@ -415,6 +416,19 @@ func (sc *StatementContext) AppendWarning(warn error) {
 		sc.mu.warnings = append(sc.mu.warnings, warn)
 	}
 	sc.mu.Unlock()
+}
+
+func (sc *StatementContext) SetHistogramsNotLoad() {
+	sc.mu.Lock()
+	sc.mu.histogramsNotLoad = true
+	sc.mu.Unlock()
+}
+
+func (sc *StatementContext) HistogramsNotLoad() bool {
+	sc.mu.Lock()
+	notLoad := sc.mu.histogramsNotLoad
+	sc.mu.Unlock()
+	return notLoad
 }
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.
