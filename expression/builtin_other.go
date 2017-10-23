@@ -381,7 +381,7 @@ type builtinGetParamStringSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinGetParamStringSig) evalString(row []types.Datum) (string, bool, error) {
+func (b *builtinGetParamStringSig) evalString(row types.Row) (string, bool, error) {
 	sessionVars := b.ctx.GetSessionVars()
 	sc := sessionVars.StmtCtx
 	idx, isNull, err := b.args[0].EvalInt(row, sc)

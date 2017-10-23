@@ -1052,6 +1052,29 @@ func (s *testSuite) TestIndexScan(c *C) {
 	// Test for double read and top n.
 	result = tk.MustQuery("select a from t where c >= 2 order by b desc limit 1")
 	result.Check(testkit.Rows("5"))
+
+	tk.MustExec("drop table if exists tab0")
+	tk.MustExec("CREATE TABLE tab0(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT)")
+	tk.MustExec("INSERT INTO tab0 VALUES(0,26,690.51,'vkasq',738,541.24,'zdmee')")
+	tk.MustExec("INSERT INTO tab0 VALUES(1,621,84.92,'jnvsy',783,88.94,'swdpn')")
+	tk.MustExec("INSERT INTO tab0 VALUES(2,865,358.72,'gwuaz',225,162.41,'pgyvg')")
+	tk.MustExec("INSERT INTO tab0 VALUES(3,763,777.26,'vqjrp',355,169.58,'jnwpl')")
+	tk.MustExec("INSERT INTO tab0 VALUES(4,925,793.34,'irlrv',131,517.38,'tzczq')")
+	tk.MustExec("INSERT INTO tab0 VALUES(5,688,675.30,'ebxej',302,242.88,'dunwk')")
+	tk.MustExec("INSERT INTO tab0 VALUES(6,244,132.20,'vwfmh',533,629.36,'cnoua')")
+	tk.MustExec("INSERT INTO tab0 VALUES(7,762,934.85,'hmzfr',530,842.49,'gxohz')")
+	tk.MustExec("INSERT INTO tab0 VALUES(8,516,544.4,'tqtme',164,548.43,'pfoxu')")
+	tk.MustExec("INSERT INTO tab0 VALUES(9,7,737.59,'hpnbs',599,539.96,'kgygk')")
+	tk.MustExec("drop table if exists tab1")
+	tk.MustExec("CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT)")
+	tk.MustExec("CREATE INDEX idx_tab1_0 on tab1 (col0)")
+	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (col1)")
+	tk.MustExec("CREATE INDEX idx_tab1_3 on tab1 (col3)")
+	tk.MustExec("CREATE INDEX idx_tab1_4 on tab1 (col4)")
+	tk.MustExec("INSERT INTO tab1 SELECT * FROM tab0")
+	result = tk.MustQuery("SELECT ALL + col1 AS col3 FROM tab1 WHERE NOT NULL NOT BETWEEN col1 AND NULL")
+	result.Check(nil)
+
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
