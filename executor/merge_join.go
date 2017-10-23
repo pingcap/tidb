@@ -57,157 +57,11 @@ type MergeJoinExec struct {
 	flipSide        bool
 	joinType        plan.JoinType
 
-	// for semi joins
-	isAuxMode  bool
+	// for semi join
 	isAntiMode bool
 }
 
 const rowBufferSize = 4096
-
-type joinBuilder struct {
-	context       context.Context
-	leftChild     Executor
-	rightChild    Executor
-	eqConditions  []*expression.ScalarFunction
-	leftFilter    []expression.Expression
-	rightFilter   []expression.Expression
-	otherFilter   []expression.Expression
-	schema        *expression.Schema
-	joinType      plan.JoinType
-	defaultValues []types.Datum
-	isAuxMode     bool
-	isAntiMode    bool
-}
-
-func (b *joinBuilder) Context(context context.Context) *joinBuilder {
-	b.context = context
-	return b
-}
-
-func (b *joinBuilder) EqualConditions(conds []*expression.ScalarFunction) *joinBuilder {
-	b.eqConditions = conds
-	return b
-}
-
-func (b *joinBuilder) LeftChild(exec Executor) *joinBuilder {
-	b.leftChild = exec
-	return b
-}
-
-func (b *joinBuilder) RightChild(exec Executor) *joinBuilder {
-	b.rightChild = exec
-	return b
-}
-
-func (b *joinBuilder) LeftFilter(expr []expression.Expression) *joinBuilder {
-	b.leftFilter = expr
-	return b
-}
-
-func (b *joinBuilder) RightFilter(expr []expression.Expression) *joinBuilder {
-	b.rightFilter = expr
-	return b
-}
-
-func (b *joinBuilder) OtherFilter(expr []expression.Expression) *joinBuilder {
-	b.otherFilter = expr
-	return b
-}
-
-func (b *joinBuilder) Schema(schema *expression.Schema) *joinBuilder {
-	b.schema = schema
-	return b
-}
-
-func (b *joinBuilder) JoinType(joinType plan.JoinType) *joinBuilder {
-	b.joinType = joinType
-	return b
-}
-
-func (b *joinBuilder) DefaultVals(defaultValues []types.Datum) *joinBuilder {
-	b.defaultValues = defaultValues
-	return b
-}
-
-func (b *joinBuilder) SetAuxMode(isAuxMode bool) *joinBuilder {
-	b.isAuxMode = isAuxMode
-	return b
-}
-
-func (b *joinBuilder) SetAntiMode(isAntiMode bool) *joinBuilder {
-	b.isAntiMode = isAntiMode
-	return b
-}
-
-func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, error) {
-	var leftJoinKeys, rightJoinKeys []*expression.Column
-	for _, eqCond := range b.eqConditions {
-		if len(eqCond.GetArgs()) != 2 {
-			return nil, errors.Annotate(ErrBuildExecutor, "invalid join key for equal condition")
-		}
-		lKey, ok := eqCond.GetArgs()[0].(*expression.Column)
-		if !ok {
-			return nil, errors.Annotate(ErrBuildExecutor, "left side of join key must be column for merge join")
-		}
-		rKey, ok := eqCond.GetArgs()[1].(*expression.Column)
-		if !ok {
-			return nil, errors.Annotate(ErrBuildExecutor, "right side of join key must be column for merge join")
-		}
-		leftJoinKeys = append(leftJoinKeys, lKey)
-		rightJoinKeys = append(rightJoinKeys, rKey)
-	}
-	leftRowBlock := &rowBlockIterator{
-		ctx:      b.context,
-		reader:   b.leftChild,
-		filter:   b.leftFilter,
-		joinKeys: leftJoinKeys,
-	}
-
-	rightRowBlock := &rowBlockIterator{
-		ctx:      b.context,
-		reader:   b.rightChild,
-		filter:   b.rightFilter,
-		joinKeys: rightJoinKeys,
-	}
-
-	exec := &MergeJoinExec{
-		ctx:           b.context,
-		leftJoinKeys:  leftJoinKeys,
-		rightJoinKeys: rightJoinKeys,
-		leftRowBlock:  leftRowBlock,
-		rightRowBlock: rightRowBlock,
-		otherFilter:   b.otherFilter,
-		schema:        b.schema,
-		desc:          assumeSortedDesc,
-		joinType:      b.joinType,
-		isAuxMode:     b.isAuxMode,
-		isAntiMode:    b.isAntiMode,
-	}
-
-	switch b.joinType {
-	case plan.LeftOuterJoin:
-		exec.leftRowBlock.filter = nil
-		exec.leftFilter = b.leftFilter
-		exec.preserveLeft = true
-		exec.defaultRightRow = b.defaultValues
-	case plan.RightOuterJoin:
-		exec.leftRowBlock = rightRowBlock
-		exec.rightRowBlock = leftRowBlock
-		exec.leftRowBlock.filter = nil
-		exec.leftFilter = b.leftFilter
-		exec.preserveLeft = true
-		exec.defaultRightRow = b.defaultValues
-		exec.flipSide = true
-		exec.leftJoinKeys = rightJoinKeys
-		exec.rightJoinKeys = leftJoinKeys
-	case plan.InnerJoin:
-	case plan.SemiJoin:
-	case plan.LeftOuterSemiJoin:
-	default:
-		return nil, errors.Annotate(ErrBuildExecutor, "unknown join type")
-	}
-	return exec, nil
-}
 
 // rowBlockIterator represents a row block with the same join keys
 type rowBlockIterator struct {
@@ -400,9 +254,13 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 				return errors.Trace(err)
 			}
 			if !matched {
-				if (e.joinType != plan.SemiJoin && e.joinType != plan.LeftOuterSemiJoin) && e.preserveLeft {
+				switch e.joinType {
+				case plan.LeftOuterJoin, plan.RightOuterJoin:
 					// as all right join converted to left, we only output left side if no match and continue
 					e.outputJoinRow(lRow, e.defaultRightRow)
+				case plan.LeftOuterSemiJoin:
+					result := append(lRow, types.NewDatum(e.isAntiMode))
+					e.outputBuf = append(e.outputBuf, result)
 				}
 				continue
 			}
@@ -411,6 +269,9 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 		initInnerLen := len(e.outputBuf)
 		if e.joinType == plan.SemiJoin {
 			e.outputBuf = append(e.outputBuf, lRow)
+		} else if e.joinType == plan.LeftOuterSemiJoin {
+			result := append(lRow, types.NewDatum(!e.isAntiMode))
+			e.outputBuf = append(e.outputBuf, result)
 		} else {
 			for _, rRow := range e.rightRows {
 				err = e.outputFilteredJoinRow(lRow, rRow)
@@ -421,8 +282,14 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 		}
 		// Even if caught up for left filter
 		// no matching but it's outer join
-		if e.preserveLeft && initInnerLen == len(e.outputBuf) && (e.joinType != plan.SemiJoin && e.joinType != plan.LeftOuterSemiJoin) {
-			e.outputJoinRow(lRow, e.defaultRightRow)
+		if initInnerLen == len(e.outputBuf) {
+			switch e.joinType {
+			case plan.LeftOuterJoin, plan.RightOuterJoin:
+				e.outputJoinRow(lRow, e.defaultRightRow)
+			case plan.LeftOuterSemiJoin:
+				result := append(lRow, types.NewDatum(e.isAntiMode))
+				e.outputBuf = append(e.outputBuf, result)
+			}
 		}
 	}
 
