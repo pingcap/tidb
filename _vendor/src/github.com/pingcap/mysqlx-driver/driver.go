@@ -14,9 +14,12 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"net"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 )
 
-// This struct is exported to make the driver directly accessible.
+// XDriver is exported to make the driver directly accessible.
 // In general the driver is used via the database/sql package.
 type XDriver struct{}
 
@@ -36,19 +39,20 @@ func RegisterDial(net string, dial DialFunc) {
 	dials[net] = dial
 }
 
+// Open implements database driver Open()
 func (d XDriver) Open(dsn string) (driver.Conn, error) {
+	log.Infof("Opening dsn: %s", dsn)
 	var err error
-
 	cfg, err := parseDSN(dsn)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	cfg.useXProtocol = true // force X protocol as this driver was called explicitly
 
 	// New mysqlConn
 	mc := &mysqlXConn{
-		capabilities:     NewServerCapabilities(),
-		cfg:              NewXconfigFromConfig(cfg),
+		capabilities:     newServerCapabilities(),
+		cfg:              newXconfigFromConfig(cfg),
 		maxPacketAllowed: maxPacketSize,
 		maxWriteSize:     maxPacketSize - 1,
 	}
