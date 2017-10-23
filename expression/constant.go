@@ -95,15 +95,15 @@ func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 				c.Value.SetNull()
 				return c.Value, nil
 			}
-			if c.RetType.Tp == mysql.TypeUnspecified {
-				c.RetType.Tp = mysql.TypeVarString
+			retType := types.NewFieldType(c.RetType.Tp)
+			if retType.Tp == mysql.TypeUnspecified {
+				retType.Tp = mysql.TypeVarString
 			}
-			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
+			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, retType)
 			if err != nil {
 				return c.Value, err
 			}
 			c.Value.SetValue(val.GetValue())
-			types.DefaultTypeForValue(c.Value, c.RetType)
 		}
 	}
 	return c.Value, nil
