@@ -444,11 +444,11 @@ import (
 	AlterUserStmt			"Alter user statement"
 	AnalyzeTableStmt		"Analyze table statement"
 	BeginTransactionStmt		"BEGIN TRANSACTION statement"
-	BinlogStmt          "Binlog base64 statement"
+	BinlogStmt              	"Binlog base64 statement"
 	CommitStmt			"COMMIT statement"
-	CreateTableStmt             "CREATE TABLE statement"
-	CreateViewStmt              "CREATE VIEW  stetement"
-	CreateUserStmt              "CREATE User statement"
+	CreateTableStmt             	"CREATE TABLE statement"
+	CreateViewStmt              	"CREATE VIEW  stetement"
+	CreateUserStmt              	"CREATE User statement"
 	CreateDatabaseStmt		"Create Database Statement"
 	CreateIndexStmt			"CREATE INDEX statement"
 	DoStmt				"Do statement"
@@ -577,7 +577,7 @@ import (
 	OptFull				"Full or empty"
 	Order				"ORDER BY clause optional collation specification"
 	OrderBy				"ORDER BY clause"
-	OrReplace               "OR REPLACE"
+	OrReplace               	"OR REPLACE"
 	ByItem				"BY item"
 	OrderByOptional			"Optional ORDER BY clause optional"
 	ByList				"BY list"
@@ -2151,7 +2151,7 @@ Field:
 		if asName != ""{
 		    startOffset := parser.startOffset(&yyS[yypt-1])
 		    endOffset := parser.endOffset(&yyS[yypt])
-                expr.SetText(parser.src[startOffset:endOffset])
+                    expr.SetText(parser.src[startOffset:endOffset])
 		}
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
@@ -3725,7 +3725,7 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-3].offset-1
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
-                lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
+                	lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 		if $5 != nil {
 			st.Where = $5.(ast.ExprNode)
@@ -3755,7 +3755,7 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-7])
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
-                lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
+                	lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 
 		if $6 != nil {
@@ -4860,8 +4860,8 @@ Statement:
 |	ExplainStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
-|   CreateTableStmt
-|   CreateViewStmt
+|   	CreateTableStmt
+|   	CreateViewStmt
 |	CreateUserStmt
 |	DoStmt
 |	DropDatabaseStmt
