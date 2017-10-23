@@ -83,6 +83,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
+			var err error
+			alloc, err = b.getAllocatorAfterRenameTable(m, diff.OldSchemaID, diff.SchemaID, diff.TableID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			b.applyDropTable(oldRoDBInfo, oldTableID)
 		} else {
 			b.applyDropTable(roDBInfo, oldTableID)
@@ -96,6 +101,19 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 	}
 	return tblIDs, nil
+}
+
+func (b *Builder) getAllocatorAfterRenameTable(m *meta.Meta, oldSchemaID, newSchemaID, tableID int64) (autoid.Allocator, error) {
+	id, err := m.GetAutoTableID(oldSchemaID, tableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	alloc := autoid.NewAllocator(b.handle.store, newSchemaID)
+	err = alloc.Rebase(tableID, id, true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return alloc, nil
 }
 
 // copySortedTables copies sortedTables for old table and new table for later modification.
@@ -162,9 +180,6 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	}
 	if alloc == nil {
 		schemaID := roDBInfo.ID
-		if tblInfo.OldSchemaID != 0 {
-			schemaID = tblInfo.OldSchemaID
-		}
 		alloc = autoid.NewAllocator(b.handle.store, schemaID)
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
@@ -267,9 +282,6 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
 		schemaID := di.ID
-		if t.OldSchemaID != 0 {
-			schemaID = t.OldSchemaID
-		}
 		alloc := autoid.NewAllocator(b.handle.store, schemaID)
 		var tbl table.Table
 		tbl, err := tables.TableFromMeta(alloc, t)
