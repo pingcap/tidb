@@ -209,7 +209,7 @@ type builtinCaseWhenIntSig struct {
 
 // evalInt evals a builtinCaseWhenIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, err error) {
+func (b *builtinCaseWhenIntSig) evalInt(row types.Row) (ret int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -240,7 +240,7 @@ type builtinCaseWhenRealSig struct {
 
 // evalReal evals a builtinCaseWhenRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (ret float64, isNull bool, err error) {
+func (b *builtinCaseWhenRealSig) evalReal(row types.Row) (ret float64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -271,7 +271,7 @@ type builtinCaseWhenDecimalSig struct {
 
 // evalDecimal evals a builtinCaseWhenDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCaseWhenDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -302,7 +302,7 @@ type builtinCaseWhenStringSig struct {
 
 // evalString evals a builtinCaseWhenStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (ret string, isNull bool, err error) {
+func (b *builtinCaseWhenStringSig) evalString(row types.Row) (ret string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -333,7 +333,7 @@ type builtinCaseWhenTimeSig struct {
 
 // evalTime evals a builtinCaseWhenTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull bool, err error) {
+func (b *builtinCaseWhenTimeSig) evalTime(row types.Row) (ret types.Time, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -364,7 +364,7 @@ type builtinCaseWhenDurationSig struct {
 
 // evalDuration evals a builtinCaseWhenDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenDurationSig) evalDuration(row []types.Datum) (ret types.Duration, isNull bool, err error) {
+func (b *builtinCaseWhenDurationSig) evalDuration(row types.Row) (ret types.Duration, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -432,7 +432,7 @@ type builtinIfIntSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, err error) {
+func (b *builtinIfIntSig) evalInt(row types.Row) (ret int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -450,7 +450,7 @@ type builtinIfRealSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfRealSig) evalReal(row []types.Datum) (ret float64, isNull bool, err error) {
+func (b *builtinIfRealSig) evalReal(row types.Row) (ret float64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -468,7 +468,7 @@ type builtinIfDecimalSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecimal, isNull bool, err error) {
+func (b *builtinIfDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -486,7 +486,7 @@ type builtinIfStringSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfStringSig) evalString(row []types.Datum) (ret string, isNull bool, err error) {
+func (b *builtinIfStringSig) evalString(row types.Row) (ret string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -504,7 +504,7 @@ type builtinIfTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull bool, err error) {
+func (b *builtinIfTimeSig) evalTime(row types.Row) (ret types.Time, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -522,7 +522,7 @@ type builtinIfDurationSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Duration, isNull bool, err error) {
+func (b *builtinIfDurationSig) evalDuration(row types.Row) (ret types.Duration, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -540,7 +540,7 @@ type builtinIfJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfJSONSig) evalJSON(row []types.Datum) (ret json.JSON, isNull bool, err error) {
+func (b *builtinIfJSONSig) evalJSON(row types.Row) (ret json.JSON, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -612,7 +612,7 @@ type builtinIfNullIntSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinIfNullIntSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
 	if !isNull || err != nil {
@@ -626,7 +626,7 @@ type builtinIfNullRealSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (b *builtinIfNullRealSig) evalReal(row types.Row) (float64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalReal(row, sc)
 	if !isNull || err != nil {
@@ -640,7 +640,7 @@ type builtinIfNullDecimalSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *builtinIfNullDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalDecimal(row, sc)
 	if !isNull || err != nil {
@@ -654,7 +654,7 @@ type builtinIfNullStringSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, error) {
+func (b *builtinIfNullStringSig) evalString(row types.Row) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalString(row, sc)
 	if !isNull || err != nil {
@@ -668,7 +668,7 @@ type builtinIfNullTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfNullTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinIfNullTimeSig) evalTime(row types.Row) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalTime(row, sc)
 	if !isNull || err != nil {
@@ -682,7 +682,7 @@ type builtinIfNullDurationSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+func (b *builtinIfNullDurationSig) evalDuration(row types.Row) (types.Duration, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalDuration(row, sc)
 	if !isNull || err != nil {
@@ -696,7 +696,7 @@ type builtinIfNullJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfNullJSONSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+func (b *builtinIfNullJSONSig) evalJSON(row types.Row) (json.JSON, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalJSON(row, sc)
 	if !isNull {
