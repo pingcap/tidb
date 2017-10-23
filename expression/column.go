@@ -194,12 +194,12 @@ func (col *Column) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (col *Column) Eval(row types.Row) (types.Datum, error) {
-	return row.(types.DatumnRow)[col.Index], nil
+	return row.(types.DatumRow)[col.Index], nil
 }
 
 // EvalInt returns int representation of Column.
 func (col *Column) EvalInt(row types.Row, sc *variable.StatementContext) (int64, bool, error) {
-	val := &row.(types.DatumnRow)[col.Index]
+	val := &row.(types.DatumRow)[col.Index]
 	if val.IsNull() {
 		return 0, true, nil
 	}
@@ -212,7 +212,7 @@ func (col *Column) EvalInt(row types.Row, sc *variable.StatementContext) (int64,
 
 // EvalReal returns real representation of Column.
 func (col *Column) EvalReal(row types.Row, sc *variable.StatementContext) (float64, bool, error) {
-	val := &row.(types.DatumnRow)[col.Index]
+	val := &row.(types.DatumRow)[col.Index]
 	if val.IsNull() {
 		return 0, true, nil
 	}
@@ -225,7 +225,7 @@ func (col *Column) EvalReal(row types.Row, sc *variable.StatementContext) (float
 
 // EvalString returns string representation of Column.
 func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (string, bool, error) {
-	val := &row.(types.DatumnRow)[col.Index]
+	val := &row.(types.DatumRow)[col.Index]
 	if val.IsNull() {
 		return "", true, nil
 	}
@@ -235,7 +235,7 @@ func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (str
 
 // EvalDecimal returns decimal representation of Column.
 func (col *Column) EvalDecimal(row types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	val := &row.(types.DatumnRow)[col.Index]
+	val := &row.(types.DatumRow)[col.Index]
 	if val.IsNull() {
 		return nil, true, nil
 	}

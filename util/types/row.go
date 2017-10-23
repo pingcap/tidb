@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@ type Row interface {
 
 	// GetUint64 returns the uint64 value and isNull with the colIdx.
 	GetUint64(colIdx int) (val uint64, isNull bool)
-	//
-	// GetFloat32 returns the float64 value and isNull with the colIdx.
+
+	// GetFloat32 returns the float32 value and isNull with the colIdx.
 	GetFloat32(colIdx int) (float32, bool)
 
 	// GetFloat64 returns the float64 value and isNull with the colIdx.
@@ -55,13 +55,13 @@ type Row interface {
 	GetJSON(colIdx int) (json.JSON, bool)
 }
 
-var _ Row = DatumnRow{}
+var _ Row = DatumRow{}
 
-// DatumnRow is a slice of Datum, implements Row interface.
-type DatumnRow []Datum
+// DatumRow is a slice of Datum, implements Row interface.
+type DatumRow []Datum
 
 // GetInt64 implements Row interface.
-func (dr DatumnRow) GetInt64(colIdx int) (int64, bool) {
+func (dr DatumRow) GetInt64(colIdx int) (int64, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return 0, true
@@ -70,7 +70,7 @@ func (dr DatumnRow) GetInt64(colIdx int) (int64, bool) {
 }
 
 // GetUint64 implements Row interface.
-func (dr DatumnRow) GetUint64(colIdx int) (uint64, bool) {
+func (dr DatumRow) GetUint64(colIdx int) (uint64, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return 0, true
@@ -79,7 +79,7 @@ func (dr DatumnRow) GetUint64(colIdx int) (uint64, bool) {
 }
 
 // GetFloat32 implements Row interface.
-func (dr DatumnRow) GetFloat32(colIdx int) (float32, bool) {
+func (dr DatumRow) GetFloat32(colIdx int) (float32, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return 0, true
@@ -88,7 +88,7 @@ func (dr DatumnRow) GetFloat32(colIdx int) (float32, bool) {
 }
 
 // GetFloat64 implements Row interface.
-func (dr DatumnRow) GetFloat64(colIdx int) (float64, bool) {
+func (dr DatumRow) GetFloat64(colIdx int) (float64, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return 0, true
@@ -97,7 +97,7 @@ func (dr DatumnRow) GetFloat64(colIdx int) (float64, bool) {
 }
 
 // GetString implements Row interface.
-func (dr DatumnRow) GetString(colIdx int) (string, bool) {
+func (dr DatumRow) GetString(colIdx int) (string, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return "", true
@@ -106,7 +106,7 @@ func (dr DatumnRow) GetString(colIdx int) (string, bool) {
 }
 
 // GetBytes implements Row interface.
-func (dr DatumnRow) GetBytes(colIdx int) ([]byte, bool) {
+func (dr DatumRow) GetBytes(colIdx int) ([]byte, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return nil, true
@@ -115,7 +115,7 @@ func (dr DatumnRow) GetBytes(colIdx int) ([]byte, bool) {
 }
 
 // GetTime implements Row interface.
-func (dr DatumnRow) GetTime(colIdx int) (Time, bool) {
+func (dr DatumRow) GetTime(colIdx int) (Time, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return Time{}, true
@@ -124,7 +124,7 @@ func (dr DatumnRow) GetTime(colIdx int) (Time, bool) {
 }
 
 // GetDuration implements Row interface.
-func (dr DatumnRow) GetDuration(colIdx int) (Duration, bool) {
+func (dr DatumRow) GetDuration(colIdx int) (Duration, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return Duration{}, true
@@ -133,7 +133,7 @@ func (dr DatumnRow) GetDuration(colIdx int) (Duration, bool) {
 }
 
 // GetEnum implements Row interface.
-func (dr DatumnRow) GetEnum(colIdx int) (Enum, bool) {
+func (dr DatumRow) GetEnum(colIdx int) (Enum, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return Enum{}, true
@@ -142,7 +142,7 @@ func (dr DatumnRow) GetEnum(colIdx int) (Enum, bool) {
 }
 
 // GetSet implements Row interface.
-func (dr DatumnRow) GetSet(colIdx int) (Set, bool) {
+func (dr DatumRow) GetSet(colIdx int) (Set, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return Set{}, true
@@ -151,7 +151,7 @@ func (dr DatumnRow) GetSet(colIdx int) (Set, bool) {
 }
 
 // GetMyDecimal implements Row interface.
-func (dr DatumnRow) GetMyDecimal(colIdx int) (*MyDecimal, bool) {
+func (dr DatumRow) GetMyDecimal(colIdx int) (*MyDecimal, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return nil, true
@@ -160,7 +160,7 @@ func (dr DatumnRow) GetMyDecimal(colIdx int) (*MyDecimal, bool) {
 }
 
 // GetJSON implements Row interface.
-func (dr DatumnRow) GetJSON(colIdx int) (json.JSON, bool) {
+func (dr DatumRow) GetJSON(colIdx int) (json.JSON, bool) {
 	datum := dr[colIdx]
 	if datum.IsNull() {
 		return json.JSON{}, true
