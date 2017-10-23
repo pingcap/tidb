@@ -2154,11 +2154,11 @@ Field:
 	{
 		expr := $1
 		asName := $2.(string)
-		if asName != ""{
+		if asName != "" {
         		    startOffset := parser.startOffset(&yyS[yypt-1])
         		    endOffset := parser.endOffset(&yyS[yypt])
         		    expr.SetText(parser.src[startOffset:endOffset])
-        		}
+        }
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
 
