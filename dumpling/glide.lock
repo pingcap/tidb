@@ -1,5 +1,5 @@
-hash: 2f02661c367cf0712f223a57569749eaebaa6c910c45f049e022bb02105ed3dc
-updated: 2017-10-19T20:32:33.517492371+08:00
+hash: 8d417eb10577464722137ba91ba0d045cccf47b81f9ea4f21d9e133410f3cf46
+updated: 2017-10-23T20:08:13.880281979+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -124,7 +124,7 @@ imports:
 - name: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - name: github.com/pingcap/goleveldb
-  version: 1c7b975bc41078e959e38e2ecbfd28a9619fc77a
+  version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
   - leveldb
   - leveldb/cache
@@ -158,7 +158,7 @@ imports:
   - pd-client
   - pkg/logutil
 - name: github.com/pingcap/tipb
-  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
+  version: eccd39c3992538c382a6351430a77233f42b1344
   subpackages:
   - go-binlog
   - go-mysqlx
