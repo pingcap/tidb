@@ -26,7 +26,6 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tipb/go-binlog"
