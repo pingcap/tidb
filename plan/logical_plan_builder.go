@@ -59,7 +59,7 @@ func (p *LogicalAggregation) collectGroupByColumns() {
 	}
 }
 
-func (b *logicalPlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
+func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 
@@ -111,7 +111,7 @@ func (b *logicalPlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.
 	return agg, aggIndexMap
 }
 
-func (b *logicalPlanBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
+func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildJoin(x)
@@ -219,7 +219,7 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 	return nil
 }
 
-func (b *logicalPlanBuilder) buildJoin(join *ast.Join) LogicalPlan {
+func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
 	}
@@ -302,7 +302,7 @@ func (b *logicalPlanBuilder) buildJoin(join *ast.Join) LogicalPlan {
 // First, coalesced common columns of the two joined tables, in the order in which they occur in the first table.
 // Second, columns unique to the first table, in order in which they occur in that table.
 // Third, columns unique to the second table, in order in which they occur in that table.
-func (b *logicalPlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
 	filter := make(map[string]bool, len(join.Using))
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
@@ -316,12 +316,12 @@ func (b *logicalPlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPla
 // 	All the common columns
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
-func (b *logicalPlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+func (b *planBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
 	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, nil)
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
-func (b *logicalPlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
+func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
 	lColumns, rColumns := lsc.Columns, rsc.Columns
@@ -387,7 +387,7 @@ func (b *logicalPlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rig
 	return nil
 }
 
-func (b *logicalPlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
+func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
@@ -414,7 +414,7 @@ func (b *logicalPlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, A
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
-func (b *logicalPlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, tblName, origTblName, dbName model.CIStr) {
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, tblName, origTblName, dbName model.CIStr) {
 	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
 		colName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
 	}
@@ -431,7 +431,7 @@ func (b *logicalPlanBuilder) buildProjectionFieldNameFromColumns(field *ast.Sele
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *logicalPlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) model.CIStr {
+func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) model.CIStr {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
@@ -472,7 +472,7 @@ func (b *logicalPlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.
-func (b *logicalPlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
+func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var origTblName, tblName, colName, dbName model.CIStr
 	if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
 		// Field is a column reference.
@@ -496,7 +496,7 @@ func (b *logicalPlanBuilder) buildProjectionField(id, position int, field *ast.S
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
-func (b *logicalPlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
+func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
 	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
@@ -522,7 +522,7 @@ func (b *logicalPlanBuilder) buildProjection(p LogicalPlan, fields []*ast.Select
 	return proj, oldLen
 }
 
-func (b *logicalPlanBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
+func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := LogicalAggregation{
@@ -550,7 +550,7 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
-func (b *logicalPlanBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
+func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := Union{}.init(b.allocator, b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
@@ -632,7 +632,7 @@ func (by *ByItems) Clone() *ByItems {
 	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
 }
 
-func (b *logicalPlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
+func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	sort := Sort{}.init(b.allocator, b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
@@ -668,7 +668,7 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 	return 0, errors.Errorf("Invalid type %T for Limit/Offset", val)
 }
 
-func (b *logicalPlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
+func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
 	if UseDAGPlanBuilder(b.ctx) {
 		b.optFlag = b.optFlag | flagPushDownTopN
 	}
@@ -886,7 +886,7 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 // resolveHavingAndOrderBy will process aggregate functions and resolve the columns that don't exist in select fields.
 // If we found some columns that are not in select fields, we will append it to select fields and update the colMapper.
 // When we rewrite the order by / having expression, we will find column in map at first.
-func (b *logicalPlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
+func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
 	extractor := &havingAndOrderbyExprResolver{
 		p:            p,
@@ -926,7 +926,7 @@ func (b *logicalPlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p Logi
 	return havingAggMapper, extractor.aggMapper
 }
 
-func (b *logicalPlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
+func (b *planBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
@@ -989,7 +989,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-func (b *logicalPlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression) {
+func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression) {
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{fields: fields, schema: p.Schema()}
 	for _, item := range gby.Items {
@@ -1011,7 +1011,7 @@ func (b *logicalPlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClau
 	return p, exprs
 }
 
-func (b *logicalPlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField) {
+func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField) {
 	for i, field := range selectFields {
 		if field.WildCard == nil {
 			resultList = append(resultList, field)
@@ -1043,7 +1043,7 @@ func (b *logicalPlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.S
 	return
 }
 
-func (b *logicalPlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
+func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	var sortMergeTables, INLJTables []model.CIStr
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -1065,19 +1065,19 @@ func (b *logicalPlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) boo
 	return false
 }
 
-func (b *logicalPlanBuilder) popTableHints() {
+func (b *planBuilder) popTableHints() {
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
 
 // TableHints returns the *tableHintInfo of PlanBuilder.
-func (b *logicalPlanBuilder) TableHints() *tableHintInfo {
+func (b *planBuilder) TableHints() *tableHintInfo {
 	if b.tableHintInfo == nil || len(b.tableHintInfo) == 0 {
 		return nil
 	}
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
-func (b *logicalPlanBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
+func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.TableHints != nil {
 		// table hints without query block support only visible in current SELECT
 		if b.pushTableHints(sel.TableHints) {
@@ -1189,13 +1189,13 @@ func (b *logicalPlanBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	return p
 }
 
-func (b *logicalPlanBuilder) buildTableDual() LogicalPlan {
+func (b *planBuilder) buildTableDual() LogicalPlan {
 	dual := TableDual{RowCount: 1}.init(b.allocator, b.ctx)
 	dual.SetSchema(expression.NewSchema())
 	return dual
 }
 
-func (b *logicalPlanBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
+func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
 	var statisticTable *statistics.Table
 	if handle == nil {
@@ -1294,7 +1294,7 @@ func (b *logicalPlanBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 // projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
 // we add a projection on the original DataSource, and calculate those columns in the projection
 // so that plans above it can reference generated columns by their name.
-func (b *logicalPlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
+func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
 	var hasVirtualGeneratedColumn = false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
@@ -1339,7 +1339,7 @@ func (b *logicalPlanBuilder) projectVirtualColumns(ds *DataSource, columns []*ta
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
-func (b *logicalPlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
+func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
@@ -1356,7 +1356,7 @@ func (b *logicalPlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan Logical
 }
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
-func (b *logicalPlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) LogicalPlan {
+func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
@@ -1370,7 +1370,7 @@ func (b *logicalPlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, co
 	return ap
 }
 
-func (b *logicalPlanBuilder) buildExists(p LogicalPlan) LogicalPlan {
+func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
 out:
 	for {
 		switch plan := p.(type) {
@@ -1400,14 +1400,14 @@ out:
 	return exists
 }
 
-func (b *logicalPlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
+func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow := MaxOneRow{}.init(b.allocator, b.ctx)
 	setParentAndChildren(maxOneRow, p)
 	maxOneRow.SetSchema(p.Schema().Clone())
 	return maxOneRow
 }
 
-func (b *logicalPlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) *LogicalJoin {
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) *LogicalJoin {
 	joinPlan := LogicalJoin{}.init(b.allocator, b.ctx)
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
@@ -1432,7 +1432,7 @@ func (b *logicalPlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onC
 	return joinPlan
 }
 
-func (b *logicalPlanBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
+func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	b.inUpdateStmt = true
 	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
@@ -1484,7 +1484,7 @@ func (b *logicalPlanBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	return updt
 }
 
-func (b *logicalPlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
 	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
@@ -1594,7 +1594,7 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 	}
 }
 
-func (b *logicalPlanBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)

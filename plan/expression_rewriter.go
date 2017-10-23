@@ -39,7 +39,7 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	if val, ok := expr.(*ast.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	b := &logicalPlanBuilder{
+	b := &planBuilder{
 		ctx:       ctx,
 		allocator: new(idAllocator),
 		colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -58,7 +58,7 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
-func (b *logicalPlanBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
+func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
 	expression.Expression, LogicalPlan, error) {
 	return b.rewriteWithPreprocess(expr, p, aggMapper, asScalar, nil)
 }
@@ -66,7 +66,7 @@ func (b *logicalPlanBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
-func (b *logicalPlanBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (
+func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (
 	expression.Expression, LogicalPlan, error) {
 	er := &expressionRewriter{
 		p:          p,
@@ -102,7 +102,7 @@ type expressionRewriter struct {
 	schema   *expression.Schema
 	err      error
 	aggrMap  map[*ast.AggregateFuncExpr]int
-	b        *logicalPlanBuilder
+	b        *planBuilder
 	ctx      context.Context
 	// asScalar means the return value must be a scalar value.
 	asScalar bool

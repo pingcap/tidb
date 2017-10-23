@@ -77,7 +77,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -186,7 +186,7 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -313,7 +313,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -539,7 +539,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -664,7 +664,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
@@ -767,7 +767,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -823,7 +823,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -927,7 +927,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -1004,7 +1004,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 			handle.UpdateTableStats([]*statistics.Table{statsTbl}, nil)
 		}
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       ctx,
 			colMapper: make(map[*ast.ColumnNameExpr]int),

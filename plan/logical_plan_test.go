@@ -569,7 +569,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
@@ -687,7 +687,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -742,7 +742,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -847,7 +847,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -986,7 +986,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
@@ -1149,7 +1149,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		c.Assert(err, IsNil, comment)
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -1254,7 +1254,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
@@ -1304,7 +1304,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
@@ -1469,7 +1469,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
@@ -1641,7 +1641,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &logicalPlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
