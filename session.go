@@ -209,7 +209,7 @@ func (s *session) SetCollation(coID int) error {
 	return nil
 }
 
-func (s *session) PlanCache() *kvcache.SimpleLRUCache {
+func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
 	return s.preparedPlanCache
 }
 
@@ -1071,6 +1071,9 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+	}
+	if cache.PreparedPlanCacheEnabled {
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(cache.PreparedPlanCacheCapacity)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, dom)

@@ -92,7 +92,7 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 	)
 	d, err := con.Eval(nil)
 	if err != nil {
-		log.Errorf("Fail to eval expression, err: %s", err.Error())
+		log.Errorf("Fail to eval constant, err: %s", err.Error())
 		return nil
 	}
 

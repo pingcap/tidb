@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -59,6 +60,7 @@ func (c *Constant) String() string {
 	if c.DeferredExpr != nil {
 		dt, err := c.Eval(nil)
 		if err != nil {
+			log.Errorf("Fail to eval constant, err: %s", err.Error())
 			return ""
 		}
 		c.Value.SetValue(dt.GetValue())

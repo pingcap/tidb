@@ -31,16 +31,15 @@ var _ context.Context = (*Context)(nil)
 
 // Context represents mocked context.Context.
 type Context struct {
-	values       map[fmt.Stringer]interface{}
-	txn          kv.Transaction // mock global variable
-	Store        kv.Storage     // mock global variable
-	sessionVars  *variable.SessionVars
-	mux          sync.Mutex // fix data race in ddl test.
-	ctx          goctx.Context
-	cancel       goctx.CancelFunc
-	sm           util.SessionManager
-	pcache       *kvcache.SimpleLRUCache
-	enablePCache bool
+	values      map[fmt.Stringer]interface{}
+	txn         kv.Transaction // mock global variable
+	Store       kv.Storage     // mock global variable
+	sessionVars *variable.SessionVars
+	mux         sync.Mutex // fix data race in ddl test.
+	ctx         goctx.Context
+	cancel      goctx.CancelFunc
+	sm          util.SessionManager
+	pcache      *kvcache.SimpleLRUCache
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -96,8 +95,8 @@ func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string
 	return nil
 }
 
-// PlanCache implements the context.Context interface.
-func (c *Context) PlanCache() *kvcache.SimpleLRUCache {
+// PreparedPlanCache implements the context.Context interface.
+func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
 	return c.pcache
 }
 
@@ -184,10 +183,9 @@ func (c *Context) GoCtx() goctx.Context {
 func NewContext() *Context {
 	ctx, cancel := goctx.WithCancel(goctx.Background())
 	return &Context{
-		values:       make(map[fmt.Stringer]interface{}),
-		sessionVars:  variable.NewSessionVars(),
-		ctx:          ctx,
-		cancel:       cancel,
-		enablePCache: true,
+		values:      make(map[fmt.Stringer]interface{}),
+		sessionVars: variable.NewSessionVars(),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }

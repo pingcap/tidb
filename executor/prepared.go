@@ -294,7 +294,7 @@ func (e *ExecuteExec) getPhysicalPlan(ctx context.Context, is infoschema.InfoSch
 	sessionVars.StmtCtx.UseCache = useCache
 	if useCache {
 		cacheKey = cache.NewPSTMTPlanCacheKey(sessionVars, pstmtID, schemaVer)
-		if cacheValue, exists := ctx.PlanCache().Get(cacheKey); exists {
+		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
 			return cacheValue.(*cache.PSTMTPlanCacheValue).Plan, nil
 		}
 	}
@@ -303,7 +303,7 @@ func (e *ExecuteExec) getPhysicalPlan(ctx context.Context, is infoschema.InfoSch
 		return nil, errors.Trace(err)
 	}
 	if useCache {
-		ctx.PlanCache().Put(cacheKey, cache.NewPSTMTPlanCacheValue(p))
+		ctx.PreparedPlanCache().Put(cacheKey, cache.NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
 }

@@ -68,8 +68,8 @@ type Context interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
-	// Plan returns the cache of the physical plan
-	PlanCache() *kvcache.SimpleLRUCache
+	// PreparedPlanCache returns the cache of the physical plan
+	PreparedPlanCache() *kvcache.SimpleLRUCache
 }
 
 type basicCtxType int
