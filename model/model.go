@@ -94,15 +94,17 @@ type TableInfo struct {
 	Charset string `json:"charset"`
 	Collate string `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
-	Columns     []*ColumnInfo `json:"cols"`
-	Indices     []*IndexInfo  `json:"index_info"`
-	ForeignKeys []*FKInfo     `json:"fk_info"`
-	State       SchemaState   `json:"state"`
-	PKIsHandle  bool          `json:"pk_is_handle"`
-	Comment     string        `json:"comment"`
-	AutoIncID   int64         `json:"auto_inc_id"`
-	MaxColumnID int64         `json:"max_col_id"`
-	MaxIndexID  int64         `json:"max_idx_id"`
+	Columns         []*ColumnInfo `json:"cols"`
+	Indices         []*IndexInfo  `json:"index_info"`
+	ForeignKeys     []*FKInfo     `json:"fk_info"`
+	State           SchemaState   `json:"state"`
+	PKIsHandle      bool          `json:"pk_is_handle"`
+	Comment         string        `json:"comment"`
+	AutoIncID       int64         `json:"auto_inc_id"`
+	MaxColumnID     int64         `json:"max_col_id"`
+	MaxIndexID      int64         `json:"max_idx_id"`
+	ViewSelectStmt  string        `json:"view_select_stmt"`
+	ViewSelectField []string      `json:"view_select_field"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged

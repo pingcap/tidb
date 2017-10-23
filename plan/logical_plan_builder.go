@@ -1216,6 +1216,32 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	tableInfo := tbl.Meta()
 
+	if tableInfo.ViewSelectStmt != "" {
+		FieldMap := make(map[string]model.CIStr)
+		for i, col := range tableInfo.Columns {
+			FieldMap[strings.ToLower(tableInfo.ViewSelectField[i])] = col.Name
+		}
+
+		charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+		stmts, err := parser.New().Parse(tableInfo.ViewSelectStmt, charset, collation)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		selectStmt := stmts[0].(*ast.SelectStmt)
+		if err := Preprocess(selectStmt, b.is, b.ctx); err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		p := b.buildSelect(selectStmt)
+		cols := p.Schema().Columns
+		for _, col := range cols {
+			col.ColName = FieldMap[col.ColName.L]
+			col.TblName = tableInfo.Name
+		}
+		return p
+	}
+
 	p := DataSource{
 		indexHints:     tn.IndexHints,
 		tableInfo:      tableInfo,

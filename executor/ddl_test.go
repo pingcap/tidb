@@ -260,3 +260,85 @@ func (s *testSuite) TestUnsupportedCharset(c *C) {
 	}
 	tk.MustExec("drop database " + dbName)
 }
+
+func (s *testSuite) TestCreateView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	//create an source table
+	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+
+	//test create a exist view
+	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
+	c.Assert(err, NotNil)
+
+	//create view on nonexistent table
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
+	c.Assert(err, NotNil)
+
+	//simple view
+	tk.MustExec("create table t1 (a int ,b int)")
+	tk.MustExec("insert into t1 values (1,2);")
+	//view with colList and SelectFieldExpr
+	_, err = tk.Exec("create view v1 (c) as select b+1 from t1")
+	c.Assert(err, IsNil)
+	//view with SelectFieldExpr
+	_, err = tk.Exec("create view v2 as select b+1 from t1")
+	c.Assert(err, IsNil)
+	//view with SelectFieldExpr and AsName
+	_, err = tk.Exec("create view v3 as select b+1 as c from t1")
+	c.Assert(err, IsNil)
+	//view with colList , SelectField and AsName
+	_, err = tk.Exec("create view v4 (c) as select b+1 as d from t1")
+	c.Assert(err, IsNil)
+
+	tk.MustQuery("select c from v1").Check(testkit.Rows("3"))
+	tk.MustQuery("select `b+1` from v2").Check(testkit.Rows("3"))
+	tk.MustQuery("select c from v3").Check(testkit.Rows("3"))
+	tk.MustQuery("select c from v4").Check(testkit.Rows("3"))
+	//check that created view works
+	tk.MustQuery("select * from v1").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from v2").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from v3").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from v4").Check(testkit.Rows("3"))
+
+	//try to use fields from underlying table
+	_, err = tk.Exec("select a from v1")
+	c.Assert(err, NotNil)
+
+	//drop views
+	tk.MustExec("drop view v1,v2,v3,v4")
+	tk.MustExec("drop table t1")
+
+	//outer left join with views
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+
+	tk.MustExec("create view v1 (a) as select a+1 from t1")
+	tk.MustExec("create view v2 (a) as select a-1 from t1")
+	tk.MustQuery("select * from t1 natural left join v1 order by a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from v2 natural left join t1 order by a").Check(testkit.Rows("0", "1", "2"))
+
+	tk.MustExec("drop view v1,v2")
+	tk.MustExec("drop table t1")
+
+	//DISTINCT option for VIEW
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("insert into t1 values (1), (2), (3), (1), (2), (3)")
+	tk.MustExec("create view v1 as select distinct a from t1")
+	tk.MustQuery("select * from v1").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop view v1")
+	tk.MustExec("drop table t1")
+
+	//view with variable
+	tk.MustExec("create table t1 (a int ,b int)")
+	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
+
+	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop table t1")
+}

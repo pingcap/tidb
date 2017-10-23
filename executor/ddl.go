@@ -56,6 +56,8 @@ func (e *DDLExec) Next() (Row, error) {
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
+	case *ast.CreateViewStmt:
+		err = e.executeCreateView(x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -64,6 +66,8 @@ func (e *DDLExec) Next() (Row, error) {
 		err = e.executeDropTable(x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
+	case *ast.DropViewStmt:
+		err = e.executeDropView(x)
 	case *ast.AlterTableStmt:
 		err = e.executeAlterTable(x)
 	case *ast.RenameTableStmt:
@@ -152,6 +156,41 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	return errors.Trace(err)
 }
 
+func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
+	ident := ast.Ident{Schema: s.View.Schema, Name: s.View.Name}
+	var selectFields []string
+	selectstmt := s.Select.(*ast.SelectStmt)
+	fields := selectstmt.Fields.Fields
+	for _, field := range fields {
+		if field.AsName.O == "" {
+			selectFields = append(selectFields, field.Expr.Text())
+		} else {
+			selectFields = append(selectFields, field.AsName.O)
+		}
+	}
+
+	if s.Cols == nil {
+		for _, field := range fields {
+			if field.AsName.O != "" {
+				s.Cols = append(s.Cols, &ast.ColumnName{
+					Name: field.AsName,
+				})
+			} else {
+				s.Cols = append(s.Cols, &ast.ColumnName{
+					Name: model.NewCIStr(field.Expr.Text()),
+				})
+			}
+		}
+	}
+
+	var err error
+	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFields, s.SelectText)
+	if infoschema.ErrTableExists.Equal(err) {
+		return err
+	}
+	return errors.Trace(err)
+}
+
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := sessionctx.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.Unique, model.NewCIStr(s.IndexName), s.IndexColNames, s.IndexOption)
@@ -186,6 +225,38 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 	var notExistTables []string
 	for _, tn := range s.Tables {
+		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
+		_, ok := e.is.SchemaByName(tn.Schema)
+		if !ok {
+			// TODO: we should return special error for table not exist, checking "not exist" is not enough,
+			// because some other errors may contain this error string too.
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		}
+		_, err := e.is.TableByName(tn.Schema, tn.Name)
+		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		} else if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = sessionctx.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			notExistTables = append(notExistTables, fullti.String())
+		} else if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if len(notExistTables) > 0 && !s.IfExists {
+		return infoschema.ErrTableDropExists.GenByArgs(strings.Join(notExistTables, ","))
+	}
+	return nil
+}
+
+func (e *DDLExec) executeDropView(s *ast.DropViewStmt) error {
+	var notExistTables []string
+	for _, tn := range s.Views {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		_, ok := e.is.SchemaByName(tn.Schema)
 		if !ok {

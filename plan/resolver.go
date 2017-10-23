@@ -195,6 +195,9 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 	case *ast.CreateTableStmt:
 		nr.pushContext()
 		nr.currentContext().inCreateOrDropTable = true
+	case *ast.CreateViewStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
 	case *ast.ColumnOption:
 		nr.currentContext().inColumnOption = true
 	case *ast.DeleteStmt:
@@ -208,6 +211,9 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inCreateOrDropTable = true
 	case *ast.DropIndexStmt:
 		nr.pushContext()
+	case *ast.DropViewStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
 	case *ast.FieldList:
 		nr.currentContext().inFieldList = true
 	case *ast.GroupByClause:
@@ -277,6 +283,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.popContext()
 	case *ast.CreateTableStmt:
 		nr.popContext()
+	case *ast.CreateViewStmt:
+		nr.popContext()
 	case *ast.ColumnOption:
 		nr.currentContext().inColumnOption = false
 	case *ast.DeleteTableList:
@@ -286,6 +294,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.DropIndexStmt:
 		nr.popContext()
 	case *ast.DropTableStmt:
+		nr.popContext()
+	case *ast.DropViewStmt:
 		nr.popContext()
 	case *ast.TableSource:
 		nr.handleTableSource(v)
