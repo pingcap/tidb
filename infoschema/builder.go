@@ -73,7 +73,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var alloc autoid.Allocator
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
 		if diff.Type == model.ActionRenameTable {
@@ -82,11 +82,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				return nil, ErrDatabaseNotExists.GenByArgs(
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
-			}
-			var err error
-			alloc, err = b.getAllocatorAfterRenameTable(m, diff.OldSchemaID, diff.SchemaID, diff.TableID)
-			if err != nil {
-				return nil, errors.Trace(err)
 			}
 			b.applyDropTable(oldRoDBInfo, oldTableID)
 		} else {
@@ -101,19 +96,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 	}
 	return tblIDs, nil
-}
-
-func (b *Builder) getAllocatorAfterRenameTable(m *meta.Meta, oldSchemaID, newSchemaID, tableID int64) (autoid.Allocator, error) {
-	id, err := m.GetAutoTableID(oldSchemaID, tableID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	alloc := autoid.NewAllocator(b.handle.store, newSchemaID)
-	err = alloc.Rebase(tableID, id, true)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return alloc, nil
 }
 
 // copySortedTables copies sortedTables for old table and new table for later modification.
