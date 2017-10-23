@@ -454,6 +454,7 @@ import (
 	BinlogStmt			"Binlog base64 statement"
 	CommitStmt			"COMMIT statement"
 	CreateTableStmt			"CREATE TABLE statement"
+	CreateViewStmt              	"CREATE VIEW  stetement"
 	CreateUserStmt			"CREATE User statement"
 	CreateDatabaseStmt		"Create Database Statement"
 	CreateIndexStmt			"CREATE INDEX statement"
@@ -583,6 +584,7 @@ import (
 	OptFull				"Full or empty"
 	Order				"ORDER BY clause optional collation specification"
 	OrderBy				"ORDER BY clause"
+	OrReplace               	"OR REPLACE"
 	ByItem				"BY item"
 	OrderByOptional			"Optional ORDER BY clause optional"
 	ByList				"BY list"
@@ -660,6 +662,8 @@ import (
 	ValuesOpt		"values optional"
 	VariableAssignment	"set variable value"
 	VariableAssignmentList	"set variable value list"
+	ViewName                "View Name"
+	ViewFieldList           "Create View statement field list"
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optional WHERE clause"
 	WhenClause		"When clause"
@@ -1646,6 +1650,45 @@ PartDefStorageOpt:
 |	"ENGINE" eq Identifier
 	{}
 
+/*******************************************************************
+ *
+ *  Create View Statement
+ *
+ *  Example:
+ *      CREATE VIEW viewname (col1,col2) as select Col1,Col2 from table
+ *******************************************************************/
+CreateViewStmt:
+    "CREATE" OrReplace "VIEW" ViewName ViewFieldList "AS" SelectStmt
+    {
+        startOffset := parser.startOffset(&yyS[yypt])
+		selstmt := $7.(*ast.SelectStmt)
+		selstmt.SetText(string(parser.src[startOffset:]))
+         x := &ast.CreateViewStmt {
+            OrReplace:     $2.(bool),
+            View :         $4.(*ast.TableName),
+            Select:        selstmt,
+            SelectText:    selstmt.Text(),
+        }
+        if $5 != nil{
+            x.Cols = $5.([]*ast.ColumnName)
+        }
+        $$ = x
+    }
+ViewName:
+    TableName
+    {
+        $$ = $1.(*ast.TableName)
+    }
+ViewFieldList:
+    /* Empty */
+    {
+        $$ = nil
+    }
+|   '(' ColumnNameList ')'
+    {
+        $$ = $2.([]*ast.ColumnName)
+    }
+
 /******************************************************************
  * Do statement
  * See https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -2111,6 +2154,11 @@ Field:
 	{
 		expr := $1
 		asName := $2.(string)
+		if asName != ""{
+        		    startOffset := parser.startOffset(&yyS[yypt-1])
+        		    endOffset := parser.endOffset(&yyS[yypt])
+        		    expr.SetText(parser.src[startOffset:endOffset])
+        		}
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
 
@@ -2157,6 +2205,7 @@ FieldList:
 		if last.Expr != nil && last.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-1])
 			last.SetText(parser.src[last.Offset:lastEnd])
+			last.Expr.SetText(parser.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
 		newField.Offset = parser.startOffset(&yyS[yypt])
@@ -2276,6 +2325,15 @@ IndexTypeOpt:
 |	IndexType
 	{
 		$$ = $1
+	}
+
+OrReplace:
+	{
+		$$ = false
+	}
+|	"OR" "REPLACE"
+	{
+		$$ = true
 	}
 
 /**********************************Identifier********************************************/
@@ -3654,6 +3712,7 @@ SelectStmt:
 				}
 			}
 			lastField.SetText(src[lastField.Offset:lastEnd])
+			lastField.Expr.SetText(src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Limit = $4.(*ast.Limit)
@@ -3672,6 +3731,7 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-3].offset-1
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+			lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 		if $5 != nil {
 			st.Where = $5.(ast.ExprNode)
@@ -3701,6 +3761,7 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-7])
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+			lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 
 		if $6 != nil {
@@ -4830,6 +4891,7 @@ Statement:
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
+|   CreateViewStmt
 |	CreateUserStmt
 |	DoStmt
 |	DropDatabaseStmt

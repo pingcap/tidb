@@ -195,6 +195,9 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 	case *ast.CreateTableStmt:
 		nr.pushContext()
 		nr.currentContext().inCreateOrDropTable = true
+	case *ast.CreateViewStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
 	case *ast.ColumnOption:
 		nr.currentContext().inColumnOption = true
 	case *ast.DeleteStmt:
@@ -276,6 +279,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.CreateIndexStmt:
 		nr.popContext()
 	case *ast.CreateTableStmt:
+		nr.popContext()
+	case *ast.CreateViewStmt:
 		nr.popContext()
 	case *ast.ColumnOption:
 		nr.currentContext().inColumnOption = false

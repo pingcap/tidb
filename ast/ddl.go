@@ -530,6 +530,48 @@ func (n *TableToTable) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+//CreateViewStmt is a statement to create a View.
+//see https://dev.mysql.com/doc/refman/5.7/en/create-view.html
+type CreateViewStmt struct {
+	ddlNode
+
+	OrReplace  bool
+	View       *TableName
+	Cols       []*ColumnName
+	Select     ResultSetNode
+	SelectText string
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateViewStmt)
+	node, ok := n.View.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.View = node.(*TableName)
+	if n.Cols != nil {
+		for i, col := range n.Cols {
+			node, ok = col.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Cols[i] = node.(*ColumnName)
+		}
+	}
+	selnode, ok := n.Select.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Select = selnode.(*SelectStmt)
+	n.SelectText = selnode.Text()
+	return v.Leave(n)
+}
+
 // CreateIndexStmt is a statement to create an index.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type CreateIndexStmt struct {

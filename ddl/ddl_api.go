@@ -178,6 +178,19 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 	return cols, constraints, nil
 }
 
+func buildColumnNames(colNames []*ast.ColumnName) ([]*table.Column, error) {
+	var cols []*table.Column
+	for i, colName := range colNames {
+		col, err := buildColumnName(i, colName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		col.State = model.StatePublic
+		cols = append(cols, col)
+	}
+	return cols, nil
+}
+
 func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
@@ -228,6 +241,14 @@ func buildColumnAndConstraint(ctx context.Context, offset int,
 		return nil, nil, errors.Trace(err)
 	}
 	return col, cts, nil
+}
+
+func buildColumnName(offset int, colName *ast.ColumnName) (*table.Column, error) {
+	col, err := columnNameToCol(offset, colName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return col, nil
 }
 
 // checkColumnCantHaveDefaultValue checks the column can have value as default or not.
@@ -349,6 +370,14 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
+}
+
+func columnNameToCol(offset int, colName *ast.ColumnName) (*table.Column, error) {
+	col := table.ToColumn(&model.ColumnInfo{
+		Offset: offset,
+		Name:   colName.Name,
+	})
+	return col, nil
 }
 
 func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
@@ -474,6 +503,18 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkDuplicateColumnName(colNames []*ast.ColumnName) error {
+	colNamesMap := map[string]bool{}
+	for _, colName := range colNames {
+		nameLower := colName.Name.L
+		if colNamesMap[nameLower] {
+			return infoschema.ErrColumnExists.GenByArgs(colName.Name)
+		}
+		colNamesMap[nameLower] = true
+	}
+	return nil
+}
+
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	for i, colDef := range colDefs {
@@ -509,9 +550,32 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkTooLongColumnName(colNames []*ast.ColumnName) error {
+	for _, colName := range colNames {
+		if len(colName.Name.O) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.Gen("too long column %s", colName.Name)
+		}
+	}
+	return nil
+}
+
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	if len(colDefs) > TableColumnCountLimit {
 		return errTooManyFields
+	}
+	return nil
+}
+
+func checkTooManyColumnNames(colNames []*ast.ColumnName) error {
+	if len(colNames) > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
+func checkViewDiffColCounts(colNames []*ast.ColumnName, selectFields []string) error {
+	if len(colNames) != len(selectFields) {
+		return errViewWrongList
 	}
 	return nil
 }
@@ -691,6 +755,23 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 	return
 }
 
+func (d *ddl) buildViewTableInfo(tableName model.CIStr, cols []*table.Column, selectFields []string, selectText string) (tbInfo *model.TableInfo, err error) {
+	tbInfo = &model.TableInfo{
+		Name:            tableName,
+		ViewSelectStmt:  selectText,
+		ViewSelectField: selectFields,
+	}
+	tbInfo.ID, err = d.genGlobalID()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, v := range cols {
+		v.ID = allocateColumnID(tbInfo)
+		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
+	}
+	return
+}
+
 func (d *ddl) CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error {
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(referIdent.Schema)
@@ -780,6 +861,60 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	}
 
 	handleTableOptions(options, tbInfo)
+	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		if tbInfo.AutoIncID > 1 {
+			// Default tableAutoIncID base is 0.
+			// If the first id is expected to greater than 1, we need to do rebase.
+			err = d.handleAutoIncID(tbInfo, schema.ID)
+		}
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.ColumnName, selectFields []string, selectText string) (err error) {
+	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+	if is.TableExists(ident.Schema, ident.Name) {
+		return infoschema.ErrTableExists.GenByArgs(ident)
+	}
+	if err = checkTooLongTable(ident.Name); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkDuplicateColumnName(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooLongColumnName(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooManyColumnNames(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkViewDiffColCounts(colNames, selectFields); err != nil {
+		return errors.Trace(err)
+	}
+	cols, err := buildColumnNames(colNames)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tbInfo, err := d.buildViewTableInfo(ident.Name, cols, selectFields, selectText)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo},
+	}
+
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {

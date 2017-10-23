@@ -56,6 +56,8 @@ func (e *DDLExec) Next() (Row, error) {
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
+	case *ast.CreateViewStmt:
+		err = e.executeCreateView(x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -147,6 +149,41 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 		if s.IfNotExists {
 			return nil
 		}
+		return err
+	}
+	return errors.Trace(err)
+}
+
+func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
+	ident := ast.Ident{Schema: s.View.Schema, Name: s.View.Name}
+	var selectFields []string
+	selectstmt := s.Select.(*ast.SelectStmt)
+	fields := selectstmt.Fields.Fields
+	for _, field := range fields {
+		if field.AsName.O == "" {
+			selectFields = append(selectFields, field.Expr.Text())
+		} else {
+			selectFields = append(selectFields, field.AsName.O)
+		}
+	}
+
+	if s.Cols == nil {
+		for _, field := range fields {
+			if field.AsName.O != "" {
+				s.Cols = append(s.Cols, &ast.ColumnName{
+					Name: field.AsName,
+				})
+			} else {
+				s.Cols = append(s.Cols, &ast.ColumnName{
+					Name: model.NewCIStr(field.Expr.Text()),
+				})
+			}
+		}
+	}
+
+	var err error
+	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFields, s.SelectText)
+	if infoschema.ErrTableExists.Equal(err) {
 		return err
 	}
 	return errors.Trace(err)
