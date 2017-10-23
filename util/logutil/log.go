@@ -147,7 +147,7 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 
 	if !f.DisableColors {
 		colorStr := logTypeToColor(entry.Level)
-		fmt.Fprintf(b, "\033%sm[%s] ", colorStr, entry.Level.String())
+		fmt.Fprintf(b, "\033%sm ", colorStr)
 	}
 
 	if !f.DisableTimestamp {
