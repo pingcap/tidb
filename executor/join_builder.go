@@ -35,7 +35,7 @@ type joinBuilder struct {
 	isAntiMode    bool
 }
 
-func NewJoinBuilder(ctx context.Context, lhs, rhs Executor, joinType plan.JoinType,
+func newJoinBuilder(ctx context.Context, lhs, rhs Executor, joinType plan.JoinType,
 	equalConds []*expression.ScalarFunction,
 	lhsFilter, rhsFilter, otherFilter []expression.Expression,
 	schema *expression.Schema, defaultValues []types.Datum,
