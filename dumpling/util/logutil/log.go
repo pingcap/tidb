@@ -110,9 +110,30 @@ func stringToLogLevel(level string) log.Level {
 	return defaultLogLevel
 }
 
+// logTypeToColor converts the Level to a color string.
+func logTypeToColor(level log.Level) string {
+	switch level {
+	case log.DebugLevel:
+		return "[0;37"
+	case log.InfoLevel:
+		return "[0;36"
+	case log.WarnLevel:
+		return "[0;33"
+	case log.ErrorLevel:
+		return "[0;31"
+	case log.FatalLevel:
+		return "[0;31"
+	case log.PanicLevel:
+		return "[0;31"
+	}
+
+	return "[0;37"
+}
+
 // textFormatter is for compatability with ngaut/log
 type textFormatter struct {
 	DisableTimestamp bool
+	EnableColors     bool
 }
 
 // Format implements logrus.Formatter
@@ -123,6 +144,12 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 	} else {
 		b = &bytes.Buffer{}
 	}
+
+	if f.EnableColors {
+		colorStr := logTypeToColor(entry.Level)
+		fmt.Fprintf(b, "\033%sm ", colorStr)
+	}
+
 	if !f.DisableTimestamp {
 		fmt.Fprintf(b, "%s ", entry.Time.Format(defaultLogTimeFormat))
 	}
@@ -136,6 +163,10 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 		}
 	}
 	b.WriteByte('\n')
+
+	if f.EnableColors {
+		b.WriteString("\033[0m")
+	}
 	return b.Bytes(), nil
 }
 
@@ -155,6 +186,11 @@ func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 			FullTimestamp:    true,
 			TimestampFormat:  defaultLogTimeFormat,
 			DisableTimestamp: disableTimestamp,
+		}
+	case "highlight":
+		return &textFormatter{
+			DisableTimestamp: disableTimestamp,
+			EnableColors:     true,
 		}
 	default:
 		return &textFormatter{}
