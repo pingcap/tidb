@@ -1332,50 +1332,78 @@ func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
 	s.testRenameTable(c, "alter_table_rename_table", "alter table %s rename to %s")
 }
 
+func (s *testDBSuite) TestRenameTable2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("rename table rename1.t to rename2.t1")
+	tk.MustExec("insert rename2.t1 values ()")
+}
+
+func (s *testDBSuite) TestRenameTable1(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t1")
+	tk.MustExec("insert rename2.t1 values (100000)")
+	tk.MustExec("insert rename2.t values ()")
+}
+
 func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
-	s.tk.MustExec("use test")
-	// for different databases
-	s.tk.MustExec("create table t (c1 int, c2 int)")
-	s.tk.MustExec("insert t values (1, 1), (2, 2)")
-	ctx := s.tk.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	oldTblID := oldTblInfo.Meta().ID
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("create database db1")
+	s.tk.MustExec("create database db2")
+	s.tk.MustExec("create table db1.t1 (c1 int, c2 int)")
+	s.tk.MustExec(fmt.Sprintf(sql, "db1.t1", "db2.t1"))
+	s.tk.MustExec("insert db2.t1 values (1, 1), (2, 2)")
+
+	 for different databases
+		s.tk.MustExec("use test")
+	s.tk.MustExec("create table test.t (c1 int, c2 int)")
+	s.tk.MustExec("insert test.t values (1, 1), (2, 2)")
+	 ctx := s.tk.Se.(context.Context)
+	 is := sessionctx.GetDomain(ctx).InfoSchema()
+	 oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	 c.Assert(err, IsNil)
+	 oldTblID := oldTblInfo.Meta().ID
 	s.tk.MustExec("create database test1")
-	s.tk.MustExec("use test1")
+		s.tk.MustExec("use test1")
 	s.tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
-	is = sessionctx.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
-	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
-	s.tk.MustExec("use test")
-	s.tk.MustQuery("show tables").Check(testkit.Rows())
-
-	// for the same database
-	s.tk.MustExec("use test1")
-	s.tk.MustExec(fmt.Sprintf(sql, "t1", "t2"))
-	is = sessionctx.GetDomain(ctx).InfoSchema()
-	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
-	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
-	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
-	c.Assert(isExist, IsFalse)
-	s.tk.MustQuery("show tables").Check(testkit.Rows("t2"))
-
-	// for failure case
-	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
-	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
-	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
-	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
-	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
-	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
-	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
-	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
-
-	s.tk.MustExec("drop table test1.t2")
+	s.tk.MustExec("insert test1.t1 values (3, 3)")
+	 is = sessionctx.GetDomain(ctx).InfoSchema()
+	 newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	 c.Assert(err, IsNil)
+	 c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	 s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
+	 s.tk.MustExec("use test")
+	 s.tk.MustQuery("show tables").Check(testkit.Rows())
+	
+		// for the same database
+		s.tk.MustExec("use test1")
+		s.tk.MustExec(fmt.Sprintf(sql, "t1", "t2"))
+		is = sessionctx.GetDomain(ctx).InfoSchema()
+		newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+		c.Assert(err, IsNil)
+		c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+		s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
+		isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
+		c.Assert(isExist, IsFalse)
+		s.tk.MustQuery("show tables").Check(testkit.Rows("t2"))
+	
+		// for failure case
+		failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+		failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+		failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
+		s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
+		failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
+		s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+	
+		s.tk.MustExec("drop table test1.t2")
 }
 
 func (s *testDBSuite) TestRenameMultiTables(c *C) {
