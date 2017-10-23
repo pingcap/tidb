@@ -56,7 +56,7 @@ const (
 	CodeUnknownTable                      = mysql.ErrBadTable
 	CodeWrongArguments                    = 1210
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
-	CodeViewSelectVariable				  = mysql.ErrViewSelectVariable
+	CodeViewSelectVariable                = mysql.ErrViewSelectVariable
 )
 
 func init() {

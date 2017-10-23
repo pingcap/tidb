@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/_vendor/src/github.com/Sirupsen/logrus"
 )
 
 const (
@@ -120,8 +119,6 @@ type resolverContext struct {
 	inShow bool
 	// When visiting create/alter table statement.
 	inColumnOption bool
-	// When visiting create view statement
-	inCreateView bool
 }
 
 // currentContext gets the current resolverContext.
@@ -201,7 +198,6 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 	case *ast.CreateViewStmt:
 		nr.pushContext()
 		nr.currentContext().inCreateOrDropTable = true
-		nr.currentContext().inCreateView = true
 	case *ast.ColumnOption:
 		nr.currentContext().inColumnOption = true
 	case *ast.DeleteStmt:
@@ -830,13 +826,6 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 		rf.Table = v.Refer.Table
 		rf.DBName = v.Refer.DBName
 		rf.TableName = v.Refer.TableName
-		rf.Expr = v
-	case *ast.VariableExpr:
-		if ctx.inCreateView {
-			logrus.Warnf("The field.Expr type is VariableExpr")
-		}
-		rf.Column = &model.ColumnInfo{} // Empty column info.
-		rf.Table = &model.TableInfo{}   // Empty table info.
 		rf.Expr = v
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.

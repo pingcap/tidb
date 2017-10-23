@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/_vendor/src/github.com/Sirupsen/logrus"
 )
 
 const (
@@ -1208,13 +1207,8 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	tableInfo := tbl.Meta()
 
 	if tableInfo.ViewSelectStmt != "" {
-		logrus.Warnf("The Table %s is a view" , tableInfo.Name)
-		logrus.Warnf("The view selectstmt is %s", tableInfo.ViewSelectStmt)
-
 		FieldMap := make (map[string]model.CIStr)
 		for i , col := range tableInfo.Columns {
-			logrus.Warnf("The col name is %s" , col.Name.O)
-			logrus.Warnf("The viewselectfield is %s" , tableInfo.ViewSelectField[i])
 			FieldMap[strings.ToLower(tableInfo.ViewSelectField[i])] = col.Name
 		}
 

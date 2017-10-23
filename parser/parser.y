@@ -446,7 +446,7 @@ import (
 	BeginTransactionStmt		"BEGIN TRANSACTION statement"
 	BinlogStmt			"Binlog base64 statement"
 	CommitStmt			"COMMIT statement"
-	CreateTableStmt			"CREATE TABLE statement"
+	CreateTableStmt         "CREATE TABLE statement"
 	CreateViewStmt          "CREATE VIEW  stetement"
 	CreateUserStmt			"CREATE User statement"
 	CreateDatabaseStmt		"Create Database Statement"
@@ -655,8 +655,8 @@ import (
 	ValuesOpt		"values optional"
 	VariableAssignment	"set variable value"
 	VariableAssignmentList	"set variable value list"
-	ViewName        "View Name"
-	ViewFieldList   "Create View statement field list"
+	ViewName            "View Name"
+	ViewFieldList           "Create View statement field list"
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optional WHERE clause"
 	WhenClause		"When clause"
@@ -1643,7 +1643,7 @@ PartDefStorageOpt:
  *  Create View Statement
  *
  *  Example:
- *      CREATE VIEW viewname as select col1,col2 from table
+ *      CREATE VIEW viewname (col1,col2) as select Col1,Col2 from table
  *******************************************************************/
 CreateViewStmt:
     "CREATE" OrReplace "VIEW" ViewName ViewFieldList "AS" SelectStmt
@@ -2151,7 +2151,7 @@ Field:
 		if asName != ""{
 		    startOffset := parser.startOffset(&yyS[yypt-1])
 		    endOffset := parser.endOffset(&yyS[yypt])
-    		expr.SetText(parser.src[startOffset:endOffset])
+            expr.SetText(parser.src[startOffset:endOffset])
 		}
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}

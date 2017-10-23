@@ -172,7 +172,6 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
-
 	switch e.(type) {
 	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
 		snapshotTS := ctx.GetSessionVars().SnapshotTS
