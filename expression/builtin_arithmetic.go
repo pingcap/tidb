@@ -168,7 +168,7 @@ type builtinArithmeticPlusIntSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticPlusIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticPlusIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 
 	a, isNull, err := s.args[0].EvalInt(row, sc)
@@ -216,7 +216,7 @@ type builtinArithmeticPlusDecimalSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticPlusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticPlusDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
@@ -238,7 +238,7 @@ type builtinArithmeticPlusRealSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticPlusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (s *builtinArithmeticPlusRealSig) evalReal(row types.Row) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalReal(row, sc)
 	if isNull || err != nil {
@@ -292,7 +292,7 @@ type builtinArithmeticMinusRealSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticMinusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (s *builtinArithmeticMinusRealSig) evalReal(row types.Row) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalReal(row, sc)
 	if isNull || err != nil {
@@ -312,7 +312,7 @@ type builtinArithmeticMinusDecimalSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
@@ -334,7 +334,7 @@ type builtinArithmeticMinusIntSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticMinusIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticMinusIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 
 	a, isNull, err := s.args[0].EvalInt(row, sc)
@@ -418,7 +418,7 @@ type builtinArithmeticMultiplyDecimalSig struct{ baseBuiltinFunc }
 type builtinArithmeticMultiplyIntUnsignedSig struct{ baseBuiltinFunc }
 type builtinArithmeticMultiplyIntSig struct{ baseBuiltinFunc }
 
-func (s *builtinArithmeticMultiplyRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (s *builtinArithmeticMultiplyRealSig) evalReal(row types.Row) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalReal(row, sc)
 	if isNull || err != nil {
@@ -435,7 +435,7 @@ func (s *builtinArithmeticMultiplyRealSig) evalReal(row []types.Datum) (float64,
 	return result, false, nil
 }
 
-func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
@@ -453,7 +453,7 @@ func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row []types.Datum) (*t
 	return c, false, nil
 }
 
-func (s *builtinArithmeticMultiplyIntUnsignedSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticMultiplyIntUnsignedSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -472,7 +472,7 @@ func (s *builtinArithmeticMultiplyIntUnsignedSig) evalInt(row []types.Datum) (va
 	return int64(result), false, nil
 }
 
-func (s *builtinArithmeticMultiplyIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticMultiplyIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -515,7 +515,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx context.Context, args []
 type builtinArithmeticDivideRealSig struct{ baseBuiltinFunc }
 type builtinArithmeticDivideDecimalSig struct{ baseBuiltinFunc }
 
-func (s *builtinArithmeticDivideRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (s *builtinArithmeticDivideRealSig) evalReal(row types.Row) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalReal(row, sc)
 	if isNull || err != nil {
@@ -535,7 +535,7 @@ func (s *builtinArithmeticDivideRealSig) evalReal(row []types.Datum) (float64, b
 	return result, false, nil
 }
 
-func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
@@ -585,7 +585,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx context.Context, args
 type builtinArithmeticIntDivideIntSig struct{ baseBuiltinFunc }
 type builtinArithmeticIntDivideDecimalSig struct{ baseBuiltinFunc }
 
-func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (s *builtinArithmeticIntDivideIntSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	b, isNull, err := s.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -624,7 +624,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bo
 	return ret, err != nil, errors.Trace(err)
 }
 
-func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
@@ -715,7 +715,7 @@ type builtinArithmeticModRealSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticModRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (s *builtinArithmeticModRealSig) evalReal(row types.Row) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	b, isNull, err := s.args[1].EvalReal(row, sc)
 	if isNull || err != nil {
@@ -738,7 +738,7 @@ type builtinArithmeticModDecimalSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticModDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticModDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
@@ -760,7 +760,7 @@ type builtinArithmeticModIntSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticModIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticModIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 
 	b, isNull, err := s.args[1].EvalInt(row, sc)

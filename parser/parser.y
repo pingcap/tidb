@@ -1631,6 +1631,8 @@ PartitionOpt:
 	{}
 |	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt  PartitionDefinitionListOpt
 	{}
+|	"PARTITION" "BY" "RANGE" "COLUMNS" '(' ColumnNameList ')' PartitionNumOpt PartitionDefinitionListOpt
+	{}
 
 PartitionNumOpt:
 	{}
@@ -1655,6 +1657,8 @@ PartitionDefinition:
 PartDefValuesOpt:
 	{}
 |	"VALUES" "LESS" "THAN" "MAXVALUE"
+	{}
+|	"VALUES" "LESS" "THAN" '(' "MAXVALUE" ')'
 	{}
 |	"VALUES" "LESS" "THAN" '(' ExpressionList ')'
 	{}
