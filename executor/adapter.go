@@ -139,6 +139,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	if err := e.Open(); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -171,7 +172,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
-	log.Warnf("In handleNoDelayExecutor")
+
 	switch e.(type) {
 	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
 		snapshotTS := ctx.GetSessionVars().SnapshotTS
@@ -179,7 +180,7 @@ func (a *statement) handleNoDelayExecutor(e Executor, ctx context.Context, pi pr
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
 	}
-	log.Warnf("The Executor type is %T" , e)
+
 	defer func() {
 		if pi != nil {
 			pi.SetProcessInfo("")

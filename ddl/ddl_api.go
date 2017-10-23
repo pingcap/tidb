@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/_vendor/src/github.com/Sirupsen/logrus"
 )
 
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -889,7 +888,6 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.C
 	var constraints []*ast.Constraint
 
 	tbInfo, err := d.buildTableInfo(ident.Name, cols, constraints, selectFields, selectText, ctx)
-	logrus.Warnf("The tbInfo Select Text is %s" , tbInfo.ViewSelectStmt)
 	if err != nil {
 		return errors.Trace(err)
 	}

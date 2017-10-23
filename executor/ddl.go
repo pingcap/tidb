@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/_vendor/src/github.com/Sirupsen/logrus"
 )
 
 // DDLExec represents a DDL executor.
@@ -49,7 +48,6 @@ func (e *DDLExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
-	logrus.Warnf("The statement type is %T" , e.Statement)
 	var err error
 	switch x := e.Statement.(type) {
 	case *ast.TruncateTableStmt:
@@ -185,9 +183,6 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 		}
 	}
 
-	for i, col := range s.Cols {
-		logrus.Warnf("The select field[%d] name is %s", i, col)
-	}
 	var err error
 	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFields, s.SelectText)
 	if infoschema.ErrTableExists.Equal(err) {
