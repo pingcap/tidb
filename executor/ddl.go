@@ -156,6 +156,8 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	ident := ast.Ident{Schema: s.View.Schema, Name: s.View.Name}
+	// SelectFields represents the field expression text in SelectStmt and
+	// saves it as a string to establish the mapping relationship of ColList
 	var selectFields []string
 	selectstmt := s.Select.(*ast.SelectStmt)
 	fields := selectstmt.Fields.Fields
@@ -166,7 +168,8 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 			selectFields = append(selectFields, field.AsName.O)
 		}
 	}
-
+	// The column_list in Create View statement could be null, so if Cols is nil,
+	// it saves select_statement field expression or field AsName
 	if s.Cols == nil {
 		for _, field := range fields {
 			if field.AsName.O != "" {
