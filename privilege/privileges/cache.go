@@ -433,7 +433,7 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 		return true
 	}
 
-	return false
+	return priv == 0
 }
 
 // DBIsVisible checks whether the user can see the db.
