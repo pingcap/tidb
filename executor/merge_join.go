@@ -235,9 +235,21 @@ func (e *MergeJoinExec) outputFilteredJoinRow(leftRow Row, rightRow Row) error {
 }
 
 func (e *MergeJoinExec) tryOutputLeftRows() error {
-	if e.preserveLeft {
+	switch e.joinType {
+	case plan.LeftOuterJoin, plan.RightOuterJoin:
 		for _, lRow := range e.leftRows {
 			e.outputJoinRow(lRow, e.defaultRightRow)
+		}
+	case plan.SemiJoin:
+		if e.isAntiMode {
+			for _, lRow := range e.leftRows {
+				e.outputBuf = append(e.outputBuf, lRow)
+			}
+		}
+	case plan.LeftOuterSemiJoin:
+		for _, lRow := range e.leftRows {
+			result := append(lRow, types.NewDatum(e.isAntiMode))
+			e.outputBuf = append(e.outputBuf, result)
 		}
 	}
 	return nil
