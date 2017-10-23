@@ -317,8 +317,8 @@ func (s *testSuite) TestCreateView(c *C) {
 
 	tk.MustExec("create view v1 (a) as select a+1 from t1")
 	tk.MustExec("create view v2 (a) as select a-1 from t1")
-	tk.MustQuery("select * from t1 natural left join v1").Check(testkit.Rows("1","2","3"))
-	tk.MustQuery("select * from v2 natural left join t1").Check(testkit.Rows("0","1","2"))
+	tk.MustQuery("select * from t1 natural left join v1 order by a").Check(testkit.Rows("1","2","3"))
+	tk.MustQuery("select * from v2 natural left join t1 order by a").Check(testkit.Rows("0","1","2"))
 
 	tk.MustExec("drop view v1,v2")
 	tk.MustExec("drop table t1")
