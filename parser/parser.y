@@ -1779,10 +1779,10 @@ DropTableStmt:
 	}
 
 DropViewStmt:
-    "DROP" "VIEW" TableNameList
-    {
-        $$ = &ast.DropViewStmt{Views: $3.([]*ast.TableName)}
-    }
+    	"DROP" "VIEW" TableNameList
+    	{
+        	$$ = &ast.DropViewStmt{Views: $3.([]*ast.TableName)}
+    	}	
 |	"DROP" "VIEW" "IF" "EXISTS" TableNameList
 	{
 		$$ = &ast.DropViewStmt{IfExists: true, Views: $5.([]*ast.TableName)}
@@ -2151,7 +2151,7 @@ Field:
 		if asName != ""{
 		    startOffset := parser.startOffset(&yyS[yypt-1])
 		    endOffset := parser.endOffset(&yyS[yypt])
-                    expr.SetText(parser.src[startOffset:endOffset])
+		    expr.SetText(parser.src[startOffset:endOffset])
 		}
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
