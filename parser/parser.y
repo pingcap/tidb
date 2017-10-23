@@ -2158,7 +2158,7 @@ Field:
         		    startOffset := parser.startOffset(&yyS[yypt-1])
         		    endOffset := parser.endOffset(&yyS[yypt])
         		    expr.SetText(parser.src[startOffset:endOffset])
-        }
+        	}
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
 
