@@ -274,7 +274,7 @@ func (s *testSuite) TestCreateView(c *C) {
 	c.Assert(err, NotNil)
 
 	//create view on nonexistent table
-	_ , err = tk.Exec("create view v1 (c,d) as select a,b from t1")
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
 	c.Assert(err, NotNil)
 
 	//simple view
@@ -305,7 +305,7 @@ func (s *testSuite) TestCreateView(c *C) {
 
 	//try to use fields from underlying table
 	_, err = tk.Exec("select a from v1")
-	c.Assert(err,NotNil)
+	c.Assert(err, NotNil)
 
 	//drop views
 	tk.MustExec("drop view v1,v2,v3,v4")
@@ -317,8 +317,8 @@ func (s *testSuite) TestCreateView(c *C) {
 
 	tk.MustExec("create view v1 (a) as select a+1 from t1")
 	tk.MustExec("create view v2 (a) as select a-1 from t1")
-	tk.MustQuery("select * from t1 natural left join v1 order by a").Check(testkit.Rows("1","2","3"))
-	tk.MustQuery("select * from v2 natural left join t1 order by a").Check(testkit.Rows("0","1","2"))
+	tk.MustQuery("select * from t1 natural left join v1 order by a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from v2 natural left join t1 order by a").Check(testkit.Rows("0", "1", "2"))
 
 	tk.MustExec("drop view v1,v2")
 	tk.MustExec("drop table t1")
@@ -327,7 +327,7 @@ func (s *testSuite) TestCreateView(c *C) {
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("insert into t1 values (1), (2), (3), (1), (2), (3)")
 	tk.MustExec("create view v1 as select distinct a from t1")
-	tk.MustQuery("select * from v1").Check(testkit.Rows("1","2","3"))
+	tk.MustQuery("select * from v1").Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
 
@@ -336,9 +336,9 @@ func (s *testSuite) TestCreateView(c *C) {
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
 
 	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
-	c.Assert(err,NotNil)
+	c.Assert(err, NotNil)
 
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
-	c.Assert(err,NotNil)
+	c.Assert(err, NotNil)
 	tk.MustExec("drop table t1")
 }

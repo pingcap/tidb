@@ -436,14 +436,16 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+//CreateViewStmt is a statement to create a View.
+//see https://dev.mysql.com/doc/refman/5.7/en/create-view.html
 type CreateViewStmt struct {
 	ddlNode
 
-	OrReplace		bool
-	View        	*TableName
-	Cols        	[]*ColumnName
-	Select 			ResultSetNode
-	SelectText		string
+	OrReplace  bool
+	View       *TableName
+	Cols       []*ColumnName
+	Select     ResultSetNode
+	SelectText string
 }
 
 // Accept implements Node Accept interface.
@@ -459,7 +461,7 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n.View = node.(*TableName)
 	if n.Cols != nil {
-		for i , col := range n.Cols {
+		for i, col := range n.Cols {
 			node, ok = col.Accept(v)
 			if !ok {
 				return n, false
@@ -502,11 +504,13 @@ func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// DropViewStmt is a statement to drop one or more views
+//see https://dev.mysql.com/doc/refman/5.7/en/drop-view.html
 type DropViewStmt struct {
 	ddlNode
 
 	IfExists bool
-	Views   []*TableName
+	Views    []*TableName
 }
 
 // Accept implements Node Accept interface.

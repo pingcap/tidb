@@ -161,7 +161,7 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	var selectFields []string
 	selectstmt := s.Select.(*ast.SelectStmt)
 	fields := selectstmt.Fields.Fields
-	for _ , field := range fields{
+	for _, field := range fields {
 		if field.AsName.O == "" {
 			selectFields = append(selectFields, field.Expr.Text())
 		} else {
@@ -172,12 +172,12 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	if s.Cols == nil {
 		for _, field := range fields {
 			if field.AsName.O != "" {
-				s.Cols = append(s.Cols , &ast.ColumnName{
-					Name:	field.AsName,
+				s.Cols = append(s.Cols, &ast.ColumnName{
+					Name: field.AsName,
 				})
 			} else {
-				s.Cols = append(s.Cols , &ast.ColumnName{
-					Name:	model.NewCIStr(field.Expr.Text()),
+				s.Cols = append(s.Cols, &ast.ColumnName{
+					Name: model.NewCIStr(field.Expr.Text()),
 				})
 			}
 		}

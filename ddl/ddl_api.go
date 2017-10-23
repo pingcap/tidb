@@ -243,7 +243,7 @@ func buildColumnAndConstraint(ctx context.Context, offset int,
 	return col, cts, nil
 }
 
-func buildColumnName(offset int, colName *ast.ColumnName) (*table.Column, error){
+func buildColumnName(offset int, colName *ast.ColumnName) (*table.Column, error) {
 	col, err := columnNameToCol(offset, colName)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -367,11 +367,10 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	return col, constraints, nil
 }
 
-
 func columnNameToCol(offset int, colName *ast.ColumnName) (*table.Column, error) {
 	col := table.ToColumn(&model.ColumnInfo{
-		Offset:    offset,
-		Name:      colName.Name,
+		Offset: offset,
+		Name:   colName.Name,
 	})
 	return col, nil
 }
@@ -569,8 +568,8 @@ func checkTooManyColumnNames(colNames []*ast.ColumnName) error {
 	return nil
 }
 
-func checkViewDiffColCounts(colNames []*ast.ColumnName, selectFields []string) error{
-	if len(colNames) != len(selectFields){
+func checkViewDiffColCounts(colNames []*ast.ColumnName, selectFields []string) error {
+	if len(colNames) != len(selectFields) {
 		return errViewWrongList
 	}
 	return nil
@@ -647,7 +646,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, selectFields []string, selectText string, ctx context.Context) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
-		Name:  			 tableName,
+		Name:            tableName,
 		ViewSelectStmt:  selectText,
 		ViewSelectField: selectFields,
 	}
@@ -829,7 +828,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	}
 
 	var selectFieldExprs []string
-	tbInfo, err := d.buildTableInfo(ident.Name, cols, newConstraints, selectFieldExprs ,"", ctx)
+	tbInfo, err := d.buildTableInfo(ident.Name, cols, newConstraints, selectFieldExprs, "", ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -855,7 +854,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.ColumnName , selectFields []string, selectText string) (err error) {
+func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.ColumnName, selectFields []string, selectText string) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -876,7 +875,7 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.C
 	if err = checkTooManyColumnNames(colNames); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkViewDiffColCounts(colNames , selectFields) ; err != nil {
+	if err = checkViewDiffColCounts(colNames, selectFields); err != nil {
 		return errors.Trace(err)
 	}
 	cols, err := buildColumnNames(colNames)
