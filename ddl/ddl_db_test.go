@@ -1333,10 +1333,10 @@ func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
 }
 
 func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
-	// for different databases
 	s.tk.MustExec("use test")
-	s.tk.MustExec("create table test.t (c1 int, c2 int)")
-	s.tk.MustExec("insert test.t values (1, 1), (2, 2)")
+	// for different databases
+	s.tk.MustExec("create table t (c1 int, c2 int)")
+	s.tk.MustExec("insert t values (1, 1), (2, 2)")
 	ctx := s.tk.Se.(context.Context)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
