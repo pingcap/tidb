@@ -4891,7 +4891,7 @@ Statement:
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
-|   CreateViewStmt
+|  	CreateViewStmt
 |	CreateUserStmt
 |	DoStmt
 |	DropDatabaseStmt
