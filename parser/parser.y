@@ -448,7 +448,7 @@ import (
 	CommitStmt			"COMMIT statement"
 	CreateTableStmt         "CREATE TABLE statement"
 	CreateViewStmt          "CREATE VIEW  stetement"
-	CreateUserStmt			"CREATE User statement"
+	CreateUserStmt          "CREATE User statement"
 	CreateDatabaseStmt		"Create Database Statement"
 	CreateIndexStmt			"CREATE INDEX statement"
 	DoStmt				"Do statement"
@@ -655,7 +655,7 @@ import (
 	ValuesOpt		"values optional"
 	VariableAssignment	"set variable value"
 	VariableAssignmentList	"set variable value list"
-	ViewName            "View Name"
+	ViewName                "View Name"
 	ViewFieldList           "Create View statement field list"
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optional WHERE clause"
@@ -3725,7 +3725,7 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-3].offset-1
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
-			lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
+            lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 		if $5 != nil {
 			st.Where = $5.(ast.ExprNode)
@@ -3755,7 +3755,7 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-7])
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
-			lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
+            lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 
 		if $6 != nil {

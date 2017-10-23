@@ -645,8 +645,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, selectFields []string,
-	selectText string, ctx context.Context) (tbInfo *model.TableInfo, err error) {
+func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, selectFields []string, selectText string, ctx context.Context) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name:  			 tableName,
 		ViewSelectStmt:  selectText,
