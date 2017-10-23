@@ -344,7 +344,7 @@ type builtinRowCountSig struct {
 
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
-func (b *builtinRowCountSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+func (b *builtinRowCountSig) evalInt(_ types.Row) (res int64, isNull bool, err error) {
 	res = int64(b.ctx.GetSessionVars().PrevAffectedRows)
 	return res, false, nil
 }
