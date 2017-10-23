@@ -76,12 +76,12 @@ func (c *Constant) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
+func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 	return c.Value, nil
 }
 
 // EvalInt returns int representation of Constant.
-func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+func (c *Constant) EvalInt(_ types.Row, sc *variable.StatementContext) (int64, bool, error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return 0, true, nil
 	}
@@ -93,7 +93,7 @@ func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int6
 }
 
 // EvalReal returns real representation of Constant.
-func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+func (c *Constant) EvalReal(_ types.Row, sc *variable.StatementContext) (float64, bool, error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return 0, true, nil
 	}
@@ -105,7 +105,7 @@ func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (flo
 }
 
 // EvalString returns string representation of Constant.
-func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (string, bool, error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return "", true, nil
 	}
@@ -114,7 +114,7 @@ func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (s
 }
 
 // EvalDecimal returns decimal representation of Constant.
-func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+func (c *Constant) EvalDecimal(_ types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return nil, true, nil
 	}
@@ -123,7 +123,7 @@ func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
+func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return types.Time{}, true, nil
 	}
@@ -131,7 +131,7 @@ func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (val
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
+func (c *Constant) EvalDuration(_ types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return types.Duration{}, true, nil
 	}
@@ -139,7 +139,7 @@ func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) 
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(_ []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+func (c *Constant) EvalJSON(_ types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
 	if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 		return json.JSON{}, true, nil
 	}
