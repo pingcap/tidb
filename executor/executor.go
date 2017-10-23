@@ -95,7 +95,7 @@ const (
 // If there is sort need in the double read, then the table scan of the double read must store the handle.
 // If there is a select for update. then we need to store the handle until the lock plan. But if there is aggregation, the handle info can be removed.
 // Otherwise the executor's returned rows don't need to store the handle information.
-type Row []types.Datum
+type Row = types.DatumRow
 
 type baseExecutor struct {
 	children []Executor

@@ -16,7 +16,7 @@ package config
 import (
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
-	"github.com/pingcap/pd/pkg/logutil"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Config contains configuration options.
@@ -50,9 +50,9 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowThreshold int `toml:"slow-threshold" json:"slow-threshold"`
-
-	QueryLogMaxLen int `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowQueryFile  string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold  int    `toml:"slow-threshold" json:"slow-threshold"`
+	QueryLogMaxLen int    `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Security is the security section of the config.
@@ -164,5 +164,6 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 		Format:           l.Format,
 		DisableTimestamp: l.DisableTimestamp,
 		File:             l.File,
+		SlowQueryFile:    l.SlowQueryFile,
 	}
 }

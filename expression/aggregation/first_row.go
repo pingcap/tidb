@@ -41,7 +41,7 @@ func (ff *firstRowFunction) GetType() *types.FieldType {
 }
 
 // Update implements Aggregation interface.
-func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
+func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
 	if ctx.GotFirstRow {
 		return nil
 	}
