@@ -133,7 +133,7 @@ func logTypeToColor(level log.Level) string {
 // textFormatter is for compatability with ngaut/log
 type textFormatter struct {
 	DisableTimestamp bool
-	DisableColors    bool
+	EnableColors     bool
 }
 
 // Format implements logrus.Formatter
@@ -145,7 +145,7 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 		b = &bytes.Buffer{}
 	}
 
-	if !f.DisableColors {
+	if f.EnableColors {
 		colorStr := logTypeToColor(entry.Level)
 		fmt.Fprintf(b, "\033%sm ", colorStr)
 	}
@@ -164,7 +164,7 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 	}
 	b.WriteByte('\n')
 
-	if !f.DisableColors {
+	if f.EnableColors {
 		b.WriteString("\033[0m")
 	}
 	return b.Bytes(), nil
@@ -175,7 +175,6 @@ func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 	case "text":
 		return &textFormatter{
 			DisableTimestamp: disableTimestamp,
-			DisableColors:    true,
 		}
 	case "json":
 		return &log.JSONFormatter{
@@ -187,14 +186,14 @@ func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 			FullTimestamp:    true,
 			TimestampFormat:  defaultLogTimeFormat,
 			DisableTimestamp: disableTimestamp,
-			DisableColors:    true,
 		}
 	case "highlight":
 		return &textFormatter{
 			DisableTimestamp: disableTimestamp,
+			EnableColors:     true,
 		}
 	default:
-		return &textFormatter{DisableColors: true}
+		return &textFormatter{}
 	}
 }
 
