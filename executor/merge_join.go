@@ -55,6 +55,11 @@ type MergeJoinExec struct {
 	rightRows       []Row
 	desc            bool
 	flipSide        bool
+	joinType        plan.JoinType
+
+	// for semi joins
+	isAuxMode  bool
+	isAntiMode bool
 }
 
 const rowBufferSize = 4096
@@ -70,6 +75,8 @@ type joinBuilder struct {
 	schema        *expression.Schema
 	joinType      plan.JoinType
 	defaultValues []types.Datum
+	isAuxMode     bool
+	isAntiMode    bool
 }
 
 func (b *joinBuilder) Context(context context.Context) *joinBuilder {
@@ -122,6 +129,16 @@ func (b *joinBuilder) DefaultVals(defaultValues []types.Datum) *joinBuilder {
 	return b
 }
 
+func (b *joinBuilder) SetAuxMode(isAuxMode bool) *joinBuilder {
+	b.isAuxMode = isAuxMode
+	return b
+}
+
+func (b *joinBuilder) SetAntiMode(isAntiMode bool) *joinBuilder {
+	b.isAntiMode = isAntiMode
+	return b
+}
+
 func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, error) {
 	var leftJoinKeys, rightJoinKeys []*expression.Column
 	for _, eqCond := range b.eqConditions {
@@ -162,6 +179,9 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		otherFilter:   b.otherFilter,
 		schema:        b.schema,
 		desc:          assumeSortedDesc,
+		joinType:      b.joinType,
+		isAuxMode:     b.isAuxMode,
+		isAntiMode:    b.isAntiMode,
 	}
 
 	switch b.joinType {
@@ -181,6 +201,8 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		exec.leftJoinKeys = rightJoinKeys
 		exec.rightJoinKeys = leftJoinKeys
 	case plan.InnerJoin:
+	case plan.SemiJoin:
+	case plan.LeftOuterSemiJoin:
 	default:
 		return nil, errors.Annotate(ErrBuildExecutor, "unknown join type")
 	}
@@ -378,8 +400,8 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 				return errors.Trace(err)
 			}
 			if !matched {
-				// as all right join converted to left, we only output left side if no match and continue
-				if e.preserveLeft {
+				if (e.joinType != plan.SemiJoin && e.joinType != plan.LeftOuterSemiJoin) && e.preserveLeft {
+					// as all right join converted to left, we only output left side if no match and continue
 					e.outputJoinRow(lRow, e.defaultRightRow)
 				}
 				continue
@@ -387,15 +409,19 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 		}
 		// Do the real cross product calculation
 		initInnerLen := len(e.outputBuf)
-		for _, rRow := range e.rightRows {
-			err = e.outputFilteredJoinRow(lRow, rRow)
-			if err != nil {
-				return errors.Trace(err)
+		if e.joinType == plan.SemiJoin {
+			e.outputBuf = append(e.outputBuf, lRow)
+		} else {
+			for _, rRow := range e.rightRows {
+				err = e.outputFilteredJoinRow(lRow, rRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		// Even if caught up for left filter
 		// no matching but it's outer join
-		if e.preserveLeft && initInnerLen == len(e.outputBuf) {
+		if e.preserveLeft && initInnerLen == len(e.outputBuf) && (e.joinType != plan.SemiJoin && e.joinType != plan.LeftOuterSemiJoin) {
 			e.outputJoinRow(lRow, e.defaultRightRow)
 		}
 	}

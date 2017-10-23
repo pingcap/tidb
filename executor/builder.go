@@ -507,6 +507,8 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		Schema(v.Schema()).
 		JoinType(v.JoinType).
 		DefaultVals(v.DefaultValues).
+		SetAuxMode(v.WithAux).
+		SetAntiMode(v.Anti).
 		BuildMergeJoin(v.Desc)
 
 	if err != nil {

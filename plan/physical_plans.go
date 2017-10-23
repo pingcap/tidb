@@ -528,6 +528,10 @@ type PhysicalMergeJoin struct {
 
 	leftKeys  []*expression.Column
 	rightKeys []*expression.Column
+
+	// for semi joins
+	WithAux bool
+	Anti    bool
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
