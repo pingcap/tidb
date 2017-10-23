@@ -530,8 +530,8 @@ func (n *TableToTable) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-//CreateViewStmt is a statement to create a View.
-//see https://dev.mysql.com/doc/refman/5.7/en/create-view.html
+// CreateViewStmt is a statement to create a View.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-view.html
 type CreateViewStmt struct {
 	ddlNode
 

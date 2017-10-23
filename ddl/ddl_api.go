@@ -178,13 +178,10 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 	return cols, constraints, nil
 }
 
-func buildColumnNames(colNames []*ast.ColumnName) ([]*table.Column, error) {
+func buildColumns(colNames []*ast.ColumnName) ([]*table.Column, error) {
 	var cols []*table.Column
 	for i, colName := range colNames {
-		col, err := buildColumnName(i, colName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		col := buildColumn(i, colName)
 		col.State = model.StatePublic
 		cols = append(cols, col)
 	}
@@ -243,12 +240,12 @@ func buildColumnAndConstraint(ctx context.Context, offset int,
 	return col, cts, nil
 }
 
-func buildColumnName(offset int, colName *ast.ColumnName) (*table.Column, error) {
-	col, err := columnNameToCol(offset, colName)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return col, nil
+func buildColumn(offset int, colName *ast.ColumnName) *table.Column {
+	col := table.ToColumn(&model.ColumnInfo{
+		Offset: offset,
+		Name:   colName.Name,
+	})
+	return col
 }
 
 // checkColumnCantHaveDefaultValue checks the column can have value as default or not.
@@ -370,14 +367,6 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
-}
-
-func columnNameToCol(offset int, colName *ast.ColumnName) (*table.Column, error) {
-	col := table.ToColumn(&model.ColumnInfo{
-		Offset: offset,
-		Name:   colName.Name,
-	})
-	return col, nil
 }
 
 func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
@@ -897,7 +886,7 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.C
 	if err = checkViewDiffColCounts(colNames, selectFields); err != nil {
 		return errors.Trace(err)
 	}
-	cols, err := buildColumnNames(colNames)
+	cols, err := buildColumns(colNames)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -915,14 +904,7 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.C
 		Args:       []interface{}{tbInfo},
 	}
 
-	err = d.doDDLJob(ctx, job)
-	if err == nil {
-		if tbInfo.AutoIncID > 1 {
-			// Default tableAutoIncID base is 0.
-			// If the first id is expected to greater than 1, we need to do rebase.
-			err = d.handleAutoIncID(tbInfo, schema.ID)
-		}
-	}
+	d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
