@@ -103,14 +103,12 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 	case plan.LeftOuterJoin:
 		exec.leftRowBlock.filter = nil
 		exec.leftFilter = b.leftFilter
-		exec.preserveLeft = true
 		exec.defaultRightRow = b.defaultValues
 	case plan.RightOuterJoin:
 		exec.leftRowBlock = rightRowBlock
 		exec.rightRowBlock = leftRowBlock
 		exec.leftRowBlock.filter = nil
 		exec.leftFilter = b.leftFilter
-		exec.preserveLeft = true
 		exec.defaultRightRow = b.defaultValues
 		exec.flipSide = true
 		exec.leftJoinKeys = rightJoinKeys

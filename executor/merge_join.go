@@ -41,7 +41,6 @@ type MergeJoinExec struct {
 	leftFilter    []expression.Expression
 	otherFilter   []expression.Expression
 	schema        *expression.Schema
-	preserveLeft  bool // To preserve left side of the relation as in left outer join
 	cursor        int
 	defaultValues []types.Datum
 
@@ -325,10 +324,17 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 		var compareResult int
 		var err error
 		if e.leftRows == nil || e.rightRows == nil {
-			if e.leftRows != nil && e.rightRows == nil && e.preserveLeft {
-				// left remains and left outer join
-				// -1 will make loop continue for left
-				compareResult = -1
+			if e.leftRows != nil && e.rightRows == nil {
+				switch e.joinType {
+				case plan.LeftOuterJoin, plan.RightOuterJoin:
+					// left remains and left outer join
+					// -1 will make loop continue for left
+					compareResult = -1
+				case plan.SemiJoin:
+					compareResult = -1
+				case plan.LeftOuterSemiJoin:
+					compareResult = -1
+				}
 			} else {
 				// inner join or left is nil
 				return false, nil
