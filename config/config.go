@@ -17,6 +17,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/logutil"
+	tracing "github.com/uber/jaeger-client-go/config"
 )
 
 // Config contains configuration options.
@@ -37,6 +38,7 @@ type Config struct {
 	Performance Performance `toml:"performance" json:"performance"`
 	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
 	PlanCache   PlanCache   `toml:"plan-cache" json:"plan-cache"`
+	OpenTracing OpenTracing `toml:"opentracing" json:"opentracing"`
 }
 
 // Log is the log section of config.
@@ -69,6 +71,11 @@ type Status struct {
 	StatusPort      int    `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	MetricsInterval int    `toml:"metrics-interval" json:"metrics-interval"`
+}
+
+// OpenTracing is the opentracing section of the config.
+type OpenTracing struct {
+	TracingAddr string `toml:"tracing-addr" json:"tracing-addr`
 }
 
 // Performance is the performance section of the config.
@@ -165,5 +172,17 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 		DisableTimestamp: l.DisableTimestamp,
 		File:             l.File,
 		SlowQueryFile:    l.SlowQueryFile,
+	}
+}
+
+func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
+	if t.TracingAddr == "" {
+		return nil
+	}
+
+	return &tracing.Configuration{
+		Reporter: &tracing.ReporterConfig{
+			LocalAgentHostPort: t.TracingAddr,
+		},
 	}
 }

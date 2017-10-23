@@ -122,3 +122,7 @@ xsocket = ""
 plan-cache-enabled = false
 plan-cache-capacity = 2560
 plan-cache-shards = 256
+
+[opentracing]
+# to send spans to jaeger-agent at this address
+tracing-addr = ":6381"
