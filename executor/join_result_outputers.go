@@ -58,7 +58,7 @@ func newMergeJoinOutputer(ctx context.Context, joinType plan.JoinType, isAntiMod
 			filter:       filter,
 		}
 	case plan.InnerJoin:
-		return &mergeJoinOutputer4RightOuterJoin{
+		return &mergeJoinOutputer4InnerJoin{
 			ctx:    ctx,
 			filter: filter,
 		}
@@ -222,11 +222,11 @@ func (outputer *mergeJoinOutputer4InnerJoin) emitMatchedInners(outer Row, inners
 }
 
 // emitUnMatchedOuter implements joinResultOutputer interface.
-func (outputer *mergeJoinOutputer4InnerJoin) emitUnMatchedOuter(outer Row, resultBuffer []Row) []Row {
+func (outputer *mergeJoinOutputer4InnerJoin) emitUnMatchedOuter(_ Row, resultBuffer []Row) []Row {
 	return resultBuffer
 }
 
 // emitUnMatchedOuters implements joinResultOutputer interface.
-func (outputer *mergeJoinOutputer4InnerJoin) emitUnMatchedOuters(outers []Row, resultBuffer []Row) []Row {
+func (outputer *mergeJoinOutputer4InnerJoin) emitUnMatchedOuters(_ []Row, resultBuffer []Row) []Row {
 	return resultBuffer
 }

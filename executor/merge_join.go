@@ -109,16 +109,13 @@ func (rb *rowBlockIterator) nextRow() (Row, error) {
 }
 
 func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
-	var err error
-	peekedRow := rb.peekedRow
-	var curRow Row
-	if peekedRow == nil {
+	if rb.peekedRow == nil {
 		return nil, nil
 	}
 	rowCache := rb.rowCache[0:0:rowBufferSize]
-	rowCache = append(rowCache, peekedRow)
+	rowCache = append(rowCache, rb.peekedRow)
 	for {
-		curRow, err = rb.nextRow()
+		curRow, err := rb.nextRow()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -142,6 +139,7 @@ func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.outputBuf = nil
+	e.outputer = nil
 
 	lErr := e.leftRowBlock.reader.Close()
 	if lErr != nil {
@@ -212,7 +210,7 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 				return errors.Trace(err)
 			}
 			if !matched {
-				e.outputer.emitUnMatchedOuter(lRow, e.outputBuf)
+				e.outputBuf = e.outputer.emitUnMatchedOuter(lRow, e.outputBuf)
 				continue
 			}
 		}
