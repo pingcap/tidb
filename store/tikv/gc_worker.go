@@ -308,12 +308,6 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 		return errors.Trace(err)
 	}
 	// When the worker is just started, or an old GC job has just finished,
-	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
-		w.gcIsRunning = false
-		return nil
-	}
-
 	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts GC job, safePoint: %v", w.uuid, safePoint)
 	go w.runGCJob(ctx, safePoint)
@@ -565,7 +559,7 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 		for i := range locksInfo {
 			locks[i] = newLock(locksInfo[i])
 		}
-		ok, err1 := store.lockResolver.ResolveLocks(bo, locks)
+		ok, err1 := store.lockResolver.BatchResolveLocks(bo, locks, loc.Region)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
