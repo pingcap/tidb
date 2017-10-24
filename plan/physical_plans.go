@@ -1171,8 +1171,18 @@ func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
 	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
-	case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexJoin:
+	case *PhysicalHashJoin, *PhysicalIndexJoin:
 		p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
+	case *PhysicalMergeJoin:
+		if x.JoinType == SemiJoin {
+			x.SetSchema(x.children[0].Schema().Clone())
+		} else if x.JoinType == LeftOuterSemiJoin {
+			auxCol := x.schema.Columns[x.Schema().Len()-1]
+			x.SetSchema(x.children[0].Schema().Clone())
+			x.schema.Append(auxCol)
+		} else {
+			p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
+		}
 	case *PhysicalApply:
 		buildSchema(x.PhysicalJoin)
 		x.schema = x.PhysicalJoin.Schema()
