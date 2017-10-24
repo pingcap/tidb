@@ -18,6 +18,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
@@ -171,12 +173,16 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
+	_, err = se.Execute("use test")
+	c.Assert(err, IsNil)
+	ctx := se.(context.Context)
+	is := infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})
 	for _, tt := range tests {
-		stmts, err1 := tidb.Parse(se.(context.Context), tt.sql)
+		stmts, err1 := tidb.Parse(ctx, tt.sql)
 		c.Assert(err1, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		err = plan.Validate(stmt, tt.inPrepare)
+		err = plan.Preprocess(ctx, stmt, is, tt.inPrepare)
 		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
 	}
 }
