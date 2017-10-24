@@ -31,6 +31,7 @@ var (
 	_ functionClass = &releaseLockFunctionClass{}
 	_ functionClass = &valuesFunctionClass{}
 	_ functionClass = &bitCountFunctionClass{}
+	_ functionClass = &getParamFunctionClass{}
 )
 
 var (
@@ -48,6 +49,7 @@ var (
 	_ builtinFunc = &builtinValuesDurationSig{}
 	_ builtinFunc = &builtinValuesJSONSig{}
 	_ builtinFunc = &builtinBitCountSig{}
+	_ builtinFunc = &builtinGetParamStringSig{}
 )
 
 type rowFunctionClass struct {
@@ -357,4 +359,41 @@ func (b *builtinBitCountSig) evalInt(row types.Row) (int64, bool, error) {
 		count++
 	}
 	return count, false, nil
+}
+
+// for plan cache of prepared statements
+type getParamFunctionClass struct {
+	baseFunctionClass
+}
+
+//TODO: more typed functions will be added when typed parameters are supported.
+func (c *getParamFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Flen = mysql.MaxFieldVarCharLength
+	sig := &builtinGetParamStringSig{bf}
+	return sig, nil
+}
+
+type builtinGetParamStringSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetParamStringSig) evalString(row types.Row) (string, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	sc := sessionVars.StmtCtx
+	idx, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	v := sessionVars.PreparedParams[idx]
+
+	dt := v.(types.Datum)
+	str, err := (&dt).ToString()
+	if err != nil {
+		return "", true, nil
+	}
+	return str, false, nil
 }
