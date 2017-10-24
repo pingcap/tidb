@@ -249,6 +249,10 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		if tblInfo.OldSchemaID != 0 {
+			oldSchemaID = tblInfo.OldSchemaID
+			tblInfo.OldSchemaID = 0
+		}
 		baseID, err = t.GetAutoTableID(oldSchemaID, tblInfo.ID)
 		if err != nil {
 			return ver, errors.Trace(err)
