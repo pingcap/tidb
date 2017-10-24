@@ -160,6 +160,18 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 	return hg, nil
 }
 
+func columnCountFromStorage(ctx context.Context, tableID, colID int64) (int64, error) {
+	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if rows[0].Data[0].IsNull() {
+		return 0, nil
+	}
+	return rows[0].Data[0].GetMysqlDecimal().ToInt()
+}
+
 func (hg *Histogram) toString(isIndex bool) string {
 	strs := make([]string, 0, len(hg.Buckets)+1)
 	if isIndex {
@@ -443,7 +455,8 @@ func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram
 // Column represents a column histogram.
 type Column struct {
 	Histogram
-	Info *model.ColumnInfo
+	Count int64
+	Info  *model.ColumnInfo
 }
 
 func (c *Column) String() string {
