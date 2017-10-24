@@ -17,10 +17,13 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -67,6 +70,72 @@ func (t *Table) copy() *Table {
 	return nt
 }
 
+func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo *model.TableInfo) error {
+	histID, distinct := row.Data[2].GetInt64(), row.Data[3].GetInt64()
+	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
+	idx := table.Indices[histID]
+	for _, idxInfo := range tableInfo.Indices {
+		if histID != idxInfo.ID {
+			continue
+		}
+		if idx == nil || idx.LastUpdateVersion < histVer {
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idx = &Index{Histogram: *hg, Info: idxInfo}
+		}
+		break
+	}
+	if idx != nil {
+		table.Indices[histID] = idx
+	} else {
+		log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+	}
+	return nil
+}
+
+func (h *Handle) columnHistogramFromStorage(row *ast.Row, table *Table, tableInfo *model.TableInfo) error {
+	histID, distinct := row.Data[2].GetInt64(), row.Data[3].GetInt64()
+	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
+	col := table.Columns[histID]
+	for _, colInfo := range tableInfo.Columns {
+		if histID != colInfo.ID {
+			continue
+		}
+		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
+		needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
+		if h.Lease > 0 && !isHandle && needNotLoad {
+			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			col = &Column{
+				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, LastUpdateVersion: histVer},
+				Info:      colInfo,
+				Count:     count}
+			break
+		}
+		if col == nil || col.LastUpdateVersion < histVer {
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			col = &Column{Histogram: *hg, Info: colInfo, Count: int64(hg.totalRowCount())}
+		}
+		break
+	}
+	if col != nil {
+		table.Columns[col.ID] = col
+	} else {
+		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
+		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
+		// avoid error.
+		log.Warnf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+	}
+	return nil
+}
+
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
@@ -90,52 +159,13 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 		return nil, nil
 	}
 	for _, row := range rows {
-		distinct := row.Data[3].GetInt64()
-		histID := row.Data[2].GetInt64()
-		histVer := row.Data[4].GetUint64()
-		nullCount := row.Data[5].GetInt64()
 		if row.Data[1].GetInt64() > 0 {
-			// process index
-			idx := table.Indices[histID]
-			for _, idxInfo := range tableInfo.Indices {
-				if histID == idxInfo.ID {
-					if idx == nil || idx.LastUpdateVersion < histVer {
-						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
-						if err != nil {
-							return nil, errors.Trace(err)
-						}
-						idx = &Index{Histogram: *hg, Info: idxInfo}
-					}
-					break
-				}
-			}
-			if idx != nil {
-				table.Indices[histID] = idx
-			} else {
-				log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+			if err := h.indexHistogramFromStorage(row, table, tableInfo); err != nil {
+				return nil, errors.Trace(err)
 			}
 		} else {
-			// process column
-			col := table.Columns[histID]
-			for _, colInfo := range tableInfo.Columns {
-				if histID == colInfo.ID {
-					if col == nil || col.LastUpdateVersion < histVer {
-						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
-						if err != nil {
-							return nil, errors.Trace(err)
-						}
-						col = &Column{Histogram: *hg, Info: colInfo}
-					}
-					break
-				}
-			}
-			if col != nil {
-				table.Columns[col.ID] = col
-			} else {
-				// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
-				// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
-				// avoid error.
-				log.Warnf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+			if err := h.columnHistogramFromStorage(row, table, tableInfo); err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 	}
@@ -155,54 +185,93 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-// ColumnIsInvalid checks if this column is invalid.
-func (t *Table) ColumnIsInvalid(colInfo *model.ColumnInfo) bool {
+type tableColumnID struct {
+	tableID  int64
+	columnID int64
+}
+
+type neededColumnMap struct {
+	m    sync.Mutex
+	cols map[tableColumnID]struct{}
+}
+
+func (n *neededColumnMap) allCols() []tableColumnID {
+	n.m.Lock()
+	keys := make([]tableColumnID, 0, len(n.cols))
+	for key := range n.cols {
+		keys = append(keys, key)
+	}
+	n.m.Unlock()
+	return keys
+}
+
+func (n *neededColumnMap) insert(col tableColumnID) {
+	n.m.Lock()
+	n.cols[col] = struct{}{}
+	n.m.Unlock()
+}
+
+func (n *neededColumnMap) delete(col tableColumnID) {
+	n.m.Lock()
+	delete(n.cols, col)
+	n.m.Unlock()
+}
+
+var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
+
+// ColumnIsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
+// as need histogram.
+func (t *Table) ColumnIsInvalid(sc *variable.StatementContext, colID int64) bool {
 	if t.Pseudo {
 		return true
 	}
-	col, ok := t.Columns[colInfo.ID]
+	col, ok := t.Columns[colID]
+	if ok && col.NDV > 0 && len(col.Buckets) == 0 {
+		sc.SetHistogramsNotLoad()
+		histogramNeededColumns.insert(tableColumnID{tableID: t.TableID, columnID: colID})
+	}
 	return !ok || len(col.Buckets) == 0
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.ColumnIsInvalid(colInfo) {
+func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
-	hist := t.Columns[colInfo.ID]
+	hist := t.Columns[colID]
 	result, err := hist.greaterRowCount(sc, value)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
-func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.ColumnIsInvalid(colInfo) {
+func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
-	hist := t.Columns[colInfo.ID]
+	hist := t.Columns[colID]
 	result, err := hist.lessRowCount(sc, value)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.ColumnIsInvalid(colInfo) {
+func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colID int64) (float64, error) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	hist := t.Columns[colInfo.ID]
+	hist := t.Columns[colID]
 	result, err := hist.betweenRowCount(sc, a, b)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
-func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.ColumnIsInvalid(colInfo) {
+func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	hist := t.Columns[colInfo.ID]
+	hist := t.Columns[colID]
 	result, err := hist.equalRowCount(sc, value)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
@@ -210,19 +279,19 @@ func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.D
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
 func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []types.IntColumnRange) (float64, error) {
-	c := t.Columns[colID]
-	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
+	if t.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
+	c := t.Columns[colID]
 	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
 func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID int64, colRanges []*types.ColumnRange) (float64, error) {
-	c := t.Columns[colID]
-	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
+	if t.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
 	}
+	c := t.Columns[colID]
 	return c.getColumnRowCount(sc, colRanges)
 }
 
