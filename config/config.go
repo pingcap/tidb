@@ -218,6 +218,7 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 	}
 }
 
+// ToTracingConfig converts *OpenTracing to *tracing.Configuration.
 func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	ret := &tracing.Configuration{
 		Disabled:   !t.Enable,
