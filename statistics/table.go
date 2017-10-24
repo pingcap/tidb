@@ -75,16 +75,17 @@ func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo
 	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
 	idx := table.Indices[histID]
 	for _, idxInfo := range tableInfo.Indices {
-		if histID == idxInfo.ID {
-			if idx == nil || idx.LastUpdateVersion < histVer {
-				hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				idx = &Index{Histogram: *hg, Info: idxInfo}
-			}
-			break
+		if histID != idxInfo.ID {
+			continue
 		}
+		if idx == nil || idx.LastUpdateVersion < histVer {
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idx = &Index{Histogram: *hg, Info: idxInfo}
+		}
+		break
 	}
 	if idx != nil {
 		table.Indices[histID] = idx
@@ -99,29 +100,30 @@ func (h *Handle) columnHistogramFromStorage(row *ast.Row, table *Table, tableInf
 	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
 	col := table.Columns[histID]
 	for _, colInfo := range tableInfo.Columns {
-		if histID == colInfo.ID {
-			isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-			needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
-			if h.Lease > 0 && !isHandle && needNotLoad {
-				count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				col = &Column{
-					Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, LastUpdateVersion: histVer},
-					Info:      colInfo,
-					Count:     count}
-				break
-			}
-			if col == nil || col.LastUpdateVersion < histVer {
-				hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				col = &Column{Histogram: *hg, Info: colInfo, Count: int64(hg.totalRowCount())}
-				break
-			}
+		if histID != colInfo.ID {
+			continue
 		}
+		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
+		needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
+		if h.Lease > 0 && !isHandle && needNotLoad {
+			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			col = &Column{
+				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, LastUpdateVersion: histVer},
+				Info:      colInfo,
+				Count:     count}
+			break
+		}
+		if col == nil || col.LastUpdateVersion < histVer {
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			col = &Column{Histogram: *hg, Info: colInfo, Count: int64(hg.totalRowCount())}
+		}
+		break
 	}
 	if col != nil {
 		table.Columns[col.ID] = col
