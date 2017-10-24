@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -322,7 +323,12 @@ func setGlobalVars() {
 	if cache.PlanCacheEnabled {
 		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
 		cache.PlanCacheShards = cfg.PlanCache.Shards
-		cache.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+		cache.GlobalPlanCache = kvcache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	}
+
+	cache.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
+	if cache.PreparedPlanCacheEnabled {
+		cache.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
 }
 
