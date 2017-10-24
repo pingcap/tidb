@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	DefaultMaxRetries        = 30
-	RetryInterval     uint64 = 500
+	// DefaultMaxRetries indicates the max retry count.
+	DefaultMaxRetries = 30
+	// RetryInterval indicates retry interval.
+	RetryInterval uint64 = 500
 )
 
 // RunWithRetry will run the f with backoff and retry.

@@ -122,3 +122,7 @@ xsocket = ""
 plan-cache-enabled = false
 plan-cache-capacity = 2560
 plan-cache-shards = 256
+
+[prepared-plan-cache]
+prepared-plan-cache-enabled = false
+prepared-plan-cache-capacity = 100

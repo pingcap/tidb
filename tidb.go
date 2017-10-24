@@ -255,6 +255,9 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	return s, errors.Trace(err1)
 }
 
+// DialPumpClient tries to dial to binlogSocket,
+// if any error happens, it will try to re-dial,
+// or return this error when timeout.
 func DialPumpClient(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) error {
 	return dialPumpClientWithRetry(binlogSocket, clientCon, maxRetries, dialerOpt)
 }

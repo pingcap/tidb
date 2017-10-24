@@ -31,12 +31,13 @@ type Config struct {
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
 
-	Log         Log         `toml:"log" json:"log"`
-	Security    Security    `toml:"security" json:"security"`
-	Status      Status      `toml:"status" json:"status"`
-	Performance Performance `toml:"performance" json:"performance"`
-	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
-	PlanCache   PlanCache   `toml:"plan-cache" json:"plan-cache"`
+	Log               Log               `toml:"log" json:"log"`
+	Security          Security          `toml:"security" json:"security"`
+	Status            Status            `toml:"status" json:"status"`
+	Performance       Performance       `toml:"performance" json:"performance"`
+	XProtocol         XProtocol         `toml:"xprotocol" json:"xprotocol"`
+	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
+	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 }
 
 // Log is the log section of config.
@@ -96,6 +97,12 @@ type PlanCache struct {
 	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
 }
 
+// PreparedPlanCache is the PreparedPlanCache section of the config.
+type PreparedPlanCache struct {
+	Enabled  bool  `toml:"prepared-plan-cache-enabled" json:"prepared-plan-cache-enabled"`
+	Capacity int64 `toml:"prepared-plan-cache-capacity" json:"prepared-plan-cache-capacity"`
+}
+
 var defaultConf = Config{
 	Host:   "0.0.0.0",
 	Port:   4000,
@@ -133,6 +140,10 @@ var defaultConf = Config{
 		Enabled:  false,
 		Capacity: 2560,
 		Shards:   256,
+	},
+	PreparedPlanCache: PreparedPlanCache{
+		Enabled:  false,
+		Capacity: 100,
 	},
 }
 

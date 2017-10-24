@@ -126,7 +126,7 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 
 func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
 	retryDialPumlClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
-		return util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
+		return util.RunWithRetry(maxRetries, 10, func() (bool, error) {
 			clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
 			return true, errors.New("must fail")
 		})
@@ -137,7 +137,7 @@ func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "must fail")
 	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
+	c.Assert(uint64(elapse), GreaterEqual, uint64(6*10*time.Millisecond))
 }
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {

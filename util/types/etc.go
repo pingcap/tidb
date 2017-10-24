@@ -55,6 +55,11 @@ func IsTypeJSON(tp byte) bool {
 	return tp == mysql.TypeJSON
 }
 
+// IsTypeUnspecified returns a boolean indicating whether the tp is the Unspecified type.
+func IsTypeUnspecified(tp byte) bool {
+	return tp == mysql.TypeUnspecified
+}
+
 // IsTypePrefixable returns a boolean indicating
 // whether an index on a column with the tp can be defined with a prefix.
 func IsTypePrefixable(tp byte) bool {
@@ -82,7 +87,7 @@ func IsTemporalWithDate(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	if ft.Collate == charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp)) {
+	if ft.Collate == charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)) {
 		return true
 	}
 	return false
@@ -91,7 +96,7 @@ func IsBinaryStr(ft *FieldType) bool {
 // IsNonBinaryStr returns a boolean indicating
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
-	if ft.Collate != charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp)) {
+	if ft.Collate != charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)) {
 		return true
 	}
 	return false
