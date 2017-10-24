@@ -103,6 +103,12 @@ type TableInfo struct {
 	AutoIncID   int64         `json:"auto_inc_id"`
 	MaxColumnID int64         `json:"max_col_id"`
 	MaxIndexID  int64         `json:"max_idx_id"`
+	// OldSchemaID :
+	// Because auto increment ID has schemaID as prefix,
+	// We need to save original schemaID to keep autoID unchanged
+	// while renaming a table from one database to another.
+	// TODO: Remove this field.
+	OldSchemaID int64 `json:"old_schema_id,omitempty"`
 }
 
 // Clone clones TableInfo.
