@@ -20,11 +20,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -260,7 +260,7 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 		if job.SchemaState == model.StateNone && job.State != model.JobStateDone {
 			// If the schema state is none, we only test the job is finished.
 		} else {
-			errs, err := inspectkv.CancelJobs(txn, test.jobIDs)
+			errs, err := admin.CancelJobs(txn, test.jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return checkErr

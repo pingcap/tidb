@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func evalBuiltinFunc(f builtinFunc, row []types.Datum) (d types.Datum, err error) {
+func evalBuiltinFunc(f builtinFunc, row types.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool

@@ -412,6 +412,7 @@ var tokenMap = map[string]int{
 	"STATS_PERSISTENT":    statsPersistent,
 	"STATUS":              status,
 	"STORED":              stored,
+	"STRAIGHT_JOIN":       straightJoin,
 	"SUBDATE":             subDate,
 	"SUBSTR":              substring,
 	"SUBSTRING":           substring,

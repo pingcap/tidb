@@ -37,28 +37,28 @@ type Expression interface {
 	goJSON.Marshaler
 
 	// Eval evaluates an expression through a row.
-	Eval(row []types.Datum) (types.Datum, error)
+	Eval(row types.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(row []types.Datum, sc *variable.StatementContext) (val int64, isNull bool, err error)
+	EvalInt(row types.Row, sc *variable.StatementContext) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(row []types.Datum, sc *variable.StatementContext) (val float64, isNull bool, err error)
+	EvalReal(row types.Row, sc *variable.StatementContext) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(row []types.Datum, sc *variable.StatementContext) (val string, isNull bool, err error)
+	EvalString(row types.Row, sc *variable.StatementContext) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(row types.Row, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(row []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
+	EvalTime(row types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(row []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
+	EvalDuration(row types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(row []types.Datum, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
+	EvalJSON(row types.Row, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -98,7 +98,7 @@ func (e CNFExprs) Clone() CNFExprs {
 }
 
 // EvalBool evaluates expression list to a boolean value.
-func EvalBool(exprList CNFExprs, row []types.Datum, ctx context.Context) (bool, error) {
+func EvalBool(exprList CNFExprs, row types.Row, ctx context.Context) (bool, error) {
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
