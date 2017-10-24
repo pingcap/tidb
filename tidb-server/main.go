@@ -109,8 +109,6 @@ var (
 	dom      *domain.Domain
 	svr      *server.Server
 	xsvr     *xserver.Server
-	binlogCh = make(chan error, 1)
-	storeCh  = make(chan error, 1)
 )
 
 func main() {
