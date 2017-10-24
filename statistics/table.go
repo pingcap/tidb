@@ -21,6 +21,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -69,6 +70,70 @@ func (t *Table) copy() *Table {
 	return nt
 }
 
+func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo *model.TableInfo) error {
+	histID, distinct := row.Data[2].GetInt64(), row.Data[3].GetInt64()
+	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
+	idx := table.Indices[histID]
+	for _, idxInfo := range tableInfo.Indices {
+		if histID == idxInfo.ID {
+			if idx == nil || idx.LastUpdateVersion < histVer {
+				hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				idx = &Index{Histogram: *hg, Info: idxInfo}
+			}
+			break
+		}
+	}
+	if idx != nil {
+		table.Indices[histID] = idx
+	} else {
+		log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+	}
+	return nil
+}
+
+func (h *Handle) columnHistogramFromStorage(row *ast.Row, table *Table, tableInfo *model.TableInfo) error {
+	histID, distinct := row.Data[2].GetInt64(), row.Data[3].GetInt64()
+	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
+	col := table.Columns[histID]
+	for _, colInfo := range tableInfo.Columns {
+		if histID == colInfo.ID {
+			isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
+			needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
+			if h.Lease > 0 && !isHandle && needNotLoad {
+				count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				col = &Column{
+					Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, LastUpdateVersion: histVer},
+					Info:      colInfo,
+					Count:     count}
+				break
+			}
+			if col == nil || col.LastUpdateVersion < histVer {
+				hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				col = &Column{Histogram: *hg, Info: colInfo, Count: int64(hg.totalRowCount())}
+				break
+			}
+		}
+	}
+	if col != nil {
+		table.Columns[col.ID] = col
+	} else {
+		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
+		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
+		// avoid error.
+		log.Warnf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+	}
+	return nil
+}
+
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
@@ -92,65 +157,13 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 		return nil, nil
 	}
 	for _, row := range rows {
-		distinct := row.Data[3].GetInt64()
-		histID := row.Data[2].GetInt64()
-		histVer := row.Data[4].GetUint64()
-		nullCount := row.Data[5].GetInt64()
 		if row.Data[1].GetInt64() > 0 {
-			// process index
-			idx := table.Indices[histID]
-			for _, idxInfo := range tableInfo.Indices {
-				if histID == idxInfo.ID {
-					if idx == nil || idx.LastUpdateVersion < histVer {
-						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
-						if err != nil {
-							return nil, errors.Trace(err)
-						}
-						idx = &Index{Histogram: *hg, Info: idxInfo}
-					}
-					break
-				}
-			}
-			if idx != nil {
-				table.Indices[histID] = idx
-			} else {
-				log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+			if err := h.indexHistogramFromStorage(row, table, tableInfo); err != nil {
+				return nil, errors.Trace(err)
 			}
 		} else {
-			// process column
-			col := table.Columns[histID]
-			for _, colInfo := range tableInfo.Columns {
-				if histID == colInfo.ID {
-					isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-					needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
-					if h.Lease > 0 && !isHandle && needNotLoad {
-						count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
-						if err != nil {
-							return nil, errors.Trace(err)
-						}
-						col = &Column{
-							Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, LastUpdateVersion: histVer},
-							Info:      colInfo,
-							Count:     count}
-						break
-					}
-					if col == nil || col.LastUpdateVersion < histVer {
-						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
-						if err != nil {
-							return nil, errors.Trace(err)
-						}
-						col = &Column{Histogram: *hg, Info: colInfo, Count: int64(hg.totalRowCount())}
-						break
-					}
-				}
-			}
-			if col != nil {
-				table.Columns[col.ID] = col
-			} else {
-				// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
-				// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
-				// avoid error.
-				log.Warnf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+			if err := h.columnHistogramFromStorage(row, table, tableInfo); err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 	}
@@ -180,6 +193,28 @@ type neededColumnMap struct {
 	cols map[tableColumnID]struct{}
 }
 
+func (n *neededColumnMap) allCols() []tableColumnID {
+	n.m.Lock()
+	keys := make([]tableColumnID, 0, len(n.cols))
+	for key := range n.cols {
+		keys = append(keys, key)
+	}
+	n.m.Unlock()
+	return keys
+}
+
+func (n *neededColumnMap) insert(col tableColumnID) {
+	n.m.Lock()
+	n.cols[col] = struct{}{}
+	n.m.Unlock()
+}
+
+func (n *neededColumnMap) delete(col tableColumnID) {
+	n.m.Lock()
+	delete(n.cols, col)
+	n.m.Unlock()
+}
+
 var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 
 // ColumnIsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
@@ -191,10 +226,7 @@ func (t *Table) ColumnIsInvalid(sc *variable.StatementContext, colID int64) bool
 	col, ok := t.Columns[colID]
 	if ok && col.NDV > 0 && len(col.Buckets) == 0 {
 		sc.SetHistogramsNotLoad()
-		histogramNeededColumns.m.Lock()
-		key := tableColumnID{tableID: t.TableID, columnID: colID}
-		histogramNeededColumns.cols[key] = struct{}{}
-		histogramNeededColumns.m.Unlock()
+		histogramNeededColumns.insert(tableColumnID{tableID: t.TableID, columnID: colID})
 	}
 	return !ok || len(col.Buckets) == 0
 }

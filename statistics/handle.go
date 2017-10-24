@@ -159,29 +159,21 @@ func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 
 // LoadNeededHistograms will load histograms for those needed columns.
 func (h *Handle) LoadNeededHistograms() error {
-	histogramNeededColumns.m.Lock()
-	colsMap := make(map[tableColumnID]struct{})
-	for key := range histogramNeededColumns.cols {
-		colsMap[key] = struct{}{}
-	}
-	histogramNeededColumns.m.Unlock()
-	for key := range colsMap {
-		tbl := h.GetTableStats(key.tableID).copy()
-		c, ok := tbl.Columns[key.columnID]
+	cols := histogramNeededColumns.allCols()
+	for _, col := range cols {
+		tbl := h.GetTableStats(col.tableID).copy()
+		c, ok := tbl.Columns[col.columnID]
 		if !ok || len(c.Buckets) > 0 {
+			histogramNeededColumns.delete(col)
 			continue
 		}
-		hg, err := histogramFromStorage(h.ctx, key.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount)
+		hg, err := histogramFromStorage(h.ctx, col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, Count: int64(hg.totalRowCount())}
 		h.UpdateTableStats([]*Table{tbl}, nil)
+		histogramNeededColumns.delete(col)
 	}
-	histogramNeededColumns.m.Lock()
-	for key := range colsMap {
-		delete(histogramNeededColumns.cols, key)
-	}
-	histogramNeededColumns.m.Unlock()
 	return nil
 }
