@@ -67,7 +67,10 @@ func main() {
 		}
 	}()
 	var input []string
-	stat, _ := os.Stdin.Stat()
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		fmt.Println("Error when executing os.Stdin.Stat() ", err)
+	}
 	if (stat.Mode() & os.ModeCharDevice) == 0 {
 		detach = true
 		b, err := ioutil.ReadAll(os.Stdin)
@@ -95,7 +98,12 @@ func loop() {
 	if err != nil {
 		panic(err)
 	}
-	defer l.Close()
+	defer func() {
+		err := l.Close()
+		if err != nil {
+			fmt.Println("Error when close the command instance")
+		}
+	}()
 
 	for {
 		line, err := l.Readline()

@@ -62,7 +62,12 @@ func getTableInfo(host, dbName, tableName string, verbose bool) (*tableInfo, err
 		return nil, err
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			fmt.Println("Error when close the http response body. ", err)
+		}
+	}()
 
 	content, err := ioutil.ReadAll(resp.Body)
 	if err != nil {

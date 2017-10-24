@@ -54,10 +54,14 @@ func init() {
 func Start(args []string) {
 	rootCmd.SetArgs(args)
 	rootCmd.SilenceErrors = true
-	rootCmd.ParseFlags(args)
+	err := rootCmd.ParseFlags(args)
+	if err != nil {
+		fmt.Println("Error when parse flags: ", err)
+		return
+	}
 
 	// TiDB address validation
-	err := validTiDBAddrInCmd(rootCmd)
+	err = validTiDBAddrInCmd(rootCmd)
 	if err != nil {
 		fmt.Println("Error when validate tidb url: ", err)
 		return
@@ -92,8 +96,18 @@ func validTiDBAddr(tidb string) error {
 	if err != nil {
 		return err
 	}
-	defer reps.Body.Close()
-	ioutil.ReadAll(reps.Body)
+	defer func() {
+		err = reps.Body.Close()
+		if err != nil {
+			fmt.Println("Error when close the http response body. ", err)
+		}
+	}()
+
+	_, err = ioutil.ReadAll(reps.Body)
+	if err != nil {
+		fmt.Println("Error when read the http response body. ", err)
+	}
+
 	if reps.StatusCode != http.StatusOK {
 		return errInvalidAddr
 	}
