@@ -78,9 +78,9 @@ type protocolType uint32
 
 const (
 	// MySQLProtocol is MySQL Protocol
-	MySQLProtocol protocolType = 1
+	MySQLProtocol protocolType = iota
 	// MySQLXProtocol is MySQL X Protocol
-	MySQLXProtocol = 2
+	MySQLXProtocol
 )
 
 // Server is the MySQL protocol server

@@ -17,8 +17,10 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
+type authStatus int32
+
 const (
-	authOngoing int32 = iota
+	authOngoing authStatus = iota
 	authSucceed
 	authFailed
 	authError
@@ -26,7 +28,7 @@ const (
 
 type response struct {
 	data    string
-	status  int32
+	status  authStatus
 	errCode uint16
 }
 

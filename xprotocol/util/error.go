@@ -35,6 +35,7 @@ var (
 	ErrXCmdNumArguments           = ErrorMessage(mysql.ErrXCmdNumArguments, mysql.MySQLErrName[mysql.ErrXCmdNumArguments])
 	ErrXCmdArgumentType           = ErrorMessage(mysql.ErrXCmdArgumentType, mysql.MySQLErrName[mysql.ErrXCmdArgumentType])
 	ErrXCannotDisableNotice       = ErrorMessage(mysql.ErrXCannotDisableNotice, mysql.MySQLErrName[mysql.ErrXCannotDisableNotice])
+	ErrNotSupportedAuthMode       = ErrorMessage(mysql.ErrNotSupportedAuthMode, mysql.MySQLErrName[mysql.ErrNotSupportedAuthMode])
 )
 
 const (
@@ -55,6 +56,7 @@ const (
 	codeErrXCmdNumArguments                          = terror.ErrCode(mysql.ErrXCmdNumArguments)
 	codeErrXCmdArgumentType                          = terror.ErrCode(mysql.ErrXCmdArgumentType)
 	codeErrXCannotDisableNotice                      = terror.ErrCode(mysql.ErrXCannotDisableNotice)
+	codeErrNotSupportedAuthMode                      = terror.ErrCode(mysql.ErrNotSupportedAuthMode)
 )
 
 func init() {
@@ -76,6 +78,7 @@ func init() {
 		codeErrXCmdNumArguments:           mysql.ErrXCmdNumArguments,
 		codeErrXCmdArgumentType:           mysql.ErrXCmdArgumentType,
 		codeErrXCannotDisableNotice:       mysql.ErrXCannotDisableNotice,
+		codeErrNotSupportedAuthMode:       mysql.ErrNotSupportedAuthMode,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassXProtocol] = xProtocolMySQLErrCodes
 }
