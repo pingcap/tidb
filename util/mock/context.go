@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/kvcache"
 	goctx "golang.org/x/net/context"
 )
 
@@ -38,6 +39,7 @@ type Context struct {
 	ctx         goctx.Context
 	cancel      goctx.CancelFunc
 	sm          util.SessionManager
+	pcache      *kvcache.SimpleLRUCache
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -91,6 +93,11 @@ func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string
 	}
 	v.Value = value
 	return nil
+}
+
+// PreparedPlanCache implements the context.Context interface.
+func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
+	return c.pcache
 }
 
 // NewTxn implements the context.Context interface.

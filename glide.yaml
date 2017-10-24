@@ -51,7 +51,7 @@ import:
 - package: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - package: github.com/pingcap/goleveldb
-  version: 1c7b975bc41078e959e38e2ecbfd28a9619fc77a
+  version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
   - leveldb
   - leveldb/cache
@@ -141,7 +141,7 @@ import:
 - package: github.com/pingcap/pd
   version: 91e4257196bb714005f80a6e075bc1e19a9687b1
 - package: github.com/pingcap/tipb
-  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
+  version: eccd39c3992538c382a6351430a77233f42b1344
   subpackages:
   - go-binlog
   - go-mysqlx

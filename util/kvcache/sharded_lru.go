@@ -11,23 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cache
+package kvcache
 
 import (
 	"sync"
 
 	"github.com/spaolacci/murmur3"
-)
-
-var (
-	// PlanCacheEnabled stores the global config "plan-cache-enabled".
-	PlanCacheEnabled bool
-	// PlanCacheShards stores the global config "plan-cache-shards".
-	PlanCacheShards int64
-	// PlanCacheCapacity stores the global config "plan-cache-capacity".
-	PlanCacheCapacity int64
-	// GlobalPlanCache stores the global plan cache for every session in a tidb-server.
-	GlobalPlanCache *ShardedLRUCache
 )
 
 // ShardedLRUCache is a sharded LRU Cache, thread safe.

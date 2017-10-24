@@ -281,11 +281,15 @@ func (c *dateLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	constant, ok := args[0].(*Constant)
+	con, ok := args[0].(*Constant)
 	if !ok {
 		panic("Unexpected parameter for date literal")
 	}
-	str := constant.Value.GetString()
+	dt, err := con.Eval(nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	str := dt.GetString()
 	if !datePattern.MatchString(str) {
 		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(str)
 	}
@@ -1847,11 +1851,15 @@ func (c *timeLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	constant, ok := args[0].(*Constant)
+	con, ok := args[0].(*Constant)
 	if !ok {
 		panic("Unexpected parameter for time literal")
 	}
-	str := constant.Value.GetString()
+	dt, err := con.Eval(nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	str := dt.GetString()
 	if !isDuration(str) {
 		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(str)
 	}
@@ -3076,11 +3084,18 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx context.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	constant, ok := args[0].(*Constant)
+	con, ok := args[0].(*Constant)
 	if !ok {
 		panic("Unexpected parameter for timestamp literal")
 	}
-	str := constant.Value.GetString()
+	dt, err := con.Eval(nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	str, err := dt.ToString()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(str)
 	}

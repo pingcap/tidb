@@ -11,11 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cache
+package kvcache
 
 import (
 	"container/list"
 )
+
+// Key is the interface that every key in LRU Cache should implement.
+type Key interface {
+	Hash() []byte
+}
+
+// Value is the interface that every value in LRU Cache should implement.
+type Value interface {
+}
 
 // cacheEntry wraps Key and Value. It's the value of list.Element.
 type cacheEntry struct {
