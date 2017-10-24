@@ -142,7 +142,7 @@ var defaultConf = Config{
 		Shards:   256,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:  true,
+		Enabled:  false,
 		Capacity: 100,
 	},
 }
