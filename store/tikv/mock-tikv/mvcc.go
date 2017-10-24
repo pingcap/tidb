@@ -424,6 +424,7 @@ type MVCCStore interface {
 	Cleanup(key []byte, startTS uint64) error
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
+	BatchResolveLock(startKey, endKey []byte, txninfos map[uint64]uint64) error
 }
 
 // RawKV is a key-value storage. MVCCStore can be implemented upon it with timestamp encoded into key.
@@ -694,6 +695,41 @@ func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint6
 				return false
 			}
 			ents = append(ents, ent)
+		}
+		return true
+	}
+	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.submit(ents...)
+	return nil
+}
+
+// BatchResolveLock resolves all orphan locks belong to a transaction.
+func (s *MvccStore) BatchResolveLock(startKey, endKey []byte, txninfos map[uint64]uint64) error {
+	s.Lock()
+	defer s.Unlock()
+
+	var ents []*mvccEntry
+	var err error
+	iterator := func(item llrb.Item) bool {
+		ent := item.(*mvccEntry)
+		if !regionContains(startKey, endKey, ent.key) {
+			return false
+		}
+		if ent.lock != nil {
+			if commitTS, ok := txninfos[ent.lock.startTS]; ok {
+				if commitTS > 0 {
+					err = ent.Commit(ent.lock.startTS, commitTS)
+				} else {
+					err = ent.Rollback(ent.lock.startTS)
+				}
+				if err != nil {
+					return false
+				}
+				ents = append(ents, ent)
+			}
 		}
 		return true
 	}
