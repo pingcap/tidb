@@ -904,7 +904,10 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.C
 		Args:       []interface{}{tbInfo},
 	}
 
-	d.doDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
