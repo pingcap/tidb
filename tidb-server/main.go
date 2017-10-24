@@ -165,7 +165,7 @@ func setupBinlogClient() {
 		return net.DialTimeout("unix", addr, timeout)
 	})
 	var clientConn *grpc.ClientConn
-	err := tidb.DialPumpClient(cfg.BinlogSocket, clientConn, util.DefaultMaxRetries, dialerOpt)
+	err := tidb.DialPumpClientWithRetry(cfg.BinlogSocket, clientConn, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s", cfg.BinlogSocket)

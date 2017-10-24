@@ -125,15 +125,14 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 }
 
 func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
-	retryDialPumlClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
+	retryDialPumpClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
 		return util.RunWithRetry(maxRetries, 10, func() (bool, error) {
-			clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
+			// Assume that it'll always return an error.
 			return true, errors.New("must fail")
 		})
 	}
 	begin := time.Now()
-	var clientConn *grpc.ClientConn
-	err := retryDialPumlClientMustFail("", clientConn, 3, grpc.WithInsecure())
+	err := retryDialPumpClientMustFail("", nil, 3, nil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "must fail")
 	elapse := time.Since(begin)
