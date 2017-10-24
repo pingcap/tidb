@@ -261,18 +261,14 @@ func (w *GCWorker) tick(ctx goctx.Context) {
 	isLeader, err := w.checkLeader()
 	if err != nil {
 		log.Warnf("[gc worker] check leader err: %v", err)
-		log.Infof("[gc worker] check leader err: %v", err)
 		return
 	}
 	if isLeader {
-		log.Info("This is leader")
 		err = w.leaderTick(ctx)
 		if err != nil {
 			log.Warnf("[gc worker] leader tick err: %v", err)
-			log.Infof("[gc worker] leader tick err: %v", err)
 		}
 	} else {
-		log.Info("Not Leader, Return")
 		// Config metrics should always be updated by leader, set them to 0 when current instance is not leader.
 		gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
 		gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
@@ -299,19 +295,15 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 // Leader of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 	if w.gcIsRunning {
-		log.Infof("There is another gc worker running")
 		return nil
 	}
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
-		log.Info("prepare ok:", ok)
-		log.Info("prepare err:", err)
 		w.gcIsRunning = false
 		return errors.Trace(err)
 	}
 	// When the worker is just started, or an old GC job has just finished,
-	
 	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts GC job, safePoint: %v", w.uuid, safePoint)
 	go w.runGCJob(ctx, safePoint)
@@ -355,7 +347,6 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 }
 
 func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
-	return true, nil
 	runInterval, err := w.loadDurationWithDefault(gcRunIntervalKey, gcDefaultRunInterval)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -367,7 +358,6 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	}
 
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
-		log.Infof("lastRun (%v) + (%v) shoule be less than now (%v)", lastRun, *runInterval, time.Now())
 		return false, nil
 	}
 
@@ -565,7 +555,6 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 		for i := range locksInfo {
 			locks[i] = newLock(locksInfo[i])
 		}
-		//ok, err1 := store.lockResolver.ResolveLocks(bo, locks)
 		ok, err1 := store.lockResolver.BatchResolveLocks(bo, locks, loc.Region)
 		if err1 != nil {
 			return errors.Trace(err1)

@@ -173,18 +173,18 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	}
 	log.Infof("BatchResolveLocks: it takes %v cost to lookup %v txn status from %v txn status", lr.costTxnStatus, lr.cntTxnStatus, count)
 
-	var list2TxnStatus []*kvrpcpb.Txn2Status
+	var list2TxnStatus []*kvrpcpb.TxnInfo
 	for txnID, status := range txnID2Status {
-		list2TxnStatus = append(list2TxnStatus, &kvrpcpb.Txn2Status {
+		list2TxnStatus = append(list2TxnStatus, &kvrpcpb.TxnInfo {
 			Txn:	txnID,
 			Status:	status,
 		})
 	}
 
 	req := &tikvrpc.Request{
-        Type: tikvrpc.CmdBatchLockResolve,
-        BatchLockResolve: &kvrpcpb.BatchLockResolveRequest{
-            Txn2StatusS: list2TxnStatus,
+        Type: tikvrpc.CmdResolveLock,
+            ResolveLock: &kvrpcpb.ResolveLockRequest {
+            TxnInfos: list2TxnStatus ,
         },
 	}
 	startTime := time.Now()

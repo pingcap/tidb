@@ -19,6 +19,14 @@
 		RegionSizeResponse
 		ScanMvccRequest
 		ScanMvccResponse
+		CompactRequest
+		CompactResponse
+		InjectFailPointRequest
+		InjectFailPointResponse
+		RecoverFailPointRequest
+		RecoverFailPointResponse
+		ListFailPointsRequest
+		ListFailPointsResponse
 */
 package debugpb
 
@@ -333,6 +341,160 @@ func (m *ScanMvccResponse) GetInfo() *kvrpcpb.MvccInfo {
 	return nil
 }
 
+type CompactRequest struct {
+	Db      DB     `protobuf:"varint,1,opt,name=db,proto3,enum=debugpb.DB" json:"db,omitempty"`
+	Cf      string `protobuf:"bytes,2,opt,name=cf,proto3" json:"cf,omitempty"`
+	FromKey []byte `protobuf:"bytes,3,opt,name=from_key,json=fromKey,proto3" json:"from_key,omitempty"`
+	ToKey   []byte `protobuf:"bytes,4,opt,name=to_key,json=toKey,proto3" json:"to_key,omitempty"`
+}
+
+func (m *CompactRequest) Reset()                    { *m = CompactRequest{} }
+func (m *CompactRequest) String() string            { return proto.CompactTextString(m) }
+func (*CompactRequest) ProtoMessage()               {}
+func (*CompactRequest) Descriptor() ([]byte, []int) { return fileDescriptorDebugpb, []int{10} }
+
+func (m *CompactRequest) GetDb() DB {
+	if m != nil {
+		return m.Db
+	}
+	return DB_INVALID
+}
+
+func (m *CompactRequest) GetCf() string {
+	if m != nil {
+		return m.Cf
+	}
+	return ""
+}
+
+func (m *CompactRequest) GetFromKey() []byte {
+	if m != nil {
+		return m.FromKey
+	}
+	return nil
+}
+
+func (m *CompactRequest) GetToKey() []byte {
+	if m != nil {
+		return m.ToKey
+	}
+	return nil
+}
+
+type CompactResponse struct {
+}
+
+func (m *CompactResponse) Reset()                    { *m = CompactResponse{} }
+func (m *CompactResponse) String() string            { return proto.CompactTextString(m) }
+func (*CompactResponse) ProtoMessage()               {}
+func (*CompactResponse) Descriptor() ([]byte, []int) { return fileDescriptorDebugpb, []int{11} }
+
+type InjectFailPointRequest struct {
+	Name    string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Actions string `protobuf:"bytes,2,opt,name=actions,proto3" json:"actions,omitempty"`
+}
+
+func (m *InjectFailPointRequest) Reset()                    { *m = InjectFailPointRequest{} }
+func (m *InjectFailPointRequest) String() string            { return proto.CompactTextString(m) }
+func (*InjectFailPointRequest) ProtoMessage()               {}
+func (*InjectFailPointRequest) Descriptor() ([]byte, []int) { return fileDescriptorDebugpb, []int{12} }
+
+func (m *InjectFailPointRequest) GetName() string {
+	if m != nil {
+		return m.Name
+	}
+	return ""
+}
+
+func (m *InjectFailPointRequest) GetActions() string {
+	if m != nil {
+		return m.Actions
+	}
+	return ""
+}
+
+type InjectFailPointResponse struct {
+}
+
+func (m *InjectFailPointResponse) Reset()                    { *m = InjectFailPointResponse{} }
+func (m *InjectFailPointResponse) String() string            { return proto.CompactTextString(m) }
+func (*InjectFailPointResponse) ProtoMessage()               {}
+func (*InjectFailPointResponse) Descriptor() ([]byte, []int) { return fileDescriptorDebugpb, []int{13} }
+
+type RecoverFailPointRequest struct {
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+}
+
+func (m *RecoverFailPointRequest) Reset()                    { *m = RecoverFailPointRequest{} }
+func (m *RecoverFailPointRequest) String() string            { return proto.CompactTextString(m) }
+func (*RecoverFailPointRequest) ProtoMessage()               {}
+func (*RecoverFailPointRequest) Descriptor() ([]byte, []int) { return fileDescriptorDebugpb, []int{14} }
+
+func (m *RecoverFailPointRequest) GetName() string {
+	if m != nil {
+		return m.Name
+	}
+	return ""
+}
+
+type RecoverFailPointResponse struct {
+}
+
+func (m *RecoverFailPointResponse) Reset()                    { *m = RecoverFailPointResponse{} }
+func (m *RecoverFailPointResponse) String() string            { return proto.CompactTextString(m) }
+func (*RecoverFailPointResponse) ProtoMessage()               {}
+func (*RecoverFailPointResponse) Descriptor() ([]byte, []int) { return fileDescriptorDebugpb, []int{15} }
+
+type ListFailPointsRequest struct {
+}
+
+func (m *ListFailPointsRequest) Reset()                    { *m = ListFailPointsRequest{} }
+func (m *ListFailPointsRequest) String() string            { return proto.CompactTextString(m) }
+func (*ListFailPointsRequest) ProtoMessage()               {}
+func (*ListFailPointsRequest) Descriptor() ([]byte, []int) { return fileDescriptorDebugpb, []int{16} }
+
+type ListFailPointsResponse struct {
+	Entries []*ListFailPointsResponse_Entry `protobuf:"bytes,1,rep,name=entries" json:"entries,omitempty"`
+}
+
+func (m *ListFailPointsResponse) Reset()                    { *m = ListFailPointsResponse{} }
+func (m *ListFailPointsResponse) String() string            { return proto.CompactTextString(m) }
+func (*ListFailPointsResponse) ProtoMessage()               {}
+func (*ListFailPointsResponse) Descriptor() ([]byte, []int) { return fileDescriptorDebugpb, []int{17} }
+
+func (m *ListFailPointsResponse) GetEntries() []*ListFailPointsResponse_Entry {
+	if m != nil {
+		return m.Entries
+	}
+	return nil
+}
+
+type ListFailPointsResponse_Entry struct {
+	Name    string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Actions string `protobuf:"bytes,2,opt,name=actions,proto3" json:"actions,omitempty"`
+}
+
+func (m *ListFailPointsResponse_Entry) Reset()         { *m = ListFailPointsResponse_Entry{} }
+func (m *ListFailPointsResponse_Entry) String() string { return proto.CompactTextString(m) }
+func (*ListFailPointsResponse_Entry) ProtoMessage()    {}
+func (*ListFailPointsResponse_Entry) Descriptor() ([]byte, []int) {
+	return fileDescriptorDebugpb, []int{17, 0}
+}
+
+func (m *ListFailPointsResponse_Entry) GetName() string {
+	if m != nil {
+		return m.Name
+	}
+	return ""
+}
+
+func (m *ListFailPointsResponse_Entry) GetActions() string {
+	if m != nil {
+		return m.Actions
+	}
+	return ""
+}
+
 func init() {
 	proto.RegisterType((*GetRequest)(nil), "debugpb.GetRequest")
 	proto.RegisterType((*GetResponse)(nil), "debugpb.GetResponse")
@@ -345,6 +507,15 @@ func init() {
 	proto.RegisterType((*RegionSizeResponse_Entry)(nil), "debugpb.RegionSizeResponse.Entry")
 	proto.RegisterType((*ScanMvccRequest)(nil), "debugpb.ScanMvccRequest")
 	proto.RegisterType((*ScanMvccResponse)(nil), "debugpb.ScanMvccResponse")
+	proto.RegisterType((*CompactRequest)(nil), "debugpb.CompactRequest")
+	proto.RegisterType((*CompactResponse)(nil), "debugpb.CompactResponse")
+	proto.RegisterType((*InjectFailPointRequest)(nil), "debugpb.InjectFailPointRequest")
+	proto.RegisterType((*InjectFailPointResponse)(nil), "debugpb.InjectFailPointResponse")
+	proto.RegisterType((*RecoverFailPointRequest)(nil), "debugpb.RecoverFailPointRequest")
+	proto.RegisterType((*RecoverFailPointResponse)(nil), "debugpb.RecoverFailPointResponse")
+	proto.RegisterType((*ListFailPointsRequest)(nil), "debugpb.ListFailPointsRequest")
+	proto.RegisterType((*ListFailPointsResponse)(nil), "debugpb.ListFailPointsResponse")
+	proto.RegisterType((*ListFailPointsResponse_Entry)(nil), "debugpb.ListFailPointsResponse.Entry")
 	proto.RegisterEnum("debugpb.DB", DB_name, DB_value)
 }
 
@@ -372,6 +543,16 @@ type DebugClient interface {
 	// Note: DO NOT CALL IT IN PRODUCTION, it's really expensive.
 	//       Server uses keys directly w/o any encoding.
 	ScanMvcc(ctx context.Context, in *ScanMvccRequest, opts ...grpc.CallOption) (Debug_ScanMvccClient, error)
+	// Compact a column family in a specified range.
+	// Note: Server uses keys directly w/o any encoding.
+	Compact(ctx context.Context, in *CompactRequest, opts ...grpc.CallOption) (*CompactResponse, error)
+	// Inject a fail point. Currently, it's only used in tests.
+	// Note: DO NOT CALL IT IN PRODUCTION.
+	InjectFailPoint(ctx context.Context, in *InjectFailPointRequest, opts ...grpc.CallOption) (*InjectFailPointResponse, error)
+	// Recover from a fail point.
+	RecoverFailPoint(ctx context.Context, in *RecoverFailPointRequest, opts ...grpc.CallOption) (*RecoverFailPointResponse, error)
+	// List all fail points.
+	ListFailPoints(ctx context.Context, in *ListFailPointsRequest, opts ...grpc.CallOption) (*ListFailPointsResponse, error)
 }
 
 type debugClient struct {
@@ -384,7 +565,7 @@ func NewDebugClient(cc *grpc.ClientConn) DebugClient {
 
 func (c *debugClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error) {
 	out := new(GetResponse)
-	err := grpc.Invoke(ctx, "/debugpb.Debug/get", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/debugpb.Debug/Get", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +574,7 @@ func (c *debugClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.Call
 
 func (c *debugClient) RaftLog(ctx context.Context, in *RaftLogRequest, opts ...grpc.CallOption) (*RaftLogResponse, error) {
 	out := new(RaftLogResponse)
-	err := grpc.Invoke(ctx, "/debugpb.Debug/raft_log", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/debugpb.Debug/RaftLog", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +583,7 @@ func (c *debugClient) RaftLog(ctx context.Context, in *RaftLogRequest, opts ...g
 
 func (c *debugClient) RegionInfo(ctx context.Context, in *RegionInfoRequest, opts ...grpc.CallOption) (*RegionInfoResponse, error) {
 	out := new(RegionInfoResponse)
-	err := grpc.Invoke(ctx, "/debugpb.Debug/region_info", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/debugpb.Debug/RegionInfo", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +592,7 @@ func (c *debugClient) RegionInfo(ctx context.Context, in *RegionInfoRequest, opt
 
 func (c *debugClient) RegionSize(ctx context.Context, in *RegionSizeRequest, opts ...grpc.CallOption) (*RegionSizeResponse, error) {
 	out := new(RegionSizeResponse)
-	err := grpc.Invoke(ctx, "/debugpb.Debug/region_size", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/debugpb.Debug/RegionSize", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +600,7 @@ func (c *debugClient) RegionSize(ctx context.Context, in *RegionSizeRequest, opt
 }
 
 func (c *debugClient) ScanMvcc(ctx context.Context, in *ScanMvccRequest, opts ...grpc.CallOption) (Debug_ScanMvccClient, error) {
-	stream, err := grpc.NewClientStream(ctx, &_Debug_serviceDesc.Streams[0], c.cc, "/debugpb.Debug/scan_mvcc", opts...)
+	stream, err := grpc.NewClientStream(ctx, &_Debug_serviceDesc.Streams[0], c.cc, "/debugpb.Debug/ScanMvcc", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -450,6 +631,42 @@ func (x *debugScanMvccClient) Recv() (*ScanMvccResponse, error) {
 	return m, nil
 }
 
+func (c *debugClient) Compact(ctx context.Context, in *CompactRequest, opts ...grpc.CallOption) (*CompactResponse, error) {
+	out := new(CompactResponse)
+	err := grpc.Invoke(ctx, "/debugpb.Debug/Compact", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *debugClient) InjectFailPoint(ctx context.Context, in *InjectFailPointRequest, opts ...grpc.CallOption) (*InjectFailPointResponse, error) {
+	out := new(InjectFailPointResponse)
+	err := grpc.Invoke(ctx, "/debugpb.Debug/InjectFailPoint", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *debugClient) RecoverFailPoint(ctx context.Context, in *RecoverFailPointRequest, opts ...grpc.CallOption) (*RecoverFailPointResponse, error) {
+	out := new(RecoverFailPointResponse)
+	err := grpc.Invoke(ctx, "/debugpb.Debug/RecoverFailPoint", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *debugClient) ListFailPoints(ctx context.Context, in *ListFailPointsRequest, opts ...grpc.CallOption) (*ListFailPointsResponse, error) {
+	out := new(ListFailPointsResponse)
+	err := grpc.Invoke(ctx, "/debugpb.Debug/ListFailPoints", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Server API for Debug service
 
 type DebugServer interface {
@@ -466,6 +683,16 @@ type DebugServer interface {
 	// Note: DO NOT CALL IT IN PRODUCTION, it's really expensive.
 	//       Server uses keys directly w/o any encoding.
 	ScanMvcc(*ScanMvccRequest, Debug_ScanMvccServer) error
+	// Compact a column family in a specified range.
+	// Note: Server uses keys directly w/o any encoding.
+	Compact(context.Context, *CompactRequest) (*CompactResponse, error)
+	// Inject a fail point. Currently, it's only used in tests.
+	// Note: DO NOT CALL IT IN PRODUCTION.
+	InjectFailPoint(context.Context, *InjectFailPointRequest) (*InjectFailPointResponse, error)
+	// Recover from a fail point.
+	RecoverFailPoint(context.Context, *RecoverFailPointRequest) (*RecoverFailPointResponse, error)
+	// List all fail points.
+	ListFailPoints(context.Context, *ListFailPointsRequest) (*ListFailPointsResponse, error)
 }
 
 func RegisterDebugServer(s *grpc.Server, srv DebugServer) {
@@ -565,30 +792,118 @@ func (x *debugScanMvccServer) Send(m *ScanMvccResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
+func _Debug_Compact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompactRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DebugServer).Compact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/debugpb.Debug/Compact",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DebugServer).Compact(ctx, req.(*CompactRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Debug_InjectFailPoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InjectFailPointRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DebugServer).InjectFailPoint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/debugpb.Debug/InjectFailPoint",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DebugServer).InjectFailPoint(ctx, req.(*InjectFailPointRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Debug_RecoverFailPoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecoverFailPointRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DebugServer).RecoverFailPoint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/debugpb.Debug/RecoverFailPoint",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DebugServer).RecoverFailPoint(ctx, req.(*RecoverFailPointRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Debug_ListFailPoints_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFailPointsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DebugServer).ListFailPoints(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/debugpb.Debug/ListFailPoints",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DebugServer).ListFailPoints(ctx, req.(*ListFailPointsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Debug_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "debugpb.Debug",
 	HandlerType: (*DebugServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "get",
+			MethodName: "Get",
 			Handler:    _Debug_Get_Handler,
 		},
 		{
-			MethodName: "raft_log",
+			MethodName: "RaftLog",
 			Handler:    _Debug_RaftLog_Handler,
 		},
 		{
-			MethodName: "region_info",
+			MethodName: "RegionInfo",
 			Handler:    _Debug_RegionInfo_Handler,
 		},
 		{
-			MethodName: "region_size",
+			MethodName: "RegionSize",
 			Handler:    _Debug_RegionSize_Handler,
+		},
+		{
+			MethodName: "Compact",
+			Handler:    _Debug_Compact_Handler,
+		},
+		{
+			MethodName: "InjectFailPoint",
+			Handler:    _Debug_InjectFailPoint_Handler,
+		},
+		{
+			MethodName: "RecoverFailPoint",
+			Handler:    _Debug_RecoverFailPoint_Handler,
+		},
+		{
+			MethodName: "ListFailPoints",
+			Handler:    _Debug_ListFailPoints_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "scan_mvcc",
+			StreamName:    "ScanMvcc",
 			Handler:       _Debug_ScanMvcc_Handler,
 			ServerStreams: true,
 		},
@@ -948,6 +1263,233 @@ func (m *ScanMvccResponse) MarshalTo(dAtA []byte) (int, error) {
 	return i, nil
 }
 
+func (m *CompactRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *CompactRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.Db != 0 {
+		dAtA[i] = 0x8
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(m.Db))
+	}
+	if len(m.Cf) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(len(m.Cf)))
+		i += copy(dAtA[i:], m.Cf)
+	}
+	if len(m.FromKey) > 0 {
+		dAtA[i] = 0x1a
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(len(m.FromKey)))
+		i += copy(dAtA[i:], m.FromKey)
+	}
+	if len(m.ToKey) > 0 {
+		dAtA[i] = 0x22
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(len(m.ToKey)))
+		i += copy(dAtA[i:], m.ToKey)
+	}
+	return i, nil
+}
+
+func (m *CompactResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *CompactResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	return i, nil
+}
+
+func (m *InjectFailPointRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *InjectFailPointRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Name) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(len(m.Name)))
+		i += copy(dAtA[i:], m.Name)
+	}
+	if len(m.Actions) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(len(m.Actions)))
+		i += copy(dAtA[i:], m.Actions)
+	}
+	return i, nil
+}
+
+func (m *InjectFailPointResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *InjectFailPointResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	return i, nil
+}
+
+func (m *RecoverFailPointRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RecoverFailPointRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Name) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(len(m.Name)))
+		i += copy(dAtA[i:], m.Name)
+	}
+	return i, nil
+}
+
+func (m *RecoverFailPointResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RecoverFailPointResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	return i, nil
+}
+
+func (m *ListFailPointsRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ListFailPointsRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	return i, nil
+}
+
+func (m *ListFailPointsResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ListFailPointsResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Entries) > 0 {
+		for _, msg := range m.Entries {
+			dAtA[i] = 0xa
+			i++
+			i = encodeVarintDebugpb(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
+	}
+	return i, nil
+}
+
+func (m *ListFailPointsResponse_Entry) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ListFailPointsResponse_Entry) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Name) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(len(m.Name)))
+		i += copy(dAtA[i:], m.Name)
+	}
+	if len(m.Actions) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintDebugpb(dAtA, i, uint64(len(m.Actions)))
+		i += copy(dAtA[i:], m.Actions)
+	}
+	return i, nil
+}
+
 func encodeFixed64Debugpb(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	dAtA[offset+1] = uint8(v >> 8)
@@ -1117,6 +1659,101 @@ func (m *ScanMvccResponse) Size() (n int) {
 	}
 	if m.Info != nil {
 		l = m.Info.Size()
+		n += 1 + l + sovDebugpb(uint64(l))
+	}
+	return n
+}
+
+func (m *CompactRequest) Size() (n int) {
+	var l int
+	_ = l
+	if m.Db != 0 {
+		n += 1 + sovDebugpb(uint64(m.Db))
+	}
+	l = len(m.Cf)
+	if l > 0 {
+		n += 1 + l + sovDebugpb(uint64(l))
+	}
+	l = len(m.FromKey)
+	if l > 0 {
+		n += 1 + l + sovDebugpb(uint64(l))
+	}
+	l = len(m.ToKey)
+	if l > 0 {
+		n += 1 + l + sovDebugpb(uint64(l))
+	}
+	return n
+}
+
+func (m *CompactResponse) Size() (n int) {
+	var l int
+	_ = l
+	return n
+}
+
+func (m *InjectFailPointRequest) Size() (n int) {
+	var l int
+	_ = l
+	l = len(m.Name)
+	if l > 0 {
+		n += 1 + l + sovDebugpb(uint64(l))
+	}
+	l = len(m.Actions)
+	if l > 0 {
+		n += 1 + l + sovDebugpb(uint64(l))
+	}
+	return n
+}
+
+func (m *InjectFailPointResponse) Size() (n int) {
+	var l int
+	_ = l
+	return n
+}
+
+func (m *RecoverFailPointRequest) Size() (n int) {
+	var l int
+	_ = l
+	l = len(m.Name)
+	if l > 0 {
+		n += 1 + l + sovDebugpb(uint64(l))
+	}
+	return n
+}
+
+func (m *RecoverFailPointResponse) Size() (n int) {
+	var l int
+	_ = l
+	return n
+}
+
+func (m *ListFailPointsRequest) Size() (n int) {
+	var l int
+	_ = l
+	return n
+}
+
+func (m *ListFailPointsResponse) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Entries) > 0 {
+		for _, e := range m.Entries {
+			l = e.Size()
+			n += 1 + l + sovDebugpb(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *ListFailPointsResponse_Entry) Size() (n int) {
+	var l int
+	_ = l
+	l = len(m.Name)
+	if l > 0 {
+		n += 1 + l + sovDebugpb(uint64(l))
+	}
+	l = len(m.Actions)
+	if l > 0 {
 		n += 1 + l + sovDebugpb(uint64(l))
 	}
 	return n
@@ -2256,6 +2893,742 @@ func (m *ScanMvccResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *CompactRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: CompactRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: CompactRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Db", wireType)
+			}
+			m.Db = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Db |= (DB(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Cf", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Cf = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FromKey", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.FromKey = append(m.FromKey[:0], dAtA[iNdEx:postIndex]...)
+			if m.FromKey == nil {
+				m.FromKey = []byte{}
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ToKey", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ToKey = append(m.ToKey[:0], dAtA[iNdEx:postIndex]...)
+			if m.ToKey == nil {
+				m.ToKey = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *CompactResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: CompactResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: CompactResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *InjectFailPointRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: InjectFailPointRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: InjectFailPointRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Name = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Actions", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Actions = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *InjectFailPointResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: InjectFailPointResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: InjectFailPointResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RecoverFailPointRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RecoverFailPointRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RecoverFailPointRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Name = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RecoverFailPointResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RecoverFailPointResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RecoverFailPointResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ListFailPointsRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ListFailPointsRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ListFailPointsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ListFailPointsResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ListFailPointsResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ListFailPointsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Entries", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Entries = append(m.Entries, &ListFailPointsResponse_Entry{})
+			if err := m.Entries[len(m.Entries)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ListFailPointsResponse_Entry) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowDebugpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Entry: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Entry: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Name = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Actions", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowDebugpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Actions = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipDebugpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthDebugpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func skipDebugpb(dAtA []byte) (n int, err error) {
 	l := len(dAtA)
 	iNdEx := 0
@@ -2364,48 +3737,60 @@ var (
 func init() { proto.RegisterFile("debugpb.proto", fileDescriptorDebugpb) }
 
 var fileDescriptorDebugpb = []byte{
-	// 687 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x54, 0xcd, 0x6e, 0xd3, 0x40,
-	0x10, 0x8e, 0x9d, 0xa4, 0x49, 0x26, 0x6d, 0xea, 0x6e, 0x83, 0x48, 0x5d, 0x11, 0x82, 0x0b, 0x52,
-	0x54, 0x24, 0x53, 0x85, 0x03, 0x07, 0x0e, 0xa8, 0x51, 0xa0, 0x84, 0xb4, 0x1c, 0xb6, 0xa8, 0x12,
-	0xa7, 0xc8, 0xd9, 0xac, 0x2d, 0x2b, 0x8e, 0xd7, 0xd8, 0x6e, 0x44, 0x7a, 0xe0, 0x39, 0x78, 0x24,
-	0x8e, 0x9c, 0x38, 0xa3, 0xf2, 0x0c, 0xdc, 0xd1, 0xae, 0xd7, 0xce, 0x5f, 0x91, 0x7a, 0xca, 0xfc,
-	0xf9, 0x9b, 0xd9, 0xf9, 0xbe, 0x09, 0xec, 0x8c, 0xe9, 0xe8, 0xda, 0x09, 0x46, 0x66, 0x10, 0xb2,
-	0x98, 0xa1, 0x92, 0x74, 0xf5, 0x1d, 0x1a, 0x5a, 0x76, 0x9c, 0xc6, 0xf5, 0x9d, 0xc9, 0x2c, 0x0c,
-	0x48, 0xe6, 0xee, 0xf3, 0xe4, 0x30, 0xa2, 0xe1, 0x8c, 0x86, 0x59, 0xb0, 0xee, 0x30, 0x87, 0x09,
-	0xf3, 0x05, 0xb7, 0x92, 0xa8, 0x31, 0x00, 0x38, 0xa3, 0x31, 0xa6, 0x5f, 0xae, 0x69, 0x14, 0xa3,
-	0x43, 0x50, 0xc7, 0xa3, 0x86, 0xd2, 0x52, 0xda, 0xb5, 0x4e, 0xd5, 0x4c, 0x7b, 0xf7, 0xba, 0x58,
-	0x1d, 0x8f, 0x50, 0x0d, 0x54, 0x62, 0x37, 0xd4, 0x96, 0xd2, 0xae, 0x60, 0x95, 0xd8, 0x48, 0x83,
-	0xfc, 0x84, 0xce, 0x1b, 0xf9, 0x96, 0xd2, 0xde, 0xc6, 0xdc, 0x34, 0x8e, 0xa0, 0x2a, 0xc0, 0xa2,
-	0x80, 0xf9, 0x11, 0x45, 0x75, 0x28, 0xce, 0x2c, 0xef, 0x9a, 0x0a, 0xc0, 0x6d, 0x9c, 0x38, 0xc6,
-	0x07, 0xa8, 0x61, 0xcb, 0x8e, 0xcf, 0x99, 0xb3, 0xe8, 0x5a, 0x09, 0xa9, 0xe3, 0x32, 0x7f, 0xe8,
-	0x8e, 0x45, 0x6d, 0x01, 0x97, 0x93, 0x40, 0x7f, 0xcc, 0x93, 0x1e, 0x73, 0x86, 0xae, 0x3f, 0xa6,
-	0x5f, 0x45, 0xf3, 0x02, 0x2e, 0x7b, 0xcc, 0xe9, 0x73, 0xdf, 0x78, 0x05, 0xbb, 0x19, 0x96, 0x6c,
-	0xfa, 0x14, 0x8a, 0xd4, 0x8f, 0xc3, 0xb9, 0x00, 0xaa, 0x76, 0x6a, 0x66, 0xba, 0xa9, 0xb7, 0x3c,
-	0x8a, 0x93, 0xa4, 0x71, 0x02, 0x7b, 0x38, 0xe9, 0xe0, 0xdb, 0xec, 0x3e, 0x73, 0x18, 0x7f, 0x15,
-	0x40, 0xcb, 0x9f, 0xc8, 0x76, 0x67, 0xa0, 0x89, 0x65, 0x7b, 0x8c, 0x58, 0xde, 0x30, 0x8a, 0xad,
-	0x98, 0xca, 0xce, 0x8f, 0xcc, 0x55, 0x16, 0x92, 0x41, 0x89, 0xe5, 0x5d, 0xf2, 0x22, 0x5c, 0x0b,
-	0x57, 0xfc, 0x0c, 0xc8, 0x0a, 0x02, 0x6f, 0x2e, 0x81, 0xd4, 0xff, 0x02, 0x9d, 0xf2, 0xaa, 0x25,
-	0xa0, 0x85, 0x8f, 0x2e, 0x00, 0xc9, 0x57, 0x2c, 0xcf, 0x94, 0x17, 0x50, 0x8f, 0xd7, 0xa1, 0x44,
-	0xe1, 0xd2, 0x54, 0x5a, 0xb8, 0x16, 0x31, 0xba, 0xe9, 0xa6, 0x2e, 0xdd, 0x1b, 0x7a, 0x2f, 0xc6,
-	0x34, 0xc8, 0x13, 0x3b, 0x6a, 0xa8, 0xad, 0x7c, 0xbb, 0x82, 0xb9, 0x69, 0x7c, 0x4b, 0x57, 0x97,
-	0x60, 0xc8, 0xd5, 0xbd, 0x86, 0x12, 0x27, 0xc3, 0xa5, 0x51, 0x43, 0x69, 0xe5, 0xdb, 0xd5, 0xce,
-	0x93, 0x4c, 0x71, 0x9b, 0xd5, 0x92, 0xbe, 0xf4, 0x0b, 0xfd, 0x39, 0x14, 0x45, 0x44, 0xaa, 0x52,
-	0xc9, 0x54, 0x89, 0xa0, 0x10, 0xb9, 0x37, 0x54, 0x4a, 0x45, 0xd8, 0xc6, 0x67, 0xd8, 0xbd, 0x24,
-	0x96, 0x7f, 0x31, 0x23, 0x24, 0x7d, 0xc1, 0x01, 0x94, 0xed, 0x90, 0x4d, 0x87, 0x5c, 0xc1, 0x89,
-	0x3c, 0x4b, 0xdc, 0x1f, 0xd0, 0x39, 0x7a, 0x00, 0x5b, 0x31, 0x13, 0x09, 0x35, 0xd1, 0x6d, 0xcc,
-	0x78, 0xb8, 0x0e, 0x45, 0xcf, 0x9d, 0xba, 0xb1, 0x58, 0x65, 0x01, 0x27, 0x8e, 0x31, 0x00, 0x6d,
-	0x01, 0x2d, 0x1f, 0x26, 0x0f, 0x43, 0xc9, 0x0e, 0x03, 0x3d, 0x83, 0x82, 0xeb, 0xdb, 0x4c, 0x12,
-	0xba, 0x67, 0xa6, 0xe7, 0xca, 0x3f, 0x13, 0x72, 0x12, 0xe9, 0xe3, 0x23, 0x50, 0x7b, 0x5d, 0x54,
-	0x85, 0x52, 0xff, 0xe3, 0xd5, 0xe9, 0x79, 0xbf, 0xa7, 0xe5, 0xd0, 0x16, 0xa8, 0x83, 0x2b, 0x4d,
-	0x41, 0x65, 0x28, 0xe0, 0xd3, 0x77, 0x9f, 0x34, 0xb5, 0xf3, 0x4b, 0x85, 0x62, 0x8f, 0xef, 0x09,
-	0x75, 0x20, 0xef, 0xd0, 0x18, 0xed, 0x67, 0x6b, 0x5b, 0x5c, 0xb2, 0x5e, 0x5f, 0x0d, 0x26, 0x93,
-	0x19, 0x39, 0xf4, 0x06, 0xca, 0x52, 0xaf, 0x0e, 0x7a, 0xb8, 0xd8, 0xf7, 0xca, 0x41, 0xea, 0x8d,
-	0xcd, 0x44, 0x06, 0xf0, 0x1e, 0xaa, 0x29, 0xf5, 0xbe, 0xcd, 0x90, 0xbe, 0xc6, 0xd9, 0xd2, 0x3d,
-	0xe9, 0x87, 0x77, 0xe6, 0xee, 0x40, 0xe2, 0x24, 0x6d, 0x20, 0x2d, 0xe9, 0x6d, 0x03, 0x69, 0x59,
-	0x19, 0x46, 0x0e, 0xf5, 0xa0, 0x12, 0x11, 0xcb, 0x1f, 0x4e, 0x67, 0x84, 0xa0, 0xc5, 0xf0, 0x6b,
-	0x9c, 0xeb, 0x07, 0x77, 0x64, 0x52, 0x8c, 0x13, 0xa5, 0x7b, 0xfc, 0xe3, 0xb6, 0xa9, 0xfc, 0xbc,
-	0x6d, 0x2a, 0xbf, 0x6f, 0x9b, 0xca, 0xf7, 0x3f, 0xcd, 0x1c, 0x34, 0x08, 0x9b, 0x9a, 0x81, 0xeb,
-	0x3b, 0xc4, 0x0a, 0xcc, 0xd8, 0x9d, 0xcc, 0xcc, 0xc9, 0x4c, 0xfc, 0x6d, 0x8e, 0xb6, 0xc4, 0xcf,
-	0xcb, 0x7f, 0x01, 0x00, 0x00, 0xff, 0xff, 0x8f, 0x5d, 0x1c, 0x84, 0xa0, 0x05, 0x00, 0x00,
+	// 878 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x9c, 0x56, 0xdd, 0x6e, 0xe3, 0x44,
+	0x14, 0x8e, 0x7f, 0xd2, 0xa4, 0x27, 0xdb, 0xd4, 0x9d, 0xed, 0x6e, 0x5d, 0xaf, 0x48, 0xb3, 0xb3,
+	0xac, 0x14, 0x2d, 0xc2, 0xac, 0x82, 0x10, 0x17, 0x48, 0xa0, 0x76, 0x4b, 0xab, 0xd0, 0x2e, 0x42,
+	0x2e, 0xaa, 0xb4, 0x57, 0x91, 0xe3, 0x8c, 0x2d, 0x53, 0xc7, 0x63, 0x6c, 0x37, 0x22, 0xbd, 0xe0,
+	0x19, 0xb8, 0x44, 0x3c, 0x11, 0x97, 0x3c, 0x02, 0x2a, 0xcf, 0xc0, 0x3d, 0x9a, 0xf1, 0xf8, 0x27,
+	0x4e, 0x02, 0x65, 0xaf, 0x3c, 0xe7, 0x67, 0xbe, 0x73, 0xe6, 0xcc, 0xf7, 0x8d, 0x0c, 0x3b, 0x53,
+	0x32, 0xb9, 0xf5, 0xa2, 0x89, 0x19, 0xc5, 0x34, 0xa5, 0xa8, 0x25, 0x4c, 0x63, 0x87, 0xc4, 0xb6,
+	0x9b, 0xe6, 0x7e, 0x63, 0xe7, 0x66, 0x1e, 0x47, 0x4e, 0x61, 0x3e, 0x66, 0xc1, 0x71, 0x42, 0xe2,
+	0x39, 0x89, 0x0b, 0xe7, 0xbe, 0x47, 0x3d, 0xca, 0x97, 0x9f, 0xb0, 0x55, 0xe6, 0xc5, 0x17, 0x00,
+	0xe7, 0x24, 0xb5, 0xc8, 0x8f, 0xb7, 0x24, 0x49, 0xd1, 0x33, 0x90, 0xa7, 0x13, 0x5d, 0xea, 0x4b,
+	0x83, 0xee, 0xb0, 0x63, 0xe6, 0xb5, 0x4f, 0x4f, 0x2c, 0x79, 0x3a, 0x41, 0x5d, 0x90, 0x1d, 0x57,
+	0x97, 0xfb, 0xd2, 0x60, 0xdb, 0x92, 0x1d, 0x17, 0x69, 0xa0, 0xdc, 0x90, 0x85, 0xae, 0xf4, 0xa5,
+	0xc1, 0x23, 0x8b, 0x2d, 0xf1, 0x0b, 0xe8, 0x70, 0xb0, 0x24, 0xa2, 0x61, 0x42, 0xd0, 0x3e, 0x34,
+	0xe7, 0x76, 0x70, 0x4b, 0x38, 0xe0, 0x23, 0x2b, 0x33, 0xf0, 0x37, 0xd0, 0xb5, 0x6c, 0x37, 0xbd,
+	0xa4, 0x5e, 0x59, 0x75, 0x3b, 0x26, 0x9e, 0x4f, 0xc3, 0xb1, 0x3f, 0xe5, 0xb9, 0xaa, 0xd5, 0xce,
+	0x1c, 0xa3, 0x29, 0x0b, 0x06, 0xd4, 0x1b, 0xfb, 0xe1, 0x94, 0xfc, 0xc4, 0x8b, 0xab, 0x56, 0x3b,
+	0xa0, 0xde, 0x88, 0xd9, 0xf8, 0x73, 0xd8, 0x2d, 0xb0, 0x44, 0xd1, 0x0f, 0xa1, 0x49, 0xc2, 0x34,
+	0x5e, 0x70, 0xa0, 0xce, 0xb0, 0x6b, 0xe6, 0x93, 0xfa, 0x9a, 0x79, 0xad, 0x2c, 0x88, 0x5f, 0xc3,
+	0x9e, 0x95, 0x55, 0x08, 0x5d, 0xfa, 0x90, 0x3e, 0xf0, 0xdf, 0x12, 0xa0, 0xea, 0x16, 0x51, 0xee,
+	0x1c, 0x34, 0x3e, 0xec, 0x80, 0x3a, 0x76, 0x30, 0x4e, 0x52, 0x3b, 0x25, 0xa2, 0xf2, 0x07, 0xe6,
+	0xf2, 0x2d, 0x64, 0x8d, 0x3a, 0x76, 0x70, 0xc5, 0x92, 0xac, 0x6e, 0xbc, 0x64, 0x17, 0x40, 0x76,
+	0x14, 0x05, 0x0b, 0x01, 0x24, 0x6f, 0x04, 0x3a, 0x66, 0x59, 0x15, 0xa0, 0xd2, 0x46, 0x6f, 0x01,
+	0x89, 0x53, 0x54, 0x7b, 0x52, 0x38, 0xd4, 0x51, 0x1d, 0x8a, 0x27, 0x56, 0xba, 0xd2, 0xe2, 0x9a,
+	0x07, 0x9f, 0xe4, 0x93, 0xba, 0xf2, 0xef, 0xc8, 0x83, 0x6e, 0x4c, 0x03, 0xc5, 0x71, 0x13, 0x5d,
+	0xee, 0x2b, 0x83, 0x6d, 0x8b, 0x2d, 0xf1, 0xcf, 0xf9, 0xe8, 0x32, 0x0c, 0x31, 0xba, 0x2f, 0xa0,
+	0xc5, 0x2e, 0xc3, 0x27, 0x89, 0x2e, 0xf5, 0x95, 0x41, 0x67, 0xf8, 0xbc, 0x60, 0xdc, 0x6a, 0xb6,
+	0xb8, 0xbe, 0x7c, 0x87, 0xf1, 0x11, 0x34, 0xb9, 0x47, 0xb0, 0x52, 0x2a, 0x58, 0x89, 0x40, 0x4d,
+	0xfc, 0x3b, 0x22, 0xa8, 0xc2, 0xd7, 0xf8, 0x1d, 0xec, 0x5e, 0x39, 0x76, 0xf8, 0x76, 0xee, 0x38,
+	0xf9, 0x09, 0x0e, 0xa1, 0xed, 0xc6, 0x74, 0x36, 0x66, 0x0c, 0xce, 0xe8, 0xd9, 0x62, 0xf6, 0x05,
+	0x59, 0xa0, 0x27, 0xb0, 0x95, 0x52, 0x1e, 0x90, 0x33, 0xde, 0xa6, 0x94, 0xb9, 0xf7, 0xa1, 0x19,
+	0xf8, 0x33, 0x3f, 0xe5, 0xa3, 0x54, 0xad, 0xcc, 0xc0, 0x17, 0xa0, 0x95, 0xd0, 0xe2, 0x60, 0x42,
+	0x18, 0x52, 0x21, 0x0c, 0xf4, 0x12, 0x54, 0x3f, 0x74, 0xa9, 0xb8, 0xd0, 0x3d, 0x33, 0x97, 0x2b,
+	0xdb, 0xc6, 0xe9, 0xc4, 0xc3, 0x98, 0x42, 0xf7, 0x0d, 0x9d, 0x45, 0xb6, 0xf3, 0x7e, 0x82, 0xac,
+	0x9e, 0x49, 0xd9, 0x74, 0x26, 0xb5, 0x72, 0x26, 0xbc, 0x07, 0xbb, 0x45, 0xc1, 0xac, 0x79, 0x7c,
+	0x06, 0x4f, 0x47, 0xe1, 0x0f, 0xc4, 0x49, 0xcf, 0x6c, 0x3f, 0xf8, 0x8e, 0xfa, 0x61, 0xd1, 0x0b,
+	0x02, 0x35, 0xb4, 0x67, 0x44, 0xcc, 0x9a, 0xaf, 0x91, 0x0e, 0x2d, 0xdb, 0x49, 0x7d, 0x1a, 0x26,
+	0xa2, 0x8f, 0xdc, 0xc4, 0x87, 0x70, 0xb0, 0x82, 0x23, 0x4a, 0x7c, 0x0c, 0x07, 0x16, 0x71, 0xe8,
+	0x9c, 0xc4, 0x0f, 0xa9, 0x81, 0x0d, 0xd0, 0x57, 0xd3, 0x05, 0xd4, 0x01, 0x3c, 0xb9, 0xf4, 0x93,
+	0xb2, 0x46, 0x22, 0x80, 0xf0, 0x2f, 0x12, 0x3c, 0xad, 0x47, 0xc4, 0xf5, 0x7c, 0x55, 0xe7, 0xdd,
+	0xcb, 0x62, 0xb0, 0xeb, 0x77, 0xd4, 0xb9, 0xf7, 0x59, 0xce, 0xbd, 0xff, 0x35, 0x91, 0x57, 0x2f,
+	0x40, 0x3e, 0x3d, 0x41, 0x1d, 0x68, 0x8d, 0xbe, 0xbd, 0x3e, 0xbe, 0x1c, 0x9d, 0x6a, 0x0d, 0xb4,
+	0x05, 0xf2, 0xc5, 0xb5, 0x26, 0xa1, 0x36, 0xa8, 0xd6, 0xf1, 0xd9, 0xf7, 0x9a, 0x3c, 0xfc, 0xad,
+	0x09, 0xcd, 0x53, 0xd6, 0x0d, 0x1a, 0x82, 0x72, 0x4e, 0x52, 0xf4, 0xb8, 0x68, 0xae, 0x7c, 0xa7,
+	0x8d, 0xfd, 0x65, 0xa7, 0x18, 0x46, 0x03, 0x7d, 0x09, 0x2d, 0xf1, 0x1e, 0xa2, 0x83, 0x52, 0x4c,
+	0x4b, 0xaf, 0xad, 0xa1, 0xaf, 0x06, 0x8a, 0xfd, 0xe7, 0x00, 0xe5, 0x1b, 0x87, 0x8c, 0x9a, 0x1e,
+	0x2b, 0x6f, 0xa5, 0xf1, 0x6c, 0x6d, 0x6c, 0x15, 0x88, 0x69, 0x78, 0x05, 0xa8, 0xf2, 0x94, 0xac,
+	0x00, 0x55, 0x45, 0x8f, 0x1b, 0xe8, 0x0d, 0xb4, 0x73, 0x7d, 0xa1, 0xb2, 0xf3, 0x9a, 0x9a, 0x8d,
+	0xc3, 0x35, 0x91, 0x1c, 0xe2, 0xb5, 0xc4, 0xc6, 0x22, 0x68, 0x5e, 0x19, 0xcb, 0xb2, 0xd2, 0x2a,
+	0x63, 0xa9, 0x2b, 0xa2, 0x81, 0xae, 0x61, 0xb7, 0xc6, 0x65, 0x74, 0x54, 0xa4, 0xaf, 0x57, 0x8b,
+	0xd1, 0xdf, 0x9c, 0x50, 0xe0, 0xbe, 0x03, 0xad, 0xce, 0x6c, 0xd4, 0xaf, 0xcc, 0x63, 0xad, 0x46,
+	0x8c, 0xe7, 0xff, 0x92, 0x51, 0x40, 0x5f, 0x41, 0x77, 0x99, 0xcc, 0xa8, 0xb7, 0x91, 0xe5, 0x19,
+	0xec, 0xd1, 0x7f, 0xa8, 0x00, 0x37, 0x4e, 0x5e, 0xfd, 0x7e, 0xdf, 0x93, 0xfe, 0xb8, 0xef, 0x49,
+	0x7f, 0xde, 0xf7, 0xa4, 0x5f, 0xff, 0xea, 0x35, 0x40, 0x77, 0xe8, 0xcc, 0x8c, 0xfc, 0xd0, 0x73,
+	0xec, 0xc8, 0x4c, 0xfd, 0x9b, 0xb9, 0x79, 0x33, 0xe7, 0x3f, 0x16, 0x93, 0x2d, 0xfe, 0xf9, 0xf4,
+	0x9f, 0x00, 0x00, 0x00, 0xff, 0xff, 0x5e, 0x7d, 0xaf, 0xff, 0xc2, 0x08, 0x00, 0x00,
 }
