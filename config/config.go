@@ -14,6 +14,8 @@
 package config
 
 import (
+	"time"
+
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/logutil"
@@ -73,11 +75,6 @@ type Status struct {
 	MetricsInterval int    `toml:"metrics-interval" json:"metrics-interval"`
 }
 
-// OpenTracing is the opentracing section of the config.
-type OpenTracing struct {
-	TracingAddr string `toml:"tracing-addr" json:"tracing-addr`
-}
-
 // Performance is the performance section of the config.
 type Performance struct {
 	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
@@ -101,6 +98,33 @@ type PlanCache struct {
 	Enabled  bool  `toml:"plan-cache-enabled" json:"plan-cache-enabled"`
 	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`
 	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
+}
+
+// OpenTracing is the opentracing section of the config.
+type OpenTracing struct {
+	Enable     bool                `toml:"opentracing-enable" json:"opentracing-enbale"`
+	Sampler    OpenTracingSampler  `toml:"sampler" json:"sampler"`
+	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
+	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
+}
+
+// OpenTracingSampler is the config for opentracing sampler.
+// See https://godoc.org/github.com/uber/jaeger-client-go/config#SamplerConfig
+type OpenTracingSampler struct {
+	Type                    string        `toml:"type" json:"type"`
+	Param                   float64       `toml:"param" json:"param"`
+	SamplingServerURL       string        `toml:"sampling-server-url" json:"sampling-server-url"`
+	MaxOperations           int           `toml:"max-operations" json:"max-operations"`
+	SamplingRefreshInterval time.Duration `toml:"sampling-refresh-interval" json:"sampling-refresh-interval"`
+}
+
+// OpenTracingReporter is the config for opentracing reporter.
+// See https://godoc.org/github.com/uber/jaeger-client-go/config#ReporterConfig
+type OpenTracingReporter struct {
+	QueueSize           int           `toml:"queue-size" json:"queue-size"`
+	BufferFlushInterval time.Duration `toml:"buffer-flush-interval" json:"buffer-flush-interval"`
+	LogSpans            bool          `toml:"log-spans" json:"log-spans"`
+	LocalAgentHostPort  string        `toml:"local-agent-host-port" json:"local-agent-host-port"`
 }
 
 var defaultConf = Config{
@@ -141,6 +165,14 @@ var defaultConf = Config{
 		Capacity: 2560,
 		Shards:   256,
 	},
+	OpenTracing: OpenTracing{
+		Enable: false,
+		Sampler: OpenTracingSampler{
+			Type:  "const",
+			Param: 1.0,
+		},
+		Reporter: OpenTracingReporter{},
+	},
 }
 
 var globalConf = defaultConf
@@ -176,13 +208,21 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 }
 
 func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
-	if t.TracingAddr == "" {
-		return nil
+	ret := &tracing.Configuration{
+		Disabled:   !t.Enable,
+		RPCMetrics: t.RPCMetrics,
+		Reporter:   &tracing.ReporterConfig{},
+		Sampler:    &tracing.SamplerConfig{},
 	}
+	ret.Reporter.QueueSize = t.Reporter.QueueSize
+	ret.Reporter.BufferFlushInterval = t.Reporter.BufferFlushInterval
+	ret.Reporter.LogSpans = t.Reporter.LogSpans
+	ret.Reporter.LocalAgentHostPort = t.Reporter.LocalAgentHostPort
 
-	return &tracing.Configuration{
-		Reporter: &tracing.ReporterConfig{
-			LocalAgentHostPort: t.TracingAddr,
-		},
-	}
+	ret.Sampler.Type = t.Sampler.Type
+	ret.Sampler.Param = t.Sampler.Param
+	ret.Sampler.SamplingServerURL = t.Sampler.SamplingServerURL
+	ret.Sampler.MaxOperations = t.Sampler.MaxOperations
+	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
+	return ret
 }
