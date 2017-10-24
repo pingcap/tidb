@@ -308,6 +308,12 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 		return errors.Trace(err)
 	}
 	// When the worker is just started, or an old GC job has just finished,
+	// wait a while before starting a new job.
+	if time.Since(w.lastFinish) < gcWaitTime {
+		w.gcIsRunning = false
+		return nil
+	}
+
 	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts GC job, safePoint: %v", w.uuid, safePoint)
 	go w.runGCJob(ctx, safePoint)
