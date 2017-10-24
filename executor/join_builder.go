@@ -110,7 +110,6 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		exec.leftRowBlock.filter = nil
 		exec.leftFilter = b.leftFilter
 		exec.defaultRightRow = b.defaultValues
-		exec.flipSide = true
 		exec.leftJoinKeys = rightJoinKeys
 		exec.rightJoinKeys = leftJoinKeys
 	case plan.InnerJoin:

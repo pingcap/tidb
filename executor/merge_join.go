@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -42,7 +41,6 @@ type MergeJoinExec struct {
 	otherFilter   []expression.Expression
 	schema        *expression.Schema
 	cursor        int
-	defaultValues []types.Datum
 
 	// Default for both side in case full join
 
@@ -53,11 +51,11 @@ type MergeJoinExec struct {
 	leftRows        []Row
 	rightRows       []Row
 	desc            bool
-	flipSide        bool
 	joinType        plan.JoinType
 
 	// for semi join
 	isAntiMode bool
+	outputer   joinResultOutputer
 }
 
 const rowBufferSize = 4096
@@ -163,6 +161,7 @@ func (e *MergeJoinExec) Open() error {
 	e.prepared = false
 	e.cursor = 0
 	e.outputBuf = nil
+	e.outputer = newMergeJoinOutputer(e.ctx, e.joinType, e.isAntiMode, e.defaultRightRow, e.otherFilter)
 
 	err := e.leftRowBlock.reader.Open()
 	if err != nil {
@@ -202,58 +201,6 @@ func compareKeys(stmtCtx *variable.StatementContext,
 	return 0, nil
 }
 
-func (e *MergeJoinExec) outputJoinRow(leftRow Row, rightRow Row) {
-	var joinedRow Row
-	if e.flipSide {
-		joinedRow = makeJoinRow(rightRow, leftRow)
-	} else {
-		joinedRow = makeJoinRow(leftRow, rightRow)
-	}
-	e.outputBuf = append(e.outputBuf, joinedRow)
-}
-
-func (e *MergeJoinExec) outputFilteredJoinRow(leftRow Row, rightRow Row) error {
-	var joinedRow Row
-	if e.flipSide {
-		joinedRow = makeJoinRow(rightRow, leftRow)
-	} else {
-		joinedRow = makeJoinRow(leftRow, rightRow)
-	}
-
-	if e.otherFilter != nil {
-		matched, err := expression.EvalBool(e.otherFilter, joinedRow, e.ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !matched {
-			return nil
-		}
-	}
-	e.outputBuf = append(e.outputBuf, joinedRow)
-	return nil
-}
-
-func (e *MergeJoinExec) tryOutputLeftRows() error {
-	switch e.joinType {
-	case plan.LeftOuterJoin, plan.RightOuterJoin:
-		for _, lRow := range e.leftRows {
-			e.outputJoinRow(lRow, e.defaultRightRow)
-		}
-	case plan.SemiJoin:
-		if e.isAntiMode {
-			for _, lRow := range e.leftRows {
-				e.outputBuf = append(e.outputBuf, lRow)
-			}
-		}
-	case plan.LeftOuterSemiJoin:
-		for _, lRow := range e.leftRows {
-			result := append(lRow, types.NewDatum(e.isAntiMode))
-			e.outputBuf = append(e.outputBuf, result)
-		}
-	}
-	return nil
-}
-
 func (e *MergeJoinExec) computeCrossProduct() error {
 	var err error
 	for _, lRow := range e.leftRows {
@@ -265,52 +212,20 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 				return errors.Trace(err)
 			}
 			if !matched {
-				switch e.joinType {
-				case plan.LeftOuterJoin, plan.RightOuterJoin:
-					// as all right join converted to left, we only output left side if no match and continue
-					e.outputJoinRow(lRow, e.defaultRightRow)
-				case plan.SemiJoin:
-					if e.isAntiMode {
-						e.outputBuf = append(e.outputBuf, lRow)
-					}
-				case plan.LeftOuterSemiJoin:
-					result := append(lRow, types.NewDatum(e.isAntiMode))
-					e.outputBuf = append(e.outputBuf, result)
-				}
+				e.outputer.emitUnMatchedOuter(lRow, e.outputBuf)
 				continue
 			}
 		}
 		// Do the real cross product calculation
 		initInnerLen := len(e.outputBuf)
-		if e.joinType == plan.SemiJoin {
-			if !e.isAntiMode {
-				e.outputBuf = append(e.outputBuf, lRow)
-			}
-		} else if e.joinType == plan.LeftOuterSemiJoin {
-			result := append(lRow, types.NewDatum(!e.isAntiMode))
-			e.outputBuf = append(e.outputBuf, result)
-		} else {
-			for _, rRow := range e.rightRows {
-				err = e.outputFilteredJoinRow(lRow, rRow)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
+		e.outputBuf, err = e.outputer.emitMatchedInners(lRow, e.rightRows, e.outputBuf)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		// Even if caught up for left filter
 		// no matching but it's outer join
 		if initInnerLen == len(e.outputBuf) {
-			switch e.joinType {
-			case plan.LeftOuterJoin, plan.RightOuterJoin:
-				e.outputJoinRow(lRow, e.defaultRightRow)
-			case plan.SemiJoin:
-				if e.isAntiMode {
-					e.outputBuf = append(e.outputBuf, lRow)
-				}
-			case plan.LeftOuterSemiJoin:
-				result := append(lRow, types.NewDatum(e.isAntiMode))
-				e.outputBuf = append(e.outputBuf, result)
-			}
+			e.outputBuf = e.outputer.emitUnMatchedOuter(lRow, e.outputBuf)
 		}
 	}
 
@@ -326,13 +241,9 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 		if e.leftRows == nil || e.rightRows == nil {
 			if e.leftRows != nil && e.rightRows == nil {
 				switch e.joinType {
-				case plan.LeftOuterJoin, plan.RightOuterJoin:
+				case plan.LeftOuterJoin, plan.RightOuterJoin, plan.SemiJoin, plan.LeftOuterSemiJoin:
 					// left remains and left outer join
 					// -1 will make loop continue for left
-					compareResult = -1
-				case plan.SemiJoin:
-					compareResult = -1
-				case plan.LeftOuterSemiJoin:
 					compareResult = -1
 				}
 			} else {
@@ -359,10 +270,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			}
 		} else if compareResult < 0 {
 			initLen := len(e.outputBuf)
-			err := e.tryOutputLeftRows()
-			if err != nil {
-				return false, errors.Trace(err)
-			}
+			e.outputBuf = e.outputer.emitUnMatchedOuters(e.leftRows, e.outputBuf)
 			e.leftRows, err = e.leftRowBlock.nextBlock()
 			if err != nil {
 				return false, errors.Trace(err)
