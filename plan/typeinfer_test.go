@@ -85,7 +85,8 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		c_blob_d blob,
 		c_set set('a', 'b', 'c'),
 		c_enum enum('a', 'b', 'c'),
-		c_json JSON
+		c_json JSON,
+		c_year year
 	)`
 	testKit.MustExec(sql)
 
@@ -170,7 +171,7 @@ func (s *testPlanSuite) createTestCase4Cast() []typeInferTestCase {
 		{"CAST(c_int_d AS DATE)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS DATETIME)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 		{"CAST(c_int_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
-		{"CAST(c_int_d AS DECIMAL(10))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},   // TODO: Flen should be 11
+		{"CAST(c_int_d AS DECIMAL(10))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS DECIMAL(10,3))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 3}, // TODO: Flen should be 12
 		{"CAST(c_int_d AS JSON)", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag | mysql.ParseToJSONFlag, 12582912 / 3, 0},
 		{"CAST(c_int_d AS SIGNED)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},         // TODO: Flen should be 11.
@@ -184,8 +185,9 @@ func (s *testPlanSuite) createTestCase4Cast() []typeInferTestCase {
 func (s *testPlanSuite) createTestCase4Columns() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"c_bit        ", mysql.TypeBit, charset.CharsetBin, mysql.UnsignedFlag, 10, 0},
+		{"c_year       ", mysql.TypeYear, charset.CharsetBin, mysql.UnsignedFlag | mysql.ZerofillFlag, 4, 0},
 		{"c_int_d      ", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
-		{"c_uint_d     ", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 11, 0}, // TODO: Flen should be 10
+		{"c_uint_d     ", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 10, 0},
 		{"c_bigint_d   ", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
 		{"c_ubigint_d  ", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 20, 0},
 		{"c_float_d    ", mysql.TypeFloat, charset.CharsetBin, mysql.BinaryFlag, 12, types.UnspecifiedLength},
@@ -501,7 +503,7 @@ func (s *testPlanSuite) createTestCase4MathFuncs() []typeInferTestCase {
 		{"cot(c_binary)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 
 		{"floor(c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
-		{"floor(c_uint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 11, 0},
+		{"floor(c_uint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 10, 0},
 		{"floor(c_bigint_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0},  // TODO: Flen should be 17
 		{"floor(c_ubigint_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0}, // TODO: Flen should be 17
 		{"floor(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
@@ -519,7 +521,7 @@ func (s *testPlanSuite) createTestCase4MathFuncs() []typeInferTestCase {
 		{"floor(18446744073709551615.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
 
 		{"ceil(c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
-		{"ceil(c_uint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 11, 0},
+		{"ceil(c_uint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 10, 0},
 		{"ceil(c_bigint_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0},  // TODO: Flen should be 17
 		{"ceil(c_ubigint_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0}, // TODO: Flen should be 17
 		{"ceil(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},

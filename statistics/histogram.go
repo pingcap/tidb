@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -167,8 +168,10 @@ func (hg *Histogram) toString(isIndex bool) string {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
 	}
 	for _, bucket := range hg.Buckets {
-		upperVal, _ := bucket.UpperBound.ToString()
-		lowerVal, _ := bucket.LowerBound.ToString()
+		upperVal, err := bucket.UpperBound.ToString()
+		terror.Log(errors.Trace(err))
+		lowerVal, err := bucket.LowerBound.ToString()
+		terror.Log(errors.Trace(err))
 		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", bucket.Count, lowerVal, upperVal, bucket.Repeats))
 	}
 	return strings.Join(strs, "\n")

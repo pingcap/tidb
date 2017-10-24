@@ -39,8 +39,12 @@ type clientConn struct {
 
 func (cc *clientConn) Run() {
 	defer func() {
-		recover()
-		cc.Close()
+		x := recover()
+		if x != nil {
+			log.Error(x)
+		}
+		err := cc.Close()
+		terror.Log(errors.Trace(err))
 	}()
 
 	for !cc.killed {

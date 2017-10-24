@@ -568,6 +568,7 @@ func (n *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
 type ParamMarkerExpr struct {
 	exprNode
 	Offset int
+	Order  int
 }
 
 // Accept implements Node Accept interface.

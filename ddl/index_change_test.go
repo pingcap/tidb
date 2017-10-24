@@ -44,7 +44,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})
-	c.Check(err, IsNil)
+	c.Check(err, IsNil, Commentf("err %v", errors.ErrorStack(err)))
 }
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {

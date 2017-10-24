@@ -113,6 +113,8 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
+	// params for prepared statements
+	PreparedParams []interface{}
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -228,6 +230,7 @@ func NewSessionVars() *SessionVars {
 		Systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
 		PreparedStmtNameToID:       make(map[string]uint32),
+		PreparedParams:             make([]interface{}, 10),
 		TxnCtx:                     &TransactionContext{},
 		RetryInfo:                  &RetryInfo{},
 		StrictSQLMode:              true,
@@ -331,10 +334,12 @@ type StatementContext struct {
 	InUpdateOrDeleteStmt   bool
 	InSelectStmt           bool
 	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
 	DividedByZeroAsWarning bool
 	TruncateAsWarning      bool
 	OverflowAsWarning      bool
 	InShowWarning          bool
+	UseCache               bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {

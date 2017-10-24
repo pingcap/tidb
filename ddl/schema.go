@@ -25,7 +25,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
 		// Invalid arguments, cancel this job.
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -41,7 +41,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if db.Name.L == dbInfo.Name.L {
 			if db.ID != schemaID {
 				// The database already exists, can't create it, we should cancel this job now.
-				job.State = model.JobCancelled
+				job.State = model.JobStateCancelled
 				return ver, infoschema.ErrDatabaseExists.GenByArgs(db.Name)
 			}
 			dbInfo = db
@@ -63,7 +63,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.State = model.JobDone
+		job.State = model.JobStateDone
 		job.BinlogInfo.AddDBInfo(ver, dbInfo)
 		return ver, nil
 	default:
@@ -78,7 +78,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	if dbInfo == nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrDatabaseDropExists.GenByArgs("")
 	}
 
@@ -119,7 +119,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if len(tables) > 0 {
 			job.Args = append(job.Args, getIDs(tables))
 		}
-		job.State = model.JobDone
+		job.State = model.JobStateDone
 		job.SchemaState = model.StateNone
 		for _, tblInfo := range dbInfo.Tables {
 			d.asyncNotifyEvent(&Event{Tp: model.ActionDropTable, TableInfo: tblInfo})

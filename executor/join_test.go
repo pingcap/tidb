@@ -50,9 +50,9 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
 	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
-	bigFilter, _ := expression.NewFunction(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
+	bigFilter := expression.NewFunctionInternal(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
 	smallFilter := bigFilter.Clone()
-	otherFilter, _ := expression.NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
+	otherFilter := expression.NewFunctionInternal(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	join := &executor.NestedLoopJoinExec{
 		BigExec:     bigExec,
 		SmallExec:   smallExec,
@@ -610,6 +610,13 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert into t2 values (1,1),(1,2),(1,3)")
 	result = tk.MustQuery("select f1,f2 from t1 group by f1,f2 having count(1) >= all (select fb from t2 where fa = f1)")
 	result.Check(testkit.Rows("1 2"))
+
+	tk.MustExec("DROP TABLE IF EXISTS t1, t2")
+	tk.MustExec("CREATE TABLE t1(a INT)")
+	tk.MustExec("CREATE TABLE t2 (d BINARY(2), PRIMARY KEY (d(1)), UNIQUE KEY (d))")
+	tk.MustExec("INSERT INTO t1 values(1)")
+	result = tk.MustQuery("SELECT 1 FROM test.t1, test.t2 WHERE 1 = (SELECT test.t2.d FROM test.t2 WHERE test.t1.a >= 1) and test.t2.d = 1;")
+	result.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestInSubquery(c *C) {

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 )
@@ -36,28 +37,28 @@ type Expression interface {
 	goJSON.Marshaler
 
 	// Eval evaluates an expression through a row.
-	Eval(row []types.Datum) (types.Datum, error)
+	Eval(row types.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(row []types.Datum, sc *variable.StatementContext) (val int64, isNull bool, err error)
+	EvalInt(row types.Row, sc *variable.StatementContext) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(row []types.Datum, sc *variable.StatementContext) (val float64, isNull bool, err error)
+	EvalReal(row types.Row, sc *variable.StatementContext) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(row []types.Datum, sc *variable.StatementContext) (val string, isNull bool, err error)
+	EvalString(row types.Row, sc *variable.StatementContext) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(row types.Row, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(row []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
+	EvalTime(row types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(row []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
+	EvalDuration(row types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(row []types.Datum, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
+	EvalJSON(row types.Row, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -97,7 +98,7 @@ func (e CNFExprs) Clone() CNFExprs {
 }
 
 // EvalBool evaluates expression list to a boolean value.
-func EvalBool(exprList CNFExprs, row []types.Datum, ctx context.Context) (bool, error) {
+func EvalBool(exprList CNFExprs, row types.Row, ctx context.Context) (bool, error) {
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
@@ -127,7 +128,7 @@ func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, 
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(ctx, funcName,
+	expr := NewFunctionInternal(ctx, funcName,
 		types.NewFieldType(mysql.TypeTiny),
 		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
 		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
@@ -212,9 +213,13 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		}
 		constant := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 		return constant, nil
-	default:
-		return x.Clone(), nil
+	case *Constant:
+		if x.DeferredExpr != nil {
+			newConst := FoldConstant(x)
+			return newConst, nil
+		}
 	}
+	return expr.Clone(), nil
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.
@@ -288,19 +293,15 @@ func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*mode
 	return columns
 }
 
-// NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) Expression {
-	return FoldConstant(BuildCastFunction(ctx, arg, tp))
-}
-
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
-	bt, _ := fc.getFunction(ctx, nil)
+	bt, err := fc.getFunction(ctx, nil)
+	terror.Log(errors.Trace(err))
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
-		Function: bt.setSelf(bt),
+		Function: bt,
 	}
 }
 

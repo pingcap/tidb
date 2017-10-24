@@ -22,11 +22,11 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/logutil"
 	"golang.org/x/net/context"
 )
 

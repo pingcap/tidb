@@ -157,6 +157,10 @@ type DeleteExec struct {
 	Tables       []*ast.TableName
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
+	// Table ID may not be unique for deleting multiple tables, for statements like
+	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
+	// by its alias instead of ID, so the table map value is an array which contains table aliases.
+	tblMap map[int64][]*ast.TableName
 
 	finished bool
 }
@@ -181,17 +185,35 @@ func (e *DeleteExec) Next() (Row, error) {
 	return nil, e.deleteSingleTable()
 }
 
+type tblColPosInfo struct {
+	tblID         int64
+	colBeginIndex int
+	colEndIndex   int
+	handleIndex   int
+}
+
 func (e *DeleteExec) deleteMultiTables() error {
 	if len(e.Tables) == 0 {
 		return nil
 	}
 
-	// Table ID may not be unique for deleting multiple tables, for statements like
-	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
-	// by its alias instead of ID, so the table map value is an array which contains table aliases.
-	tblMap := make(map[int64][]*ast.TableName, len(e.Tables))
+	e.tblMap = make(map[int64][]*ast.TableName, len(e.Tables))
 	for _, t := range e.Tables {
-		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t)
+		e.tblMap[t.TableInfo.ID] = append(e.tblMap[t.TableInfo.ID], t)
+	}
+	var colPosInfos []tblColPosInfo
+	// Extract the columns' position information of this table in the delete's schema, together with the table id
+	// and its handle's position in the schema.
+	for id, cols := range e.SelectExec.Schema().TblID2Handle {
+		tbl := e.tblID2Table[id]
+		for _, col := range cols {
+			if !e.matchingDeletingTable(id, col) {
+				continue
+			}
+			offset := getTableOffset(e.SelectExec.Schema(), col)
+			end := offset + len(tbl.Cols())
+			colPosInfos = append(colPosInfos, tblColPosInfo{tblID: id, colBeginIndex: offset, colEndIndex: end, handleIndex: col.Index})
+		}
 	}
 	// Map for unique (Table, Row) pair.
 	tblRowMap := make(map[int64]map[int64][]types.Datum)
@@ -204,23 +226,13 @@ func (e *DeleteExec) deleteMultiTables() error {
 			break
 		}
 
-		for id, cols := range e.SelectExec.Schema().TblID2Handle {
-			tbl := e.tblID2Table[id]
-			for _, col := range cols {
-				if names, ok := tblMap[id]; !ok || !isMatchTableName(names, col) {
-					continue
-				}
-				if tblRowMap[id] == nil {
-					tblRowMap[id] = make(map[int64][]types.Datum)
-				}
-				offset := getTableOffset(e.SelectExec.Schema(), col)
-				end := offset + len(tbl.Cols())
-				data := joinedRow[offset:end]
-				handle := joinedRow[col.Index].GetInt64()
-				tblRowMap[id][handle] = data
+		for _, info := range colPosInfos {
+			if tblRowMap[info.tblID] == nil {
+				tblRowMap[info.tblID] = make(map[int64][]types.Datum)
 			}
+			handle := joinedRow[info.handleIndex].GetInt64()
+			tblRowMap[info.tblID][handle] = joinedRow[info.colBeginIndex:info.colEndIndex]
 		}
-
 	}
 	for id, rowMap := range tblRowMap {
 		for handle, data := range rowMap {
@@ -233,7 +245,12 @@ func (e *DeleteExec) deleteMultiTables() error {
 	return nil
 }
 
-func isMatchTableName(names []*ast.TableName, col *expression.Column) bool {
+// matchingDeletingTable checks whether this column is from the table which is in the deleting list.
+func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column) bool {
+	names, ok := e.tblMap[tableID]
+	if !ok {
+		return false
+	}
 	for _, n := range names {
 		if (col.DBName.L == "" || col.DBName.L == n.Schema.L) && col.TblName.L == n.Name.L {
 			return true
@@ -893,7 +910,7 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 // getRow eval the insert statement. Because the value of column may calculated based on other column,
 // it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
-	row := make([]types.Datum, len(e.Table.Cols()))
+	row := make(types.DatumRow, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 
 	if e.needFillDefaultValues {
@@ -983,7 +1000,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	return e.fillGenColData(cols, len(vals), hasValue, row, ignoreErr)
 }
 
-func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row []types.Datum, ignoreErr bool) ([]types.Datum, error) {
+func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row types.DatumRow, ignoreErr bool) ([]types.Datum, error) {
 	err := e.initDefaultValues(row, hasValue, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1071,7 +1088,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row[i].SetInt64(id)
+		if mysql.HasUnsignedFlag(c.Flag) {
+			row[i].SetUint64(uint64(id))
+		} else {
+			row[i].SetInt64(id)
+		}
 		return nil
 	}
 
@@ -1090,7 +1111,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 			return errors.Trace(err)
 		}
 		e.ctx.GetSessionVars().InsertID = uint64(recordID)
-		row[i].SetInt64(recordID)
+		if mysql.HasUnsignedFlag(c.Flag) {
+			row[i].SetUint64(uint64(recordID))
+		} else {
+			row[i].SetInt64(recordID)
+		}
 		retryInfo.AddAutoIncrementID(recordID)
 		return nil
 	}
@@ -1108,7 +1133,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		}
 	}
 
-	row[i].SetInt64(recordID)
+	if mysql.HasUnsignedFlag(c.Flag) {
+		row[i].SetUint64(uint64(recordID))
+	} else {
+		row[i].SetInt64(recordID)
+	}
 	retryInfo.AddAutoIncrementID(recordID)
 	return nil
 }
@@ -1126,7 +1155,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 
 	// evaluate assignment
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
-	newData := make([]types.Datum, len(data))
+	newData := make(types.DatumRow, len(data))
 	copy(newData, data)
 	for _, col := range cols {
 		val, err1 := col.Expr.Eval(newData)
@@ -1358,7 +1387,7 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		newRowData := make([]types.Datum, len(row))
+		newRowData := make(types.DatumRow, len(row))
 		copy(newRowData, row)
 		for _, assign := range e.OrderedList {
 			val, err := assign.Expr.Eval(newRowData)

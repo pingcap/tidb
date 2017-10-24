@@ -28,7 +28,7 @@ const (
 	MaxPayloadLen      int  = 1<<24 - 1
 	// The version number should be three digits.
 	// See https://dev.mysql.com/doc/refman/5.7/en/which-version.html
-	TiDBReleaseVersion string = "0.9.0"
+	TiDBReleaseVersion string = "1.0.0"
 )
 
 // ServerVersion is the version information of this tidb-server in MySQL's format.
@@ -80,6 +80,9 @@ const (
 	// MaxUserDefinedVariableLen is max length of user-defined variable.
 	MaxUserDefinedVariableLen int = 64
 )
+
+// ErrTextLength error text length limit.
+const ErrTextLength = 80
 
 // Command information.
 const (

@@ -37,6 +37,9 @@ format = "text"
 # Disable automatic timestamps in output
 disable-timestamp = false
 
+# Stores slow query log into seperate files.
+#slow-query-file = ""
+
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
 
@@ -100,7 +103,7 @@ cross-join = true
 stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
-run-auto-analyze = false
+run-auto-analyze = true
 
 [xprotocol]
 # Start TiDB x server.
@@ -114,3 +117,12 @@ xport = 14000
 
 # The socket file to use for x protocol connection.
 xsocket = ""
+
+[plan-cache]
+plan-cache-enabled = false
+plan-cache-capacity = 2560
+plan-cache-shards = 256
+
+[prepared-plan-cache]
+prepared-plan-cache-enabled = false
+prepared-plan-cache-capacity = 100

@@ -23,13 +23,14 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -79,6 +80,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildPrepare(v)
 	case *plan.SelectLock:
 		return b.buildSelectLock(v)
+	case *plan.CancelDDLJobs:
+		return b.buildCancelDDLJobs(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
 	case *plan.ShowDDLJobs:
@@ -143,6 +146,19 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	}
 }
 
+func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
+	e := &CancelDDLJobsExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		JobIDs:       v.JobIDs,
+	}
+	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.JobIDs)
+	if b.err != nil {
+		return nil
+	}
+
+	return e
+}
+
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	// We get DDLInfo here because for Executors that returns result set,
 	// next will be called after transaction has been committed.
@@ -161,7 +177,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 		return nil
 	}
 
-	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
+	ddlInfo, err := admin.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -177,12 +193,12 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	}
 
 	var err error
-	e.jobs, err = inspectkv.GetDDLJobs(e.ctx.Txn())
+	e.jobs, err = admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	historyJobs, err := inspectkv.GetHistoryDDLJobs(e.ctx.Txn())
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -1117,6 +1133,44 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 	return dagReq
 }
 
+//func (b *executorBuilder) constructTableRanges(tbl *model.TableInfo, schema *expression.Schema, conds []expression.Expression) (newRanges []types.IntColumnRange) {
+func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []types.IntColumnRange) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
+	newRanges = ranger.FullIntRange()
+	var pkCol *expression.Column
+	if ts.Table.PKIsHandle {
+		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+			pkCol = expression.ColInfo2Col(cols, pkColInfo)
+		}
+	}
+	if pkCol != nil {
+		var ranges []types.Range
+		ranges, b.err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+		if b.err != nil {
+			return nil
+		}
+		newRanges = ranger.Ranges2IntRanges(ranges)
+	}
+	return newRanges
+}
+
+func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newRanges []*types.IndexRange) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
+	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
+	newRanges = ranger.FullIndexRange()
+	if len(idxCols) > 0 {
+		var ranges []types.Range
+		ranges, b.err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
+		if b.err != nil {
+			return nil
+		}
+		newRanges = ranger.Ranges2IndexRanges(ranges)
+	}
+	return newRanges
+}
+
 func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 	batchSize := 1
 	if !v.KeepOrder {
@@ -1143,6 +1197,10 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
+	newRanges := b.constructTableRanges(ts)
+	if b.err != nil {
+		return nil
+	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1151,7 +1209,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		table:     table,
 		keepOrder: ts.KeepOrder,
 		desc:      ts.Desc,
-		ranges:    ts.Ranges,
+		ranges:    newRanges,
 		columns:   ts.Columns,
 		priority:  b.priority,
 	}
@@ -1169,6 +1227,10 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		return nil
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	newRanges := b.constructIndexRanges(is)
+	if b.err != nil {
+		return nil
+	}
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
 		ctx:       b.ctx,
@@ -1179,7 +1241,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		index:     is.Index,
 		keepOrder: !is.OutOfOrder,
 		desc:      is.Desc,
-		ranges:    is.Ranges,
+		ranges:    newRanges,
 		columns:   is.Columns,
 		priority:  b.priority,
 	}
@@ -1207,7 +1269,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableReaderSchema *expression.Schema
 	)
 	table, _ := b.is.TableByID(is.Table.ID)
-	len := v.Schema().Len()
+	length := v.Schema().Len()
 	if v.NeedColHandle {
 		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
 	} else if !is.OutOfOrder {
@@ -1219,11 +1281,20 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		}
 		tableReaderSchema.Append(handleCol)
-		len = tableReaderSchema.Len()
+		length = tableReaderSchema.Len()
 	}
 
-	for i := 0; i < len; i++ {
+	for i := 0; i < length; i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
+	}
+
+	newRanges := b.constructIndexRanges(is)
+	if b.err != nil {
+		return nil
+	}
+	ranges := make([]*types.IndexRange, 0, len(newRanges))
+	for _, rangeInPlan := range newRanges {
+		ranges = append(ranges, rangeInPlan.Clone())
 	}
 
 	e := &IndexLookUpExecutor{
@@ -1235,7 +1306,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		index:             is.Index,
 		keepOrder:         !is.OutOfOrder,
 		desc:              is.Desc,
-		ranges:            is.Ranges,
+		ranges:            ranges,
 		tableRequest:      tableReq,
 		columns:           is.Columns,
 		handleCol:         handleCol,

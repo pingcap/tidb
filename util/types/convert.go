@@ -132,15 +132,6 @@ func ConvertFloatToUint(sc *variable.StatementContext, fval float64, upperBound 
 	return uint64(val), nil
 }
 
-func isCastType(tp byte) bool {
-	switch tp {
-	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
-		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal:
-		return true
-	}
-	return false
-}
-
 // StrToInt converts a string to an integer at the best-effort.
 func StrToInt(sc *variable.StatementContext, str string) (int64, error) {
 	str = strings.TrimSpace(str)
@@ -167,8 +158,8 @@ func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
 }
 
 // StrToDateTime converts str to MySQL DateTime.
-func StrToDateTime(str string, fsp int) (Time, error) {
-	return ParseTime(str, mysql.TypeDatetime, fsp)
+func StrToDateTime(sc *variable.StatementContext, str string, fsp int) (Time, error) {
+	return ParseTime(sc, str, mysql.TypeDatetime, fsp)
 }
 
 // StrToDuration converts str to Duration. It returns Duration in normal case,
@@ -184,7 +175,7 @@ func StrToDuration(sc *variable.StatementContext, str string, fsp int) (d Durati
 	// Timestamp format is 'YYYYMMDDHHMMSS' or 'YYMMDDHHMMSS', which length is 12.
 	// See #3923, it explains what we do here.
 	if length >= 12 {
-		t, err = StrToDateTime(str, fsp)
+		t, err = StrToDateTime(sc, str, fsp)
 		if err == nil {
 			return d, t, false, nil
 		}
@@ -202,7 +193,7 @@ func NumberToDuration(number int64, fsp int) (t Time, err error) {
 	if number > TimeMaxValue {
 		// Try to parse DATETIME.
 		if number >= 10000000000 { // '2001-00-00 00-00-00'
-			if t, err = ParseDatetimeFromNum(number); err == nil {
+			if t, err = ParseDatetimeFromNum(nil, number); err == nil {
 				return t, nil
 			}
 		}

@@ -591,7 +591,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)}->TopN([a],0,1)",
+			best: "UnionAll{TableReader(Table(t)->Limit)->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)}->TopN([t.a],0,1)",
 		},
 	}
 	for _, tt := range tests {
@@ -689,6 +689,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		sql  string
 		best string
 	}{
+		// Test distinct.
+		{
+			sql:  "select distinct b from t",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
 		// Test agg + table.
 		{
 			sql:  "select sum(a), avg(b + c) from t group by d",

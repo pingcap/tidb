@@ -49,14 +49,12 @@ func (s *TopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
 			Offset:  s.Offset,
 			partial: s.partial,
 		}.init(s.allocator, s.ctx)
-		limit.SetChildren(p)
-		p.SetParents(limit)
+		setParentAndChildren(limit, p)
 		limit.SetSchema(p.Schema().Clone())
 		return limit
 	}
 	// Then s must be topN.
-	s.SetChildren(p)
-	p.SetParents(s)
+	setParentAndChildren(s, p)
 	s.SetSchema(p.Schema().Clone())
 	return s
 }
@@ -111,8 +109,7 @@ func (p *Projection) pushDownTopN(topN *TopN) LogicalPlan {
 		}
 	}
 	child := p.children[0].(LogicalPlan).pushDownTopN(topN)
-	p.SetChildren(child)
-	child.SetParents(p)
+	setParentAndChildren(p, child)
 	return p
 }
 
@@ -152,11 +149,9 @@ func (p *LogicalJoin) pushDownTopN(topN *TopN) LogicalPlan {
 	default:
 		return p.baseLogicalPlan.pushDownTopN(topN)
 	}
-	p.SetChildren(leftChild, rightChild)
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
 	self := p.self.(LogicalPlan)
-	leftChild.SetParents(self)
-	rightChild.SetParents(self)
+	setParentAndChildren(self, leftChild, rightChild)
 	if topN != nil {
 		return topN.setChild(self, true)
 	}

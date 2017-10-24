@@ -12,7 +12,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build
+GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
 GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
@@ -68,7 +68,7 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check:
+check: errcheck
 	go get github.com/golang/lint/golint
 
 	@echo "vet"
@@ -86,7 +86,7 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go"
+	@ GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...

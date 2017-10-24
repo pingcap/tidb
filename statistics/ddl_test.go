@@ -125,6 +125,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	sc := new(variable.StatementContext)
 	c.Assert(statsTbl.ColumnIsInvalid(tableInfo.Columns[2]), IsTrue)
+	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NDV, Equals, int64(0))
 
 	testKit.MustExec("alter table t add column c3 int NOT NULL")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())

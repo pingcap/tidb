@@ -409,6 +409,8 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		return true
 	case ast.Like:
 		return c.checkLikeFunc(scalar)
+	case ast.GetParam:
+		return true
 	}
 	return false
 }

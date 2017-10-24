@@ -205,6 +205,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.Tp)
 	if tp.Flen == types.UnspecifiedLength {
 		tp.Flen = defaultFlen
+		if mysql.HasUnsignedFlag(tp.Flag) && tp.Tp != mysql.TypeLonglong && mysql.IsIntegerType(tp.Tp) {
+			// Issue #4684: the flen of unsigned integer(except bigint) is 1 digit shorter than signed integer
+			// because it has no prefix "+" or "-" character.
+			tp.Flen--
+		}
 	}
 	if tp.Decimal == types.UnspecifiedLength {
 		tp.Decimal = defaultDecimal
@@ -333,6 +338,11 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 		// For BIT field, it's charset is binary but does not have binary flag.
 		col.Flag &= ^mysql.BinaryFlag
 		col.Flag |= mysql.UnsignedFlag
+	}
+	if col.Tp == mysql.TypeYear {
+		// For Year field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
 	}
 	err := checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {

@@ -69,6 +69,32 @@ func (s *testSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// Issue #4684.
+	tk.MustExec("drop table if exists `t1`")
+	testSQL = "create table `t1` (" +
+		"`c1` tinyint unsigned default null," +
+		"`c2` smallint unsigned default null," +
+		"`c3` mediumint unsigned default null," +
+		"`c4` int unsigned default null," +
+		"`c5` bigint unsigned default null);`"
+
+	tk.MustExec(testSQL)
+	testSQL = "show create table t1"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"t1", "CREATE TABLE `t1` (\n" +
+			"  `c1` tinyint(3) UNSIGNED DEFAULT NULL,\n" +
+			"  `c2` smallint(5) UNSIGNED DEFAULT NULL,\n" +
+			"  `c3` mediumint(8) UNSIGNED DEFAULT NULL,\n" +
+			"  `c4` int(10) UNSIGNED DEFAULT NULL,\n" +
+			"  `c5` bigint(20) UNSIGNED DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
@@ -113,6 +139,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
+	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
 
 	// Test show create database
 	testSQL = `create database show_test_DB`
@@ -205,6 +232,26 @@ func (s *testSuite) TestShow(c *C) {
 		"show_test", "CREATE TABLE `show_test` (\n  `a` bit(1) DEFAULT NULL,\n  `b` bit(32) DEFAULT b'0',\n  `c` bit(1) DEFAULT b'1',\n  `d` bit(10) DEFAULT b'1010'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// for issue #4740
+	testSQL = `drop table if exists t`
+	tk.MustExec(testSQL)
+	testSQL = `create table t (a int1, b int2, c int3, d int4, e int8)`
+	tk.MustExec(testSQL)
+	testSQL = `show create table t;`
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"t",
+		"CREATE TABLE `t` (\n" +
+			"  `a` tinyint(4) DEFAULT NULL,\n" +
+			"  `b` smallint(6) DEFAULT NULL,\n" +
+			"  `c` mediumint(9) DEFAULT NULL,\n" +
+			"  `d` int(11) DEFAULT NULL,\n" +
+			"  `e` bigint(20) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	}
 }
 

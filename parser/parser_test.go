@@ -19,9 +19,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -198,6 +200,12 @@ type testCase struct {
 	ok  bool
 }
 
+type testErrMsgCase struct {
+	src string
+	ok  bool
+	err error
+}
+
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	parser := New()
 	for _, t := range table {
@@ -207,6 +215,19 @@ func (s *testParserSuite) RunTest(c *C, table []testCase) {
 			c.Assert(err, IsNil, comment)
 		} else {
 			c.Assert(err, NotNil, comment)
+		}
+	}
+}
+
+func (s *testParserSuite) RunErrMsgTest(c *C, table []testErrMsgCase) {
+	parser := New()
+	for _, t := range table {
+		_, err := parser.Parse(t.src, "", "")
+		comment := Commentf("source %v", t.src)
+		if t.err != nil {
+			c.Assert(terror.ErrorEqual(err, t.err), IsTrue, comment)
+		} else {
+			c.Assert(err, IsNil, comment)
 		}
 	}
 }
@@ -341,10 +362,15 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 natural inner join t2", false},
 		{"select * from t1 natural cross join t2", false},
 
+		// for straight_join
+		{"select * from t1 straight_join t2 on t1.id = t2.id", true},
+
 		// for admin
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
+		{"admin cancel ddl jobs 1", true},
+		{"admin cancel ddl jobs 1, 2", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
@@ -424,6 +450,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		{`SHOW PLUGINS`, true},
+		{`SHOW PROFILES`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
@@ -1271,6 +1298,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
 		{"create table t (c int, `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '') PARTITION BY RANGE (UNIX_TIMESTAMP(create_time)) (PARTITION p201610 VALUES LESS THAN(1477929600), PARTITION p201611 VALUES LESS THAN(1480521600),PARTITION p201612 VALUES LESS THAN(1483200000),PARTITION p201701 VALUES LESS THAN(1485878400),PARTITION p201702 VALUES LESS THAN(1488297600),PARTITION p201703 VALUES LESS THAN(1490976000))", true},
 		{"CREATE TABLE `md_product_shop` (`shopCode` varchar(4) DEFAULT NULL COMMENT '地点') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 /*!50100 PARTITION BY KEY (shopCode) PARTITIONS 19 */;", true},
+		{"CREATE TABLE `payinfo1` (`id` bigint(20) NOT NULL AUTO_INCREMENT, `oderTime` datetime NOT NULL) ENGINE=InnoDB AUTO_INCREMENT=641533032 DEFAULT CHARSET=utf8 ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8 /*!50500 PARTITION BY RANGE COLUMNS(oderTime) (PARTITION P2011 VALUES LESS THAN ('2012-01-01 00:00:00') ENGINE = InnoDB, PARTITION P1201 VALUES LESS THAN ('2012-02-01 00:00:00') ENGINE = InnoDB, PARTITION PMAX VALUES LESS THAN (MAXVALUE) ENGINE = InnoDB)*/;", true},
 
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
@@ -1465,6 +1493,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for issue 4538
 		{"create table a (process double)", true},
+
+		// for issue 4740
+		{"create table t (a int1, b int2, c int3, d int4, e int8)", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1618,9 +1649,23 @@ func (s *testParserSuite) TestComment(c *C) {
 		{"START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */", true},
 		// for comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
+		// for unclosed comment
+		{"delete from t where a = 7 or 1=1/*' and b = 'p'", false},
 	}
 	s.RunTest(c, table)
 }
+
+func (s *testParserSuite) TestCommentErrMsg(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testErrMsgCase{
+		{"delete from t where a = 7 or 1=1/*' and b = 'p'", false, errors.New("[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' and b = 'p'' at line 1")},
+		{"delete from t where a = 7 or\n 1=1/*' and b = 'p'", false, errors.New("[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' and b = 'p'' at line 2")},
+		{"select 1/*", false, errors.New("[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' at line 1")},
+		{"select 1/* comment */", false, nil},
+	}
+	s.RunErrMsgTest(c, table)
+}
+
 func (s *testParserSuite) TestSubquery(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
@@ -1771,25 +1816,6 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 	c.Assert(err, IsNil)
 	runtime.ReadMemStats(&newStats)
 	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)
-}
-
-func BenchmarkParse(b *testing.B) {
-	var table = []string{
-		"insert into t values (1), (2), (3)",
-		"insert into t values (4), (5), (6), (7)",
-		"select c from t where c > 2",
-	}
-	parser := New()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, v := range table {
-			_, err := parser.Parse(v, "", "")
-			if err != nil {
-				b.Failed()
-			}
-		}
-	}
-	b.ReportAllocs()
 }
 
 func (s *testParserSuite) TestExplain(c *C) {

@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/kvcache"
 	goctx "golang.org/x/net/context"
 )
 
@@ -66,6 +67,9 @@ type Context interface {
 
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
+
+	// PreparedPlanCache returns the cache of the physical plan
+	PreparedPlanCache() *kvcache.SimpleLRUCache
 }
 
 type basicCtxType int

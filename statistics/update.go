@@ -181,18 +181,31 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 			if needAnalyzeTable(statsTbl, 20*h.Lease) {
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				log.Infof("[stats] auto analyze table %s now", tblName)
-				_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-				return errors.Trace(err)
+				return errors.Trace(h.execAutoAnalyze(sql))
 			}
 			for _, idx := range tblInfo.Indices {
+				if idx.State != model.StatePublic {
+					continue
+				}
 				if _, ok := statsTbl.Indices[idx.ID]; !ok {
 					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
 					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
-					_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-					return errors.Trace(err)
+					return errors.Trace(h.execAutoAnalyze(sql))
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func (h *Handle) execAutoAnalyze(sql string) error {
+	startTime := time.Now()
+	_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+	autoAnalyzeHistgram.Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		autoAnalyzeCounter.WithLabelValues("failed").Inc()
+	} else {
+		autoAnalyzeCounter.WithLabelValues("succ").Inc()
+	}
+	return errors.Trace(err)
 }

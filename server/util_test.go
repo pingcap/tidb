@@ -27,18 +27,18 @@ type testUtilSuite struct {
 
 func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	defer testleak.AfterTest(c)()
-	t, err := types.ParseTimestamp("0000-00-00 00:00:00.0000000")
+	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
 	d, err := dumpBinaryDateTime(t, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d, DeepEquals, []byte{11, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0})
-	t, err = types.ParseDatetime("0000-00-00 00:00:00.0000000")
+	t, err = types.ParseDatetime(nil, "0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
 	d, err = dumpBinaryDateTime(t, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d, DeepEquals, []byte{11, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0})
 
-	t, err = types.ParseDate("0000-00-00")
+	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
 	d, err = dumpBinaryDateTime(t, nil)
 	c.Assert(err, IsNil)
@@ -101,7 +101,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 
 	var d types.Datum
 
-	time, err := types.ParseTime("2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
+	time, err := types.ParseTime(nil, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
 	c.Assert(err, IsNil)
 	d.SetMysqlTime(time)
 	colInfo.Type = mysql.TypeDatetime

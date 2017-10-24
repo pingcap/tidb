@@ -64,7 +64,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rowCount := int64(10)
 	f := func() error {
 		d.setReorgRowCount(rowCount)
-		time.Sleep(4 * testLease)
+		time.Sleep(20 * testLease)
 		return nil
 	}
 	job := &model.Job{}

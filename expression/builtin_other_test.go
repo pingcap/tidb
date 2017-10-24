@@ -57,8 +57,7 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), IsTrue)
-		count, err := f.eval(nil)
+		count, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		if count.IsNull() {
 			c.Assert(test.count, IsNil)
@@ -75,9 +74,8 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RowFunc]
-	fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
+	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
 	c.Assert(err, IsNil)
-	c.Assert(fn.canBeFolded(), IsFalse)
 }
 
 func (s *testEvaluatorSuite) TestSetVar(c *C) {
@@ -96,8 +94,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		c.Assert(fn.canBeFolded(), IsFalse)
-		d, err := fn.eval(types.MakeDatums(tc.args...))
+		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 		if tc.args[1] != nil {
@@ -138,8 +135,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		c.Assert(fn.canBeFolded(), IsFalse)
-		d, err := fn.eval(types.MakeDatums(tc.args...))
+		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 	}
@@ -152,15 +148,14 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
 	sig, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums()))
 	c.Assert(err, IsNil)
-	c.Assert(sig.canBeFolded(), IsFalse)
-	_, err = sig.eval(nil)
+	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, "Session current insert values is nil")
 	s.ctx.GetSessionVars().CurrInsertValues = types.MakeDatums("1")
-	_, err = sig.eval(nil)
+	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, fmt.Sprintf("Session current insert values len %d and column's offset %v don't match", 1, 1))
 	currInsertValues := types.MakeDatums("1", "2")
 	s.ctx.GetSessionVars().CurrInsertValues = currInsertValues
-	ret, err := sig.eval(nil)
+	ret, err := evalBuiltinFunc(sig, nil)
 	c.Assert(err, IsNil)
 	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
 	c.Assert(err, IsNil)

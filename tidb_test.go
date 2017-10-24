@@ -25,11 +25,11 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -48,11 +48,9 @@ func TestT(t *testing.T) {
 var _ = Suite(&testMainSuite{})
 
 type testMainSuite struct {
-	dbName         string
-	createTableSQL string
-	selectSQL      string
-	store          kv.Storage
-	dom            *domain.Domain
+	dbName string
+	store  kv.Storage
+	dom    *domain.Domain
 }
 
 type brokenStore struct{}
@@ -64,11 +62,6 @@ func (s *brokenStore) Open(schema string) (kv.Storage, error) {
 func (s *testMainSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.dbName = "test_main_db"
-	s.createTableSQL = `
-    CREATE TABLE tbl_test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));
-    CREATE TABLE tbl_test1(id INT NOT NULL DEFAULT 2, name varchar(255), PRIMARY KEY(id), INDEX name(name));
-    CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
-	s.selectSQL = `SELECT * from tbl_test;`
 	s.store = newStore(c, s.dbName)
 	dom, err := BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -83,129 +76,8 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
 }
 
-func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {
-	gotRows := se.AffectedRows()
-	c.Assert(gotRows, Equals, affectedRows)
-
-	gotID := se.LastInsertID()
-	c.Assert(gotID, Equals, insertID)
-}
-
-func (s *testMainSuite) TestConcurrent(c *C) {
-	dbName := "test_concurrent_db"
-	se := newSession(c, s.store, dbName)
-	// create db
-	createDBSQL := fmt.Sprintf("create database if not exists %s;", dbName)
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	useDBSQL := fmt.Sprintf("use %s;", dbName)
-	createTableSQL := ` CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id)); `
-
-	mustExecSQL(c, se, dropDBSQL)
-	mustExecSQL(c, se, createDBSQL)
-	mustExecSQL(c, se, useDBSQL)
-	mustExecSQL(c, se, createTableSQL)
-	wg := &sync.WaitGroup{}
-	f := func(start, count int) {
-		sess := newSession(c, s.store, dbName)
-		for i := 0; i < count; i++ {
-			// insert data
-			mustExecSQL(c, sess, fmt.Sprintf(`INSERT INTO test VALUES (%d, "hello");`, start+i))
-		}
-		wg.Done()
-	}
-	step := 10
-	for i := 0; i < step; i++ {
-		wg.Add(1)
-		go f(i*step, step)
-	}
-	wg.Wait()
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testMainSuite) TestTableInfoMeta(c *C) {
-	dbName := "test_info_meta"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	// create table
-	mustExecSQL(c, se, s.createTableSQL)
-
-	// insert data
-	mustExecSQL(c, se, `INSERT INTO tbl_test VALUES (1, "hello");`)
-	checkResult(c, se, 1, 0)
-
-	mustExecSQL(c, se, `INSERT INTO tbl_test VALUES (2, "hello");`)
-	checkResult(c, se, 1, 0)
-
-	mustExecSQL(c, se, `UPDATE tbl_test SET name = "abc" where id = 2;`)
-	checkResult(c, se, 1, 0)
-
-	mustExecSQL(c, se, `DELETE from tbl_test where id = 2;`)
-	checkResult(c, se, 1, 0)
-
-	// select data
-	mustExecMatch(c, se, s.selectSQL, [][]interface{}{{1, []byte("hello")}})
-
-	// drop db
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testMainSuite) TestInfoSchema(c *C) {
-	se := newSession(c, s.store, "test_info_schema")
-	rs := mustExecSQL(c, se, "SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'")
-	row, err := rs.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "utf8mb4")
-}
-
-func (s *testMainSuite) TestCaseInsensitive(c *C) {
-	dbName := "test_case_insensitive"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "create table T (a text, B int)")
-	mustExecSQL(c, se, "insert t (A, b) values ('aaa', 1)")
-	rs := mustExecSQL(c, se, "select * from t")
-	fields, err := rs.Fields()
-	c.Assert(err, IsNil)
-	c.Assert(fields[0].ColumnAsName.O, Equals, "a")
-	c.Assert(fields[1].ColumnAsName.O, Equals, "B")
-	rs = mustExecSQL(c, se, "select A, b from t")
-	fields, err = rs.Fields()
-	c.Assert(err, IsNil)
-	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
-	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
-	rs = mustExecSQL(c, se, "select a as A from t where A > 0")
-	fields, err = rs.Fields()
-	c.Assert(err, IsNil)
-	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
-	mustExecSQL(c, se, "update T set b = B + 1")
-	mustExecSQL(c, se, "update T set B = b + 1")
-	rs = mustExecSQL(c, se, "select b from T")
-	rows, err := GetRows(rs)
-	c.Assert(err, IsNil)
-	match(c, rows[0], 3)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// Testcase for delete panic
-func (s *testMainSuite) TestDeletePanic(c *C) {
-	se := newSession(c, s.store, "test_delete_panic")
-	mustExecSQL(c, se, "create table t (c int)")
-	mustExecSQL(c, se, "insert into t values (1), (2), (3)")
-	mustExecSQL(c, se, "delete from `t` where `c` = ?", 1)
-	rs := mustExecSQL(c, se, "delete from `t` where `c` = ?", 2)
-	c.Assert(rs, IsNil)
-}
-
 // Testcase for arg type.
 func (s *testMainSuite) TestCheckArgs(c *C) {
-	dbName := "test_check_args"
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "create table if not exists t (c datetime)")
-	mustExecSQL(c, se, "insert t values (?)", time.Now())
-	mustExecSQL(c, se, "drop table t")
 	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
 		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),
 		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)

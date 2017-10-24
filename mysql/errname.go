@@ -894,6 +894,7 @@ var MySQLErrName = map[uint16]string{
 	ErrTiKVServerBusy:     "TiKV server is busy",
 	ErrResolveLockTimeout: "Resolve lock timeout",
 	ErrRegionUnavaiable:   "Region is unavaiable",
+	ErrGCTooEarly:         "GC Interval shorter than transaction duration",
 
 	ErrTxnTooLarge: "Transaction is too large",
 }

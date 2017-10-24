@@ -1420,9 +1420,10 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
-	c.Assert(err, IsNil)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	tk.MustExec("insert into t value(0)")
 	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfMonth(123)`)
@@ -2434,6 +2435,12 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 
 	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
 	c.Assert(terror.ErrorEqual(err, expression.ErrDivisionByZero), IsTrue)
+
+	tk.MustQuery("select sum(1.2e2) * 0.1").Check(testkit.Rows("12.0"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a double)")
+	tk.MustExec("insert into t value(1.2)")
+	tk.MustQuery("select sum(a) * 0.1 from t").Check(testkit.Rows("0.12"))
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
@@ -2651,6 +2658,16 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec(`set @varname = "Abc"`)
 	result = tk.MustQuery(`select @varname, @VARNAME`)
 	result.Check(testkit.Rows("Abc Abc"))
+
+	// for values
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (`id` varchar(32) NOT NULL, `count` decimal(18,2), PRIMARY KEY (`id`));")
+	tk.MustExec("INSERT INTO t (id,count)VALUES('abc',2) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count)")
+	result = tk.MustQuery("select count from t where id = 'abc'")
+	result.Check(testkit.Rows("2.00"))
+	tk.MustExec("INSERT INTO t (id,count)VALUES('abc',265.0) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count)")
+	result = tk.MustQuery("select count from t where id = 'abc'")
+	result.Check(testkit.Rows("265.00"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {

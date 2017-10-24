@@ -42,7 +42,7 @@ func (af *avgFunction) GetType() *types.FieldType {
 	return ft
 }
 
-func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
+func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
 	a := af.Args[1]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -73,7 +73,7 @@ func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.Statement
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
+func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
 	if af.mode == FinalMode {
 		return af.updateAvg(ctx, sc, row)
 	}
@@ -91,9 +91,9 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 		y := types.NewDecFromInt(ctx.Count)
 		to := new(types.MyDecimal)
 		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 		d.SetMysqlDecimal(to)
 	}
 	return

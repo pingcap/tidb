@@ -216,6 +216,19 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
 		`GRANT Update ON test.test TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
+
+	// Fix a issue that empty privileges is displayed when revoke after grant.
+	mustExec(c, se, "TRUNCATE TABLE mysql.db")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, "TRUNCATE TABLE mysql.tables_priv")
+	mustExec(c, se, "GRANT ALL PRIVILEGES ON `te%`.* TO 'show'@'localhost'")
+	mustExec(c, se, "REVOKE ALL PRIVILEGES ON `te%`.* FROM 'show'@'localhost'")
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	c.Assert(err, IsNil)
+	// It should not be "GRANT ON `te%`.* to 'show'@'localhost'"
+	c.Assert(gs, HasLen, 0)
+
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {

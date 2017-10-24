@@ -18,7 +18,6 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -31,14 +30,10 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args []Expression
-	ctx  context.Context
-	tp   *types.FieldType
-	// self points to the built-in function signature which contains this baseBuiltinFunc.
-	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
-	self     builtinFunc
-	pbCode   tipb.ScalarFuncSig
-	foldable bool // Default value is true because many expressions are foldable.
+	args   []Expression
+	ctx    context.Context
+	tp     *types.FieldType
+	pbCode tipb.ScalarFuncSig
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -51,10 +46,9 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 
 func newBaseBuiltinFunc(ctx context.Context, args []Expression) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:     args,
-		ctx:      ctx,
-		foldable: true,
-		tp:       types.NewFieldType(mysql.TypeUnspecified),
+		args: args,
+		ctx:  ctx,
+		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
 }
 
@@ -151,88 +145,41 @@ func newBaseBuiltinFuncWithTp(ctx context.Context, args []Expression, retType ty
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
 	return baseBuiltinFunc{
-		args:     args,
-		ctx:      ctx,
-		foldable: true,
-		tp:       fieldType,
+		args: args,
+		ctx:  ctx,
+		tp:   fieldType,
 	}
-}
-
-func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
-	b.self = f
-	return f
-}
-
-func (b *baseBuiltinFunc) canBeFolded() bool {
-	return b.foldable
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
-// eval should only be called in test files, and it should be removed after all tests being rewritten.
-func (b *baseBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	var (
-		res    interface{}
-		isNull bool
-	)
-	switch b.tp.EvalType() {
-	case types.ETInt:
-		var intRes int64
-		intRes, isNull, err = b.self.evalInt(row)
-		if mysql.HasUnsignedFlag(b.tp.Flag) {
-			res = uint64(intRes)
-		} else {
-			res = intRes
-		}
-	case types.ETReal:
-		res, isNull, err = b.self.evalReal(row)
-	case types.ETDecimal:
-		res, isNull, err = b.self.evalDecimal(row)
-	case types.ETDatetime, types.ETTimestamp:
-		res, isNull, err = b.self.evalTime(row)
-	case types.ETDuration:
-		res, isNull, err = b.self.evalDuration(row)
-	case types.ETJson:
-		res, isNull, err = b.self.evalJSON(row)
-	case types.ETString:
-		res, isNull, err = b.self.evalString(row)
-	}
-
-	if isNull || err != nil {
-		d.SetValue(nil)
-		return d, errors.Trace(err)
-	}
-	d.SetValue(res)
-	return
-}
-
-func (b *baseBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *baseBuiltinFunc) evalInt(row types.Row) (int64, bool, error) {
 	panic("baseBuiltinFunc.evalInt() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+func (b *baseBuiltinFunc) evalReal(row types.Row) (float64, bool, error) {
 	panic("baseBuiltinFunc.evalReal() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+func (b *baseBuiltinFunc) evalString(row types.Row) (string, bool, error) {
 	panic("baseBuiltinFunc.evalString() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *baseBuiltinFunc) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	panic("baseBuiltinFunc.evalDecimal() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *baseBuiltinFunc) evalTime(row types.Row) (types.Time, bool, error) {
 	panic("baseBuiltinFunc.evalTime() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+func (b *baseBuiltinFunc) evalDuration(row types.Row) (types.Duration, bool, error) {
 	panic("baseBuiltinFunc.evalDuration() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+func (b *baseBuiltinFunc) evalJSON(row types.Row) (json.JSON, bool, error) {
 	panic("baseBuiltinFunc.evalJSON() should never be called.")
 }
 
@@ -252,9 +199,6 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 }
 
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.canBeFolded() || !fun.canBeFolded() {
-		return false
-	}
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
 		return false
@@ -273,34 +217,28 @@ func (b *baseBuiltinFunc) getCtx() context.Context {
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
-	// eval evaluates result of builtinFunc by given row.
-	eval(row []types.Datum) (d types.Datum, err error)
 	// evalInt evaluates int result of builtinFunc by given row.
-	evalInt(row []types.Datum) (val int64, isNull bool, err error)
+	evalInt(row types.Row) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
-	evalReal(row []types.Datum) (val float64, isNull bool, err error)
+	evalReal(row types.Row) (val float64, isNull bool, err error)
 	// evalString evaluates string representation of builtinFunc by given row.
-	evalString(row []types.Datum) (val string, isNull bool, err error)
+	evalString(row types.Row) (val string, isNull bool, err error)
 	// evalDecimal evaluates decimal representation of builtinFunc by given row.
-	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
+	evalDecimal(row types.Row) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
-	evalTime(row []types.Datum) (val types.Time, isNull bool, err error)
+	evalTime(row types.Row) (val types.Time, isNull bool, err error)
 	// evalDuration evaluates duration representation of builtinFunc by given row.
-	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
+	evalDuration(row types.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(row []types.Datum) (val json.JSON, isNull bool, err error)
+	evalJSON(row types.Row) (val json.JSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
-	// canBeFolded checks whether a function can be folded in constant folding.
-	canBeFolded() bool
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() context.Context
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
-	// setSelf sets a pointer to itself.
-	setSelf(builtinFunc) builtinFunc
 	// setPbCode sets pbCode for signature.
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
@@ -425,7 +363,7 @@ var funcs = map[string]functionClass{
 	ast.UnixTimestamp:    &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
 	ast.UTCDate:          &utcDateFunctionClass{baseFunctionClass{ast.UTCDate, 0, 0}},
 	ast.UTCTime:          &utcTimeFunctionClass{baseFunctionClass{ast.UTCTime, 0, 1}},
-	ast.UTCTimestamp:     &utcTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
+	ast.UTCTimestamp:     &utcTimestampFunctionClass{baseFunctionClass{ast.UTCTimestamp, 0, 1}},
 	ast.Week:             &weekFunctionClass{baseFunctionClass{ast.Week, 1, 2}},
 	ast.Weekday:          &weekDayFunctionClass{baseFunctionClass{ast.Weekday, 1, 1}},
 	ast.WeekOfYear:       &weekOfYearFunctionClass{baseFunctionClass{ast.WeekOfYear, 1, 1}},
@@ -566,6 +504,7 @@ var funcs = map[string]functionClass{
 	ast.SetVar:     &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
 	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
 	ast.BitCount:   &bitCountFunctionClass{baseFunctionClass{ast.BitCount, 1, 1}},
+	ast.GetParam:   &getParamFunctionClass{baseFunctionClass{ast.GetParam, 1, 1}},
 
 	// encryption and compression functions
 	ast.AesDecrypt:               &aesDecryptFunctionClass{baseFunctionClass{ast.AesDecrypt, 2, 3}},

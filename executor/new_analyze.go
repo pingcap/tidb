@@ -174,6 +174,7 @@ func (e *AnalyzeColumnsExec) buildHistograms() (hists []*statistics.Histogram, e
 	collectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
+			IsMerger:      true,
 			Sketch:        statistics.NewFMSketch(maxSketchSize),
 			MaxSampleSize: maxSampleSize,
 		}

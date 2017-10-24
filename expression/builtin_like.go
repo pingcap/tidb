@@ -47,7 +47,7 @@ func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf.tp.Flen = 1
 	sig := &builtinLikeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinLikeSig struct {
@@ -57,7 +57,7 @@ type builtinLikeSig struct {
 // evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
 // NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
-func (b *builtinLikeSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinLikeSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	valStr, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
@@ -95,14 +95,14 @@ func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression
 	} else {
 		sig = &builtinRegexpSig{bf}
 	}
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
 type builtinRegexpBinarySig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRegexpBinarySig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinRegexpBinarySig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	expr, isNull, err := b.args[0].EvalString(row, sc)
@@ -129,7 +129,7 @@ type builtinRegexpSig struct {
 
 // evalInt evals `expr REGEXP pat`, or `expr RLIKE pat`.
 // See https://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
-func (b *builtinRegexpSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinRegexpSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	expr, isNull, err := b.args[0].EvalString(row, sc)

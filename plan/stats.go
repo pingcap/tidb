@@ -40,9 +40,10 @@ func (s *statsProfile) collapse(factor float64) *statsProfile {
 
 func (p *basePhysicalPlan) statsProfile() *statsProfile {
 	profile := p.basePlan.profile
-	if p.expectedCnt > 0 && p.expectedCnt < profile.count {
-		factor := p.expectedCnt / profile.count
-		profile.count = p.expectedCnt
+	expectedCnt := p.basePlan.expectedCnt
+	if expectedCnt > 0 && expectedCnt < profile.count {
+		factor := expectedCnt / profile.count
+		profile.count = expectedCnt
 		for i := range profile.cardinality {
 			profile.cardinality[i] = profile.cardinality[i] * factor
 		}
@@ -73,8 +74,9 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 	}
 	for i, col := range p.Columns {
 		hist, ok := p.statisticTable.Columns[col.ID]
-		if ok {
-			profile.cardinality[i] = float64(hist.NDV)
+		if ok && hist.NDV > 0 && len(hist.Buckets) > 0 {
+			factor := float64(p.statisticTable.Count) / float64(hist.Buckets[len(hist.Buckets)-1].Count)
+			profile.cardinality[i] = float64(hist.NDV) * factor
 		} else {
 			profile.cardinality[i] = profile.count * distinctFactor
 		}
@@ -241,7 +243,7 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 	}
 	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
 	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
-	count := (leftProfile.count * rightProfile.count / leftKeyCardinality / rightKeyCardinality) * math.Min(leftKeyCardinality, rightKeyCardinality)
+	count := leftProfile.count * rightProfile.count / math.Max(leftKeyCardinality, rightKeyCardinality)
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.count)
 	} else if p.JoinType == RightOuterJoin {

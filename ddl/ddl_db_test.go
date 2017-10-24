@@ -40,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -285,6 +287,104 @@ LOOP:
 		s.mustExec(c, "delete from t1 where c1 = ?", i+10)
 	}
 	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
+
+	s.mustExec(c, "drop table t1")
+}
+
+func (s *testDBSuite) TestCancelAddIndex(c *C) {
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
+	// defaultBatchSize is equal to ddl.defaultBatchSize
+	base := defaultBatchSize * 2
+	count := base
+	// add some rows
+	for i := 0; i < count; i++ {
+		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+	}
+
+	s.tk.Se.NewTxn()
+	jobs, err := admin.GetHistoryDDLJobs(s.tk.Se.Txn())
+	c.Assert(err, IsNil)
+	jobIDs := []int64{jobs[len(jobs)-1].ID}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	first := true
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		addIndexNotFirstReorg := job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
+		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
+		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
+		if !addIndexNotFirstReorg {
+			return
+		}
+		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
+		if first {
+			first = false
+			return
+		}
+		if checkErr != nil {
+			return
+		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
+		var err error
+		err = hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		// It only tests cancel one DDL job.
+		if errs[0] != nil {
+			checkErr = errors.Trace(errs[0])
+			return
+		}
+		err = hookCtx.Txn().Commit()
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+	}
+	originHook := s.dom.DDL().GetHook()
+	s.dom.DDL().SetHook(hook)
+	defer s.dom.DDL().SetHook(originHook)
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
+
+	times := 0
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			break LOOP
+		case <-ticker.C:
+			if times >= 10 {
+				break
+			}
+			step := 10
+			// delete some rows, and add some data
+			for i := count; i < count+step; i++ {
+				n := rand.Intn(count)
+				s.mustExec(c, "delete from t1 where c1 = ?", n)
+				s.mustExec(c, "insert into t1 values (?, ?, ?)", i+10, i, i)
+			}
+			count += step
+			times++
+		}
+	}
+
+	t := s.testGetTable(c, "t1")
+	for _, tidx := range t.Indices() {
+		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
+	}
 
 	s.mustExec(c, "drop table t1")
 }

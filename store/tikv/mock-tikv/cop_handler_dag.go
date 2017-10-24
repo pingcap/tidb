@@ -41,23 +41,24 @@ type dagContext struct {
 	evalCtx   *evalContext
 }
 
-func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
+func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	if len(req.Ranges) == 0 {
-		return resp, nil
+		return resp
 	}
 	if req.GetTp() != kv.ReqTypeDAG {
-		return resp, nil
+		return resp
 	}
 	if err := h.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
-		return resp, nil
+		return resp
 	}
 
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		return nil, errors.Trace(err)
+		resp.OtherError = err.Error()
+		return resp
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
 	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
@@ -68,7 +69,9 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return &coprocessor.Response{
+			OtherError: err.Error(),
+		}
 	}
 	var (
 		chunks []tipb.Chunk
@@ -78,7 +81,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		var row [][]byte
 		row, err = e.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			break
 		}
 		if row == nil {
 			break
@@ -323,7 +326,7 @@ func flagsToStatementContext(flags uint64) *variable.StatementContext {
 	return sc
 }
 
-func buildResp(chunks []tipb.Chunk, err error) (*coprocessor.Response, error) {
+func buildResp(chunks []tipb.Chunk, err error) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
 		Error:  toPBError(err),
@@ -343,10 +346,11 @@ func buildResp(chunks []tipb.Chunk, err error) (*coprocessor.Response, error) {
 	}
 	data, err := proto.Marshal(selResp)
 	if err != nil {
-		return nil, errors.Trace(err)
+		resp.OtherError = err.Error()
+		return resp
 	}
 	resp.Data = data
-	return resp, nil
+	return resp
 }
 
 func toPBError(err error) *tipb.Error {

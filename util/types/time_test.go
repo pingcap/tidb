@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -28,6 +29,8 @@ type testTimeSuite struct {
 }
 
 func (s *testTimeSuite) TestDateTime(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
@@ -54,7 +57,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseDatetime(test.Input)
+		t, err := ParseDatetime(sc, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -75,12 +78,12 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range fspTbl {
-		t, err := ParseTime(test.Input, mysql.TypeDatetime, test.Fsp)
+		t, err := ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
 
-	t, _ := ParseTime("121231113045.9999999", mysql.TypeDatetime, 6)
+	t, _ := ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
 	c.Assert(t.Time.Second(), Equals, 46)
 	c.Assert(t.Time.Microsecond(), Equals, 0)
 
@@ -96,7 +99,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseDatetime(test)
+		_, err := ParseDatetime(sc, test)
 		c.Assert(err, NotNil)
 	}
 }
@@ -111,7 +114,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseTimestamp(test.Input)
+		t, err := ParseTimestamp(nil, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -122,7 +125,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseTimestamp(test)
+		_, err := ParseTimestamp(nil, test)
 		c.Assert(err, NotNil)
 	}
 }
@@ -143,7 +146,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseDate(test.Input)
+		t, err := ParseDate(nil, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -153,7 +156,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseDate(test)
+		_, err := ParseDate(nil, test)
 		c.Assert(err, NotNil)
 	}
 }
@@ -396,10 +399,10 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
 	// MySQL timestamp value doesn't allow month=0 or day=0.
-	t, err := ParseTimestamp("2016-12-00 00:00:00")
+	t, err := ParseTimestamp(nil, "2016-12-00 00:00:00")
 	c.Assert(err, NotNil)
 
-	t, err = ParseTimestamp("2010-10-10 10:11:11")
+	t, err = ParseTimestamp(nil, "2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
 	packed, err := t.ToPackedUint()
 	c.Assert(err, IsNil)
@@ -424,7 +427,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t3.String(), Equals, ZeroDatetime.String())
 
-	t, err = ParseDatetime("0001-01-01 00:00:00")
+	t, err = ParseDatetime(nil, "0001-01-01 00:00:00")
 	c.Assert(err, IsNil)
 	packed, _ = t.ToPackedUint()
 
@@ -442,7 +445,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	}
 
 	for _, test := range tbl {
-		t, err := ParseTime(test, mysql.TypeDatetime, MaxFsp)
+		t, err := ParseTime(nil, test, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 
 		packed, _ = t.ToPackedUint()
@@ -496,7 +499,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 
 	for ith, test := range table {
 		// test ParseDatetimeFromNum
-		t, err := ParseDatetimeFromNum(test.Input)
+		t, err := ParseDatetimeFromNum(nil, test.Input)
 		if test.ExpectDateTimeError {
 			c.Assert(err, NotNil, Commentf("%d", ith))
 		} else {
@@ -506,7 +509,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		c.Assert(t.String(), Equals, test.ExpectDateTimeValue)
 
 		// test ParseTimestampFromNum
-		t, err = ParseTimestampFromNum(test.Input)
+		t, err = ParseTimestampFromNum(nil, test.Input)
 		if test.ExpectTimeStampError {
 			c.Assert(err, NotNil)
 		} else {
@@ -516,7 +519,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		c.Assert(t.String(), Equals, test.ExpectTimeStampValue)
 
 		// test ParseDateFromNum
-		t, err = ParseDateFromNum(test.Input)
+		t, err = ParseDateFromNum(nil, test.Input)
 
 		if test.ExpectDateTimeError {
 			c.Assert(err, NotNil)
@@ -547,7 +550,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDateTime {
-		t, err := ParseTime(test.Input, mysql.TypeDatetime, test.Fsp)
+		t, err := ParseTime(nil, test.Input, mysql.TypeDatetime, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -570,7 +573,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDate {
-		t, err := ParseTime(test.Input, mysql.TypeDate, 0)
+		t, err := ParseTime(nil, test.Input, mysql.TypeDate, 0)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -638,6 +641,8 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestRoundFrac(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -656,7 +661,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := ParseTime(t.Input, mysql.TypeDatetime, MaxFsp)
+		v, err := ParseTime(sc, t.Input, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 		nv, err := v.RoundFrac(t.Fsp)
 		c.Assert(err, IsNil)
@@ -702,7 +707,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := ParseTime(t.Input, mysql.TypeDatetime, t.Fsp)
+		v, err := ParseTime(nil, t.Input, mysql.TypeDatetime, t.Fsp)
 		c.Assert(err, IsNil)
 		nv, err := v.ConvertToDuration()
 		c.Assert(err, IsNil)
@@ -747,10 +752,10 @@ func (s *testTimeSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := ParseTime(t.Arg1, mysql.TypeDatetime, MaxFsp)
+		v1, err := ParseTime(nil, t.Arg1, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 
-		ret, err := v1.CompareString(t.Arg2)
+		ret, err := v1.CompareString(nil, t.Arg2)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.Ret)
 	}
@@ -769,7 +774,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		v1, err := ParseDuration(t.Arg1, MaxFsp)
 		c.Assert(err, IsNil)
 
-		ret, err := v1.CompareString(t.Arg2)
+		ret, err := v1.CompareString(nil, t.Arg2)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.Ret)
 	}
@@ -899,11 +904,11 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := ParseTime(t.Arg1, mysql.TypeDatetime, MaxFsp)
+		v1, err := ParseTime(nil, t.Arg1, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 		dur, err := ParseDuration(t.Arg2, MaxFsp)
 		c.Assert(err, IsNil)
-		result, err := ParseTime(t.Ret, mysql.TypeDatetime, MaxFsp)
+		result, err := ParseTime(nil, t.Ret, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
 		v2, err := v1.Add(dur)
 		c.Assert(err, IsNil)

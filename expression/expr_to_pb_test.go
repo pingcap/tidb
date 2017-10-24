@@ -550,9 +550,11 @@ func (s *testEvaluatorSuite) TestSortByItem2Pb(c *C) {
 	pbByItem = SortByItemToPB(sc, client, item, false)
 	js, err = json.Marshal(pbByItem)
 	c.Assert(err, IsNil)
+	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},\"desc\":false}")
 
 	item = dg.genColumn(mysql.TypeDouble, 1)
 	pbByItem = SortByItemToPB(sc, client, item, true)
 	js, err = json.Marshal(pbByItem)
 	c.Assert(err, IsNil)
+	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},\"desc\":true}")
 }

@@ -190,10 +190,8 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 		JoinType:  InnerJoin,
 		reordered: true,
 	}.init(e.allocator, e.ctx)
-	join.SetChildren(lChild, rChild)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-	lChild.SetParents(join)
-	rChild.SetParents(join)
+	setParentAndChildren(join, lChild, rChild)
 	return join
 }
 

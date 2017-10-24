@@ -27,27 +27,33 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
+func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	if len(req.Ranges) == 0 {
-		return resp, nil
+		return resp
 	}
 	if req.GetTp() != kv.ReqTypeAnalyze {
-		return resp, nil
+		return resp
 	}
 	if err := h.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
-		return resp, nil
+		return resp
 	}
 	analyzeReq := new(tipb.AnalyzeReq)
 	err := proto.Unmarshal(req.Data, analyzeReq)
 	if err != nil {
-		return nil, errors.Trace(err)
+		resp.OtherError = err.Error()
+		return resp
 	}
 	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
-		return h.handleAnalyzeIndexReq(req, analyzeReq)
+		resp, err = h.handleAnalyzeIndexReq(req, analyzeReq)
+	} else {
+		resp, err = h.handleAnalyzeColumnsReq(req, analyzeReq)
 	}
-	return h.handleAnalyzeColumnsReq(req, analyzeReq)
+	if err != nil {
+		resp.OtherError = err.Error()
+	}
+	return resp
 }
 
 func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {

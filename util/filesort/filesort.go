@@ -27,6 +27,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -579,7 +580,7 @@ func (w *Worker) flushToFile() {
 		w.err = errors.Trace(err)
 		return
 	}
-	defer outputFile.Close()
+	defer terror.Call(outputFile.Close)
 
 	for _, row := range w.buf {
 		prevLen = len(outputByte)

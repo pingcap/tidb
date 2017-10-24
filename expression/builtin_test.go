@@ -27,6 +27,42 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+func evalBuiltinFunc(f builtinFunc, row types.Row) (d types.Datum, err error) {
+	var (
+		res    interface{}
+		isNull bool
+	)
+	switch f.getRetTp().EvalType() {
+	case types.ETInt:
+		var intRes int64
+		intRes, isNull, err = f.evalInt(row)
+		if mysql.HasUnsignedFlag(f.getRetTp().Flag) {
+			res = uint64(intRes)
+		} else {
+			res = intRes
+		}
+	case types.ETReal:
+		res, isNull, err = f.evalReal(row)
+	case types.ETDecimal:
+		res, isNull, err = f.evalDecimal(row)
+	case types.ETDatetime, types.ETTimestamp:
+		res, isNull, err = f.evalTime(row)
+	case types.ETDuration:
+		res, isNull, err = f.evalDuration(row)
+	case types.ETJson:
+		res, isNull, err = f.evalJSON(row)
+	case types.ETString:
+		res, isNull, err = f.evalString(row)
+	}
+
+	if isNull || err != nil {
+		d.SetValue(nil)
+		return d, errors.Trace(err)
+	}
+	d.SetValue(res)
+	return
+}
+
 // tblToDtbl is a util function for test.
 func tblToDtbl(i interface{}) []map[string][]types.Datum {
 	l := reflect.ValueOf(i).Len()
@@ -68,13 +104,13 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
+	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
+	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
@@ -85,14 +121,14 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	lock := funcs[ast.GetLock]
 	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
 	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
+	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
 	releaseLock := funcs[ast.ReleaseLock]
 	f, err = releaseLock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
+	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }

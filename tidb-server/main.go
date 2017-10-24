@@ -25,19 +25,22 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/pingcap/pd/pkg/logutil"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/cache"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
@@ -124,8 +127,8 @@ func main() {
 	setGlobalVars()
 	setupLog()
 	printInfo()
-	createStoreAndDomain()
 	setupBinlogClient()
+	createStoreAndDomain()
 	createServer()
 	setupSignalHandler()
 	setupMetrics()
@@ -135,9 +138,12 @@ func main() {
 }
 
 func registerStores() {
-	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
-	tidb.RegisterStore("tikv", tikv.Driver{})
-	tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+	err := tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	terror.MustNil(err)
+	err = tidb.RegisterStore("tikv", tikv.Driver{})
+	terror.MustNil(err)
+	err = tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+	terror.MustNil(err)
 }
 
 func createStoreAndDomain() {
@@ -312,6 +318,18 @@ func setGlobalVars() {
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+
+	cache.PlanCacheEnabled = cfg.PlanCache.Enabled
+	if cache.PlanCacheEnabled {
+		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
+		cache.PlanCacheShards = cfg.PlanCache.Shards
+		cache.GlobalPlanCache = kvcache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	}
+
+	cache.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
+	if cache.PreparedPlanCacheEnabled {
+		cache.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+	}
 }
 
 func setupLog() {
@@ -381,5 +399,6 @@ func runServer() {
 
 func cleanup() {
 	dom.Close()
-	storage.Close()
+	err := storage.Close()
+	terror.Log(errors.Trace(err))
 }

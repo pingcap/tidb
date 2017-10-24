@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"math"
 
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -70,9 +71,28 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlTime:
 		valueTime := value.GetMysqlTime()
-		zeroTime := types.ZeroDatetime
-		zeroTime.Type = valueTime.Type
-		return float64(valueTime.Sub(&zeroTime).Duration)
+		var minTime types.Time
+		switch valueTime.Type {
+		case mysql.TypeDate:
+			minTime = types.Time{
+				Time: types.MinDatetime,
+				Type: mysql.TypeDate,
+				Fsp:  types.DefaultFsp,
+			}
+		case mysql.TypeDatetime:
+			minTime = types.Time{
+				Time: types.MinDatetime,
+				Type: mysql.TypeDatetime,
+				Fsp:  types.DefaultFsp,
+			}
+		case mysql.TypeTimestamp:
+			minTime = types.Time{
+				Time: types.MinTimestamp,
+				Type: mysql.TypeTimestamp,
+				Fsp:  types.DefaultFsp,
+			}
+		}
+		return float64(valueTime.Sub(&minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {

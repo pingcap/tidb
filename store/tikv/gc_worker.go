@@ -26,12 +26,13 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
 
@@ -131,13 +132,15 @@ func (w *GCWorker) StartSafePointChecker() {
 			case spCachedTime := <-time.After(d):
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
 				if err == nil {
+					gcWorkerCounter.WithLabelValues("check_safepoint_ok").Inc()
 					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
 					d = gcSafePointUpdateInterval
 				} else {
-					log.Error("The read fails:", errors.ErrorStack(err))
+					gcWorkerCounter.WithLabelValues("check_safepoint_fail").Inc()
+					log.Errorf("[gc worker] fail to load safepoint: %v", err)
 					d = gcSafePointQuickRepeatInterval
 				}
-			case <-w.store.spMsg:
+			case <-w.store.closed:
 				return
 			}
 		}
@@ -162,6 +165,9 @@ func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
+
+	worker.StartSafePointChecker()
+
 	var ctx goctx.Context
 	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
 	var wg sync.WaitGroup
@@ -171,8 +177,6 @@ func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 		go worker.start(ctx, &wg)
 		wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
 	}
-
-	worker.StartSafePointChecker()
 
 	return worker, nil
 }
@@ -425,7 +429,7 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("delete_range").Inc()
 
 	session := createSession(w.store)
-	ranges, err := ddl.LoadDeleteRanges(session, safePoint)
+	ranges, err := util.LoadDeleteRanges(session, safePoint)
 	session.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -491,7 +495,7 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 			startKey = endKey
 		}
 		session := createSession(w.store)
-		err := ddl.CompleteDeleteRange(session, r)
+		err := util.CompleteDeleteRange(session, r)
 		session.Close()
 		if err != nil {
 			return errors.Trace(err)
@@ -581,7 +585,10 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
-	store.gcWorker.saveSafePoint(gcSavedSafePoint, safePoint)
+	err := store.gcWorker.saveSafePoint(gcSavedSafePoint, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
@@ -654,14 +661,16 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	}
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey, session)
 	if err != nil {
-		session.Execute("ROLLBACK")
+		_, err1 := session.Execute("ROLLBACK")
+		terror.Log(errors.Trace(err1))
 		return false, errors.Trace(err)
 	}
 	log.Debugf("[gc worker] got leader: %s", leader)
 	if leader == w.uuid {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
-			session.Execute("ROLLBACK")
+			_, err1 := session.Execute("ROLLBACK")
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		_, err = session.Execute("COMMIT")
@@ -685,17 +694,20 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid, session)
 		if err != nil {
-			session.Execute("ROLLBACK")
+			_, err1 := session.Execute("ROLLBACK")
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc, session)
 		if err != nil {
-			session.Execute("ROLLBACK")
+			_, err1 := session.Execute("ROLLBACK")
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
-			session.Execute("ROLLBACK")
+			_, err1 := session.Execute("ROLLBACK")
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		_, err = session.Execute("COMMIT")
@@ -704,7 +716,8 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		}
 		return true, nil
 	}
-	session.Execute("ROLLBACK")
+	_, err1 := session.Execute("ROLLBACK")
+	terror.Log(errors.Trace(err1))
 	return false, nil
 }
 

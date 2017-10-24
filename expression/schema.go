@@ -115,7 +115,15 @@ func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error
 			if idx == -1 {
 				idx = i
 			} else {
-				return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
+				// For query like:
+				// create t1(a int); create t2(d int);
+				// select 1 from t1, t2 where 1 = (select d from t2 where a > 1) where d = 1;
+				// we will get an Apply operator whose schema is [test.t1.a, test.t2.d, test.t2.d],
+				// we check whether the column of the schema comes from a subquery to avoid
+				// causing the ambiguous error when resolve the column `d` in the Selection.
+				if !col.IsAggOrSubq {
+					return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
+				}
 			}
 		}
 	}

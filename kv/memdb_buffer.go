@@ -57,7 +57,10 @@ func (m *memDbBuffer) Seek(k Key) (Iterator, error) {
 	} else {
 		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Start: []byte(k)}), reverse: false}
 	}
-	i.Next()
+	err := i.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return i, nil
 }
 

@@ -91,10 +91,10 @@ func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expressi
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONTypeSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+func (b *builtinJSONTypeSig) evalString(row types.Row) (res string, isNull bool, err error) {
 	var j json.JSON
 	j, isNull, err = b.args[0].EvalJSON(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
@@ -124,10 +124,10 @@ func (c *jsonExtractFunctionClass) getFunction(ctx context.Context, args []Expre
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONExtractSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONExtractSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinJSONExtractSig) evalJSON(row types.Row) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	res, isNull, err = b.args[0].EvalJSON(row, sc)
 	if isNull || err != nil {
@@ -168,17 +168,17 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx context.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONUnquoteSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+func (b *builtinJSONUnquoteSig) evalString(row types.Row) (res string, isNull bool, err error) {
 	var j json.JSON
 	j, isNull, err = b.args[0].EvalJSON(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
 	res, err = j.Unquote()
-	return res, false, errors.Trace(err)
+	return res, err != nil, errors.Trace(err)
 }
 
 type jsonSetFunctionClass struct {
@@ -205,10 +205,10 @@ func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONSetSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinJSONSetSig) evalJSON(row types.Row) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	res, isNull, err = jsonModify(b.args, row, json.ModifySet, sc)
 	return res, isNull, errors.Trace(err)
@@ -238,10 +238,10 @@ func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expres
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONInsertSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinJSONInsertSig) evalJSON(row types.Row) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	res, isNull, err = jsonModify(b.args, row, json.ModifyInsert, sc)
 	return res, isNull, errors.Trace(err)
@@ -271,10 +271,10 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expre
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONReplaceSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinJSONReplaceSig) evalJSON(row types.Row) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	res, isNull, err = jsonModify(b.args, row, json.ModifyReplace, sc)
 	return res, isNull, errors.Trace(err)
@@ -301,10 +301,10 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx context.Context, args []Expres
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONRemoveSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONRemoveSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinJSONRemoveSig) evalJSON(row types.Row) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	res, isNull, err = b.args[0].EvalJSON(row, sc)
 	if isNull || err != nil {
@@ -353,10 +353,10 @@ func (c *jsonMergeFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	sig := &builtinJSONMergeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONMergeSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinJSONMergeSig) evalJSON(row types.Row) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	values := make([]json.JSON, 0, len(b.args))
 	for _, arg := range b.args {
@@ -393,10 +393,10 @@ func (c *jsonObjectFunctionClass) getFunction(ctx context.Context, args []Expres
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONObjectSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinJSONObjectSig) evalJSON(row types.Row) (res json.JSON, isNull bool, err error) {
 	if len(b.args)&1 == 1 {
 		err = ErrIncorrectParameterCount.GenByArgs(ast.JSONObject)
 		return res, true, errors.Trace(err)
@@ -448,10 +448,10 @@ func (c *jsonArrayFunctionClass) getFunction(ctx context.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
-	return sig.setSelf(sig), nil
+	return sig, nil
 }
 
-func (b *builtinJSONArraySig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+func (b *builtinJSONArraySig) evalJSON(row types.Row) (res json.JSON, isNull bool, err error) {
 	jsons := make([]json.JSON, 0, len(b.args))
 	for _, arg := range b.args {
 		j, isNull, err := arg.EvalJSON(row, b.getCtx().GetSessionVars().StmtCtx)
@@ -466,7 +466,7 @@ func (b *builtinJSONArraySig) evalJSON(row []types.Datum) (res json.JSON, isNull
 	return json.CreateJSON(jsons), false, nil
 }
 
-func jsonModify(args []Expression, row []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (res json.JSON, isNull bool, err error) {
+func jsonModify(args []Expression, row types.Row, mt json.ModifyType, sc *variable.StatementContext) (res json.JSON, isNull bool, err error) {
 	res, isNull, err = args[0].EvalJSON(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)

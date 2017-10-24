@@ -204,7 +204,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	}
 	dual.SetSchema(expression.NewSchema())
 	p := Projection{Exprs: exprs}.init(b.allocator, b.ctx)
-	addChild(p, dual)
+	setParentAndChildren(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
 	return p
@@ -340,7 +340,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
 	selectLock := SelectLock{Lock: lock}.init(b.allocator, b.ctx)
-	addChild(selectLock, src)
+	setParentAndChildren(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
@@ -371,6 +371,9 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminShowDDLJobs:
 		p = &ShowDDLJobs{}
 		p.SetSchema(buildShowDDLJobsFields())
+	case ast.AdminCancelDDLJobs:
+		p = &CancelDDLJobs{JobIDs: as.JobIDs}
+		p.SetSchema(buildCancelDDLJobsFields())
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
@@ -476,6 +479,14 @@ func buildShowDDLJobsFields() *expression.Schema {
 	return schema
 }
 
+func buildCancelDDLJobsFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "JOB_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "RESULT", mysql.TypeVarchar, 128))
+
+	return schema
+}
+
 func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
@@ -569,7 +580,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	if len(conditions) != 0 {
 		sel := Selection{Conditions: conditions}.init(b.allocator, b.ctx)
-		addChild(sel, p)
+		setParentAndChildren(sel, p)
 		sel.SetSchema(p.Schema())
 		resultPlan = sel
 	}
@@ -865,7 +876,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				return nil
 			}
 		}
-		addChild(insertPlan, selectPlan)
+		setParentAndChildren(insertPlan, selectPlan)
 	}
 
 	// Calculate generated columns.
@@ -1016,7 +1027,11 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		schema.Append(buildColumn("", "Json", mysql.TypeString, mysql.MaxBlobWidth))
 		schema.Append(buildColumn("", "ParentID", mysql.TypeString, mysql.MaxBlobWidth))
 		p.SetSchema(schema)
-		p.prepareExplainInfo(p.StmtPlan, nil)
+		err := p.prepareExplainInfo(p.StmtPlan, nil)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
 	}
 	return p
 }
@@ -1156,6 +1171,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			"Repeats", "Lower_Bound", "Upper_Bound"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProfiles: // ShowProfiles is deprecated.
+		names = []string{"Query_ID", "Duration", "Query"}
+		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

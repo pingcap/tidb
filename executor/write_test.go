@@ -182,6 +182,30 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
+
+	// issue 4653
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a datetime);")
+	_, err = tk.Exec("INSERT INTO t VALUES('2017-00-00')")
+	c.Assert(err, NotNil)
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("INSERT INTO t VALUES('2017-00-00')")
+	r = tk.MustQuery("SELECT * FROM t;")
+	r.Check(testkit.Rows("2017-00-00 00:00:00"))
+	tk.MustExec("set sql_mode = 'strict_all_tables';")
+	r = tk.MustQuery("SELECT * FROM t;")
+	r.Check(testkit.Rows("2017-00-00 00:00:00"))
+
+	// test auto_increment with unsigned.
+	tk.MustExec("drop table if exists test")
+	tk.MustExec("CREATE TABLE test(id int(10) UNSIGNED NOT NULL AUTO_INCREMENT, p int(10) UNSIGNED NOT NULL, PRIMARY KEY(p), KEY(id))")
+	tk.MustExec("insert into test(p) value(1)")
+	tk.MustQuery("select * from test").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from test use index (id) where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into test values(NULL, 2)")
+	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2"))
+	tk.MustExec("insert into test values(2, 3)")
+	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2", "2 3"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -579,6 +603,13 @@ func (s *testSuite) TestUpdate(c *C) {
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1062 key already exist"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id))")
+	tk.MustExec("insert into t(t1, t2) values('2000-10-01 01:01:01', '2017-01-01 10:10:10')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2000-10-01 01:01:01 2017-01-01 10:10:10"))
+	tk.MustExec("update t set t1 = '2017-10-01 10:10:11', t2 = date_add(t1, INTERVAL 10 MINUTE) where id = 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2017-10-01 10:20:11"))
 }
 
 // For issue #4514.
@@ -700,6 +731,7 @@ func (s *testSuite) TestDelete(c *C) {
 	_, err := tk.Exec("delete from delete_test where id = (select '2a')")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("delete ignore from delete_test where id = (select '2a')")
+	c.Assert(err, IsNil)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))

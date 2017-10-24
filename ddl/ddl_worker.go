@@ -69,6 +69,13 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
+func cleanNotify(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+	}
+}
+
 func (d *ddl) isOwner() bool {
 	isOwner := d.ownerManager.IsOwner()
 	log.Debugf("[ddl] it's the job owner %v, self id %s", isOwner, d.uuid)
@@ -108,7 +115,7 @@ func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) erro
 		job.BinlogInfo.Clean()
 		job.Error = toTError(err)
 		job.SchemaState = model.StateNone
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		err = d.finishDDLJob(t, job)
 	}
 	return errors.Trace(err)
@@ -193,7 +200,7 @@ func (d *ddl) handleDDLJobQueue() error {
 
 			if job.IsDone() {
 				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
-				job.State = model.JobSynced
+				job.State = model.JobStateSynced
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -226,7 +233,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		if job.State == model.JobRunning || job.State == model.JobDone {
+		if job.State == model.JobStateRunning || job.State == model.JobStateDone {
 			d.waitSchemaChanged(nil, waitTime, schemaVer)
 		}
 		if job.IsSynced() {
@@ -248,9 +255,22 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 	if job.IsFinished() {
 		return
 	}
+	// The cause of this job state is that the job is cancelled by client.
+	if job.IsCancelling() {
+		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
+		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+			log.Infof("[ddl] run the cancelling DDL job %s", job)
+			asyncNotify(d.notifyCancelReorgJob)
+		} else {
+			job.State = model.JobStateCancelled
+			job.Error = errCancelledDDLJob
+			job.ErrorCount++
+			return
+		}
+	}
 
-	if job.State != model.JobRollback {
-		job.State = model.JobRunning
+	if !job.IsRollingback() && !job.IsCancelling() {
+		job.State = model.JobStateRunning
 	}
 
 	var err error
@@ -285,14 +305,14 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 		ver, err = d.onSetDefaultValue(t, job)
 	default:
 		// Invalid job, cancel it.
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		err = errInvalidDDLJob.Gen("invalid ddl job %v", job)
 	}
 
 	// Save errors in job, so that others can know errors happened.
 	if err != nil {
 		// If job is not cancelled, we should log this error.
-		if job.State != model.JobCancelled {
+		if job.State != model.JobStateCancelled {
 			log.Errorf("[ddl] run DDL job err %v", errors.ErrorStack(err))
 		} else {
 			log.Infof("[ddl] the DDL job is normal to cancel because %v", errors.ErrorStack(err))

@@ -34,7 +34,7 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
 	corCol2 := &CorrelatedColumn{Data: &One.Value}
 	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
-	cast := NewCastFunc(types.NewFieldType(mysql.TypeLonglong), corCol1, ctx)
+	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
 	plus := newFunction(ast.Plus, cast, corCol2)
 	plus2 := newFunction(ast.Plus, plus, One)
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}

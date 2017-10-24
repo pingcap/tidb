@@ -15,10 +15,12 @@ package plan_test
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +34,59 @@ import (
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+}
+
+// CBOWithoutAnalyze tests the plan with stats that only have count info.
+func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrapWithStatsLease(10 * time.Millisecond)
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t1 (a int)")
+	testKit.MustExec("create table t2 (a int)")
+	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
+	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
+	time.Sleep(1 * time.Second)
+	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
+		"TableScan_9   cop table:t1, range:(-inf,+inf), keep order:false 6",
+		"TableReader_10 HashLeftJoin_7  root data:TableScan_9 6",
+		"TableScan_11   cop table:t2, range:(-inf,+inf), keep order:false 6",
+		"TableReader_12 HashLeftJoin_7  root data:TableScan_11 6",
+		"HashLeftJoin_7  TableReader_10,TableReader_12 root inner join, small:TableReader_12, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
+	))
+}
+
+func (s *testAnalyzeSuite) TestEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrapWithStatsLease(10 * time.Millisecond)
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int)")
+	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
+	testKit.MustExec("insert into t select * from t")
+	testKit.MustExec("insert into t select * from t")
+	time.Sleep(1 * time.Second)
+	testKit.MustExec("analyze table t")
+	for i := 1; i <= 8; i++ {
+		testKit.MustExec("delete from t where a = ?", i)
+	}
+	time.Sleep(1 * time.Second)
+	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
+		"TableScan_5 HashAgg_4  cop table:t, range:(-inf,+inf), keep order:false 8",
+		"HashAgg_4  TableScan_5 cop type:complete, group by:test.t.a, funcs:count(1) 2",
+		"TableReader_7 HashAgg_6  root data:HashAgg_4 2",
+		"HashAgg_6  TableReader_7 root type:final, group by:, funcs:count(col_0) 2",
+	))
 }
 
 func constructInsertSQL(i, n int) string {
@@ -156,6 +211,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
@@ -205,6 +261,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
@@ -290,8 +347,50 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
+}
+
+func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	cfg := config.GetGlobalConfig()
+	orgEnable := cfg.PreparedPlanCache.Enabled
+	orgCapacity := cfg.PreparedPlanCache.Capacity
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		cfg.PreparedPlanCache.Enabled = flag
+		cfg.PreparedPlanCache.Capacity = 100
+		testKit := testkit.NewTestKit(c, store)
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec("create table t (id int, KEY id (id))")
+		testKit.MustExec("insert into t values (1), (2), (3)")
+
+		sql := "select * from t where id = ?"
+		best := "IndexReader(Index(t.id)[])"
+
+		ctx := testKit.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, sql)
+		stmt := stmts[0]
+
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.ResolveName(stmt, is, ctx)
+		c.Assert(err, IsNil)
+		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
+
+		c.Assert(plan.ToString(p), Equals, best, Commentf("for %s", sql))
+	}
+	cfg.PreparedPlanCache.Enabled = orgEnable
+	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
@@ -301,6 +400,18 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	}
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
+}
+
+func newStoreWithBootstrapWithStatsLease(lease time.Duration) (kv.Storage, *domain.Domain, error) {
+	store, err := tikv.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(lease)
+	domain.RunAutoAnalyze = false
 	dom, err := tidb.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }

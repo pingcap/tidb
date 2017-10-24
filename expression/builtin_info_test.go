@@ -33,12 +33,11 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 	ctx.GetSessionVars().CurrentDB = "test"
-	d, err = f.eval(nil)
+	d, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 
@@ -47,7 +46,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(fc, NotNil)
 	f, err = fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err = f.eval(types.MakeDatums())
+	d, err = evalBuiltinFunc(f, types.DatumRow(types.MakeDatums()))
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }
@@ -61,8 +60,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(2))
 }
@@ -76,8 +74,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	fc := funcs[ast.User]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -91,8 +88,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -106,8 +102,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	fc := funcs[ast.ConnectionID]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	d, err := f.eval(nil)
+	d, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(1))
 }
@@ -117,8 +112,7 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
-	v, err := f.eval(nil)
+	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }
@@ -226,7 +220,6 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
 }

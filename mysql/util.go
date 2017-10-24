@@ -48,6 +48,15 @@ var defaultLengthAndDecimal = map[byte]lengthAndDecimal{
 	TypeEnum:       {-1, 0},
 }
 
+// IsIntegerType indicate whether tp is an integer type.
+func IsIntegerType(tp byte) bool {
+	switch tp {
+	case TypeTiny, TypeShort, TypeInt24, TypeLong, TypeLonglong:
+		return true
+	}
+	return false
+}
+
 // GetDefaultFieldLengthAndDecimal returns the default display length (flen) and decimal length for column.
 // Call this when no Flen assigned in ddl.
 // or column value is calculated from an expression.

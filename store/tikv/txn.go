@@ -18,7 +18,6 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
@@ -35,7 +34,7 @@ type tikvTxn struct {
 	us        kv.UnionStore
 	store     *tikvStore // for connection to region.
 	startTS   uint64
-	startTime monotime.Time // Monotonic timestamp for recording txn time consuming.
+	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
 	valid     bool
 	lockKeys  [][]byte
@@ -61,7 +60,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		us:        kv.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
-		startTime: monotime.Now(),
+		startTime: time.Now(),
 		valid:     true,
 	}, nil
 }
@@ -173,9 +172,8 @@ func (txn *tikvTxn) Commit() error {
 	return nil
 }
 
-func (txn *tikvTxn) close() error {
+func (txn *tikvTxn) close() {
 	txn.valid = false
-	return nil
 }
 
 func (txn *tikvTxn) Rollback() error {

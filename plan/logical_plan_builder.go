@@ -104,7 +104,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		agg.AggFuncs = append(agg.AggFuncs, newFunc)
 		schema.Append(col.Clone().(*expression.Column))
 	}
-	addChild(agg, p)
+	setParentAndChildren(agg, p)
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
@@ -134,8 +134,9 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		if v, ok := p.(*DataSource); ok {
 			v.TableAsName = &x.AsName
 		}
-		if x.AsName.L != "" {
-			for _, col := range p.Schema().Columns {
+		for _, col := range p.Schema().Columns {
+			col.OrigTblName = col.TblName
+			if x.AsName.L != "" {
 				col.TblName = x.AsName
 				col.DBName = model.NewCIStr("")
 			}
@@ -177,7 +178,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 					continue
 				}
 				if left.Schema().Contains(rn) && right.Schema().Contains(ln) {
-					cond, _ := expression.NewFunction(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+					cond := expression.NewFunctionInternal(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
 				}
@@ -230,8 +231,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 	joinPlan := LogicalJoin{}.init(b.allocator, b.ctx)
-	addChild(joinPlan, leftPlan)
-	addChild(joinPlan, rightPlan)
+	setParentAndChildren(joinPlan, leftPlan, rightPlan)
 	joinPlan.SetSchema(newSchema)
 
 	// Merge sub join's redundantSchema into this join plan. When handle query like
@@ -409,16 +409,25 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	selection.Conditions = expressions
 	selection.SetSchema(p.Schema().Clone())
-	addChild(selection, p)
+	setParentAndChildren(selection, p)
 	return selection
 }
 
-// buildProjectionFieldNameFromColumns builds the field name and the table name when field expression is a column reference.
-func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (model.CIStr, model.CIStr) {
+// buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, tblName, origTblName, dbName model.CIStr) {
 	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
-		return astCol.Name.Name, astCol.Name.Table
+		colName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
 	}
-	return c.ColName, c.TblName
+	if field.AsName.L != "" {
+		colName = field.AsName
+	}
+	if tblName.L == "" {
+		tblName = c.TblName
+	}
+	if dbName.L == "" {
+		dbName = c.DBName
+	}
+	return colName, tblName, c.OrigTblName, c.DBName
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
@@ -464,23 +473,25 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
-	var tblName, colName model.CIStr
-	if field.AsName.L != "" {
+	var origTblName, tblName, colName, dbName model.CIStr
+	if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
+		// Field is a column reference.
+		colName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, c)
+	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
-	} else if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
-		// Field is a column reference.
-		colName, tblName = b.buildProjectionFieldNameFromColumns(field, c)
 	} else {
 		// Other: field is an expression.
 		colName = b.buildProjectionFieldNameFromExpressions(field)
 	}
 	return &expression.Column{
-		FromID:   id,
-		Position: position,
-		TblName:  tblName,
-		ColName:  colName,
-		RetType:  expr.GetType(),
+		FromID:      id,
+		Position:    position,
+		TblName:     tblName,
+		OrigTblName: origTblName,
+		ColName:     colName,
+		DBName:      dbName,
+		RetType:     expr.GetType(),
 	}
 }
 
@@ -507,7 +518,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		}
 	}
 	proj.SetSchema(schema)
-	addChild(proj, p)
+	setParentAndChildren(proj, p)
 	return proj, oldLen
 }
 
@@ -522,7 +533,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	for _, col := range child.Schema().Columns {
 		agg.AggFuncs = append(agg.AggFuncs, aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
 	}
-	addChild(agg, child)
+	setParentAndChildren(agg, child)
 	agg.SetSchema(child.Schema().Clone())
 	return agg
 }
@@ -562,8 +573,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 				col.FromID = proj.ID()
 			}
 			proj.SetSchema(schema)
-			sel.SetParents(proj)
-			proj.SetChildren(sel)
+			setParentAndChildren(proj, sel)
 			sel = proj
 			u.children[i] = proj
 		}
@@ -635,7 +645,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 		exprs = append(exprs, &ByItems{Expr: it, Desc: item.Desc})
 	}
 	sort.ByItems = exprs
-	addChild(sort, p)
+	setParentAndChildren(sort, p)
 	sort.SetSchema(p.Schema().Clone())
 	return sort
 }
@@ -686,7 +696,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 		Offset: offset,
 		Count:  count,
 	}.init(b.allocator, b.ctx)
-	addChild(li, src)
+	setParentAndChildren(li, src)
 	li.SetSchema(src.Schema().Clone())
 	return li
 }
@@ -840,7 +850,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 		} else {
 			// We should ignore the err when resolving from schema. Because we could resolve successfully
 			// when considering select fields.
-			index, _ = a.resolveFromSchema(v, a.p.Schema())
+			var err error
+			index, err = a.resolveFromSchema(v, a.p.Schema())
+			_ = err
 			if index == -1 {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			}
@@ -851,7 +863,12 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 		if index == -1 {
 			// If we can't find it any where, it may be a correlated columns.
 			for _, schema := range a.outerSchemas {
-				if col, _ := schema.FindColumn(v.Name); col != nil {
+				col, err1 := schema.FindColumn(v.Name)
+				if err1 != nil {
+					a.err = errors.Trace(err1)
+					return node, false
+				}
+				if col != nil {
 					return n, true
 				}
 			}
@@ -1160,7 +1177,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
-		addChild(proj, p)
+		setParentAndChildren(proj, p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
 			col.FromID = proj.ID()
@@ -1316,8 +1333,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		proj.Exprs = append(proj.Exprs, expr)
 	}
 	proj.SetSchema(ds.Schema().Clone())
-	proj.SetChildren(ds)
-	ds.SetParents(proj)
+	setParentAndChildren(proj, ds)
 	return proj
 }
 
@@ -1331,8 +1347,7 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	if tp == LeftOuterJoin {
 		ap.DefaultValues = make([]types.Datum, innerPlan.Schema().Len())
 	}
-	addChild(ap, outerPlan)
-	addChild(ap, innerPlan)
+	setParentAndChildren(ap, outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.schema.Columns[i].IsAggOrSubq = true
@@ -1376,7 +1391,7 @@ out:
 		}
 	}
 	exists := Exists{}.init(b.allocator, b.ctx)
-	addChild(exists, p)
+	setParentAndChildren(exists, p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
 		RetType: types.NewFieldType(mysql.TypeTiny),
@@ -1387,7 +1402,7 @@ out:
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow := MaxOneRow{}.init(b.allocator, b.ctx)
-	addChild(maxOneRow, p)
+	setParentAndChildren(maxOneRow, p)
 	maxOneRow.SetSchema(p.Schema().Clone())
 	return maxOneRow
 }
@@ -1397,9 +1412,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
-	joinPlan.SetChildren(outerPlan, innerPlan)
-	outerPlan.SetParents(joinPlan)
-	innerPlan.SetParents(joinPlan)
+	setParentAndChildren(joinPlan, outerPlan, innerPlan)
 	joinPlan.attachOnConds(onCondition)
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()
@@ -1466,7 +1479,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		OrderedList: orderedList,
 		IgnoreErr:   update.IgnoreErr,
 	}.init(b.allocator, b.ctx)
-	addChild(updt, p)
+	setParentAndChildren(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt
 }
@@ -1540,8 +1553,8 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				return expr
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
-			newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		}
+		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
@@ -1617,7 +1630,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		Tables:       tables,
 		IsMultiTable: delete.IsMultiTable,
 	}.init(b.allocator, b.ctx)
-	addChild(del, p)
+	setParentAndChildren(del, p)
 	del.SetSchema(expression.NewSchema())
 
 	// Collect visitInfo.

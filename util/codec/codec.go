@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 )
@@ -68,7 +69,10 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			// Encoding timestamp need to consider timezone.
 			// If it's not in UTC, transform to UTC first.
 			if t.Type == mysql.TypeTimestamp && t.TimeZone != time.UTC {
-				t.ConvertTimeZone(t.TimeZone, time.UTC)
+				err := t.ConvertTimeZone(t.TimeZone, time.UTC)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			v, err := t.ToPackedUint()
 			if err != nil {
@@ -99,7 +103,8 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlSet().ToNumber()), comparable)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-			val, _ := vals[i].GetBinaryLiteral().ToInt()
+			val, err := vals[i].GetBinaryLiteral().ToInt()
+			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)

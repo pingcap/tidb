@@ -144,9 +144,13 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, collector *SampleCol
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ndv := collector.Sketch.NDV()
+	if ndv > count {
+		ndv = count
+	}
 	hg := &Histogram{
 		ID:        id,
-		NDV:       collector.Sketch.NDV(),
+		NDV:       ndv,
 		NullCount: collector.NullCount,
 		Buckets:   make([]Bucket, 1, numBuckets),
 	}

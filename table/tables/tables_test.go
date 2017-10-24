@@ -23,8 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -46,8 +45,7 @@ type testSuite struct {
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
 	_, err = tidb.BootstrapSession(store)

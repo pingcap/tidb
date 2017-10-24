@@ -64,7 +64,7 @@ const (
 	ClassEvaluator
 	ClassExecutor
 	ClassExpression
-	ClassInspectkv
+	ClassAdmin
 	ClassKV
 	ClassMeta
 	ClassOptimizer
@@ -92,7 +92,7 @@ var errClz2Str = map[ErrClass]string{
 	ClassDomain:        "domain",
 	ClassExecutor:      "executor",
 	ClassExpression:    "expression",
-	ClassInspectkv:     "inspectkv",
+	ClassAdmin:         "admin",
 	ClassMeta:          "meta",
 	ClassKV:            "kv",
 	ClassOptimizer:     "optimizer",

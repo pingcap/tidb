@@ -15,9 +15,11 @@ package expression
 
 import (
 	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -99,9 +101,9 @@ func (s *propagateConstantSolver) propagateInEQ() {
 				funName := cond.(*ScalarFunction).FuncName.L
 				var newExpr Expression
 				if _, ok := cond.(*ScalarFunction).GetArgs()[0].(*Column); ok {
-					newExpr, _ = NewFunction(s.ctx, funName, cond.GetType(), s.columns[j], con)
+					newExpr = NewFunctionInternal(s.ctx, funName, cond.GetType(), s.columns[j], con)
 				} else {
-					newExpr, _ = NewFunction(s.ctx, funName, cond.GetType(), con, s.columns[j])
+					newExpr = NewFunctionInternal(s.ctx, funName, cond.GetType(), con, s.columns[j])
 				}
 				s.conditions = append(s.conditions, newExpr)
 			}
@@ -174,7 +176,8 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		ok := false
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, _ := EvalBool([]Expression{con}, nil, s.ctx)
+				value, err := EvalBool([]Expression{con}, nil, s.ctx)
+				terror.Log(errors.Trace(err))
 				if !value {
 					s.setConds2ConstFalse()
 					return nil

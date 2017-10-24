@@ -24,6 +24,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 )
@@ -69,7 +70,8 @@ func NewServer(cfg *Config) (s *Server, err error) {
 // Close closes the server.
 func (s *Server) Close() {
 	if s.listener != nil {
-		s.listener.Close()
+		err := s.listener.Close()
+		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
 }
@@ -88,7 +90,8 @@ func (s *Server) Run() error {
 			return errors.Trace(err)
 		}
 		if s.shouldStopListener() {
-			conn.Close()
+			err = conn.Close()
+			terror.Log(errors.Trace(err))
 			break
 		}
 		go s.onConn(conn)
@@ -115,7 +118,8 @@ func (s *Server) onConn(c net.Conn) {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we use info log level.
 		log.Infof("handshake error %s", errors.ErrorStack(err))
-		c.Close()
+		err := c.Close()
+		terror.Log(errors.Trace(err))
 		return
 	}
 	conn.Run()

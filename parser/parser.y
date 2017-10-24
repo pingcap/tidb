@@ -44,6 +44,7 @@ import (
 	item interface{}
 	ident string
 	expr ast.ExprNode 
+	statement ast.StmtNode
 }
 
 %token	<ident>
@@ -138,6 +139,11 @@ import (
 	is			"IS"
 	insert			"INSERT"
 	intType			"INT"
+	int1Type		"INT1"
+	int2Type		"INT2"
+	int3Type		"INT3"
+	int4Type		"INT4"
+	int8Type		"INT8"
 	join			"JOIN"
 	key			"KEY"
 	keys			"KEYS"
@@ -194,6 +200,7 @@ import (
 	smallIntType		"SMALLINT"
 	sqlCalcFoundRows	"SQL_CALC_FOUND_ROWS"
 	starting		"STARTING"
+	straightJoin		"STRAIGHT_JOIN"
 	tableKwd		"TABLE"
 	stored			"STORED"
 	terminated		"TERMINATED"
@@ -314,6 +321,7 @@ import (
 	privileges	"PRIVILEGES"
 	process		"PROCESS"
 	processlist	"PROCESSLIST"
+	profiles	"PROFILES"
 	quarter		"QUARTER"
 	query		"QUERY"
 	quick		"QUICK"
@@ -381,6 +389,7 @@ import (
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
+	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
 	stats		"STATS"
@@ -427,31 +436,71 @@ import (
 	FunctionCallKeyword		"Function call with keyword as function name"
 	FunctionCallNonKeyword		"Function call with nonkeyword as function name"
 	Literal				"literal value"
-	Variable		"User or system variable"
+	Variable			"User or system variable"
 	SystemVariable			"System defined variable name"
-	UserVariable		"User defined variable name"
+	UserVariable			"User defined variable name"
 	SubSelect			"Sub Select"
 	StringLiteral			"text literal"
-	ExpressionOpt		"Optional expression"
+	ExpressionOpt			"Optional expression"
 	SignedLiteral			"Literal or NumLiteral with sign"
 	DefaultValueExpr		"DefaultValueExpr(Now or Signed Literal)"
 	NowSymOptionFraction		"NowSym with optional fraction part"
 
-%type   <item>
+%type	<statement>
 	AdminStmt			"Check table statement or show ddl statement"
 	AlterTableStmt			"Alter table statement"
-	AlterTableSpec			"Alter table specification"
-	AlterTableSpecList		"Alter table specification list"
 	AlterUserStmt			"Alter user statement"
 	AnalyzeTableStmt		"Analyze table statement"
+	BeginTransactionStmt		"BEGIN TRANSACTION statement"
+	BinlogStmt			"Binlog base64 statement"
+	CommitStmt			"COMMIT statement"
+	CreateTableStmt			"CREATE TABLE statement"
+	CreateUserStmt			"CREATE User statement"
+	CreateDatabaseStmt		"Create Database Statement"
+	CreateIndexStmt			"CREATE INDEX statement"
+	DoStmt				"Do statement"
+	DropDatabaseStmt		"DROP DATABASE statement"
+	DropIndexStmt			"DROP INDEX statement"
+	DropStatsStmt			"DROP STATS statement"
+	DropTableStmt			"DROP TABLE statement"
+	DropUserStmt			"DROP USER"
+	DropViewStmt			"DROP VIEW statement"
+	DeallocateStmt			"Deallocate prepared statement"
+	DeleteFromStmt			"DELETE FROM statement"
+	EmptyStmt			"empty statement"
+	ExecuteStmt			"Execute statement"
+	ExplainStmt			"EXPLAIN statement"
+	FlushStmt			"Flush statement"
+	GrantStmt			"Grant statement"
+	InsertIntoStmt			"INSERT INTO statement"
+	KillStmt			"Kill statement"
+	LoadDataStmt			"Load data statement"
+	LockTablesStmt			"Lock tables statement"
+	PreparedStmt			"PreparedStmt"
+	SelectStmt			"SELECT statement"
+	RenameTableStmt         	"rename table statement"
+	ReplaceIntoStmt			"REPLACE INTO statement"
+	RevokeStmt			"Revoke statement"
+	RollbackStmt			"ROLLBACK statement"
+	SetStmt				"Set variable statement"
+	ShowStmt			"Show engines/databases/tables/columns/warnings/status statement"
+	Statement			"statement"
+	ExplainableStmt			"explainable statement"
+	TruncateTableStmt		"TRANSACTION TABLE statement"
+	UnlockTablesStmt		"Unlock tables statement"
+	UpdateStmt			"UPDATE statement"
+	UnionStmt			"Union select state ment"
+	UseStmt				"USE statement"
+
+%type   <item>
+	AlterTableSpec			"Alter table specification"
+	AlterTableSpecList		"Alter table specification list"
 	AnyOrAll			"Any or All for subquery"
 	Assignment			"assignment"
 	AssignmentList			"assignment list"
 	AssignmentListOpt		"assignment list opt"
 	AuthOption			"User auth option"
 	AuthString			"Password string value"
-	BeginTransactionStmt		"BEGIN TRANSACTION statement"
-	BinlogStmt			"Binlog base64 statement"
 	OptionalBraces			"optional braces"
 	CastType			"Cast function target type"
 	CharsetName			"Character set name"
@@ -462,7 +511,6 @@ import (
 	ColumnNameListOptWithBrackets 	"column name list opt with brackets"
 	ColumnSetValue			"insert statement set value by column name"
 	ColumnSetValueList		"insert statement set value by column name list"
-	CommitStmt			"COMMIT statement"
 	CompareOp			"Compare opcode"
 	ColumnOption			"column definition option"
 	ColumnOptionList		"column definition option list"
@@ -471,35 +519,19 @@ import (
 	Constraint			"table constraint"
 	ConstraintElem			"table constraint element"
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
-	CreateDatabaseStmt		"Create Database Statement"
-	CreateIndexStmt			"CREATE INDEX statement"
 	CreateIndexStmtUnique		"CREATE INDEX optional UNIQUE clause"
 	DatabaseOption			"CREATE Database specification"
 	DatabaseOptionList		"CREATE Database specification list"
 	DatabaseOptionListOpt		"CREATE Database specification list opt"
-	CreateTableStmt			"CREATE TABLE statement"
-	CreateUserStmt			"CREATE User statement"
 	DBName				"Database Name"
-	DeallocateStmt			"Deallocate prepared statement"
-	DeleteFromStmt			"DELETE FROM statement"
 	DistinctOpt			"Explicit distinct option"
 	DefaultFalseDistinctOpt		"Distinct option which defaults to false"
 	DefaultTrueDistinctOpt		"Distinct option which defaults to true"
 	BuggyDefaultFalseDistinctOpt	"Distinct option which accepts DISTINCT ALL and defaults to false"
-	DoStmt				"Do statement"
-	DropDatabaseStmt		"DROP DATABASE statement"
-	DropIndexStmt			"DROP INDEX statement"
-	DropStatsStmt			"DROP STATS statement"
-	DropTableStmt			"DROP TABLE statement"
-	DropUserStmt			"DROP USER"
-	DropViewStmt			"DROP VIEW statement"
-	EmptyStmt			"empty statement"
 	Enclosed			"Enclosed by"
 	EqOpt				"= or empty"
 	EscapedTableRef 		"escaped table reference"
 	Escaped				"Escaped by"
-	ExecuteStmt			"Execute statement"
-	ExplainStmt			"EXPLAIN statement"
 	ExpressionList			"expression list"
 	ExpressionListOpt		"expression list opt"
 	FuncDatetimePrecListOpt	        "Function datetime precision list opt"
@@ -510,12 +542,10 @@ import (
 	FieldAsName			"Field alias name"
 	FieldAsNameOpt			"Field alias name opt"
 	FieldList			"field expression list"
-	FlushStmt			"Flush statement"
 	FlushOption			"Flush option"
 	TableRefsClause			"Table references clause"
 	FuncDatetimePrec		"Function datetime precision"
 	GlobalScope			"The scope of variable"
-	GrantStmt			"Grant statement"
 	GroupByClause			"GROUP BY clause"
 	HashString			"Hashed string"
 	HavingClause			"HAVING clause"
@@ -535,20 +565,16 @@ import (
 	IndexOptionList			"Index Option List or empty"
 	IndexType			"index type"
 	IndexTypeOpt			"Optional index type"
-	InsertIntoStmt			"INSERT INTO statement"
 	InsertValues			"Rest part of INSERT/REPLACE INTO statement"
 	JoinTable 			"join table"
 	JoinType			"join type"
-	KillStmt			"Kill statement"
 	KillOrKillTiDB			"Kill or Kill TiDB"
 	LikeEscapeOpt 			"like escape option"
 	LimitClause			"LIMIT clause"
 	LimitOption			"Limit option could be integer or parameter marker."
 	Lines				"Lines clause"
 	LinesTerminated			"Lines terminated by"
-	LoadDataStmt			"Load data statement"
 	LocalOpt			"Local opt"
-	LockTablesStmt			"Lock tables statement"
 	LockClause         		"Alter table lock clause"
 	LowPriorityOptional		"LOW_PRIORITY or empty"
 	NumLiteral			"Num/Int/Float/Decimal Literal"
@@ -571,7 +597,6 @@ import (
 	PartDefStorageOpt		"ENGINE = xxx or empty"
 	PasswordOpt			"Password option"
 	ColumnPosition			"Column position [First|After ColumnName]"
-	PreparedStmt			"PreparedStmt"
 	PrepareSQL			"Prepare statement sql string"
 	Priority			"insert statement priority"
 	PrivElem			"Privilege element"
@@ -582,34 +607,25 @@ import (
 	OnDeleteOpt			"optional ON DELETE clause"
 	OnUpdateOpt			"optional ON UPDATE clause"
 	ReferOpt			"reference option"
-	RenameTableStmt         	"rename table statement"
-	ReplaceIntoStmt			"REPLACE INTO statement"
 	ReplacePriority			"replace statement priority"
-	RevokeStmt			"Revoke statement"
-	RollbackStmt			"ROLLBACK statement"
 	RowFormat			"Row format option"
 	RowValue			"Row value"
 	SelectLockOpt			"FOR UPDATE or LOCK IN SHARE MODE,"
-	SelectStmt			"SELECT statement"
 	SelectStmtCalcFoundRows		"SELECT statement optional SQL_CALC_FOUND_ROWS"
 	SelectStmtSQLCache		"SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
 	SelectStmtFieldList		"SELECT statement field list"
 	SelectStmtLimit			"SELECT statement optional LIMIT clause"
 	SelectStmtOpts			"Select statement options"
 	SelectStmtGroup			"SELECT statement optional GROUP BY clause"
-	SetStmt				"Set variable statement"
-	ShowStmt			"Show engines/databases/tables/columns/warnings/status statement"
 	ShowTargetFilterable    	"Show target that can be filtered by WHERE or LIKE"
 	ShowDatabaseNameOpt		"Show tables/columns statement database name option"
 	ShowTableAliasOpt       	"Show table alias option"
 	ShowLikeOrWhereOpt		"Show like or where clause option"
 	Starting			"Starting by"
-	Statement			"statement"
 	StatementList			"statement list"
 	StatsPersistentVal		"stats_persistent value"
 	StringName			"string literal or identifier"
 	StringList 			"string list"
-	ExplainableStmt			"explainable statement"
 	Symbol				"Constraint Symbol"
 	TableAsName			"table alias name"
 	TableAsNameOpt 			"table alias name optional"
@@ -632,19 +648,14 @@ import (
 	TransactionChar		"Transaction characteristic"
 	TransactionChars	"Transaction characteristic list"
 	TrimDirection		"Trim string direction"
-	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
-	UnionStmt		"Union select state ment"
 	UnionClauseList		"Union select clause list"
 	UnionSelect		"Union (select) item"
-	UnlockTablesStmt	"Unlock tables statement"
-	UpdateStmt		"UPDATE statement"
 	Username		"Username"
 	UsernameList		"UsernameList"
 	UserSpec		"Username and auth option"
 	UserSpecList		"Username and auth option list"
 	UserVariableList	"User defined variable name list"
-	UseStmt			"USE statement"
 	Values			"values"
 	ValuesList		"values list"
 	ValuesOpt		"values optional"
@@ -684,7 +695,8 @@ import (
 	OptBinary		"Optional BINARY"
 	OptCharset		"Optional Character setting"
 	OptCollate		"Optional Collate setting"
-	NUM			"numbers"
+	NUM			"A number"
+	NumList			"Some numbers"
 	LengthNum		"Field length num(uint64)"
 	HintTableList		"Table list in optimizer hint"
 	TableOptimizerHintOpt	"Table level optimizer hint"
@@ -750,7 +762,7 @@ import (
 %precedence lowerThanKey
 %precedence key
 
-%left   join inner cross left right full natural
+%left   join straightJoin inner cross left right full natural
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
 %precedence lowerThanOn
@@ -1598,6 +1610,8 @@ PartitionOpt:
 	{}
 |	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt  PartitionDefinitionListOpt
 	{}
+|	"PARTITION" "BY" "RANGE" "COLUMNS" '(' ColumnNameList ')' PartitionNumOpt PartitionDefinitionListOpt
+	{}
 
 PartitionNumOpt:
 	{}
@@ -1622,6 +1636,8 @@ PartitionDefinition:
 PartDefValuesOpt:
 	{}
 |	"VALUES" "LESS" "THAN" "MAXVALUE"
+	{}
+|	"VALUES" "LESS" "THAN" '(' "MAXVALUE" ')'
 	{}
 |	"VALUES" "LESS" "THAN" '(' ExpressionList ')'
 	{}
@@ -1792,14 +1808,14 @@ ExplainStmt:
 |	ExplainSym ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
-			Stmt:	$2.(ast.StmtNode),
+			Stmt:	$2,
 			Format: "row",
 		}
 	}
 |	ExplainSym "FORMAT" "=" stringLit ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
-			Stmt:	$5.(ast.StmtNode),
+			Stmt:	$5,
 			Format: $4,
 		}
 	}
@@ -2278,11 +2294,11 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS"
+| "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED"
 
 TiDBKeyword:
-"ADMIN" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
@@ -3929,8 +3945,10 @@ OuterOpt:
 
 CrossOpt:
 	"JOIN"
+|	"STRAIGHT_JOIN"
 |	"CROSS" "JOIN"
 |	"INNER" "JOIN"
+
 
 LimitClause:
 	{
@@ -4158,12 +4176,15 @@ UnionClauseList:
 
 UnionSelect:
 	SelectStmt
+	{
+		$$ = $1.(interface{})
+	}
 |	'(' SelectStmt ')'
 	{
 		st := $2.(*ast.SelectStmt)
 		endOffset := parser.endOffset(&yyS[yypt])
 		parser.setLastSelectFieldText(st, endOffset)
-		$$ = st
+		$$ = $2
 	}
 
 UnionOpt:
@@ -4434,6 +4455,24 @@ AdminStmt:
 			Tables: $4.([]*ast.TableName),
 		}
 	}
+|	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCancelDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
+
+NumList:
+       NUM
+       {
+	        $$ = []int64{$1.(int64)}
+       }
+|
+       NumList ',' NUM
+       {
+	        $$ = append($1.([]int64), $3.(int64))
+       }
 
 /****************************Show Statement*******************************/
 ShowStmt:
@@ -4523,6 +4562,12 @@ ShowStmt:
 			}
 		}
 		$$ = stmt
+	}
+|	"SHOW" "PROFILES"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowProfiles,
+		}
 	}
 
 ShowIndexKwd:
@@ -4810,15 +4855,15 @@ Statement:
 |	UnionStmt
 |	SetStmt
 |	ShowStmt
-|	TruncateTableStmt
-|	UpdateStmt
-|	UseStmt
 |	SubSelect
 	{
 		// `(select 1)`; is a valid select statement
 		// TODO: This is used to fix issue #320. There may be a better solution.
-		$$ = $1.(*ast.SubqueryExpr).Query
+		$$ = $1.(*ast.SubqueryExpr).Query.(ast.StmtNode)
 	}
+|	TruncateTableStmt
+|	UpdateStmt
+|	UseStmt
 |	UnlockTablesStmt
 |	LockTablesStmt
 
@@ -4834,7 +4879,7 @@ StatementList:
 	Statement
 	{
 		if $1 != nil {
-			s := $1.(ast.StmtNode)
+			s := $1
 			if lexer, ok := yylex.(stmtTexter); ok {
 				s.SetText(lexer.stmtText())
 			}
@@ -4844,7 +4889,7 @@ StatementList:
 |	StatementList ';' Statement
 	{
 		if $3 != nil {
-			s := $3.(ast.StmtNode)
+			s := $3
 			if lexer, ok := yylex.(stmtTexter); ok {
 				s.SetText(lexer.stmtText())
 			}
@@ -5123,6 +5168,26 @@ IntegerType:
 |	"INT"
 	{
 		$$ = mysql.TypeLong
+	}
+|	"INT1"
+	{
+		$$ = mysql.TypeTiny
+	}
+| 	"INT2"
+	{
+		$$ = mysql.TypeShort
+	}
+| 	"INT3"
+	{
+		$$ = mysql.TypeInt24
+	}
+|	"INT4"
+	{
+		$$ = mysql.TypeLong
+	}
+|	"INT8"
+	{
+		$$ = mysql.TypeLonglong
 	}
 |	"INTEGER"
 	{

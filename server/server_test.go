@@ -28,9 +28,9 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 )
 

@@ -92,7 +92,8 @@ func (cc *clientConn) handshake() error {
 		return errors.Trace(err)
 	}
 	if err := cc.readOptionalSSLRequestAndHandshakeResponse(); err != nil {
-		cc.writeError(err)
+		err1 := cc.writeError(err)
+		terror.Log(errors.Trace(err1))
 		return errors.Trace(err)
 	}
 	data := cc.alloc.AllocWithLen(4, 32)
@@ -118,7 +119,8 @@ func (cc *clientConn) Close() error {
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
 	connGauge.Set(float64(connections))
-	cc.bufReadConn.Close()
+	err := cc.bufReadConn.Close()
+	terror.Log(errors.Trace(err))
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -274,7 +276,6 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 				return nil
 			}
 			packet.Attrs = attrs
-			offset += int(num)
 		}
 	}
 
@@ -386,7 +387,8 @@ func (cc *clientConn) Run() {
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
-		cc.Close()
+		err := cc.Close()
+		terror.Log(errors.Trace(err))
 	}()
 
 	for !cc.killed {
@@ -424,7 +426,8 @@ func (cc *clientConn) Run() {
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%q\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
-			cc.writeError(err)
+			err1 := cc.writeError(err)
+			terror.Log(errors.Trace(err1))
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
@@ -618,7 +621,7 @@ func (cc *clientConn) writeEOF(more bool) error {
 		if more {
 			status |= mysql.ServerMoreResultsExists
 		}
-		data = append(data, dumpUint16(cc.ctx.Status())...)
+		data = append(data, dumpUint16(status)...)
 	}
 
 	err := cc.writePacket(data)
@@ -775,7 +778,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // If more is true, a flag bit would be set to indicate there are more
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error {
-	defer rs.Close()
+	defer terror.Call(rs.Close)
 	// We need to call Next before we get columns.
 	// Otherwise, we will get incorrect columns info.
 	row, err := rs.Next()

@@ -299,7 +299,7 @@ func mixDateAndTime(date, time *mysqlTime, neg bool) {
 	if neg {
 		sign = 1
 	}
-	seconds, microseconds, neg := calcTimeDiff(date, time, sign)
+	seconds, microseconds, _ := calcTimeDiff(date, time, sign)
 
 	// If we want to use this function with arbitrary dates, this code will need
 	// to cover cases when time is negative and "date < -time".

@@ -995,6 +995,9 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 			"Repeats", "Lower_Bound", "Upper_Bound"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProfiles: // ShowProfiles is deprecated.
+		names = []string{"Query_ID", "Duration", "Query"}
+		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
 	}
 	for i, name := range names {
 		f := &ast.ResultField{

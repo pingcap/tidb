@@ -92,7 +92,6 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-
 	return er.ctxStack[0], er.p, nil
 }
 
@@ -171,12 +170,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		larg0, rarg0 := getRowArg(l, 0), getRowArg(r, 0)
 		var expr1, expr2, expr3 expression.Expression
 		if op == ast.LE || op == ast.GE {
-			expr1, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr1, _ = expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, expression.Zero)
+			expr1 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+			expr1 = expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, expression.Zero)
 			expr2 = expression.Zero
 		} else if op == ast.LT || op == ast.GT {
-			expr1, _ = expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr2, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+			expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+			expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		}
 		var err error
 		l, err = popRowArg(er.ctx, l)
@@ -361,7 +360,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{aggFunc},
 	}.init(er.b.allocator, er.ctx)
-	addChild(agg, np)
+	setParentAndChildren(agg, np)
 	aggCol0 := &expression.Column{
 		ColName:  model.NewCIStr("agg_Col_0"),
 		FromID:   agg.id,
@@ -370,13 +369,13 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	}
 	schema := expression.NewSchema(aggCol0)
 	agg.SetSchema(schema)
-	cond, _ := expression.NewFunction(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
+	cond := expression.NewFunctionInternal(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
 	er.buildQuantifierPlan(agg, cond, rexpr, all)
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
 func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond, rexpr expression.Expression, all bool) {
-	isNullFunc, _ := expression.NewFunction(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
+	isNullFunc := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
 	sumFunc := aggregation.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
 	countFuncNull := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
 	agg.AggFuncs = append(agg.AggFuncs, sumFunc, countFuncNull)
@@ -398,16 +397,16 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 		agg.schema.Append(aggColCountNull)
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
 		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) = 0, true, null).
-		hasNotNull, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
-		nullChecker, _ := expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNotNull, expression.One, expression.Null)
+		hasNotNull := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
+		nullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNotNull, expression.One, expression.Null)
 		cond = expression.ComposeCNFCondition(er.ctx, cond, nullChecker)
 		// If the set is empty, it should always return true.
-		checkEmpty, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), expression.Zero)
+		checkEmpty := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), expression.Zero)
 		cond = expression.ComposeDNFCondition(er.ctx, cond, checkEmpty)
 	} else {
 		// For "any" expression, if the record set has null and the cond return false, the result should be NULL.
-		hasNull, _ := expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
-		nullChecker, _ := expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNull, expression.Null, expression.Zero)
+		hasNull := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
+		nullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNull, expression.Null, expression.Zero)
 		cond = expression.ComposeDNFCondition(er.ctx, cond, nullChecker)
 	}
 	if !er.asScalar {
@@ -431,7 +430,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 		IsAggOrSubq: true,
 		RetType:     cond.GetType(),
 	})
-	addChild(proj, er.p)
+	setParentAndChildren(proj, er.p)
 	er.p = proj
 }
 
@@ -444,7 +443,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
-	addChild(agg, np)
+	setParentAndChildren(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
@@ -458,8 +457,8 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.GetType(),
 	}
 	agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
-	gtFunc, _ := expression.NewFunction(er.ctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
-	neCond, _ := expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
+	gtFunc := expression.NewFunctionInternal(er.ctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
+	neCond := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
 	cond := expression.ComposeDNFCondition(er.ctx, gtFunc, neCond)
 	er.buildQuantifierPlan(agg, cond, rexpr, false)
 }
@@ -472,7 +471,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
-	addChild(agg, np)
+	setParentAndChildren(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
@@ -486,8 +485,8 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.GetType(),
 	}
 	agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
-	leFunc, _ := expression.NewFunction(er.ctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
-	eqCond, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
+	leFunc := expression.NewFunctionInternal(er.ctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
+	eqCond := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
 	cond := expression.ComposeCNFCondition(er.ctx, leFunc, eqCond)
 	er.buildQuantifierPlan(agg, cond, rexpr, true)
 }
@@ -685,8 +684,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		types.DefaultTypeForValue(v.GetValue(), tp)
+		types.DefaultParamTypeForValue(v.GetValue(), tp)
 		value := &expression.Constant{Value: v.Datum, RetType: tp}
+		if er.useCache() {
+			value.DeferredExpr = er.getParamExpression(v)
+		}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
@@ -708,7 +710,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if er.err != nil {
 			return retNode, false
 		}
-		er.ctxStack[len(er.ctxStack)-1] = expression.NewCastFunc(v.Tp, arg, er.ctx)
+		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.ctx, arg, v.Tp)
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
 	case *ast.PatternRegexpExpr:
@@ -736,8 +738,25 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	return originInNode, true
 }
 
+func (er *expressionRewriter) useCache() bool {
+	return er.ctx.GetSessionVars().StmtCtx.UseCache
+}
+
 func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
+}
+
+func (er *expressionRewriter) getParamExpression(v *ast.ParamMarkerExpr) expression.Expression {
+	f, err := expression.NewFunction(er.ctx,
+		ast.GetParam,
+		&v.Type,
+		datumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
+	if err != nil {
+		er.err = errors.Trace(err)
+		return nil
+	}
+	f.GetType().Tp = v.Type.Tp
+	return f
 }
 
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {

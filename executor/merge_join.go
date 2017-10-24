@@ -272,7 +272,7 @@ func (e *MergeJoinExec) Close() error {
 
 	lErr := e.leftRowBlock.reader.Close()
 	if lErr != nil {
-		terror.Log(e.rightRowBlock.reader.Close())
+		terror.Log(errors.Trace(e.rightRowBlock.reader.Close()))
 		return errors.Trace(lErr)
 	}
 	rErr := e.rightRowBlock.reader.Close()

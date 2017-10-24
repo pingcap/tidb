@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
 )
@@ -288,6 +289,25 @@ func (rh tableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse and check params
 	params := mux.Vars(req)
+	if _, ok := params[pRegionID]; !ok {
+		startKey := []byte{'m'}
+		endKey := []byte{'n'}
+
+		recordRegionIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
+		if err != nil {
+			rh.writeError(w, err)
+			return
+		}
+
+		recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
+		if err != nil {
+			rh.writeError(w, err)
+			return
+		}
+		rh.writeData(w, recordRegions)
+		return
+	}
+
 	regionIDInt, err := strconv.ParseInt(params[pRegionID], 0, 64)
 	if err != nil {
 		rh.writeError(w, err)
@@ -334,7 +354,8 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 func (rh *regionHandler) writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
-	w.Write([]byte(err.Error()))
+	_, err = w.Write([]byte(err.Error()))
+	terror.Log(errors.Trace(err))
 }
 
 func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
@@ -347,7 +368,8 @@ func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
-	w.Write(js)
+	_, err = w.Write(js)
+	terror.Log(errors.Trace(err))
 }
 
 // NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,
