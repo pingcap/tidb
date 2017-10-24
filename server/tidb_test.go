@@ -60,7 +60,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 		},
 		XProtocol: config.XProtocol{
 			XServer: true,
-			XPort:   14002,
+			XPort:   defaultXPort,
 		},
 	}
 

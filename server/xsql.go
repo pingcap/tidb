@@ -60,7 +60,7 @@ func (xsql *xSQL) dealSQLStmtExecute(payload []byte) error {
 			return errors.Trace(err)
 		}
 	default:
-		return util.ErXInvalidNamespace.GenByArgs(msg.GetNamespace())
+		return util.ErrXInvalidNamespace.GenByArgs(msg.GetNamespace())
 	}
 	return SendExecOk(xsql.pkt, (*xsql.ctx).LastInsertID())
 }

@@ -75,13 +75,13 @@ func (xsql *xSQL) dispatchAdminCmd(msg Mysqlx_Sql.StmtExecute) error {
 	case "list_notices":
 		return xsql.listNotices(args)
 	default:
-		return util.ErXInvalidAdminCommand.GenByArgs(msg.GetNamespace(), stmt)
+		return util.ErrXInvalidAdminCommand.GenByArgs(msg.GetNamespace(), stmt)
 	}
 }
 
 func (xsql *xSQL) ping(args []*Mysqlx_Datatypes.Any) error {
 	if len(args) != 0 {
-		return util.ErXCmdNumArguments.GenByArgs(0, len(args))
+		return util.ErrXCmdNumArguments.GenByArgs(0, len(args))
 	}
 	return nil
 }
@@ -103,7 +103,7 @@ func (xsql *xSQL) writeOneRow(row []types.Datum, columnsInfo []*ColumnInfo) erro
 
 func (xsql *xSQL) listClients(args []*Mysqlx_Datatypes.Any) error {
 	if len(args) != 0 {
-		return util.ErXCmdNumArguments.GenByArgs(0, len(args))
+		return util.ErrXCmdNumArguments.GenByArgs(0, len(args))
 	}
 	info := xsql.xcc.server.getXClientsInfo()
 	cols := []*ColumnInfo{
@@ -179,7 +179,7 @@ func (xsql *xSQL) ensureCollection(args []*Mysqlx_Datatypes.Any) error {
 		return errors.Trace(err)
 	}
 	if !isColl {
-		return util.ErXInvalidCollection
+		return util.ErrXInvalidCollection
 	}
 	return nil
 }
@@ -191,10 +191,10 @@ func (xsql *xSQL) dropCollection(args []*Mysqlx_Datatypes.Any) error {
 	schema := string(args[0].GetScalar().GetVString().GetValue())
 	collection := string(args[1].GetScalar().GetVString().GetValue())
 	if len(schema) == 0 {
-		return util.ErXBadSchema
+		return util.ErrXBadSchema
 	}
 	if len(collection) == 0 {
-		return util.ErXBadTable
+		return util.ErrXBadTable
 	}
 	sql := "DROP TABLE " + util.QuoteIdentifier(schema) + "." + util.QuoteIdentifier(collection)
 	log.Infof("DropCollection: %s", collection)
@@ -282,7 +282,7 @@ func (xsql *xSQL) disableNotices(args []*Mysqlx_Datatypes.Any) error {
 		} else if err := isFixedNoticeName(notice); err != nil {
 			return errors.Trace(err)
 		} else {
-			return util.ErXCannotDisableNotice.GenByArgs(notice)
+			return util.ErrXCannotDisableNotice.GenByArgs(notice)
 		}
 		if disableWarning {
 			xsql.xcc.xsession.setSendWarnings(false)
@@ -293,7 +293,7 @@ func (xsql *xSQL) disableNotices(args []*Mysqlx_Datatypes.Any) error {
 
 func (xsql *xSQL) listNotices(args []*Mysqlx_Datatypes.Any) error {
 	if len(args) != 0 {
-		return util.ErXCmdNumArguments.GenByArgs(0, len(args))
+		return util.ErrXCmdNumArguments.GenByArgs(0, len(args))
 	}
 
 	// notice | enabled
@@ -395,12 +395,12 @@ func isFixedNoticeName(name string) error {
 			return nil
 		}
 	}
-	return util.ErXBadNotice
+	return util.ErrXBadNotice
 }
 
 func checkArgs(args []*Mysqlx_Datatypes.Any, expects []Mysqlx_Datatypes.Scalar_Type) error {
 	if len(args) != len(expects) {
-		return util.ErXCmdNumArguments.GenByArgs(len(expects), len(args))
+		return util.ErrXCmdNumArguments.GenByArgs(len(expects), len(args))
 	}
 	for i, v := range args {
 		return checkScalarArg(v, i, expects[i])
@@ -410,10 +410,10 @@ func checkArgs(args []*Mysqlx_Datatypes.Any, expects []Mysqlx_Datatypes.Scalar_T
 
 func checkScalarArg(arg *Mysqlx_Datatypes.Any, pos int, expectType Mysqlx_Datatypes.Scalar_Type) error {
 	if arg.GetType() != Mysqlx_Datatypes.Any_SCALAR {
-		return util.ErXCmdArgumentType.GenByArgs(arg.String(), pos, expectType.String())
+		return util.ErrXCmdArgumentType.GenByArgs(arg.String(), pos, expectType.String())
 	}
 	if arg.GetScalar().GetType() != expectType {
-		return util.ErXCmdArgumentType.GenByArgs(arg.GetScalar().String(), pos, expectType)
+		return util.ErrXCmdArgumentType.GenByArgs(arg.GetScalar().String(), pos, expectType)
 	}
 	return nil
 }

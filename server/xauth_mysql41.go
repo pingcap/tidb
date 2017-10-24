@@ -62,8 +62,8 @@ func (spa *saslMysql41Auth) handleContinue(data []byte) *response {
 		if dbname == nil || user == nil || passwd == nil {
 			return &response{
 				status:  authFailed,
-				data:    xutil.ErXBadMessage.ToSQLError().Message,
-				errCode: xutil.ErXBadMessage.ToSQLError().Code,
+				data:    xutil.ErrXBadMessage.ToSQLError().Message,
+				errCode: xutil.ErrXBadMessage.ToSQLError().Code,
 			}
 		}
 

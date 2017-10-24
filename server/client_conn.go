@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util"
 )
 
-// clineConn used to communicate with user's client, It is usually dependence goroutine.
+// clientConn is used to communicate with user's client, it is usually dependence goroutine.
 type clientConn interface {
 	// start the main routine, receive message from client and reply the result set.
 	Run()

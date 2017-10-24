@@ -15,13 +15,17 @@ package server
 
 import (
 	"database/sql"
+	"strconv"
 
 	. "github.com/pingcap/check"
 )
 
+var defaultXPort = 14002
+var defaultXDSN = "root@tcp(localhost:" + strconv.Itoa(defaultXPort) + ")/test?xprotocol=1"
+
 // runXTests runs tests using the default database `test`.
-func runXTests(c *C, overrider configOverrider, tests ...func(dbt *DBTest)) {
-	dsn := "root@tcp(localhost:14002)/test?xprotocol=1"
+func runXTests(c *C, tests ...func(dbt *DBTest)) {
+	dsn := defaultXDSN
 	db, err := sql.Open("mysql/xprotocol", dsn)
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
@@ -33,7 +37,7 @@ func runXTests(c *C, overrider configOverrider, tests ...func(dbt *DBTest)) {
 }
 
 func runXTestCommon(c *C) {
-	runXTests(c, nil, func(dbt *DBTest) {
+	runXTests(c, func(dbt *DBTest) {
 		var out string
 		rows := dbt.mustQuery("SELECT DATABASE()")
 		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
@@ -283,7 +287,7 @@ func runXTestCommon(c *C) {
 }
 
 func runXTestValue(c *C) {
-	runXTests(c, nil, func(dbt *DBTest) {
+	runXTests(c, func(dbt *DBTest) {
 		_ = dbt.mustExec("DROP TABLE IF EXISTS xtest")
 		sql := `create table xtest (
 				c_bit bit(10),
