@@ -76,11 +76,13 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 		gotFirst           bool
 		gotBinString       bool
 	)
+	lft := fts[0]
 	for _, ft := range fts {
 		if ft.Tp == mysql.TypeNull {
 			continue
 		}
 		et := ft.EvalType()
+		rft := ft
 		if (IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeChar(ft.Tp)) && mysql.HasBinaryFlag(ft.Flag) {
 			gotBinString = true
 		}
@@ -89,16 +91,27 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 			aggregatedEvalType = et
 			unsigned = mysql.HasUnsignedFlag(ft.Flag)
 		} else {
-			aggregatedEvalType = mergeEvalType(aggregatedEvalType, et, unsigned, mysql.HasUnsignedFlag(ft.Flag))
+			aggregatedEvalType = mergeEvalType(aggregatedEvalType, et, lft, rft, unsigned, mysql.HasUnsignedFlag(ft.Flag))
 			unsigned = unsigned && mysql.HasUnsignedFlag(ft.Flag)
 		}
+		lft = rft
 	}
 	setTypeFlag(flag, mysql.UnsignedFlag, unsigned)
 	setTypeFlag(flag, mysql.BinaryFlag, !aggregatedEvalType.IsStringKind() || gotBinString)
 	return aggregatedEvalType
 }
 
-func mergeEvalType(lhs, rhs EvalType, isLHSUnsigned, isRHSUnsigned bool) EvalType {
+func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldType, isLHSUnsigned, isRHSUnsigned bool) EvalType {
+	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
+		if lft.Tp == rft.Tp {
+			return ETString
+		}
+		if lft.Tp == mysql.TypeUnspecified {
+			lhs = rhs
+		} else {
+			rhs = lhs
+		}
+	}
 	if lhs.IsStringKind() || rhs.IsStringKind() {
 		return ETString
 	} else if lhs == ETReal || rhs == ETReal {
@@ -240,6 +253,18 @@ func (ft *FieldType) String() string {
 	}
 
 	return strings.Join(strs, " ")
+}
+
+// DefaultParamTypeForValue returns the default FieldType for the parameterized value.
+func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
+	switch value.(type) {
+	case nil:
+		tp.Tp = mysql.TypeUnspecified
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = UnspecifiedLength
+	default:
+		DefaultTypeForValue(value, tp)
+	}
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.

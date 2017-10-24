@@ -34,13 +34,14 @@ type Config struct {
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
 
-	Log         Log         `toml:"log" json:"log"`
-	Security    Security    `toml:"security" json:"security"`
-	Status      Status      `toml:"status" json:"status"`
-	Performance Performance `toml:"performance" json:"performance"`
-	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
-	PlanCache   PlanCache   `toml:"plan-cache" json:"plan-cache"`
-	OpenTracing OpenTracing `toml:"opentracing" json:"opentracing"`
+	Log               Log               `toml:"log" json:"log"`
+	Security          Security          `toml:"security" json:"security"`
+	Status            Status            `toml:"status" json:"status"`
+	Performance       Performance       `toml:"performance" json:"performance"`
+	XProtocol         XProtocol         `toml:"xprotocol" json:"xprotocol"`
+	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
+	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 }
 
 // Log is the log section of config.
@@ -98,6 +99,12 @@ type PlanCache struct {
 	Enabled  bool  `toml:"plan-cache-enabled" json:"plan-cache-enabled"`
 	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`
 	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
+}
+
+// PreparedPlanCache is the PreparedPlanCache section of the config.
+type PreparedPlanCache struct {
+	Enabled  bool  `toml:"prepared-plan-cache-enabled" json:"prepared-plan-cache-enabled"`
+	Capacity int64 `toml:"prepared-plan-cache-capacity" json:"prepared-plan-cache-capacity"`
 }
 
 // OpenTracing is the opentracing section of the config.
@@ -164,6 +171,10 @@ var defaultConf = Config{
 		Enabled:  false,
 		Capacity: 2560,
 		Shards:   256,
+	},
+	PreparedPlanCache: PreparedPlanCache{
+		Enabled:  false,
+		Capacity: 100,
 	},
 	OpenTracing: OpenTracing{
 		Enable: false,
