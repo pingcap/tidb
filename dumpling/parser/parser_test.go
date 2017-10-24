@@ -362,6 +362,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 natural inner join t2", false},
 		{"select * from t1 natural cross join t2", false},
 
+		// for straight_join
+		{"select * from t1 straight_join t2 on t1.id = t2.id", true},
+
 		// for admin
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
