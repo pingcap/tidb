@@ -246,11 +246,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)(test.t.c,s.b)",
+			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
 		},
 		{
 			sql:  "select t.c in (select b from t s where s.a = t.a) from t",
-			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)(test.t.c,s.b)->Projection",
+			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)->Projection",
 		},
 		// Test Single Merge Join.
 		// Merge Join will no longer enforce a sort. If a hint doesn't take effect, we will choose other types of join.
@@ -387,7 +387,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test Nested sub query.
 		{
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			best: "SemiJoin{TableReader(Table(t))->Projection->SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(s.d,k.d)(s.c,k.c)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "SemiJoin{TableReader(Table(t))->Projection->MergeJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(s.d,k.d)(s.c,k.c)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		// Test Semi Join + Order by.
 		{

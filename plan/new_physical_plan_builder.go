@@ -276,9 +276,7 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 		return mj
 	}
 	joins := make([]PhysicalPlan, 0, 5)
-	if len(p.EqualConditions) == 1 {
-		joins = append(joins, mj...)
-	}
+	joins = append(joins, mj...)
 	idxJoins, forced := p.tryToGetIndexJoin()
 	if forced {
 		return idxJoins
