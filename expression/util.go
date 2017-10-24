@@ -138,9 +138,13 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		return newSf, nil
 	case *CorrelatedColumn:
 		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
-	default:
-		return x.Clone(), nil
+	case *Constant:
+		if x.DeferredExpr != nil {
+			newExpr := FoldConstant(x)
+			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType()}, nil
+		}
 	}
+	return expr.Clone(), nil
 }
 
 // ConvertCol2CorCol will convert the column in the condition which can be found in outerSchema to a correlated column whose

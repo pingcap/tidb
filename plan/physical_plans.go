@@ -707,6 +707,11 @@ func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	return &np
 }
 
+// SourceSchema returns the original schema of DataSource
+func (p *PhysicalIndexScan) SourceSchema() *expression.Schema {
+	return p.dataSourceSchema
+}
+
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 	pushDownInfo, err := json.Marshal(&p.physicalTableSource)
