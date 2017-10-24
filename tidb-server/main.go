@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -103,11 +104,13 @@ var (
 )
 
 var (
-	cfg     *config.Config
-	storage kv.Storage
-	dom     *domain.Domain
-	svr     *server.Server
-	xsvr    *xserver.Server
+	cfg      *config.Config
+	storage  kv.Storage
+	dom      *domain.Domain
+	svr      *server.Server
+	xsvr     *xserver.Server
+	binlogCh = make(chan error, 1)
+	storeCh  = make(chan error, 1)
 )
 
 func main() {
@@ -162,9 +165,10 @@ func setupBinlogClient() {
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientCon, err := grpc.Dial(cfg.BinlogSocket, dialerOpt, grpc.WithInsecure())
+	var clientConn *grpc.ClientConn
+	err := tidb.DialPumpClient(cfg.BinlogSocket, clientConn, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
-	binloginfo.SetPumpClient(binlog.NewPumpClient(clientCon))
+	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s", cfg.BinlogSocket)
 }
 

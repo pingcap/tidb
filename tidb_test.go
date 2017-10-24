@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"google.golang.org/grpc"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -118,6 +120,22 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	RegisterStore("dummy", &brokenStore{})
 	_, err := newStoreWithRetry("dummy://dummy-store", 3)
 	c.Assert(err, NotNil)
+	elapse := time.Since(begin)
+	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
+}
+
+func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
+	retryDialPumlClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
+		return util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
+			clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
+			return true, errors.New("must fail")
+		})
+	}
+	begin := time.Now()
+	var clientConn *grpc.ClientConn
+	err := retryDialPumlClientMustFail("", clientConn, 3, grpc.WithInsecure())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "must fail")
 	elapse := time.Since(begin)
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }

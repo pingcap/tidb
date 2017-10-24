@@ -37,13 +37,12 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
+	"google.golang.org/grpc"
 )
 
 // Engine prefix name
 const (
-	EngineGoLevelDBMemory        = "memory://"
-	defaultMaxRetries            = 30
-	retryInterval         uint64 = 500
+	EngineGoLevelDBMemory = "memory://"
 )
 
 type domainMap struct {
@@ -66,7 +65,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		ddlLease = schemaLease
 		statisticLease = statsLease
 	}
-	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
+	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
@@ -232,7 +231,7 @@ func RegisterLocalStore(name string, driver engine.Driver) error {
 //
 // The engine should be registered before creating storage.
 func NewStore(path string) (kv.Storage, error) {
-	return newStoreWithRetry(path, defaultMaxRetries)
+	return newStoreWithRetry(path, util.DefaultMaxRetries)
 }
 
 func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
@@ -248,11 +247,25 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	var s kv.Storage
-	err1 := util.RunWithRetry(maxRetries, retryInterval, func() (bool, error) {
+	err1 := util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
+		log.Infof("new store")
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
 	return s, errors.Trace(err1)
+}
+
+func DialPumpClient(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) error {
+	return dialPumpClientWithRetry(binlogSocket, clientCon, maxRetries, dialerOpt)
+}
+
+func dialPumpClientWithRetry(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
+	return util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
+		log.Infof("setup binlog client")
+		var err error
+		clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
+		return true, errors.Trace(err)
+	})
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}

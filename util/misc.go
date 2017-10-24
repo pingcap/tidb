@@ -19,6 +19,11 @@ import (
 	"github.com/juju/errors"
 )
 
+const (
+	DefaultMaxRetries        = 30
+	RetryInterval     uint64 = 500
+)
+
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
