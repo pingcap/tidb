@@ -39,7 +39,8 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
+		Level:  logLevel,
+		Format: "highlight",
 	})
 	TestingT(t)
 }

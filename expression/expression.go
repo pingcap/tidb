@@ -213,9 +213,13 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		}
 		constant := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 		return constant, nil
-	default:
-		return x.Clone(), nil
+	case *Constant:
+		if x.DeferredExpr != nil {
+			newConst := FoldConstant(x)
+			return newConst, nil
+		}
 	}
+	return expr.Clone(), nil
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.
