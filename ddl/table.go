@@ -252,7 +252,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID, false)
+	err = t.DropTable(oldSchemaID, tblInfo.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
