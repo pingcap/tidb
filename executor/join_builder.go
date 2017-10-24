@@ -72,6 +72,7 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		leftJoinKeys = append(leftJoinKeys, lKey)
 		rightJoinKeys = append(rightJoinKeys, rKey)
 	}
+
 	leftRowBlock := &rowBlockIterator{
 		ctx:      b.context,
 		reader:   b.leftChild,
@@ -88,35 +89,23 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 
 	exec := &MergeJoinExec{
 		ctx:           b.context,
-		leftJoinKeys:  leftJoinKeys,
-		rightJoinKeys: rightJoinKeys,
-		leftRowBlock:  leftRowBlock,
-		rightRowBlock: rightRowBlock,
-		otherFilter:   b.otherFilter,
+		outerKeys:     leftJoinKeys,
+		innerKeys:     rightJoinKeys,
+		outerIter:     leftRowBlock,
+		innerIter:     rightRowBlock,
 		schema:        b.schema,
 		desc:          assumeSortedDesc,
-		joinType:      b.joinType,
-		isAntiMode:    b.isAntiMode,
+		resultEmitter: newMergeJoinOutputer(b.context, b.joinType, b.isAntiMode, b.defaultValues, b.otherFilter),
 	}
 
-	switch b.joinType {
-	case plan.LeftOuterJoin:
-		exec.leftRowBlock.filter = nil
-		exec.leftFilter = b.leftFilter
-		exec.defaultRightRow = b.defaultValues
-	case plan.RightOuterJoin:
-		exec.leftRowBlock = rightRowBlock
-		exec.rightRowBlock = leftRowBlock
-		exec.leftRowBlock.filter = nil
-		exec.leftFilter = b.leftFilter
-		exec.defaultRightRow = b.defaultValues
-		exec.leftJoinKeys = rightJoinKeys
-		exec.rightJoinKeys = leftJoinKeys
-	case plan.InnerJoin:
-	case plan.SemiJoin:
-	case plan.LeftOuterSemiJoin:
-	default:
-		return nil, errors.Annotate(ErrBuildExecutor, "unknown join type")
+	if b.joinType == plan.RightOuterJoin {
+		exec.outerKeys, exec.innerKeys = exec.innerKeys, exec.outerKeys
+		exec.outerIter, exec.innerIter = exec.innerIter, exec.outerIter
 	}
+	if b.joinType != plan.InnerJoin {
+		exec.outerIter.filter = nil
+		exec.outerFilter = b.leftFilter
+	}
+
 	return exec, nil
 }
