@@ -117,7 +117,7 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.MakeDatums(tc.args...))
+		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetValue(), Equals, tc.res)
 	}
