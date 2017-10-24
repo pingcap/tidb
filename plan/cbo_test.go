@@ -344,6 +344,8 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.Preprocess(ctx, stmt, is, false)
+		c.Assert(err, IsNil)
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
