@@ -737,7 +737,7 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			// Step3: Cache the physical plan if possible.
-			if cache.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 {
+			if cache.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
 				cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
 			}
 
