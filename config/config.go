@@ -102,7 +102,7 @@ type PlanCache struct {
 
 // OpenTracing is the opentracing section of the config.
 type OpenTracing struct {
-	Enable     bool                `toml:"opentracing-enable" json:"opentracing-enbale"`
+	Enable     bool                `toml:"enable" json:"enbale"`
 	Sampler    OpenTracingSampler  `toml:"sampler" json:"sampler"`
 	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
 	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
