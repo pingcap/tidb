@@ -146,7 +146,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.MakeDatums(tc.args...))
+		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 		if tc.args[1] != nil {
@@ -187,7 +187,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.MakeDatums(tc.args...))
+		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 	}

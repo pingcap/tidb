@@ -155,31 +155,31 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
-func (b *baseBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *baseBuiltinFunc) evalInt(row types.Row) (int64, bool, error) {
 	panic("baseBuiltinFunc.evalInt() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+func (b *baseBuiltinFunc) evalReal(row types.Row) (float64, bool, error) {
 	panic("baseBuiltinFunc.evalReal() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+func (b *baseBuiltinFunc) evalString(row types.Row) (string, bool, error) {
 	panic("baseBuiltinFunc.evalString() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *baseBuiltinFunc) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	panic("baseBuiltinFunc.evalDecimal() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *baseBuiltinFunc) evalTime(row types.Row) (types.Time, bool, error) {
 	panic("baseBuiltinFunc.evalTime() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+func (b *baseBuiltinFunc) evalDuration(row types.Row) (types.Duration, bool, error) {
 	panic("baseBuiltinFunc.evalDuration() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+func (b *baseBuiltinFunc) evalJSON(row types.Row) (json.JSON, bool, error) {
 	panic("baseBuiltinFunc.evalJSON() should never be called.")
 }
 
@@ -218,19 +218,19 @@ func (b *baseBuiltinFunc) getCtx() context.Context {
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	// evalInt evaluates int result of builtinFunc by given row.
-	evalInt(row []types.Datum) (val int64, isNull bool, err error)
+	evalInt(row types.Row) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
-	evalReal(row []types.Datum) (val float64, isNull bool, err error)
+	evalReal(row types.Row) (val float64, isNull bool, err error)
 	// evalString evaluates string representation of builtinFunc by given row.
-	evalString(row []types.Datum) (val string, isNull bool, err error)
+	evalString(row types.Row) (val string, isNull bool, err error)
 	// evalDecimal evaluates decimal representation of builtinFunc by given row.
-	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
+	evalDecimal(row types.Row) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
-	evalTime(row []types.Datum) (val types.Time, isNull bool, err error)
+	evalTime(row types.Row) (val types.Time, isNull bool, err error)
 	// evalDuration evaluates duration representation of builtinFunc by given row.
-	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
+	evalDuration(row types.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(row []types.Datum) (val json.JSON, isNull bool, err error)
+	evalJSON(row types.Row) (val json.JSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.

@@ -910,7 +910,7 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 // getRow eval the insert statement. Because the value of column may calculated based on other column,
 // it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
-	row := make([]types.Datum, len(e.Table.Cols()))
+	row := make(types.DatumRow, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 
 	if e.needFillDefaultValues {
@@ -1000,7 +1000,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	return e.fillGenColData(cols, len(vals), hasValue, row, ignoreErr)
 }
 
-func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row []types.Datum, ignoreErr bool) ([]types.Datum, error) {
+func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row types.DatumRow, ignoreErr bool) ([]types.Datum, error) {
 	err := e.initDefaultValues(row, hasValue, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1088,7 +1088,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row[i].SetInt64(id)
+		if mysql.HasUnsignedFlag(c.Flag) {
+			row[i].SetUint64(uint64(id))
+		} else {
+			row[i].SetInt64(id)
+		}
 		return nil
 	}
 
@@ -1107,7 +1111,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 			return errors.Trace(err)
 		}
 		e.ctx.GetSessionVars().InsertID = uint64(recordID)
-		row[i].SetInt64(recordID)
+		if mysql.HasUnsignedFlag(c.Flag) {
+			row[i].SetUint64(uint64(recordID))
+		} else {
+			row[i].SetInt64(recordID)
+		}
 		retryInfo.AddAutoIncrementID(recordID)
 		return nil
 	}
@@ -1125,7 +1133,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		}
 	}
 
-	row[i].SetInt64(recordID)
+	if mysql.HasUnsignedFlag(c.Flag) {
+		row[i].SetUint64(uint64(recordID))
+	} else {
+		row[i].SetInt64(recordID)
+	}
 	retryInfo.AddAutoIncrementID(recordID)
 	return nil
 }
@@ -1143,7 +1155,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 
 	// evaluate assignment
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
-	newData := make([]types.Datum, len(data))
+	newData := make(types.DatumRow, len(data))
 	copy(newData, data)
 	for _, col := range cols {
 		val, err1 := col.Expr.Eval(newData)
@@ -1375,7 +1387,7 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		newRowData := make([]types.Datum, len(row))
+		newRowData := make(types.DatumRow, len(row))
 		copy(newRowData, row)
 		for _, assign := range e.OrderedList {
 			val, err := assign.Expr.Eval(newRowData)

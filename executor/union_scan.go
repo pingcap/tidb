@@ -251,7 +251,7 @@ func (us *UnionScanExec) compare(a, b Row) (int, error) {
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([]Row, 0, len(us.dirty.addedRows))
 	for h, data := range us.dirty.addedRows {
-		newData := make([]types.Datum, 0, us.schema.Len())
+		newData := make(types.DatumRow, 0, us.schema.Len())
 		for _, col := range us.columns {
 			if col.ID == model.ExtraHandleID {
 				newData = append(newData, types.NewIntDatum(h))
