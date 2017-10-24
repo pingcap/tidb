@@ -45,8 +45,6 @@ type preprocessor struct {
 	inPrepare bool
 	// When visiting create/drop table statement.
 	inCreateOrDropTable bool
-	// When visiting multi-table delete stmt table list.
-	inDeleteTableList bool
 	/* For Select Statement. */
 	// table map to lookup and check table name conflict.
 	tableMap map[string]int
@@ -75,8 +73,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.DeleteTableList:
-		p.inDeleteTableList = true
 	case *ast.DeleteStmt:
 		return in, true
 	}
@@ -501,19 +497,6 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if p.inCreateOrDropTable {
 		// The table may not exist in create table or drop table statement.
 		// Skip resolving the table to avoid error.
-		return
-	}
-	if p.inDeleteTableList {
-		idx, ok := p.tableMap[p.tableUniqueName(tn.Schema, tn.Name)]
-		if !ok {
-			p.err = errors.Errorf("Unknown table %s", tn.Name.O)
-			return
-		}
-		ts := p.tables[idx]
-		tableName := ts.Source.(*ast.TableName)
-		tn.DBInfo = tableName.DBInfo
-		tn.TableInfo = tableName.TableInfo
-		tn.SetResultFields(tableName.GetResultFields())
 		return
 	}
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
