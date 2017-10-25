@@ -292,6 +292,9 @@ func (s *testSuite) TestCreateView(c *C) {
 	//view with colList , SelectField and AsName
 	_, err = tk.Exec("create view v4 (c) as select b+1 as d from t1")
 	c.Assert(err, IsNil)
+	//view with select wild card
+	_, err = tk.Exec("create view v5 as select * from t1")
+	c.Assert(err, IsNil)
 
 	tk.MustExec("drop table v1,v2,v3,v4")
 

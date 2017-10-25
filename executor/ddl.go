@@ -155,37 +155,37 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
-	ident := ast.Ident{Schema: s.View.Schema, Name: s.View.Name}
+	ident := ast.Ident{Schema: s.ViewName.Schema, Name: s.ViewName.Name}
 	// SelectFields represents the field expression text in SelectStmt and
 	// saves it as a string to establish the mapping relationship of ColList
 	var selectFields []string
 	selectstmt := s.Select.(*ast.SelectStmt)
 	fields := selectstmt.Fields.Fields
 	for _, field := range fields {
-		if field.AsName.O == "" {
-			selectFields = append(selectFields, field.Expr.Text())
-		} else {
-			selectFields = append(selectFields, field.AsName.O)
+		if field.WildCard == nil {
+			if field.AsName.O == "" {
+				selectFields = append(selectFields, field.Expr.Text())
+			} else {
+				selectFields = append(selectFields, field.AsName.O)
+			}
 		}
 	}
 	// The column_list in Create View statement could be null, so if Cols is nil,
 	// it saves select_statement field expression or field AsName
 	if s.Cols == nil {
 		for _, field := range fields {
-			if field.AsName.O != "" {
-				s.Cols = append(s.Cols, &ast.ColumnName{
-					Name: field.AsName,
-				})
-			} else {
-				s.Cols = append(s.Cols, &ast.ColumnName{
-					Name: model.NewCIStr(field.Expr.Text()),
-				})
+			if field.WildCard == nil {
+				if field.AsName.O != "" {
+					s.Cols = append(s.Cols, field.AsName.O)
+				} else {
+					s.Cols = append(s.Cols, field.Expr.Text())
+				}
 			}
 		}
 	}
 
 	var err error
-	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFields, s.SelectText)
+	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFields, s.Select.Text())
 	if infoschema.ErrTableExists.Equal(err) {
 		return err
 	}

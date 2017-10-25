@@ -178,14 +178,14 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 	return cols, constraints, nil
 }
 
-func buildColumns(colNames []*ast.ColumnName) ([]*table.Column, error) {
+func buildColumns(colNames []string) []*table.Column {
 	var cols []*table.Column
 	for i, colName := range colNames {
 		col := buildColumn(i, colName)
 		col.State = model.StatePublic
 		cols = append(cols, col)
 	}
-	return cols, nil
+	return cols
 }
 
 func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
@@ -240,10 +240,10 @@ func buildColumnAndConstraint(ctx context.Context, offset int,
 	return col, cts, nil
 }
 
-func buildColumn(offset int, colName *ast.ColumnName) *table.Column {
+func buildColumn(offset int, colName string) *table.Column {
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset: offset,
-		Name:   colName.Name,
+		Name:   model.NewCIStr(colName),
 	})
 	return col
 }
@@ -480,26 +480,13 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	return nil
 }
 
-func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
+func checkDuplicateColumn(cols []string) error {
 	colNames := map[string]bool{}
-	for _, colDef := range colDefs {
-		nameLower := colDef.Name.Name.L
-		if colNames[nameLower] {
-			return infoschema.ErrColumnExists.GenByArgs(colDef.Name.Name)
+	for _, col := range cols {
+		if colNames[strings.ToLower(col)] {
+			return infoschema.ErrColumnExists.GenByArgs(model.NewCIStr(col))
 		}
-		colNames[nameLower] = true
-	}
-	return nil
-}
-
-func checkDuplicateColumnName(colNames []*ast.ColumnName) error {
-	colNamesMap := map[string]bool{}
-	for _, colName := range colNames {
-		nameLower := colName.Name.L
-		if colNamesMap[nameLower] {
-			return infoschema.ErrColumnExists.GenByArgs(colName.Name)
-		}
-		colNamesMap[nameLower] = true
+		colNames[strings.ToLower(col)] = true
 	}
 	return nil
 }
@@ -530,40 +517,24 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
-	for _, colDef := range colDefs {
-		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name)
+func checkTooLongColumn(cols []string) error {
+	for _, col := range cols {
+		if len(col) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.Gen("too long column %s", model.NewCIStr(col))
 		}
 	}
 	return nil
 }
 
-func checkTooLongColumnName(colNames []*ast.ColumnName) error {
-	for _, colName := range colNames {
-		if len(colName.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.Gen("too long column %s", colName.Name)
-		}
-	}
-	return nil
-}
-
-func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
-	if len(colDefs) > TableColumnCountLimit {
+func checkTooManyColumns(cols []string) error {
+	if len(cols) > TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil
 }
 
-func checkTooManyColumnNames(colNames []*ast.ColumnName) error {
-	if len(colNames) > TableColumnCountLimit {
-		return errTooManyFields
-	}
-	return nil
-}
-
-func checkViewDiffColCounts(colNames []*ast.ColumnName, selectFields []string) error {
-	if len(colNames) != len(selectFields) {
+func checkViewDiffColCounts(cols []string, selectFields []string) error {
+	if len(cols) != len(selectFields) {
 		return errViewWrongList
 	}
 	return nil
@@ -813,16 +784,22 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkDuplicateColumn(colDefs); err != nil {
+
+	var colNames []string
+	for _, col := range colDefs {
+		colNames = append(colNames, col.Name.Name.L)
+	}
+
+	if err = checkDuplicateColumn(colNames); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkGeneratedColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkTooLongColumn(colDefs); err != nil {
+	if err = checkTooLongColumn(colNames); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkTooManyColumns(colDefs); err != nil {
+	if err = checkTooManyColumns(colNames); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -862,7 +839,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.ColumnName, selectFields []string, selectText string) (err error) {
+func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []string, selectFields []string, selectText string) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -874,22 +851,19 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []*ast.C
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkDuplicateColumnName(colNames); err != nil {
+	if err = checkDuplicateColumn(colNames); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkTooLongColumnName(colNames); err != nil {
+	if err = checkTooLongColumn(colNames); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkTooManyColumnNames(colNames); err != nil {
+	if err = checkTooManyColumns(colNames); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkViewDiffColCounts(colNames, selectFields); err != nil {
 		return errors.Trace(err)
 	}
-	cols, err := buildColumns(colNames)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	cols := buildColumns(colNames)
 
 	tbInfo, err := d.buildViewTableInfo(ident.Name, cols, selectFields, selectText)
 	if err != nil {

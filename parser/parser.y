@@ -507,6 +507,7 @@ import (
 	ColumnDef			"table column definition"
 	ColumnName			"column name"
 	ColumnNameList			"column name list"
+	ColumnList              "column list"
 	ColumnNameListOpt		"column name list opt"
 	ColumnNameListOptWithBrackets 	"column name list opt with brackets"
 	ColumnSetValue			"insert statement set value by column name"
@@ -1663,31 +1664,42 @@ CreateViewStmt:
         startOffset := parser.startOffset(&yyS[yypt])
 		selstmt := $7.(*ast.SelectStmt)
 		selstmt.SetText(string(parser.src[startOffset:]))
-         x := &ast.CreateViewStmt {
+        x := &ast.CreateViewStmt {
             OrReplace:     $2.(bool),
-            View :         $4.(*ast.TableName),
+            ViewName:      $4.(*ast.TableName),
             Select:        selstmt,
-            SelectText:    selstmt.Text(),
         }
         if $5 != nil{
-            x.Cols = $5.([]*ast.ColumnName)
+            x.Cols = $5.([]string)
         }
         $$ = x
     }
+
 ViewName:
     TableName
     {
         $$ = $1.(*ast.TableName)
     }
+
 ViewFieldList:
     /* Empty */
     {
         $$ = nil
     }
-|   '(' ColumnNameList ')'
+|   '(' ColumnList ')'
     {
-        $$ = $2.([]*ast.ColumnName)
+        $$ = $2.([]string)
     }
+
+ColumnList:
+    Identifier
+	{
+		$$ = []string{$1}
+	}
+|	ColumnList ',' Identifier
+	{
+		$$ = append($1.([]string), $3)
+	}
 
 /******************************************************************
  * Do statement

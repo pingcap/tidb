@@ -23,6 +23,7 @@ var (
 	_ DDLNode = &CreateDatabaseStmt{}
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
+	_ DDLNode = &CreateViewStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
@@ -535,11 +536,10 @@ func (n *TableToTable) Accept(v Visitor) (Node, bool) {
 type CreateViewStmt struct {
 	ddlNode
 
-	OrReplace  bool
-	View       *TableName
-	Cols       []*ColumnName
-	Select     ResultSetNode
-	SelectText string
+	OrReplace bool
+	ViewName  *TableName
+	Cols      []string
+	Select    ResultSetNode
 }
 
 // Accept implements Node Accept interface.
@@ -549,26 +549,16 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateViewStmt)
-	node, ok := n.View.Accept(v)
+	node, ok := n.ViewName.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.View = node.(*TableName)
-	if n.Cols != nil {
-		for i, col := range n.Cols {
-			node, ok = col.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Cols[i] = node.(*ColumnName)
-		}
-	}
+	n.ViewName = node.(*TableName)
 	selnode, ok := n.Select.Accept(v)
 	if !ok {
 		return n, false
 	}
 	n.Select = selnode.(*SelectStmt)
-	n.SelectText = selnode.Text()
 	return v.Leave(n)
 }
 

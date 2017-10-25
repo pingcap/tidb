@@ -950,12 +950,11 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	case *ast.CreateViewStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.CreatePriv,
-			db:        v.View.Schema.L,
-			table:     v.View.Name.L,
+			db:        v.ViewName.Schema.L,
+			table:     v.ViewName.Name.L,
 		})
-		plan := b.build(v.Select)
-		if _, ok := plan.(LogicalPlan); !ok {
-			b.err = errors.Errorf("select_statement error in create view")
+		b.build(v.Select)
+		if b.err != nil {
 			return nil
 		}
 		err := checkViewSelectVariable(v.Select)
