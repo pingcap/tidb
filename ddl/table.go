@@ -309,15 +309,3 @@ func updateTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, ori
 
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
-
-// cleanAllocatorKey cleans up auto ID key.
-func cleanAllocatorKey(t *meta.Meta, tblInfo *model.TableInfo) error {
-	// If OldSchemaID isn't zero, it means this table is renamed, and
-	// it's auto ID key need to clean up.
-	if tblInfo.OldSchemaID != 0 {
-		if err := t.DelAutoTableID(tblInfo.OldSchemaID, tblInfo.ID); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}

@@ -160,11 +160,6 @@ func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
 }
 
-// DelAutoTableID deletes current auto ID with database ID and table ID.
-func (m *Meta) DelAutoTableID(dbID int64, tableID int64) error {
-	return m.txn.HDel(m.dbKey(dbID), m.autoTableIDKey(tableID))
-}
-
 // GetSchemaVersion gets current global schema version.
 func (m *Meta) GetSchemaVersion() (int64, error) {
 	return m.txn.GetInt64(mSchemaVersionKey)
