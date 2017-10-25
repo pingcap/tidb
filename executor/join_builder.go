@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// joinBuilder builds a join Executor.
 type joinBuilder struct {
 	context       context.Context
 	leftChild     Executor
@@ -85,14 +86,14 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 	}
 
 	exec := &MergeJoinExec{
-		ctx:           b.context,
-		outerKeys:     leftJoinKeys,
-		innerKeys:     rightJoinKeys,
-		outerIter:     leftRowBlock,
-		innerIter:     rightRowBlock,
-		schema:        b.schema,
-		desc:          assumeSortedDesc,
-		resultEmitter: newMergeJoinOutputer(b.context, b.joinType, b.defaultValues, b.otherFilter),
+		ctx:             b.context,
+		outerKeys:       leftJoinKeys,
+		innerKeys:       rightJoinKeys,
+		outerIter:       leftRowBlock,
+		innerIter:       rightRowBlock,
+		schema:          b.schema,
+		desc:            assumeSortedDesc,
+		resultGenerator: newMergeJoinResultGenerator(b.context, b.joinType, b.defaultValues, b.otherFilter),
 	}
 
 	if b.joinType == plan.RightOuterJoin {

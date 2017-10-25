@@ -43,9 +43,9 @@ type MergeJoinExec struct {
 	innerRows   []Row
 	outerFilter []expression.Expression
 
-	resultEmitter joinResultOutputer
-	resultBuffer  []Row
-	resultCursor  int
+	resultGenerator joinResultGenerator
+	resultBuffer    []Row
+	resultCursor    int
 }
 
 const rowBufferSize = 4096
@@ -195,19 +195,19 @@ func (e *MergeJoinExec) doJoin() (err error) {
 				return errors.Trace(err)
 			}
 			if !matched {
-				e.resultBuffer = e.resultEmitter.emitUnMatchedOuter(outer, e.resultBuffer)
+				e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)
 				continue
 			}
 		}
 
 		initLen := len(e.resultBuffer)
-		e.resultBuffer, err = e.resultEmitter.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
+		e.resultBuffer, err = e.resultGenerator.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		if initLen == len(e.resultBuffer) {
-			e.resultBuffer = e.resultEmitter.emitUnMatchedOuter(outer, e.resultBuffer)
+			e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)
 		}
 	}
 
@@ -244,7 +244,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 		}
 		if compareResult < 0 {
 			initLen := len(e.resultBuffer)
-			e.resultBuffer = e.resultEmitter.emitUnMatchedOuters(e.outerRows, e.resultBuffer)
+			e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerRows, e.resultBuffer)
 			e.outerRows, err = e.outerIter.nextBlock()
 			if err != nil {
 				return false, errors.Trace(err)
