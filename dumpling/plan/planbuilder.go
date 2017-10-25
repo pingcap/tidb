@@ -1197,8 +1197,8 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		}
 		// User varchar as the default return column type.
 		tp := mysql.TypeVarchar
-		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
-			tp = ftypes[0]
+		if len(ftypes) != 0 && ftypes[i] != mysql.TypeUnspecified {
+			tp = ftypes[i]
 		}
 		fieldType := types.NewFieldType(tp)
 		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
