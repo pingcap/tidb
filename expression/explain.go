@@ -40,13 +40,19 @@ func (expr *Column) ExplainInfo() string {
 
 // ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo() string {
-	valStr, err := expr.Value.ToString()
+	dt, err := expr.Eval(nil)
 	if err != nil {
 		if expr.Value.Kind() == types.KindNull {
-			valStr = "null"
-		} else {
-			valStr = "not recognized const value"
+			return "null"
 		}
+		return "not recognized const vanue"
+	}
+	valStr, err := dt.ToString()
+	if err != nil {
+		if expr.Value.Kind() == types.KindNull {
+			return "null"
+		}
+		return "not recognized const vanue"
 	}
 	return valStr
 }

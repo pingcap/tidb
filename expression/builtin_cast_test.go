@@ -1004,7 +1004,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	c.Assert(err, IsNil)
 
 	// test hybridType case.
-	args = []Expression{&Constant{types.NewDatum(types.Enum{Name: "a", Value: 0}), types.NewFieldType(mysql.TypeEnum)}}
+	args = []Expression{&Constant{Value: types.NewDatum(types.Enum{Name: "a", Value: 0}), RetType: types.NewFieldType(mysql.TypeEnum)}}
 	sig = &builtinCastStringAsIntSig{newBaseBuiltinFunc(ctx, args)}
 	iRes, isNull, err := sig.evalInt(nil)
 	c.Assert(isNull, Equals, false)

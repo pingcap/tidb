@@ -200,6 +200,7 @@ import (
 	smallIntType		"SMALLINT"
 	sqlCalcFoundRows	"SQL_CALC_FOUND_ROWS"
 	starting		"STARTING"
+	straightJoin		"STRAIGHT_JOIN"
 	tableKwd		"TABLE"
 	stored			"STORED"
 	terminated		"TERMINATED"
@@ -769,7 +770,7 @@ import (
 %precedence lowerThanKey
 %precedence key
 
-%left   join inner cross left right full natural
+%left   join straightJoin inner cross left right full natural
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
 %precedence lowerThanOn
@@ -3953,8 +3954,10 @@ OuterOpt:
 
 CrossOpt:
 	"JOIN"
+|	"STRAIGHT_JOIN"
 |	"CROSS" "JOIN"
 |	"INNER" "JOIN"
+
 
 LimitClause:
 	{
