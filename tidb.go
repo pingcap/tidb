@@ -287,6 +287,7 @@ func IsQuery(sql string) bool {
 	return false
 }
 
+// init()
 func init() {
 	// Register default memory and goleveldb storage
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
