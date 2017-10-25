@@ -73,7 +73,7 @@ type builtinRowSig struct {
 	baseBuiltinFunc
 }
 
-// rowFunc should always be flattened in expression rewrite phrase.
+// evalString rowFunc should always be flattened in expression rewrite phrase.
 func (b *builtinRowSig) evalString(row types.Row) (string, bool, error) {
 	panic("builtinRowSig.evalString() should never be called.")
 }
@@ -258,6 +258,9 @@ func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
+		if row[b.offset].IsNull() {
+			return "", true, nil
+		}
 		return row[b.offset].GetString(), false, nil
 	}
 	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
@@ -269,7 +272,7 @@ type builtinValuesTimeSig struct {
 	offset int
 }
 
-// // evalTime evals a builtinValuesTimeSig.
+// evalTime evals a builtinValuesTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
 	values := b.ctx.GetSessionVars().CurrInsertValues
@@ -289,7 +292,7 @@ type builtinValuesDurationSig struct {
 	offset int
 }
 
-// // evalDuration evals a builtinValuesDurationSig.
+// evalDuration evals a builtinValuesDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bool, error) {
 	values := b.ctx.GetSessionVars().CurrInsertValues
@@ -361,12 +364,13 @@ func (b *builtinBitCountSig) evalInt(row types.Row) (int64, bool, error) {
 	return count, false, nil
 }
 
-// for plan cache of prepared statements
+// getParamFunctionClass for plan cache of prepared statements
 type getParamFunctionClass struct {
 	baseFunctionClass
 }
 
-//TODO: more typed functions will be added when typed parameters are supported.
+// getFunction gets function
+// TODO: more typed functions will be added when typed parameters are supported.
 func (c *getParamFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
