@@ -2668,6 +2668,16 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t (id,count)VALUES('abc',265.0) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count)")
 	result = tk.MustQuery("select count from t where id = 'abc'")
 	result.Check(testkit.Rows("265.00"))
+
+	// for values(issue #4884)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table test(id int not null, val text, primary key(id));")
+	tk.MustExec("insert into test values(1,'hello');")
+	result = tk.MustQuery("select * from test;")
+	result.Check(testkit.Rows("1 hello"))
+	tk.MustExec("insert into test values(1, NULL) on duplicate key update val = VALUES(val);")
+	result = tk.MustQuery("select * from test;")
+	result.Check(testkit.Rows("1 <nil>"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {

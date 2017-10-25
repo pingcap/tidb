@@ -71,7 +71,7 @@ type builtinRowSig struct {
 	baseBuiltinFunc
 }
 
-// rowFunc should always be flattened in expression rewrite phrase.
+// evalString rowFunc should always be flattened in expression rewrite phrase.
 func (b *builtinRowSig) evalString(row []types.Datum) (string, bool, error) {
 	panic("builtinRowSig.evalString() should never be called.")
 }
@@ -256,6 +256,9 @@ func (b *builtinValuesStringSig) evalString(_ []types.Datum) (string, bool, erro
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
+		if row[b.offset].IsNull() {
+			return "", true, nil
+		}
 		return row[b.offset].GetString(), false, nil
 	}
 	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
@@ -267,7 +270,7 @@ type builtinValuesTimeSig struct {
 	offset int
 }
 
-// // evalTime evals a builtinValuesTimeSig.
+// evalTime evals a builtinValuesTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesTimeSig) evalTime(_ []types.Datum) (types.Time, bool, error) {
 	values := b.ctx.GetSessionVars().CurrInsertValues
@@ -287,7 +290,7 @@ type builtinValuesDurationSig struct {
 	offset int
 }
 
-// // evalDuration evals a builtinValuesDurationSig.
+// evalDuration evals a builtinValuesDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDurationSig) evalDuration(_ []types.Datum) (types.Duration, bool, error) {
 	values := b.ctx.GetSessionVars().CurrInsertValues
