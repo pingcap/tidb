@@ -75,7 +75,7 @@ type builtinLogicAndSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLogicAndSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinLogicAndSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil || (!isNull0 && arg0 == 0) {
@@ -111,7 +111,7 @@ type builtinLogicOrSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLogicOrSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinLogicOrSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -153,7 +153,7 @@ type builtinLogicXorSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLogicXorSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinLogicXorSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -189,7 +189,7 @@ type builtinBitAndSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinBitAndSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinBitAndSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -222,7 +222,7 @@ type builtinBitOrSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinBitOrSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinBitOrSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -255,7 +255,7 @@ type builtinBitXorSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinBitXorSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinBitXorSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -287,7 +287,7 @@ type builtinLeftShiftSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLeftShiftSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinLeftShiftSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -319,7 +319,7 @@ type builtinRightShiftSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRightShiftSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinRightShiftSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -384,7 +384,7 @@ type builtinRealIsTrueSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRealIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinRealIsTrueSig) evalInt(row types.Row) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
@@ -399,7 +399,7 @@ type builtinDecimalIsTrueSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinDecimalIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinDecimalIsTrueSig) evalInt(row types.Row) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
@@ -414,7 +414,7 @@ type builtinIntIsTrueSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIntIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinIntIsTrueSig) evalInt(row types.Row) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
@@ -429,7 +429,7 @@ type builtinRealIsFalseSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRealIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinRealIsFalseSig) evalInt(row types.Row) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
@@ -444,7 +444,7 @@ type builtinDecimalIsFalseSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinDecimalIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinDecimalIsFalseSig) evalInt(row types.Row) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
@@ -459,7 +459,7 @@ type builtinIntIsFalseSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIntIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinIntIsFalseSig) evalInt(row types.Row) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
@@ -489,7 +489,7 @@ type builtinBitNegSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinBitNegSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinBitNegSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -519,7 +519,7 @@ type builtinUnaryNotSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinUnaryNotSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinUnaryNotSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -625,7 +625,7 @@ type builtinUnaryMinusIntSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinUnaryMinusIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+func (b *builtinUnaryMinusIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
 	var val int64
 	val, isNull, err = b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
 	if err != nil || isNull {
@@ -651,7 +651,7 @@ type builtinUnaryMinusDecimalSig struct {
 	constantArgOverflow bool
 }
 
-func (b *builtinUnaryMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *builtinUnaryMinusDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 
 	var dec *types.MyDecimal
@@ -669,7 +669,7 @@ type builtinUnaryMinusRealSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (b *builtinUnaryMinusRealSig) evalReal(row types.Row) (float64, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	val, isNull, err := b.args[0].EvalReal(row, sc)
 	return -val, isNull, errors.Trace(err)
@@ -731,7 +731,7 @@ func evalIsNull(isNull bool, err error) (int64, bool, error) {
 	return 0, false, nil
 }
 
-func (b *builtinDecimalIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinDecimalIsNullSig) evalInt(row types.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	return evalIsNull(isNull, err)
 }
@@ -740,7 +740,7 @@ type builtinDurationIsNullSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinDurationIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinDurationIsNullSig) evalInt(row types.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
 	return evalIsNull(isNull, err)
 }
@@ -749,7 +749,7 @@ type builtinIntIsNullSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIntIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinIntIsNullSig) evalInt(row types.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	return evalIsNull(isNull, err)
 }
@@ -758,7 +758,7 @@ type builtinRealIsNullSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRealIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinRealIsNullSig) evalInt(row types.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	return evalIsNull(isNull, err)
 }
@@ -767,7 +767,7 @@ type builtinStringIsNullSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinStringIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinStringIsNullSig) evalInt(row types.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	return evalIsNull(isNull, err)
 }
@@ -776,7 +776,7 @@ type builtinTimeIsNullSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinTimeIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinTimeIsNullSig) evalInt(row types.Row) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
 	return evalIsNull(isNull, err)
 }

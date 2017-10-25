@@ -234,6 +234,12 @@ func (s *testSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// for issue #4255
+	result = tk.MustQuery("show function status like '%'")
+	result.Check(result.Rows())
+	result = tk.MustQuery("show plugins like '%'")
+	result.Check(result.Rows())
+
 	// for issue #4740
 	testSQL = `drop table if exists t`
 	tk.MustExec(testSQL)

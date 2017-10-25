@@ -1566,10 +1566,10 @@ func (s *testSuite) TestPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plan.Preprocess(stmtNode, infoSchema, ctx)
+		err = plan.ResolveName(stmtNode, infoSchema, ctx)
 		c.Check(err, IsNil)
-		// Validate should be after NameResolve.
-		err = plan.Validate(stmtNode, false)
+		// Preprocess should be after NameResolve.
+		err = plan.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
 		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
@@ -2267,6 +2267,16 @@ func (s *testSuite) TestSubqueryInValues(c *C) {
 	tk.MustExec("insert into t1 (gid) value (1)")
 	tk.MustExec("insert into t (id, name) value ((select gid from t1) ,'asd')")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
+}
+
+func (s *testSuite) TestEnhancedRangeAccess(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values(1, 2), (2, 1)")
+	tk.MustQuery("select * from t where (a = 1 and b = 2) or (a = 2 and b = 1)").Check(testkit.Rows("1 2", "2 1"))
+	tk.MustQuery("select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)").Check(nil)
 }
 
 // Issue #4810
