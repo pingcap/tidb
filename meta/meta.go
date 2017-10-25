@@ -160,7 +160,7 @@ func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
 }
 
-// DelAutoTableID del current auto ID with database ID and table ID.
+// DelAutoTableID deletes current auto ID with database ID and table ID.
 func (m *Meta) DelAutoTableID(dbID int64, tableID int64) error {
 	return m.txn.HDel(m.dbKey(dbID), m.autoTableIDKey(tableID))
 }
