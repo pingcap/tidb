@@ -101,6 +101,7 @@ type PlanCache struct {
 type Dashbase struct {
 	Enabled    bool     `toml:"enabled" json:"enabled"`
 	KafkaHosts []string `toml:"kafka-hosts" json:"kafka-hosts"`
+	APIURL     string   `toml:"api-url" json:"api-url"`
 	SchemaFile string   `toml:"schema-file" json:"schema-file"`
 }
 
@@ -145,6 +146,7 @@ var defaultConf = Config{
 	Dashbase: Dashbase{
 		Enabled:    false,
 		KafkaHosts: []string{"localhost:9092"},
+		APIURL:     "https://staging.dashbase.io:9876",
 		SchemaFile: "dashbase-schema.toml",
 	},
 }
