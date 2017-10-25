@@ -88,9 +88,13 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 	var (
 		tp  tipb.ExprType
 		val []byte
-		d   = con.Value
 		ft  = con.GetType()
 	)
+	d, err := con.Eval(nil)
+	if err != nil {
+		log.Errorf("Fail to eval constant, err: %s", err.Error())
+		return nil
+	}
 
 	switch d.Kind() {
 	case types.KindNull:
