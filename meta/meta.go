@@ -277,7 +277,8 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	// Initial the auto ID key.
-	_, err = m.txn.HInc(dbKey, m.autoTableIDKey(tableInfo.ID), 0)
+	base := []byte(strconv.FormatInt(0, 10))
+	err = m.txn.HSet(dbKey, m.autoTableIDKey(tableInfo.ID), base)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -302,7 +303,7 @@ func (m *Meta) DropDatabase(dbID int64) error {
 // DropTable drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
+func (m *Meta) DropTable(dbID int64, tblInfo *model.TableInfo, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -310,7 +311,7 @@ func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	}
 
 	// Check if table exists.
-	tableKey := m.tableKey(tableID)
+	tableKey := m.tableKey(tblInfo.ID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -320,7 +321,10 @@ func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	}
 
 	if delAutoID {
-		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tableID)); err != nil {
+		if tblInfo.OldSchemaID != 0 {
+			dbKey = m.dbKey(tblInfo.OldSchemaID)
+		}
+		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblInfo.ID)); err != nil {
 			return errors.Trace(err)
 		}
 	}
