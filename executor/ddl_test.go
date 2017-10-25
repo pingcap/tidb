@@ -296,7 +296,7 @@ func (s *testSuite) TestCreateView(c *C) {
 	_, err = tk.Exec("create view v5 as select * from t1")
 	c.Assert(err, IsNil)
 
-	tk.MustExec("drop table v1,v2,v3,v4")
+	tk.MustExec("drop table v1,v2,v3,v4,v5")
 
 	//view with variable
 	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")

@@ -507,7 +507,7 @@ import (
 	ColumnDef			"table column definition"
 	ColumnName			"column name"
 	ColumnNameList			"column name list"
-	ColumnList              "column list"
+	ColumnList              	"column list"
 	ColumnNameListOpt		"column name list opt"
 	ColumnNameListOptWithBrackets 	"column name list opt with brackets"
 	ColumnSetValue			"insert statement set value by column name"
