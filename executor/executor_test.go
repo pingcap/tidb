@@ -2269,6 +2269,16 @@ func (s *testSuite) TestSubqueryInValues(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
 }
 
+func (s *testSuite) TestEnhancedRangeAccess(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values(1, 2), (2, 1)")
+	tk.MustQuery("select * from t where (a = 1 and b = 2) or (a = 2 and b = 1)").Check(testkit.Rows("1 2", "2 1"))
+	tk.MustQuery("select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)").Check(nil)
+}
+
 // Issue #4810
 func (s *testSuite) TestMaxInt64Handle(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
