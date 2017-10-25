@@ -181,7 +181,10 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 func buildColumns(colNames []string) []*table.Column {
 	var cols []*table.Column
 	for i, colName := range colNames {
-		col := buildColumn(i, colName)
+		col := table.ToColumn(&model.ColumnInfo{
+			Offset: i,
+			Name:   model.NewCIStr(colName),
+		})
 		col.State = model.StatePublic
 		cols = append(cols, col)
 	}
@@ -238,14 +241,6 @@ func buildColumnAndConstraint(ctx context.Context, offset int,
 		return nil, nil, errors.Trace(err)
 	}
 	return col, cts, nil
-}
-
-func buildColumn(offset int, colName string) *table.Column {
-	col := table.ToColumn(&model.ColumnInfo{
-		Offset: offset,
-		Name:   model.NewCIStr(colName),
-	})
-	return col
 }
 
 // checkColumnCantHaveDefaultValue checks the column can have value as default or not.
@@ -529,13 +524,6 @@ func checkTooLongColumn(cols []string) error {
 func checkTooManyColumns(cols []string) error {
 	if len(cols) > TableColumnCountLimit {
 		return errTooManyFields
-	}
-	return nil
-}
-
-func checkViewDiffColCounts(cols []string, selectFields []string) error {
-	if len(cols) != len(selectFields) {
-		return errViewWrongList
 	}
 	return nil
 }
@@ -860,9 +848,10 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []string
 	if err = checkTooManyColumns(colNames); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkViewDiffColCounts(colNames, selectFields); err != nil {
-		return errors.Trace(err)
+	if len(colNames) != len(selectFields) {
+		return errors.Trace(errViewWrongList)
 	}
+
 	cols := buildColumns(colNames)
 
 	tbInfo, err := d.buildViewTableInfo(ident.Name, cols, selectFields, selectText)
