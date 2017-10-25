@@ -241,7 +241,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToDecCases := []struct {
 		before *Column
 		after  *types.MyDecimal
-		row    []types.Datum
+		row    types.DatumRow
 	}{
 		// cast int as decimal.
 		{
@@ -303,7 +303,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		flen    int
 		decimal int
 		after   *types.MyDecimal
-		row     []types.Datum
+		row     types.DatumRow
 	}{
 		// cast int as decimal.
 		{
@@ -385,7 +385,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToIntCases := []struct {
 		before *Column
 		after  int64
-		row    []types.Datum
+		row    types.DatumRow
 	}{
 		// cast string as int.
 		{
@@ -451,7 +451,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToRealCases := []struct {
 		before *Column
 		after  float64
-		row    []types.Datum
+		row    types.DatumRow
 	}{
 		// cast string as real.
 		{
@@ -517,7 +517,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToStringCases := []struct {
 		before *Column
 		after  string
-		row    []types.Datum
+		row    types.DatumRow
 	}{
 		// cast real as string.
 		{
@@ -595,7 +595,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		before *Column
 		after  string
 		flen   int
-		row    []types.Datum
+		row    types.DatumRow
 	}{
 		// cast real as string.
 		{
@@ -670,7 +670,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToTimeCases := []struct {
 		before *Column
 		after  types.Time
-		row    []types.Datum
+		row    types.DatumRow
 	}{
 		// cast real as Time.
 		{
@@ -747,7 +747,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToTimeCases2 := []struct {
 		before *Column
 		after  types.Time
-		row    []types.Datum
+		row    types.DatumRow
 		fsp    int
 		tp     byte
 	}{
@@ -837,7 +837,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToDurationCases := []struct {
 		before *Column
 		after  types.Duration
-		row    []types.Datum
+		row    types.DatumRow
 	}{
 		// cast real as Duration.
 		{
@@ -913,7 +913,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToDurationCases2 := []struct {
 		before *Column
 		after  types.Duration
-		row    []types.Datum
+		row    types.DatumRow
 		fsp    int
 	}{
 		// cast real as Duration.
@@ -994,7 +994,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
-	row := []types.Datum{types.NewDatum(nil)}
+	row := types.DatumRow{types.NewDatum(nil)}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = types.NewFieldType(mysql.TypeVarString)
 	sig = &builtinCastRealAsStringSig{bf}
@@ -1004,7 +1004,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	c.Assert(err, IsNil)
 
 	// test hybridType case.
-	args = []Expression{&Constant{types.NewDatum(types.Enum{Name: "a", Value: 0}), types.NewFieldType(mysql.TypeEnum)}}
+	args = []Expression{&Constant{Value: types.NewDatum(types.Enum{Name: "a", Value: 0}), RetType: types.NewFieldType(mysql.TypeEnum)}}
 	sig = &builtinCastStringAsIntSig{newBaseBuiltinFunc(ctx, args)}
 	iRes, isNull, err := sig.evalInt(nil)
 	c.Assert(isNull, Equals, false)
@@ -1019,7 +1019,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 
 	cases := []struct {
 		expr      Expression
-		row       []types.Datum
+		row       types.DatumRow
 		intRes    int64
 		realRes   float64
 		decRes    *types.MyDecimal
@@ -1125,12 +1125,12 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	// test cast unsigned int as string.
 	strExpr := WrapWithCastAsString(ctx, unsignedIntExpr)
 	c.Assert(strExpr.GetType().EvalType().IsStringKind(), IsTrue)
-	strRes, isNull, err := strExpr.EvalString([]types.Datum{types.NewUintDatum(math.MaxUint64)}, sc)
+	strRes, isNull, err := strExpr.EvalString(types.DatumRow{types.NewUintDatum(math.MaxUint64)}, sc)
 	c.Assert(err, IsNil)
 	c.Assert(strRes, Equals, strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(isNull, Equals, false)
 
-	strRes, isNull, err = strExpr.EvalString([]types.Datum{types.NewUintDatum(1234)}, sc)
+	strRes, isNull, err = strExpr.EvalString(types.DatumRow{types.NewUintDatum(1234)}, sc)
 	c.Assert(err, IsNil)
 	c.Assert(isNull, Equals, false)
 	c.Assert(strRes, Equals, strconv.FormatUint(uint64(1234), 10))
@@ -1138,7 +1138,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	// test cast unsigned int as decimal.
 	decExpr := WrapWithCastAsDecimal(ctx, unsignedIntExpr)
 	c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
-	decRes, isNull, err := decExpr.EvalDecimal([]types.Datum{types.NewUintDatum(uint64(1234))}, sc)
+	decRes, isNull, err := decExpr.EvalDecimal(types.DatumRow{types.NewUintDatum(uint64(1234))}, sc)
 	c.Assert(err, IsNil)
 	c.Assert(isNull, Equals, false)
 	c.Assert(decRes.Compare(types.NewDecFromUint(uint64(1234))), Equals, 0)
@@ -1146,7 +1146,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	// test cast unsigned int as Time.
 	timeExpr := WrapWithCastAsTime(ctx, unsignedIntExpr, types.NewFieldType(mysql.TypeDatetime))
 	c.Assert(timeExpr.GetType().Tp, Equals, mysql.TypeDatetime)
-	timeRes, isNull, err := timeExpr.EvalTime([]types.Datum{types.NewUintDatum(uint64(curTimeInt))}, sc)
+	timeRes, isNull, err := timeExpr.EvalTime(types.DatumRow{types.NewUintDatum(uint64(curTimeInt))}, sc)
 	c.Assert(err, IsNil)
 	c.Assert(isNull, Equals, false)
 	c.Assert(timeRes.Compare(tm), Equals, 0)
