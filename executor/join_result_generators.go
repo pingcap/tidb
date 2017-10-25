@@ -31,9 +31,13 @@ var (
 	_ joinResultGenerator = &mergeJoinResultGenerator4InnerJoin{}
 )
 
+// joinResultGenerator is used to generate join results according the join type, see every implementor for detailed information.
 type joinResultGenerator interface {
-	emitMatchedInners(outer Row, inner []Row, resultBuffer []Row) ([]Row, error)
+	// emitMatchedInners should be called when key in outer row is equal to key in every inner row.
+	emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error)
+	// emitUnMatchedOuter should be called when key in outer row is equal to key in inner row.
 	emitUnMatchedOuter(outer Row, resultBuffer []Row) []Row
+	// emitUnMatchedOuter should be called when outer row is not matched to any inner row.
 	emitUnMatchedOuters(outers []Row, resultBuffer []Row) []Row
 }
 
@@ -155,6 +159,7 @@ type mergeJoinResultGenerator4LeftOuterJoin struct {
 	filter       []expression.Expression
 }
 
+// emitMatchedInners implements joinResultGenerator interface.
 func (outputer *mergeJoinResultGenerator4LeftOuterJoin) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error) {
 	for _, inner := range inners {
 		joinedRow := makeJoinRow(outer, inner)
@@ -191,6 +196,7 @@ type mergeJoinResultGenerator4RightOuterJoin struct {
 	filter       []expression.Expression
 }
 
+// emitMatchedInners implements joinResultGenerator interface.
 func (outputer *mergeJoinResultGenerator4RightOuterJoin) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error) {
 	for _, inner := range inners {
 		joinedRow := makeJoinRow(inner, outer)
@@ -226,6 +232,7 @@ type mergeJoinResultGenerator4InnerJoin struct {
 	filter []expression.Expression
 }
 
+// emitMatchedInners implements joinResultGenerator interface.
 func (outputer *mergeJoinResultGenerator4InnerJoin) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error) {
 	for _, inner := range inners {
 		joinedRow := makeJoinRow(outer, inner)

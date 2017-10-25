@@ -234,7 +234,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			}
 		}
 
-		// Before moving on, in case of outer join, output the side of the row
 		if compareResult > 0 {
 			e.innerRows, err = e.innerIter.nextBlock()
 			if err != nil {
@@ -242,35 +241,24 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			}
 			continue
 		}
+
+		initLen := len(e.resultBuffer)
 		if compareResult < 0 {
-			initLen := len(e.resultBuffer)
 			e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerRows, e.resultBuffer)
-			e.outerRows, err = e.outerIter.nextBlock()
+		} else {
+			err := e.doJoin()
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if initLen < len(e.resultBuffer) {
-				return true, nil
+			e.innerRows, err = e.innerIter.nextBlock()
+			if err != nil {
+				return false, errors.Trace(err)
 			}
-			continue
 		}
-
-		// key matched, try join with other conditions
-		initLen := len(e.resultBuffer)
-		err := e.doJoin()
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
 		e.outerRows, err = e.outerIter.nextBlock()
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		e.innerRows, err = e.innerIter.nextBlock()
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
 		if initLen < len(e.resultBuffer) {
 			return true, nil
 		}

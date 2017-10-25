@@ -56,7 +56,7 @@ const (
 	RightOuterJoin
 	// SemiJoin means if row a in table A matches some rows in B, just output a.
 	SemiJoin
-	// AntiSemiJoin means if row a in table A does not matche any row in B, then output a.
+	// AntiSemiJoin means if row a in table A does not match any row in B, then output a.
 	AntiSemiJoin
 	// LeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
 	LeftOuterSemiJoin
