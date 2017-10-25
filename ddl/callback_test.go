@@ -26,7 +26,6 @@ type TestDDLCallback struct {
 	onJobRunBefore       func(*model.Job)
 	onJobUpdated         func(*model.Job)
 	OnJobUpdatedExported func(*model.Job)
-	onBgJobUpdated       func(*model.Job)
 	onWatched            func(ctx goctx.Context)
 }
 
@@ -52,15 +51,6 @@ func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	tc.BaseCallback.OnJobUpdated(job)
 }
 
-func (tc *TestDDLCallback) OnBgJobUpdated(job *model.Job) {
-	if tc.onBgJobUpdated != nil {
-		tc.onBgJobUpdated(job)
-		return
-	}
-
-	tc.BaseCallback.OnBgJobUpdated(job)
-}
-
 func (tc *TestDDLCallback) OnWatched(ctx goctx.Context) {
 	if tc.onWatched != nil {
 		tc.onWatched(ctx)
@@ -76,6 +66,5 @@ func (s *testDDLSuite) TestCallback(c *C) {
 	c.Assert(cb.OnChanged(nil), IsNil)
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)
-	cb.OnBgJobUpdated(nil)
 	cb.OnWatched(nil)
 }

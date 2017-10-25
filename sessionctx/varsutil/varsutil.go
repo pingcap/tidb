@@ -39,7 +39,6 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	case variable.TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), nil
 	}
-
 	sVal, ok := s.Systems[key]
 	if ok {
 		return sVal, nil
@@ -68,7 +67,11 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	} else if sysVar.Scope == variable.ScopeNone {
 		return sysVar.Value, nil
 	}
-	return s.GlobalVarsAccessor.GetGlobalSysVar(key)
+	gVal, err := s.GlobalVarsAccessor.GetGlobalSysVar(key)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return gVal, nil
 }
 
 // epochShiftBits is used to reserve logical part of the timestamp.
@@ -99,19 +102,13 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 			return errors.Trace(err)
 		}
 	case variable.SQLModeVar:
-		sVal = strings.ToUpper(sVal)
-		// TODO: Remove this latter.
-		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
-			vars.StrictSQLMode = true
-		} else {
-			vars.StrictSQLMode = false
-		}
+		sVal = mysql.FormatSQLModeStr(sVal)
 		// Modes is a list of different modes separated by commas.
-		modes := strings.Split(sVal, ",")
-		var sqlMode mysql.SQLMode
-		for _, mode := range modes {
-			sqlMode = sqlMode | mysql.GetSQLMode(mode)
+		sqlMode, err2 := mysql.GetSQLMode(sVal)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
+		vars.StrictSQLMode = sqlMode.HasStrictMode()
 		vars.SQLMode = sqlMode
 	case variable.TiDBSnapshot:
 		err = setSnapshotTS(vars, sVal)
@@ -134,6 +131,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.AllowInSubqueryUnFolding = tidbOptOn(sVal)
 	case variable.TiDBIndexLookupConcurrency:
 		vars.IndexLookupConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexLookupConcurrency)
+	case variable.TiDBIndexJoinBatchSize:
+		vars.IndexJoinBatchSize = tidbOptPositiveInt(sVal, variable.DefIndexJoinBatchSize)
 	case variable.TiDBIndexLookupSize:
 		vars.IndexLookupSize = tidbOptPositiveInt(sVal, variable.DefIndexLookupSize)
 	case variable.TiDBDistSQLScanConcurrency:
@@ -142,6 +141,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.IndexSerialScanConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexSerialScanConcurrency)
 	case variable.TiDBBatchInsert:
 		vars.BatchInsert = tidbOptOn(sVal)
+	case variable.TiDBBatchDelete:
+		vars.BatchDelete = tidbOptOn(sVal)
 	case variable.TiDBMaxRowCountForINLJ:
 		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
 	case variable.TiDBCurrentTS:
@@ -195,7 +196,7 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 		s.SnapshotTS = 0
 		return nil
 	}
-	t, err := types.ParseTime(sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return errors.Trace(err)
 	}

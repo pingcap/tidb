@@ -83,6 +83,14 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
+// NewTestKitWithInit returns a new *TestKit and creates a session.
+func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
+	tk := NewTestKit(c, store)
+	// Use test and prepare a session.
+	tk.MustExec("use test")
+	return tk
+}
+
 var connectionID uint64
 
 // Exec executes a sql statement.
@@ -132,11 +140,13 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
-	comment := check.Commentf("sql:%s, %v", sql, args)
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	rows, err := tidb.GetRows(rs)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	err = rs.Close()
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	sRows := make([][]string, len(rows))
 	for i := range rows {

@@ -16,7 +16,7 @@ package plan
 import (
 	"math"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -40,9 +40,10 @@ func (s *statsProfile) collapse(factor float64) *statsProfile {
 
 func (p *basePhysicalPlan) statsProfile() *statsProfile {
 	profile := p.basePlan.profile
-	if p.expectedCnt > 0 && p.expectedCnt < profile.count {
-		factor := p.expectedCnt / profile.count
-		profile.count = p.expectedCnt
+	expectedCnt := p.basePlan.expectedCnt
+	if expectedCnt > 0 && expectedCnt < profile.count {
+		factor := expectedCnt / profile.count
+		profile.count = expectedCnt
 		for i := range profile.cardinality {
 			profile.cardinality[i] = profile.cardinality[i] * factor
 		}
@@ -73,8 +74,9 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 	}
 	for i, col := range p.Columns {
 		hist, ok := p.statisticTable.Columns[col.ID]
-		if ok {
-			profile.cardinality[i] = float64(hist.NDV)
+		if ok && hist.Count > 0 {
+			factor := float64(p.statisticTable.Count) / float64(hist.Count)
+			profile.cardinality[i] = float64(hist.NDV) * factor
 		} else {
 			profile.cardinality[i] = profile.count * distinctFactor
 		}
@@ -186,15 +188,16 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
 	}
-	count := getCardinality(gbyCols, p.children[0].Schema(), childProfile)
+	cardinality := getCardinality(gbyCols, p.children[0].Schema(), childProfile)
 	p.profile = &statsProfile{
-		count:       count,
+		count:       cardinality,
 		cardinality: make([]float64, p.schema.Len()),
 	}
 	// We cannot estimate the cardinality for every output, so we use a conservative strategy.
 	for i := range p.profile.cardinality {
-		p.profile.cardinality[i] = count
+		p.profile.cardinality[i] = cardinality
 	}
+	p.inputCount = childProfile.count
 	return p.profile
 }
 
@@ -240,7 +243,7 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 	}
 	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
 	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
-	count := (leftProfile.count * rightProfile.count / leftKeyCardinality / rightKeyCardinality) * math.Min(leftKeyCardinality, rightKeyCardinality)
+	count := leftProfile.count * rightProfile.count / math.Max(leftKeyCardinality, rightKeyCardinality)
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.count)
 	} else if p.JoinType == RightOuterJoin {

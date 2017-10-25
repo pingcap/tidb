@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -64,6 +63,9 @@ func newStringType() types.FieldType {
 }
 
 func MockTable() *model.TableInfo {
+	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
+	// PK: a
+	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -120,8 +122,7 @@ func MockTable() *model.TableInfo {
 					Offset: 9,
 				},
 			},
-			State:  model.StatePublic,
-			Unique: true,
+			State: model.StatePublic,
 		},
 		{
 			Name: model.NewCIStr("f_g"),
@@ -277,7 +278,7 @@ func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	return is, expression.InferType(ctx.GetSessionVars().StmtCtx, node)
+	return is, nil
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -375,6 +376,10 @@ func (m *mockStore) UUID() string {
 
 func (m *mockStore) CurrentVersion() (kv.Version, error) {
 	return kv.Version{}, nil
+}
+
+func (m *mockStore) SupportDeleteRange() bool {
+	return false
 }
 
 func mockContext() context.Context {
@@ -596,7 +601,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(aggregation_2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
+			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
 		},
 		{
 			// Semi-join with agg cannot decorrelate.
@@ -620,7 +625,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,a)->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,s.a)->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
@@ -673,10 +678,6 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select substr(\"abc\", 1)",
 			plan: "Dual->Projection",
 		},
-		{
-			sql:  "analyze table t, t",
-			plan: "*plan.Analyze",
-		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -694,7 +695,8 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		}
 		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp.(LogicalPlan), builder.ctx, builder.allocator)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, builder.ctx, builder.allocator)
+			c.Assert(err, IsNil)
 		}
 		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
@@ -748,10 +750,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		p, err = logicalOptimize(flagPredicatePushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -852,229 +853,13 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
+		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
-		lp.ResolveIndices()
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p.ResolveIndices()
 		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
-	}
-}
-
-func (s *testPlanSuite) TestRefine(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		{
-			sql:  "select a from t where c is not null",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c >= 4",
-			best: "Index(t.c_d_e)[[4,+inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where c <= 4",
-			best: "Index(t.c_d_e)[[-inf,4]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 4 and d = 5 and e = 6",
-			best: "Index(t.c_d_e)[[4 5 6,4 5 6]]->Projection",
-		},
-		{
-			sql:  "select a from t where d = 4 and c = 5",
-			best: "Index(t.c_d_e)[[5 4,5 4]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 4 and e < 5",
-			best: "Index(t.c_d_e)[[4,4]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
-			best: "Index(t.c_d_e)[(4 3 +inf,4 5 +inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where d <= 5 and d > 3",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c between 1 and 2",
-			best: "Index(t.c_d_e)[[1,2]]->Projection",
-		},
-		{
-			sql:  "select a from t where c not between 1 and 2",
-			best: "Index(t.c_d_e)[[-inf <nil>,1 <nil>) (2 +inf,+inf +inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
-			best: "Index(t.c_d_e)[[3,5]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 1 or c = 2 or c = 3",
-			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
-		},
-		{
-			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3] [4,4] [5,5]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 5",
-			best: "Index(t.c_d_e)[[5,5]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 5 and b = 1",
-			best: "Index(t.c_d_e)[[5,5]]->Projection",
-		},
-		{
-			sql:  "select a from t where not a",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1)",
-			best: "Index(t.c_d_e)[[1,1]]->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1) and d > 3",
-			best: "Index(t.c_d_e)[(1 3 +inf,1 +inf +inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
-			best: "Index(t.c_d_e)[(1 3 +inf,1 4 <nil>) (1 5 +inf,1 6 <nil>) (2 3 +inf,2 4 <nil>) (2 5 +inf,2 6 <nil>) (3 3 +inf,3 4 <nil>) (3 5 +inf,3 6 <nil>)]->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1, 2, 3)",
-			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
-			best: "Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]]->Projection",
-		},
-		{
-			sql:  "select a from t where d in (1, 2, 3)",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c not in (1)",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t use index(c_d_e) where c != 1",
-			best: "Index(t.c_d_e)[[-inf <nil>,1 <nil>) (1 +inf,+inf +inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like ''",
-			best: "Index(t.c_d_e_str)[[,]]->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like 'abc'",
-			best: "Index(t.c_d_e_str)[[abc,abc]]->Projection",
-		},
-		{
-			sql:  "select a from t where c_str not like 'abc'",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like '_abc'",
-			best: "Table(t)->Selection->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like 'abc%'",
-			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like 'abc_'",
-			best: "Index(t.c_d_e_str)[(abc +inf,abd <nil>)]->Selection->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like 'abc%af'",
-			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Selection->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
-			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\_'`,
-			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\\\_'`,
-			best: "Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)]->Selection->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\_%'`,
-			best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc=_%' escape '='`,
-			best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\__'`,
-			best: "Index(t.c_d_e_str)[(abc_ +inf,abc` <nil>)]->Selection->Projection",
-		},
-		{
-			// Check that 123 is converted to string '123'. index can be used.
-			sql:  `select a from t where c_str like 123`,
-			best: "Index(t.c_d_e_str)[[123,123]]->Projection",
-		},
-		// c is type int which will be added cast to specified type when building function signature, no index can be used.
-		//{
-		//	sql:  `select a from t where c like '1'`,
-		//	best: "Table(t)->Selection->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c = 1.1 and d > 3`,
-		//	best: "Index(t.c_d_e)[]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c = 1.9 and d > 3`,
-		//	best: "Index(t.c_d_e)[]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c < 1.1`,
-		//	best: "Index(t.c_d_e)[[-inf,1]]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c <= 1.9`,
-		//	best: "Index(t.c_d_e)[[-inf <nil>,2 <nil>)]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c >= 1.1`,
-		//	best: "Index(t.c_d_e)[(1 +inf,+inf +inf]]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c > 1.9`,
-		//	best: "Index(t.c_d_e)[[2,+inf]]->Projection",
-		//},
-	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-
-		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			is:        is,
-		}
-		p := builder.build(stmt).(LogicalPlan)
-		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
-		info, err := p.convert2PhysicalPlan(&requiredProperty{})
-		c.Assert(err, IsNil)
-		jsonPlan, _ := info.p.MarshalJSON()
-		c.Assert(ToString(info.p), Equals, tt.best, Commentf("for %s, %s", tt.sql, string(jsonPlan)))
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -1082,114 +867,114 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
-		ans map[string][]string
+		ans map[int][]string
 	}{
 		{
 			sql: "select count(*) from t group by a",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
+			ans: map[int][]string{
+				1: {"a"},
 			},
 		},
 		{
 			sql: "select count(*) from t",
-			ans: map[string][]string{
-				"TableScan_1": {},
+			ans: map[int][]string{
+				1: {},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b where a.a < 1",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_2": {},
+			ans: map[int][]string{
+				1: {"a"},
+				2: {},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_2": {"d"},
+			ans: map[int][]string{
+				1: {"a"},
+				2: {"d"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d order by sum(a.d)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "d"},
-				"TableScan_2": {"d"},
+			ans: map[int][]string{
+				1: {"a", "d"},
+				2: {"d"},
 			},
 		},
 		{
 			sql: "select count(b.a) from t a join t b on a.a = b.d group by b.b order by sum(a.d)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "d"},
-				"TableScan_2": {"a", "b", "d"},
+			ans: map[int][]string{
+				1: {"a", "d"},
+				2: {"a", "b", "d"},
 			},
 		},
 		{
 			sql: "select * from (select count(b.a) from t a join t b on a.a = b.d group by b.b having sum(a.d) < 0) tt",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "d"},
-				"TableScan_2": {"a", "b", "d"},
+			ans: map[int][]string{
+				1: {"a", "d"},
+				2: {"a", "b", "d"},
 			},
 		},
 		{
 			sql: "select (select count(a) from t where b = k.a) from t k",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_3": {"a", "b"},
+			ans: map[int][]string{
+				1: {"a"},
+				3: {"a", "b"},
 			},
 		},
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
-			ans: map[string][]string{
-				"TableScan_1": {},
+			ans: map[int][]string{
+				1: {},
 			},
 		},
 		{
 			sql: "select b = (select count(*) from t where b = k.a) from t k",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b"},
-				"TableScan_3": {"b"},
+			ans: map[int][]string{
+				1: {"a", "b"},
+				3: {"b"},
 			},
 		},
 		{
 			sql: "select exists (select count(a) from t where b = k.a group by b) from t k",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_3": {"b"},
+			ans: map[int][]string{
+				1: {"a"},
+				3: {"b"},
 			},
 		},
 		{
 			sql: "select a as c1, b as c2 from t order by 1, c1 + c2 + c",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b", "c"},
+			ans: map[int][]string{
+				1: {"a", "b", "c"},
 			},
 		},
 		{
 			sql: "select a from t where b < any (select c from t)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b"},
-				"TableScan_3": {"c"},
+			ans: map[int][]string{
+				1: {"a", "b"},
+				3: {"c"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) != all (select c,d from t)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b"},
-				"TableScan_3": {"c", "d"},
+			ans: map[int][]string{
+				1: {"a", "b"},
+				3: {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) in (select c,d from t)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b"},
-				"TableScan_3": {"c", "d"},
+			ans: map[int][]string{
+				1: {"a", "b"},
+				3: {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where a in (select a from t s group by t.b)",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_3": {"a"},
+			ans: map[int][]string{
+				1: {"a"},
+				3: {"a"},
 			},
 		},
 	}
@@ -1223,7 +1008,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	c.Assert(pA.id, Equals, pB.id)
 }
 
-func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
+func checkDataSourceCols(p Plan, c *C, ans map[int][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *DataSource:
 		colList, ok := ans[p.ID()]
@@ -1323,6 +1108,39 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select 1, t.* from t",
 			err: nil,
 		},
+		{
+			sql: "select 1 from t t1, t t2 where t1.a > all((select a) union (select a))",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "insert into t set a = 1, b = a + 1",
+			err: nil,
+		},
+		{
+			sql: "insert into t set a = 1, b = values(a) + 1",
+			err: nil,
+		},
+		// TODO: Fix Error Code.
+		//{
+		//	sql: "select a, b, c from t order by 0",
+		//	err: ErrUnknownColumn,
+		//},
+		//{
+		//	sql: "select a, b, c from t order by 4",
+		//	err: ErrUnknownColumn,
+		//},
+		{
+			sql: "select a as c1, b as c1 from t order by c1",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "(select a as b, b from t) union (select a, b from t) order by b",
+			err: ErrAmbiguous,
+		},
+		//{
+		//	sql: "(select a as b, b from t) union (select a, b from t) order by a",
+		//	err: ErrUnknownColumn,
+		//},
 	}
 	for _, tt := range tests {
 		sql := tt.sql
@@ -1330,7 +1148,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
 		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
@@ -1346,7 +1164,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}
 }
 
-func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
+func checkUniqueKeys(p Plan, c *C, ans map[int][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
 	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
 	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
@@ -1365,66 +1183,66 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
-		ans map[string][][]string
+		ans map[int][][]string
 	}{
 		{
 			sql: "select a, sum(e) from t group by b",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}},
-				"Projection_3":  {{"a"}},
+			ans: map[int][][]string{
+				1: {{"test.t.a"}},
+				2: {{"test.t.a"}},
+				3: {{"test.t.a"}},
 			},
 		},
 		{
 			sql: "select a, b, sum(f) from t group by b",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.b"}},
-				"Projection_3":  {{"a"}, {"b"}},
+			ans: map[int][][]string{
+				1: {{"test.t.f"}, {"test.t.a"}},
+				2: {{"test.t.a"}, {"test.t.b"}},
+				3: {{"test.t.a"}, {"test.t.b"}},
 			},
 		},
 		{
 			sql: "select c, d, e, sum(a) from t group by c, d, e",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.c", "test.t.d", "test.t.e"}},
-				"Projection_3":  {{"c", "d", "e"}},
+			ans: map[int][][]string{
+				1: {{"test.t.a"}},
+				2: {{"test.t.c", "test.t.d", "test.t.e"}},
+				3: {{"test.t.c", "test.t.d", "test.t.e"}},
 			},
 		},
 		{
 			sql: "select f, g, sum(a) from t",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}},
-				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}},
+			ans: map[int][][]string{
+				1: {{"test.t.f"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
+				2: {{"test.t.f"}, {"test.t.f", "test.t.g"}},
+				3: {{"test.t.f"}, {"test.t.f", "test.t.g"}},
 			},
 		},
 		{
 			sql: "select * from t t1 join t t2 on t1.a = t2.e",
-			ans: map[string][][]string{
-				"TableScan_1":  {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"TableScan_2":  {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Join_3":       {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Projection_4": {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
+			ans: map[int][][]string{
+				1: {{"t1.f"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				2: {{"t2.f"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				3: {{"t2.f"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				4: {{"t2.f"}, {"t2.f", "t2.g"}, {"t2.a"}},
 			},
 		},
 		{
 			sql: "select f from t having sum(a) > 0",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}},
-				"Selection_6":   {{"test.t.f"}},
-				"Projection_3":  {{"f"}},
-				"Projection_5":  {{"f"}},
+			ans: map[int][][]string{
+				1: {{"test.t.f"}, {"test.t.a"}},
+				2: {{"test.t.f"}},
+				6: {{"test.t.f"}},
+				3: {{"test.t.f"}},
+				5: {{"test.t.f"}},
 			},
 		},
 		{
 			sql: "select * from t t1 left join t t2 on t1.a = t2.a",
-			ans: map[string][][]string{
-				"TableScan_1":  {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"TableScan_2":  {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Join_3":       {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"Projection_4": {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
+			ans: map[int][][]string{
+				1: {{"t1.f"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				2: {{"t2.f"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				3: {{"t1.f"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				4: {{"t1.f"}, {"t1.f", "t1.g"}, {"t1.a"}},
 			},
 		},
 	}
@@ -1446,6 +1264,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		c.Assert(builder.err, IsNil, comment)
 
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx, builder.allocator)
+		c.Assert(err, IsNil)
 		checkUniqueKeys(p, c, tt.ans, tt.sql)
 	}
 }
@@ -1490,6 +1309,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
+		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
@@ -1645,8 +1465,11 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
-		is, err := MockResolve(stmt)
+		is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+		ctx := mockContext()
+		err = Preprocess(ctx, stmt, is, false)
+		c.Assert(err, IsNil, comment)
+		is, err = MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{

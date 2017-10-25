@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -58,8 +59,12 @@ var (
 	_ PhysicalPlan = &Insert{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
+	_ PhysicalPlan = &PhysicalTableReader{}
+	_ PhysicalPlan = &PhysicalIndexReader{}
+	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ PhysicalPlan = &PhysicalAggregation{}
 	_ PhysicalPlan = &PhysicalApply{}
+	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
@@ -75,6 +80,9 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -96,6 +104,9 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -117,6 +128,9 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -164,6 +178,9 @@ type PhysicalMemTable struct {
 	Columns     []*model.ColumnInfo
 	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -234,7 +251,7 @@ type physicalTableSource struct {
 
 	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
 
-	aggFuncs              []expression.AggregationFunction
+	aggFuncs              []aggregation.Aggregation
 	gbyItems              []expression.Expression
 	sortItems             []*ByItems
 	indexFilterConditions []expression.Expression
@@ -242,6 +259,12 @@ type physicalTableSource struct {
 
 	// filterCondition is only used by new planner.
 	filterCondition []expression.Expression
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
+
+	// TODO: This should be removed after old planner was removed.
+	unionScanSchema *expression.Schema
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -253,7 +276,7 @@ func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
 	}
 	buffer.WriteString(fmt.Sprintf("\"limit\": %d, \n", limit))
 	if p.Aggregated {
-		buffer.WriteString(fmt.Sprint("\"aggregated push down\": true, \n"))
+		buffer.WriteString("\"aggregated push down\": true, \n")
 		gbyItems, err := json.Marshal(p.gbyItems)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -305,25 +328,27 @@ func (p *physicalTableSource) clearForTopnPushDown() {
 	p.LimitCount = nil
 }
 
-func needCount(af expression.AggregationFunction) bool {
+func needCount(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
 }
 
-func needValue(af expression.AggregationFunction) bool {
+func needValue(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
 }
 
-func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) PhysicalPlan {
+func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan, s *expression.Schema) PhysicalPlan {
 	if p.readOnly {
 		return resultPlan
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := PhysicalUnionScan{
-		Conditions: append(conditions, p.AccessCondition...),
+		Conditions:    append(conditions, p.AccessCondition...),
+		NeedColHandle: p.NeedColHandle,
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
-	us.SetSchema(resultPlan.Schema())
+	us.SetSchema(s)
+	p.NeedColHandle = true
 	return us
 }
 
@@ -367,7 +392,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
-		pb := expression.AggFuncToPBExpr(sc, p.client, f)
+		pb := aggregation.AggFuncToPBExpr(sc, p.client, f)
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
@@ -394,9 +419,9 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	cursor := 0
 	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems)), RetType: gkType})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
-	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
+	newAggFuncs := make([]aggregation.Aggregation, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
-		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
+		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
 		colName := model.NewCIStr(fmt.Sprint(aggFun.GetArgs()))
 		if needCount(fun) {
@@ -415,7 +440,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 			args = append(args, schema.Columns[cursor])
 		}
 		fun.SetArgs(args)
-		fun.SetMode(expression.FinalMode)
+		fun.SetMode(aggregation.FinalMode)
 		newAggFuncs[i] = fun
 	}
 	agg.AggFuncs = newAggFuncs
@@ -481,6 +506,7 @@ type PhysicalIndexJoin struct {
 	outerIndex      int
 	KeepOrder       bool
 	outerSchema     *expression.Schema
+	innerPlan       PhysicalPlan
 
 	DefaultValues []types.Datum
 }
@@ -552,8 +578,11 @@ type PhysicalAggregation struct {
 
 	HasGby       bool
 	AggType      AggregationType
-	AggFuncs     []expression.AggregationFunction
+	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
+
+	propKeys   []*expression.Column
+	inputCount float64 // inputCount is the input count of this plan.
 }
 
 // PhysicalUnionScan represents a union scan operator.
@@ -561,7 +590,8 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	Conditions []expression.Expression
+	NeedColHandle bool
+	Conditions    []expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.
@@ -674,6 +704,11 @@ func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	return &np
 }
 
+// SourceSchema returns the original schema of DataSource
+func (p *PhysicalIndexScan) SourceSchema() *expression.Schema {
+	return p.dataSourceSchema
+}
+
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 	pushDownInfo, err := json.Marshal(&p.physicalTableSource)
@@ -757,18 +792,18 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 			buffer.WriteString(fmt.Sprintf(
 				"\"innerPlan\": \"%s\",\n "+
 					"\"outerPlan\": \"%s\",\n "+
-					"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+					"\"join\": %s\n}", p.children[1].ExplainID(), p.children[0].ExplainID(), join))
 		} else {
 			buffer.WriteString(fmt.Sprintf(
 				"\"innerPlan\": \"%s\",\n "+
 					"\"outerPlan\": \"%s\",\n "+
-					"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
+					"\"join\": %s\n}", p.children[0].ExplainID(), p.children[1].ExplainID(), join))
 		}
 	case *PhysicalHashSemiJoin:
 		buffer.WriteString(fmt.Sprintf(
 			"\"innerPlan\": \"%s\",\n "+
 				"\"outerPlan\": \"%s\",\n "+
-				"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+				"\"join\": %s\n}", p.children[1].ExplainID(), p.children[0].ExplainID(), join))
 	}
 	return buffer.Bytes(), nil
 }
@@ -812,7 +847,7 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 			"\"leftPlan\": \"%s\",\n "+
 			"\"rightPlan\": \"%s\""+
 			"}",
-		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID()))
+		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild.ExplainID(), rightChild.ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -869,7 +904,7 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 			"\"leftPlan\": \"%s\",\n "+
 			"\"rightPlan\": \"%s\""+
 			"}",
-		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID()))
+		eqConds, leftConds, rightConds, otherConds, leftChild.ExplainID(), rightChild.ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -903,7 +938,7 @@ func (p *PhysicalMergeJoin) MarshalJSON() ([]byte, error) {
 			"\"rightPlan\": \"%s\",\n"+
 			"\"desc\": \"%v\""+
 			"}",
-		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID(), p.Desc))
+		eqConds, leftConds, rightConds, otherConds, leftChild.ExplainID(), rightChild.ExplainID(), p.Desc))
 	return buffer.Bytes(), nil
 }
 
@@ -926,7 +961,7 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
 		" \"scanController\": %v,"+
-		" \"child\": \"%s\"\n}", conds, p.controllerStatus != notController, p.children[0].ID()))
+		" \"child\": \"%s\"\n}", conds, p.controllerStatus != notController, p.children[0].ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -948,7 +983,7 @@ func (p *Projection) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-			" \"child\": \"%s\"\n}", exprs, p.children[0].ID()))
+			" \"child\": \"%s\"\n}", exprs, p.children[0].ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -995,7 +1030,7 @@ func (p *Limit) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		" \"limit\": %d,\n"+
 			" \"offset\": %d,\n"+
-			" \"child\": \"%s\"}", p.Count, p.Offset, child.ID()))
+			" \"child\": \"%s\"}", p.Count, p.Offset, child.ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -1043,7 +1078,7 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
 			" \"limit\": %s,\n"+
-			" \"child\": \"%s\"}", exprs, limitCount, p.children[0].ID()))
+			" \"child\": \"%s\"}", exprs, limitCount, p.children[0].ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -1087,7 +1122,7 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		"\"AggFuncs\": %s,\n"+
 			"\"GroupByItems\": %s,\n"+
-			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].ID()))
+			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -1132,4 +1167,44 @@ func (p *Cache) Copy() PhysicalPlan {
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
+}
+
+func buildSchema(p PhysicalPlan) {
+	switch x := p.(type) {
+	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
+		p.SetSchema(p.Children()[0].Schema())
+	case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexJoin:
+		p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
+	case *PhysicalApply:
+		buildSchema(x.PhysicalJoin)
+		x.schema = x.PhysicalJoin.Schema()
+	case *PhysicalHashSemiJoin:
+		if x.WithAux {
+			auxCol := x.schema.Columns[x.Schema().Len()-1]
+			x.SetSchema(x.children[0].Schema().Clone())
+			x.schema.Append(auxCol)
+		} else {
+			x.SetSchema(x.children[0].Schema().Clone())
+		}
+	case *Union:
+		panic("Union shouldn't rebuild schema")
+	}
+}
+
+// rebuildSchema rebuilds the schema for physical plans, because new planner may change indexjoin's schema.
+func rebuildSchema(p PhysicalPlan) bool {
+	needRebuild := false
+	for _, ch := range p.Children() {
+		needRebuild = needRebuild || rebuildSchema(ch.(PhysicalPlan))
+	}
+	if needRebuild {
+		buildSchema(p)
+	}
+	switch p.(type) {
+	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin:
+		needRebuild = true
+	case *Projection, *PhysicalAggregation:
+		needRebuild = false
+	}
+	return needRebuild
 }

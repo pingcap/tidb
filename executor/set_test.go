@@ -19,11 +19,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestSetVar(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)
@@ -79,6 +77,13 @@ func (s *testSuite) TestSetVar(c *C) {
 	testSQL = "SET @@global.autocommit=1, @issue998b=6;"
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @issue998b, @@global.autocommit;`).Check(testkit.Rows("6 1"))
+
+	// For issue 4302
+	testSQL = "use test;drop table if exists x;create table x(a int);insert into x value(1);"
+	tk.MustExec(testSQL)
+	testSQL = "SET @issue4302=(select a from x limit 1);"
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select @issue4302;`).Check(testkit.Rows("1"))
 
 	// Set default
 	// {ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
@@ -153,7 +158,6 @@ func (s *testSuite) TestSetVar(c *C) {
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`SET NAMES latin1`)
 

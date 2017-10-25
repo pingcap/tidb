@@ -42,7 +42,7 @@ func (s *testTableSuite) TestString(c *C) {
 	col.Collate = mysql.DefaultCollationName
 	col.Flag |= mysql.ZerofillFlag | mysql.UnsignedFlag | mysql.BinaryFlag | mysql.AutoIncrementFlag | mysql.NotNullFlag
 
-	c.Assert(col.GetTypeDesc(), Equals, "tinyint(2,1) UNSIGNED")
+	c.Assert(col.GetTypeDesc(), Equals, "tinyint(2) UNSIGNED")
 	col.ToInfo()
 	tbInfo := &model.TableInfo{}
 	c.Assert(col.IsPKHandleColumn(tbInfo), Equals, false)
@@ -183,7 +183,7 @@ func (s *testTableSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeBit),
-			types.NewDatum(types.Bit{Value: 0, Width: types.MinBitWidth}),
+			types.NewMysqlBitDatum(types.ZeroBinaryLiteral),
 		},
 		{
 			types.NewFieldType(mysql.TypeSet),
@@ -199,7 +199,7 @@ func (s *testTableSuite) TestGetZeroValue(c *C) {
 		colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 		zv := GetZeroValue(colInfo)
 		c.Assert(zv.Kind(), Equals, tt.value.Kind())
-		cmp, err := zv.CompareDatum(sc, tt.value)
+		cmp, err := zv.CompareDatum(sc, &tt.value)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -317,7 +317,7 @@ func (s *testTableSuite) TestGetDefaultValue(c *C) {
 			},
 			true,
 			types.NewDatum(zeroTimestamp),
-			errNoDefaultValue,
+			ErrNoDefaultValue,
 		},
 		{
 			&model.ColumnInfo{

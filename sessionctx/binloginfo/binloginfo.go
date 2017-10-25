@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
@@ -71,11 +71,13 @@ func GetPrewriteValue(ctx context.Context, createIfNotExists bool) *binlog.Prewr
 
 // WriteBinlog writes a binlog to Pump.
 func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
-	commitData, _ := info.Data.Marshal()
+	commitData, err := info.Data.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	req := &binlog.WriteBinlogReq{ClusterID: clusterID, Payload: commitData}
 
 	// Retry many times because we may raise CRITICAL error here.
-	var err error
 	for i := 0; i < 20; i++ {
 		var resp *binlog.WriteBinlogResp
 		resp, err = info.Client.WriteBinlog(goctx.Background(), req)

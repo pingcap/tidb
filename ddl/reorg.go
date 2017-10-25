@@ -17,14 +17,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -64,7 +63,7 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	// we will wait 2 * lease outer and try checking again,
 	// so we use a very little timeout here.
 	if d.lease > 0 {
-		waitTimeout = 1 * time.Millisecond
+		waitTimeout = 50 * time.Millisecond
 	}
 
 	// wait reorganization job done or timeout
@@ -90,97 +89,25 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	}
 }
 
-func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
+func (d *ddl) isReorgRunnable() error {
 	if d.isClosed() {
-		// worker is closed, can't run reorganization.
+		// Worker is closed. So it can't do the reorganizational job.
 		return errInvalidWorker.Gen("worker is closed")
 	}
 
-	if !d.isOwner(flag) {
+	select {
+	case <-d.notifyCancelReorgJob:
+		// Job is cancelled. So it can't be done.
+		return errCancelledDDLJob
+	default:
+	}
+
+	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		log.Infof("[ddl] the %s not the %s job owner, txnTS:%d", d.uuid, flag, txn.StartTS())
+		log.Infof("[ddl] the %s not the job owner", d.uuid)
 		return errors.Trace(errNotOwner)
 	}
 	return nil
-}
-
-// delKeysWithStartKey deletes keys with start key in a limited number. If limit < 0, deletes all keys.
-// It returns the number of rows deleted, next start key and the error.
-func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job *model.Job, limit int) (int, kv.Key, error) {
-	limitedDel := limit >= 0
-
-	var count int
-	total := job.GetRowCount()
-	keys := make([]kv.Key, 0, defaultBatchCnt)
-	for {
-		if limitedDel && count >= limit {
-			break
-		}
-		batch := defaultBatchCnt
-		if limitedDel && count+batch > limit {
-			batch = limit - count
-		}
-		startTS := time.Now()
-		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err1 := d.isReorgRunnable(txn, jobType); err1 != nil {
-				return errors.Trace(err1)
-			}
-
-			iter, err := txn.Seek(startKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer iter.Close()
-
-			for i := 0; i < batch; i++ {
-				if iter.Valid() && iter.Key().HasPrefix(prefix) {
-					keys = append(keys, iter.Key().Clone())
-					err = iter.Next()
-					if err != nil {
-						return errors.Trace(err)
-					}
-				} else {
-					break
-				}
-			}
-
-			for _, key := range keys {
-				err := txn.Delete(key)
-				// must skip ErrNotExist
-				// if key doesn't exist, skip this error.
-				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
-					return errors.Trace(err)
-				}
-			}
-
-			count += len(keys)
-			total += int64(len(keys))
-			return nil
-		})
-		sub := time.Since(startTS).Seconds()
-		if err != nil {
-			log.Warnf("[ddl] deleted %d keys failed, take time %v, deleted %d keys in total", len(keys), sub, total)
-			return 0, startKey, errors.Trace(err)
-		}
-
-		// Update the background job's RowCount.
-		job.SetRowCount(total)
-		d.setReorgRowCount(total)
-		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
-		log.Infof("[ddl] deleted %d keys take time %v, deleted %d keys in total", len(keys), sub, total)
-
-		if len(keys) > 0 {
-			startKey = keys[len(keys)-1]
-		}
-
-		if noMoreKeysToDelete := len(keys) < batch; noMoreKeysToDelete {
-			break
-		}
-
-		keys = keys[:0]
-	}
-
-	return count, startKey, nil
 }
 
 type reorgInfo struct {
@@ -215,11 +142,6 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-
-	if info.Handle > 0 {
-		// we have already handled this handle, so use next
-		info.Handle++
 	}
 
 	return info, errors.Trace(err)

@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
@@ -58,6 +59,22 @@ const (
 	// LeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
 	LeftOuterSemiJoin
 )
+
+func (tp JoinType) String() string {
+	switch tp {
+	case InnerJoin:
+		return "inner join"
+	case LeftOuterJoin:
+		return "left outer join"
+	case RightOuterJoin:
+		return "right outer join"
+	case SemiJoin:
+		return "semi join"
+	case LeftOuterSemiJoin:
+		return "left outer semi join"
+	}
+	return "unsupported join type"
+}
 
 const (
 	preferLeftAsOuter = 1 << iota
@@ -142,6 +159,10 @@ type Projection struct {
 	basePhysicalPlan
 
 	Exprs []expression.Expression
+
+	// calculateGenCols indicates the projection is for calculating generated columns.
+	// In *UPDATE*, we should know this to tell different projections.
+	calculateGenCols bool
 }
 
 func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -157,13 +178,13 @@ type LogicalAggregation struct {
 	*basePlan
 	baseLogicalPlan
 
-	AggFuncs     []expression.AggregationFunction
+	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
-
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
 	possibleProperties [][]*expression.Column
+	inputCount         float64 // inputCount is the input count of this plan.
 }
 
 func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -268,6 +289,12 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
+
+	// This is schema the PhysicalUnionScan should be.
+	unionScanSchema *expression.Schema
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
@@ -285,6 +312,14 @@ func (p *DataSource) getPKIsHandleCol() *expression.Column {
 // TableInfo returns the *TableInfo of data source.
 func (p *DataSource) TableInfo() *model.TableInfo {
 	return p.tableInfo
+}
+
+// Schema implements the plan interface.
+func (p *DataSource) Schema() *expression.Schema {
+	if p.unionScanSchema != nil {
+		return p.unionScanSchema
+	}
+	return p.schema
 }
 
 // Union represents Union plan.
@@ -353,6 +388,7 @@ type Update struct {
 	basePhysicalPlan
 
 	OrderedList []*expression.Assignment
+	IgnoreErr   bool
 }
 
 // Delete represents a delete plan.
@@ -365,13 +401,15 @@ type Delete struct {
 	IsMultiTable bool
 }
 
-// AddChild for parent.
-func addChild(parent Plan, child Plan) {
-	if child == nil || parent == nil {
+// setParentAndChildren sets parent and children relationship.
+func setParentAndChildren(parent Plan, children ...Plan) {
+	if children == nil || parent == nil {
 		return
 	}
-	child.AddParent(parent)
-	parent.AddChild(child)
+	for _, child := range children {
+		child.SetParents(parent)
+	}
+	parent.SetChildren(children...)
 }
 
 // InsertPlan means inserting plan between two plans.

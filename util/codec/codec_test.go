@@ -66,8 +66,8 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		},
 
 		{
-			types.MakeDatums(types.Hex{Value: 100}, types.Bit{Value: 100, Width: 8}),
-			types.MakeDatums(int64(100), uint64(100)),
+			types.MakeDatums(types.NewBinaryLiteralFromUint(100, -1), types.NewBinaryLiteralFromUint(100, 4)),
+			types.MakeDatums(uint64(100), uint64(100)),
 		},
 
 		{
@@ -293,7 +293,7 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 	b, u, err := DecodeComparableUvarint(b)
 	c.Assert(err, IsNil)
 	c.Assert(u, Equals, uint64(1))
-	b, i, err = DecodeComparableVarint(b)
+	_, i, err = DecodeComparableVarint(b)
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(2))
 }
@@ -503,7 +503,7 @@ func (s *testCodecSuite) TestBytes(c *C) {
 }
 
 func parseTime(c *C, s string) types.Time {
-	m, err := types.ParseTime(s, mysql.TypeDatetime, types.DefaultFsp)
+	m, err := types.ParseTime(nil, s, mysql.TypeDatetime, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
@@ -772,8 +772,8 @@ func (s *testCodecSuite) TestCut(c *C) {
 		},
 
 		{
-			types.MakeDatums(types.Hex{Value: 100}, types.Bit{Value: 100, Width: 8}),
-			types.MakeDatums(int64(100), uint64(100)),
+			types.MakeDatums(types.NewBinaryLiteralFromUint(100, -1), types.NewBinaryLiteralFromUint(100, 4)),
+			types.MakeDatums(uint64(100), uint64(100)),
 		},
 
 		{

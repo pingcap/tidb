@@ -21,9 +21,18 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
+)
+
+const (
+	unknownClause    = ""
+	fieldList        = "field list"
+	havingClause     = "having clause"
+	onClause         = "on clause"
+	orderByClause    = "order clause"
+	whereClause      = "where clause"
+	groupByStatement = "group statement"
+	showStatement    = "show statement"
 )
 
 // ResolveName resolves table name and column name.
@@ -147,25 +156,11 @@ func (nr *nameResolver) popJoin() {
 // Enter implements ast.Visitor interface.
 func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch v := inNode.(type) {
-	case *ast.AdminStmt:
-		nr.pushContext()
 	case *ast.AggregateFuncExpr:
 		ctx := nr.currentContext()
 		if ctx.inHaving {
 			ctx.inHavingAgg = true
 		}
-	case *ast.AlterTableStmt:
-		nr.pushContext()
-		for _, spec := range v.Specs {
-			if spec.Tp == ast.AlterTableRenameTable {
-				nr.currentContext().inCreateOrDropTable = true
-				break
-			}
-		}
-	case *ast.AnalyzeTableStmt:
-		nr.pushContext()
-	case *ast.DropStatsStmt:
-		nr.pushContext()
 	case *ast.ByItem:
 		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
 			// If ByItem is not a single column name expression,
@@ -179,24 +174,12 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 				return inNode, true
 			}
 		}
-	case *ast.CreateIndexStmt:
-		nr.pushContext()
-	case *ast.CreateTableStmt:
-		nr.pushContext()
-		nr.currentContext().inCreateOrDropTable = true
 	case *ast.ColumnOption:
 		nr.currentContext().inColumnOption = true
 	case *ast.DeleteStmt:
 		nr.pushContext()
 	case *ast.DeleteTableList:
 		nr.currentContext().inDeleteTableList = true
-	case *ast.DoStmt:
-		nr.pushContext()
-	case *ast.DropTableStmt:
-		nr.pushContext()
-		nr.currentContext().inCreateOrDropTable = true
-	case *ast.DropIndexStmt:
-		nr.pushContext()
 	case *ast.FieldList:
 		nr.currentContext().inFieldList = true
 	case *ast.GroupByClause:
@@ -213,23 +196,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inOnCondition = true
 	case *ast.OrderByClause:
 		nr.currentContext().inOrderBy = true
-	case *ast.RenameTableStmt:
-		nr.pushContext()
-		nr.currentContext().inCreateOrDropTable = true
 	case *ast.SelectStmt:
 		nr.pushContext()
-	case *ast.SetStmt:
-		for _, assign := range v.Variables {
-			if cn, ok := assign.Value.(*ast.ColumnNameExpr); ok && cn.Name.Table.L == "" {
-				// Convert column name expression to string value expression.
-				assign.Value = ast.NewValueExpr(cn.Name.Name.O)
-			}
-		}
-		nr.pushContext()
-	case *ast.ShowStmt:
-		nr.pushContext()
-		nr.currentContext().inShow = true
-		nr.fillShowFields(v)
 	case *ast.TableRefsClause:
 		nr.currentContext().inTableRefs = true
 	case *ast.TruncateTableStmt:
@@ -238,6 +206,9 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.pushContext()
 	case *ast.UpdateStmt:
 		nr.pushContext()
+	case *ast.ShowStmt, *ast.SetStmt, *ast.AdminStmt, *ast.CreateTableStmt, *ast.RenameTableStmt, *ast.DropTableStmt,
+		*ast.AlterTableStmt, *ast.CreateIndexStmt, *ast.DropIndexStmt, *ast.AnalyzeTableStmt, *ast.DropStatsStmt, *ast.DoStmt:
+		return inNode, true
 	}
 	return inNode, false
 }
@@ -245,37 +216,19 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 // Leave implements ast.Visitor interface.
 func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	switch v := inNode.(type) {
-	case *ast.AdminStmt:
-		nr.popContext()
 	case *ast.AggregateFuncExpr:
 		ctx := nr.currentContext()
 		if ctx.inHaving {
 			ctx.inHavingAgg = false
 		}
-	case *ast.AlterTableStmt:
-		nr.popContext()
-	case *ast.AnalyzeTableStmt:
-		nr.popContext()
-	case *ast.DropStatsStmt:
-		nr.popContext()
 	case *ast.TableName:
 		nr.handleTableName(v)
 	case *ast.ColumnNameExpr:
 		nr.handleColumnName(v)
-	case *ast.CreateIndexStmt:
-		nr.popContext()
-	case *ast.CreateTableStmt:
-		nr.popContext()
 	case *ast.ColumnOption:
 		nr.currentContext().inColumnOption = false
 	case *ast.DeleteTableList:
 		nr.currentContext().inDeleteTableList = false
-	case *ast.DoStmt:
-		nr.popContext()
-	case *ast.DropIndexStmt:
-		nr.popContext()
-	case *ast.DropTableStmt:
-		nr.popContext()
 	case *ast.TableSource:
 		nr.handleTableSource(v)
 	case *ast.OnCondition:
@@ -305,18 +258,12 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.currentContext().inByItemExpression = false
 	case *ast.PositionExpr:
 		nr.handlePosition(v)
-	case *ast.RenameTableStmt:
-		nr.popContext()
 	case *ast.SelectStmt:
 		ctx := nr.currentContext()
 		v.SetResultFields(ctx.fieldList)
 		if ctx.useOuterContext {
 			nr.useOuterContext = true
 		}
-		nr.popContext()
-	case *ast.SetStmt:
-		nr.popContext()
-	case *ast.ShowStmt:
 		nr.popContext()
 	case *ast.SubqueryExpr:
 		if nr.useOuterContext {
@@ -417,7 +364,6 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		rfs = append(rfs, rf)
 	}
 	tn.SetResultFields(rfs)
-	return
 }
 
 // handleTableSources checks name duplication
@@ -468,7 +414,6 @@ func (nr *nameResolver) handleTableSource(ts *ast.TableSource) {
 		dupNames[name] = struct{}{}
 	}
 	ctx.tables = append(ctx.tables, ts)
-	return
 }
 
 // handleJoin sets result fields for join.
@@ -502,8 +447,11 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 	}
 
 	// Try to resolve the column name from top to bottom in the context stack.
+	var where string
+	var ok bool
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
-		if nr.resolveColumnNameInContext(nr.contextStack[i], cn) {
+		where, ok = nr.resolveColumnNameInContext(nr.contextStack[i], cn)
+		if ok {
 			// Column is already resolved or encountered an error.
 			if i < len(nr.contextStack)-1 {
 				// If in subselect, the query use outer query.
@@ -512,18 +460,23 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 			return
 		}
 	}
-	nr.Err = errors.Errorf("unknown column %s", cn.Name.Name.L)
+	fieldName := cn.Name.Name.String()
+	if len(cn.Name.Table.String()) != 0 {
+		fieldName = fmt.Sprintf("%s.%s", cn.Name.Table.String(), fieldName)
+
+	}
+	nr.Err = ErrUnknownColumn.GenByArgs(fieldName, where)
 }
 
 // resolveColumnNameInContext looks up and sets ResultField for a column with the ctx.
-func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast.ColumnNameExpr) bool {
+func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast.ColumnNameExpr) (string, bool) {
 	if ctx.inTableRefs {
 		// In TableRefsClause, column reference only in join on condition which is handled before.
-		return false
+		return unknownClause, false
 	}
 	if ctx.inFieldList {
 		// only resolve column using tables.
-		return nr.resolveColumnInTableSources(cn, ctx.tables)
+		return fieldList, nr.resolveColumnInTableSources(cn, ctx.tables)
 	}
 	if ctx.inGroupBy {
 		// From tables first, then field list.
@@ -532,7 +485,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		if ctx.inByItemExpression {
 			// From table first, then field list.
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
-				return true
+				return groupByStatement, true
 			}
 			found := nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 			if nr.Err == nil && found {
@@ -541,12 +494,12 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 					nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
 				}
 			}
-			return found
+			return groupByStatement, found
 		}
 		// Resolve from table first, then from select list.
 		found := nr.resolveColumnInTableSources(cn, ctx.tables)
 		if nr.Err != nil {
-			return found
+			return groupByStatement, found
 		}
 		// We should copy the refer here.
 		// Because if the ByItem is an identifier, we should check if it
@@ -555,7 +508,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		r := cn.Refer
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList) {
 			if nr.Err != nil {
-				return true
+				return groupByStatement, true
 			}
 			if r != nil {
 				// It is not ambiguous and already resolved from table source.
@@ -564,45 +517,45 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			} else if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
 				nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
 			}
-			return true
+			return groupByStatement, true
 		}
-		return found
+		return groupByStatement, found
 	}
 	if ctx.inHaving {
 		// First group by, then field list.
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.groupBy) {
-			return true
+			return havingClause, true
 		}
 		if ctx.inHavingAgg {
 			// If cn is in an aggregate function in having clause, check tablesource first.
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
-				return true
+				return havingClause, true
 			}
 		}
-		return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
+		return havingClause, nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 	}
 	if ctx.inOrderBy {
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.groupBy) {
-			return true
+			return orderByClause, true
 		}
 		if ctx.inByItemExpression {
 			// From table first, then field list.
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
-				return true
+				return orderByClause, true
 			}
-			return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
+			return orderByClause, nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 		}
 		// Field list first, then from table.
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList) {
-			return true
+			return orderByClause, true
 		}
-		return nr.resolveColumnInTableSources(cn, ctx.tables)
+		return orderByClause, nr.resolveColumnInTableSources(cn, ctx.tables)
 	}
 	if ctx.inShow {
-		return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
+		return showStatement, nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 	}
 	// In where clause.
-	return nr.resolveColumnInTableSources(cn, ctx.tables)
+	return whereClause, nr.resolveColumnInTableSources(cn, ctx.tables)
 }
 
 // resolveColumnNameInOnCondition resolves the column name in current join.
@@ -611,7 +564,12 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	join := ctx.joinNodeStack[len(ctx.joinNodeStack)-1]
 	tableSources := appendTableSources(nil, join)
 	if !nr.resolveColumnInTableSources(cn, tableSources) {
-		nr.Err = errors.Errorf("unknown column name %s", cn.Name.Name.O)
+		fieldName := cn.Name.Name.String()
+		if len(cn.Name.Table.String()) != 0 {
+			fieldName = fmt.Sprintf("%s.%s", cn.Name.Table.String(), fieldName)
+
+		}
+		nr.Err = ErrUnknownColumn.GenByArgs(fieldName, onClause)
 	}
 }
 
@@ -755,7 +713,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 			tableIdx, ok1 := ctx.tableMap[name]
 			derivedTableIdx, ok2 := ctx.derivedTableMap[name]
 			if !ok1 && !ok2 {
-				nr.Err = errors.Errorf("unknown table %s.", field.WildCard.Table.O)
+				nr.Err = ErrUnknownTable.GenByArgs(field.WildCard.Table.String())
 			}
 			if ok1 {
 				tableRfs = ctx.tables[tableIdx].GetResultFields()
@@ -876,129 +834,4 @@ func (nr *nameResolver) handleUnionSelectList(u *ast.UnionSelectList) {
 		unionFields[i] = &rf
 	}
 	nr.currentContext().fieldList = unionFields
-}
-
-func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
-	if s.DBName == "" {
-		if s.Table != nil && s.Table.Schema.L != "" {
-			s.DBName = s.Table.Schema.O
-		} else {
-			s.DBName = nr.DefaultSchema.O
-		}
-	} else if s.Table != nil && s.Table.Schema.L == "" {
-		s.Table.Schema = model.NewCIStr(s.DBName)
-	}
-	var fields []*ast.ResultField
-	var (
-		names  []string
-		ftypes []byte
-	)
-	switch s.Tp {
-	case ast.ShowEngines:
-		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
-	case ast.ShowDatabases:
-		names = []string{"Database"}
-	case ast.ShowTables:
-		if s.DBName == "" {
-			nr.Err = errors.Trace(ErrNoDB)
-			return
-		}
-		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
-		if s.Full {
-			names = append(names, "Table_type")
-		}
-	case ast.ShowTableStatus:
-		if s.DBName == "" {
-			nr.Err = errors.Trace(ErrNoDB)
-			return
-		}
-		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
-			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
-			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
-			"Create_options", "Comment"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar}
-	case ast.ShowColumns:
-		names = table.ColDescFieldNames(s.Full)
-	case ast.ShowWarnings:
-		names = []string{"Level", "Code", "Message"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
-	case ast.ShowCharset:
-		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
-	case ast.ShowVariables:
-		names = []string{"Variable_name", "Value"}
-	case ast.ShowStatus:
-		names = []string{"Variable_name", "Value"}
-	case ast.ShowCollation:
-		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
-	case ast.ShowCreateTable:
-		names = []string{"Table", "Create Table"}
-	case ast.ShowCreateDatabase:
-		names = []string{"Database", "Create Database"}
-	case ast.ShowGrants:
-		names = []string{fmt.Sprintf("Grants for %s", s.User)}
-	case ast.ShowTriggers:
-		names = []string{"Trigger", "Event", "Table", "Statement", "Timing", "Created",
-			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
-	case ast.ShowProcedureStatus, ast.ShowEvents:
-		names = []string{}
-		ftypes = []byte{}
-	case ast.ShowIndex:
-		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
-			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
-			"Null", "Index_type", "Comment", "Index_comment"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
-	case ast.ShowProcessList:
-		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
-		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
-	case ast.ShowStatsMeta:
-		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
-	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
-			mysql.TypeLonglong, mysql.TypeLonglong}
-	case ast.ShowStatsBuckets:
-		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Bucket_id", "Count",
-			"Repeats", "Lower_Bound", "Upper_Bound"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
-			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
-	}
-	for i, name := range names {
-		f := &ast.ResultField{
-			ColumnAsName: model.NewCIStr(name),
-			Column:       &model.ColumnInfo{}, // Empty column info.
-			Table:        &model.TableInfo{},  // Empty table info.
-		}
-		if ftypes == nil || ftypes[i] == 0 {
-			// use varchar as the default return column type
-			f.Column.Tp = mysql.TypeVarchar
-		} else {
-			f.Column.Tp = ftypes[i]
-		}
-		f.Column.Charset, f.Column.Collate = types.DefaultCharsetForType(f.Column.Tp)
-		f.Expr = &ast.ValueExpr{}
-		f.Expr.SetType(&f.Column.FieldType)
-		fields = append(fields, f)
-	}
-
-	if s.Pattern != nil && s.Pattern.Expr == nil {
-		rf := fields[0]
-		s.Pattern.Expr = &ast.ColumnNameExpr{
-			Name: &ast.ColumnName{Name: rf.ColumnAsName},
-		}
-		ast.SetFlag(s.Pattern)
-	}
-	s.SetResultFields(fields)
-	nr.currentContext().fieldList = fields
 }

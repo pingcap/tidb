@@ -16,6 +16,9 @@ package types
 import (
 	"math"
 	"strconv"
+
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/terror"
 )
 
 // RoundMode is the type for round mode.
@@ -156,6 +159,9 @@ func digitsToWords(digits int) int {
 	return (digits + digitsPerWord - 1) / digitsPerWord
 }
 
+// MyDecimalStructSize is the struct size of MyDecimal.
+const MyDecimalStructSize = 40
+
 // MyDecimal represents a decimal value.
 type MyDecimal struct {
 	digitsInt int8 // the number of *decimal* digits before the point.
@@ -184,7 +190,8 @@ func (d *MyDecimal) GetDigitsFrac() int8 {
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d
-	tmp.Round(&tmp, int(tmp.resultFrac), ModeHalfEven)
+	err := tmp.Round(&tmp, int(tmp.resultFrac), ModeHalfEven)
+	terror.Log(errors.Trace(err))
 	return string(tmp.ToString())
 }
 
@@ -469,7 +476,10 @@ func (d *MyDecimal) Shift(shift int) error {
 		err = ErrTruncated
 		wordsFrac -= lack
 		diff := digitsFrac - wordsFrac*digitsPerWord
-		d.Round(d, digitEnd-point-diff, ModeHalfEven)
+		err1 := d.Round(d, digitEnd-point-diff, ModeHalfEven)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
 		digitEnd -= diff
 		digitsFrac = wordsFrac * digitsPerWord
 		if digitEnd <= digitBegin {
@@ -1351,7 +1361,8 @@ func writeWord(b []byte, word int32, size int) {
 // Compare compares one decimal to another, returns -1/0/1.
 func (d *MyDecimal) Compare(to *MyDecimal) int {
 	if d.negative == to.negative {
-		cmp, _ := doSub(d, to, nil)
+		cmp, err := doSub(d, to, nil)
+		terror.Log(errors.Trace(err))
 		return cmp
 	}
 	if d.negative {
@@ -1735,7 +1746,6 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 		if tmp1 > wordsIntTo {
 			tmp1 -= wordsIntTo
 			tmp2 = tmp1 >> 1
-			wordsInt1 -= tmp2
 			wordsInt2 -= tmp1 - tmp2
 			wordsFrac1 = 0
 			wordsFrac2 = 0
@@ -2130,14 +2140,16 @@ func NewDecFromUint(i uint64) *MyDecimal {
 // NewDecFromFloatForTest creates a MyDecimal from float, as it returns no error, it should only be used in test.
 func NewDecFromFloatForTest(f float64) *MyDecimal {
 	dec := new(MyDecimal)
-	dec.FromFloat64(f)
+	err := dec.FromFloat64(f)
+	terror.Log(errors.Trace(err))
 	return dec
 }
 
 // NewDecFromStringForTest creates a MyDecimal from string, as it returns no error, it should only be used in test.
 func NewDecFromStringForTest(s string) *MyDecimal {
 	dec := new(MyDecimal)
-	dec.FromString([]byte(s))
+	err := dec.FromString([]byte(s))
+	terror.Log(errors.Trace(err))
 	return dec
 }
 
@@ -2154,6 +2166,7 @@ func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 	}
 	str[1+prec-frac] = '.'
 	dec := new(MyDecimal)
-	dec.FromString(str)
+	err := dec.FromString(str)
+	terror.Log(errors.Trace(err))
 	return dec
 }

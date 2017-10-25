@@ -13,30 +13,23 @@ import (
 	"crypto/tls"
 	"database/sql/driver"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
 var (
+	tlsConfigLock     sync.RWMutex
 	tlsConfigRegister map[string]*tls.Config // Register for custom tls.Configs
-
-	errInvalidDSNUnescaped       = errors.New("Invalid DSN: Did you forget to escape a param value?")
-	errInvalidDSNAddr            = errors.New("Invalid DSN: Network Address not terminated (missing closing brace)")
-	errInvalidDSNNoSlash         = errors.New("Invalid DSN: Missing the slash separating the database name")
-	errInvalidDSNUnsafeCollation = errors.New("Invalid DSN: interpolateParams can be used with ascii, latin1, utf8 and utf8mb4 charset")
 )
-
-func init() {
-	tlsConfigRegister = make(map[string]*tls.Config)
-}
 
 // RegisterTLSConfig registers a custom tls.Config to be used with sql.Open.
 // Use the key as a value in the DSN where tls=value.
+//
+// Note: The tls.Config provided to needs to be exclusively owned by the driver after registering.
 //
 //  rootCertPool := x509.NewCertPool()
 //  pem, err := ioutil.ReadFile("/path/ca-cert.pem")
@@ -60,242 +53,34 @@ func init() {
 //
 func RegisterTLSConfig(key string, config *tls.Config) error {
 	if _, isBool := readBool(key); isBool || strings.ToLower(key) == "skip-verify" {
-		return fmt.Errorf("Key '%s' is reserved", key)
+		return fmt.Errorf("key '%s' is reserved", key)
+	}
+
+	tlsConfigLock.Lock()
+	if tlsConfigRegister == nil {
+		tlsConfigRegister = make(map[string]*tls.Config)
 	}
 
 	tlsConfigRegister[key] = config
+	tlsConfigLock.Unlock()
 	return nil
 }
 
 // DeregisterTLSConfig removes the tls.Config associated with key.
 func DeregisterTLSConfig(key string) {
-	delete(tlsConfigRegister, key)
+	tlsConfigLock.Lock()
+	if tlsConfigRegister != nil {
+		delete(tlsConfigRegister, key)
+	}
+	tlsConfigLock.Unlock()
 }
 
-// parseDSN parses the DSN string to a config
-func parseDSN(dsn string) (cfg *config, err error) {
-	// New config with some default values
-	cfg = &config{
-		loc:       time.UTC,
-		collation: defaultCollation,
+func getTLSConfigClone(key string) (config *tls.Config) {
+	tlsConfigLock.RLock()
+	if v, ok := tlsConfigRegister[key]; ok {
+		config = cloneTLSConfig(v)
 	}
-
-	// [user[:password]@][net[(addr)]]/dbname[?param1=value1&paramN=valueN]
-	// Find the last '/' (since the password or the net addr might contain a '/')
-	foundSlash := false
-	for i := len(dsn) - 1; i >= 0; i-- {
-		if dsn[i] == '/' {
-			foundSlash = true
-			var j, k int
-
-			// left part is empty if i <= 0
-			if i > 0 {
-				// [username[:password]@][protocol[(address)]]
-				// Find the last '@' in dsn[:i]
-				for j = i; j >= 0; j-- {
-					if dsn[j] == '@' {
-						// username[:password]
-						// Find the first ':' in dsn[:j]
-						for k = 0; k < j; k++ {
-							if dsn[k] == ':' {
-								cfg.passwd = dsn[k+1 : j]
-								break
-							}
-						}
-						cfg.user = dsn[:k]
-
-						break
-					}
-				}
-
-				// [protocol[(address)]]
-				// Find the first '(' in dsn[j+1:i]
-				for k = j + 1; k < i; k++ {
-					if dsn[k] == '(' {
-						// dsn[i-1] must be == ')' if an address is specified
-						if dsn[i-1] != ')' {
-							if strings.ContainsRune(dsn[k+1:i], ')') {
-								return nil, errInvalidDSNUnescaped
-							}
-							return nil, errInvalidDSNAddr
-						}
-						cfg.addr = dsn[k+1 : i-1]
-						break
-					}
-				}
-				cfg.net = dsn[j+1 : k]
-			}
-
-			// dbname[?param1=value1&...&paramN=valueN]
-			// Find the first '?' in dsn[i+1:]
-			for j = i + 1; j < len(dsn); j++ {
-				if dsn[j] == '?' {
-					if err = parseDSNParams(cfg, dsn[j+1:]); err != nil {
-						return
-					}
-					break
-				}
-			}
-			cfg.dbname = dsn[i+1 : j]
-
-			break
-		}
-	}
-
-	if !foundSlash && len(dsn) > 0 {
-		return nil, errInvalidDSNNoSlash
-	}
-
-	if cfg.interpolateParams && unsafeCollations[cfg.collation] {
-		return nil, errInvalidDSNUnsafeCollation
-	}
-
-	// Set default network if empty
-	if cfg.net == "" {
-		cfg.net = "tcp"
-	}
-
-	// Set default address if empty
-	if cfg.addr == "" {
-		switch cfg.net {
-		case "tcp":
-			cfg.addr = "127.0.0.1:3306"
-		case "unix":
-			cfg.addr = "/tmp/mysql.sock"
-		default:
-			return nil, errors.New("Default addr for network '" + cfg.net + "' unknown")
-		}
-
-	}
-
-	return
-}
-
-// parseDSNParams parses the DSN "query string"
-// Values must be url.QueryEscape'ed
-func parseDSNParams(cfg *config, params string) (err error) {
-	for _, v := range strings.Split(params, "&") {
-		param := strings.SplitN(v, "=", 2)
-		if len(param) != 2 {
-			continue
-		}
-
-		// cfg params
-		switch value := param[1]; param[0] {
-
-		// Enable client side placeholder substitution
-		case "interpolateParams":
-			var isBool bool
-			cfg.interpolateParams, isBool = readBool(value)
-			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
-			}
-
-		// Disable INFILE whitelist / enable all files
-		case "allowAllFiles":
-			var isBool bool
-			cfg.allowAllFiles, isBool = readBool(value)
-			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
-			}
-
-		// Use cleartext authentication mode (MySQL 5.5.10+)
-		case "allowCleartextPasswords":
-			var isBool bool
-			cfg.allowCleartextPasswords, isBool = readBool(value)
-			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
-			}
-
-		// Use old authentication mode (pre MySQL 4.1)
-		case "allowOldPasswords":
-			var isBool bool
-			cfg.allowOldPasswords, isBool = readBool(value)
-			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
-			}
-
-		// Switch "rowsAffected" mode
-		case "clientFoundRows":
-			var isBool bool
-			cfg.clientFoundRows, isBool = readBool(value)
-			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
-			}
-
-		// Collation
-		case "collation":
-			collation, ok := collations[value]
-			if !ok {
-				// Note possibility for false negatives:
-				// could be triggered  although the collation is valid if the
-				// collations map does not contain entries the server supports.
-				err = errors.New("unknown collation")
-				return
-			}
-			cfg.collation = collation
-			break
-
-		case "columnsWithAlias":
-			var isBool bool
-			cfg.columnsWithAlias, isBool = readBool(value)
-			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
-			}
-
-		// Time Location
-		case "loc":
-			if value, err = url.QueryUnescape(value); err != nil {
-				return
-			}
-			cfg.loc, err = time.LoadLocation(value)
-			if err != nil {
-				return
-			}
-
-		// Dial Timeout
-		case "timeout":
-			cfg.timeout, err = time.ParseDuration(value)
-			if err != nil {
-				return
-			}
-
-		// TLS-Encryption
-		case "tls":
-			boolValue, isBool := readBool(value)
-			if isBool {
-				if boolValue {
-					cfg.tls = &tls.Config{}
-				}
-			} else {
-				if strings.ToLower(value) == "skip-verify" {
-					cfg.tls = &tls.Config{InsecureSkipVerify: true}
-				} else if tlsConfig, ok := tlsConfigRegister[value]; ok {
-					if len(tlsConfig.ServerName) == 0 && !tlsConfig.InsecureSkipVerify {
-						host, _, err := net.SplitHostPort(cfg.addr)
-						if err == nil {
-							tlsConfig.ServerName = host
-						}
-					}
-
-					cfg.tls = tlsConfig
-				} else {
-					return fmt.Errorf("Invalid value / unknown config name: %s", value)
-				}
-			}
-
-		default:
-			// lazy init
-			if cfg.params == nil {
-				cfg.params = make(map[string]string)
-			}
-
-			if cfg.params[param[0]], err = url.QueryUnescape(value); err != nil {
-				return
-			}
-		}
-	}
-
+	tlsConfigLock.RUnlock()
 	return
 }
 
@@ -493,7 +278,7 @@ func parseDateTime(str string, loc *time.Location) (t time.Time, err error) {
 		}
 		t, err = time.Parse(timeFormat[:len(str)], str)
 	default:
-		err = fmt.Errorf("Invalid Time-String: %s", str)
+		err = fmt.Errorf("invalid time string: %s", str)
 		return
 	}
 
@@ -542,7 +327,7 @@ func parseBinaryDateTime(num uint64, data []byte, loc *time.Location) (driver.Va
 			loc,
 		), nil
 	}
-	return nil, fmt.Errorf("Invalid DATETIME-packet length %d", num)
+	return nil, fmt.Errorf("invalid DATETIME packet length %d", num)
 }
 
 // zeroDateTime is used in formatBinaryDateTime to avoid an allocation
@@ -577,7 +362,7 @@ func formatBinaryDateTime(src []byte, length uint8, justTime bool) (driver.Value
 		switch len(src) {
 		case 8, 12:
 		default:
-			return nil, fmt.Errorf("Invalid TIME-packet length %d", len(src))
+			return nil, fmt.Errorf("invalid TIME packet length %d", len(src))
 		}
 		// +2 to enable negative time and 100+ hours
 		dst = make([]byte, 0, length+2)
@@ -611,7 +396,7 @@ func formatBinaryDateTime(src []byte, length uint8, justTime bool) (driver.Value
 			if length > 10 {
 				t += "TIME"
 			}
-			return nil, fmt.Errorf("illegal %s-packet length %d", t, len(src))
+			return nil, fmt.Errorf("illegal %s packet length %d", t, len(src))
 		}
 		dst = make([]byte, 0, length)
 		// start with the date
@@ -877,7 +662,7 @@ func escapeBytesBackslash(buf, v []byte) []byte {
 			pos += 2
 		default:
 			buf[pos] = c
-			pos += 1
+			pos++
 		}
 	}
 
@@ -922,7 +707,7 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 			pos += 2
 		default:
 			buf[pos] = c
-			pos += 1
+			pos++
 		}
 	}
 
@@ -970,4 +755,68 @@ func escapeStringQuotes(buf []byte, v string) []byte {
 	}
 
 	return buf[:pos]
+}
+
+/******************************************************************************
+*                               Sync utils                                    *
+******************************************************************************/
+
+// noCopy may be embedded into structs which must not be copied
+// after the first use.
+//
+// See https://github.com/golang/go/issues/8005#issuecomment-190753527
+// for details.
+type noCopy struct{}
+
+// Lock is a no-op used by -copylocks checker from `go vet`.
+func (*noCopy) Lock() {}
+
+// atomicBool is a wrapper around uint32 for usage as a boolean value with
+// atomic access.
+type atomicBool struct {
+	_noCopy noCopy
+	value   uint32
+}
+
+// IsSet returns wether the current boolean value is true
+func (ab *atomicBool) IsSet() bool {
+	return atomic.LoadUint32(&ab.value) > 0
+}
+
+// Set sets the value of the bool regardless of the previous value
+func (ab *atomicBool) Set(value bool) {
+	if value {
+		atomic.StoreUint32(&ab.value, 1)
+	} else {
+		atomic.StoreUint32(&ab.value, 0)
+	}
+}
+
+// TrySet sets the value of the bool and returns wether the value changed
+func (ab *atomicBool) TrySet(value bool) bool {
+	if value {
+		return atomic.SwapUint32(&ab.value, 1) == 0
+	}
+	return atomic.SwapUint32(&ab.value, 0) > 0
+}
+
+// atomicBool is a wrapper for atomically accessed error values
+type atomicError struct {
+	_noCopy noCopy
+	value   atomic.Value
+}
+
+// Set sets the error value regardless of the previous value.
+// The value must not be nil
+func (ae *atomicError) Set(value error) {
+	ae.value.Store(value)
+}
+
+// Value returns the current error value
+func (ae *atomicError) Value() error {
+	if v := ae.value.Load(); v != nil {
+		// this will panic if the value doesn't implement the error interface
+		return v.(error)
+	}
+	return nil
 }

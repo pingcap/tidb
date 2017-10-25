@@ -18,14 +18,19 @@ import (
 	"math"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type processinfoSetter interface {
@@ -36,7 +41,7 @@ type processinfoSetter interface {
 type recordSet struct {
 	fields      []*ast.ResultField
 	executor    Executor
-	stmt        *statement
+	stmt        *ExecStmt
 	processinfo processinfoSetter
 	err         error
 }
@@ -44,10 +49,15 @@ type recordSet struct {
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 	if len(a.fields) == 0 {
 		for _, col := range a.executor.Schema().Columns {
+			dbName := col.DBName.O
+			if dbName == "" && col.TblName.L != "" {
+				dbName = a.stmt.ctx.GetSessionVars().CurrentDB
+			}
 			rf := &ast.ResultField{
 				ColumnAsName: col.ColName,
 				TableAsName:  col.TblName,
-				DBName:       col.DBName,
+				DBName:       model.NewCIStr(dbName),
+				Table:        &model.TableInfo{Name: col.OrigTblName},
 				Column: &model.ColumnInfo{
 					FieldType: *col.RetType,
 					Name:      col.ColName,
@@ -74,7 +84,7 @@ func (a *recordSet) Next() (*ast.Row, error) {
 	if a.stmt != nil {
 		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
-	return &ast.Row{Data: row.Data}, nil
+	return &ast.Row{Data: row}, nil
 }
 
 func (a *recordSet) Close() error {
@@ -86,22 +96,31 @@ func (a *recordSet) Close() error {
 	return errors.Trace(err)
 }
 
-// statement implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
-type statement struct {
-	is infoschema.InfoSchema // The InfoSchema cannot change during execution, so we hold a reference to it.
+// ExecStmt implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
+type ExecStmt struct {
+	// InfoSchema stores a reference to the schema information.
+	InfoSchema infoschema.InfoSchema
+	// Plan stores a reference to the final physical plan.
+	Plan plan.Plan
+	// Expensive represents whether this query is an expensive one.
+	Expensive bool
+	// Cacheable represents whether the physical plan can be cached.
+	Cacheable bool
+	// Text represents the origin query text.
+	Text string
 
 	ctx            context.Context
-	text           string
-	plan           plan.Plan
 	startTime      time.Time
 	isPreparedStmt bool
 }
 
-func (a *statement) OriginText() string {
-	return a.text
+// OriginText implements ast.Statement interface.
+func (a *ExecStmt) OriginText() string {
+	return a.Text
 }
 
-func (a *statement) IsPrepared() bool {
+// IsPrepared implements ast.Statement interface.
+func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
 
@@ -109,27 +128,130 @@ func (a *statement) IsPrepared() bool {
 // This function builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
-func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
+func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	a.ctx = ctx
-	if _, ok := a.plan.(*plan.Execute); !ok {
+
+	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+		oriStats := ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency]
+		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
+		oriIndex := ctx.GetSessionVars().IndexSerialScanConcurrency
+		oriIso := ctx.GetSessionVars().Systems[variable.TxnIsolation]
+		ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = "1"
+		ctx.GetSessionVars().DistSQLScanConcurrency = 1
+		ctx.GetSessionVars().IndexSerialScanConcurrency = 1
+		ctx.GetSessionVars().Systems[variable.TxnIsolation] = ast.ReadCommitted
+		defer func() {
+			ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = oriStats
+			ctx.GetSessionVars().DistSQLScanConcurrency = oriScan
+			ctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
+			ctx.GetSessionVars().Systems[variable.TxnIsolation] = oriIso
+		}()
+	}
+
+	e, err := a.buildExecutor(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err := e.Open(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var pi processinfoSetter
+	if raw, ok := ctx.(processinfoSetter); ok {
+		pi = raw
+		sql := a.OriginText()
+		if simple, ok := a.Plan.(*plan.Simple); ok && simple.Statement != nil {
+			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
+				// Use SecureText to avoid leak password information.
+				sql = ss.SecureText()
+			}
+		}
+		// Update processinfo, ShowProcess() will use it.
+		pi.SetProcessInfo(sql)
+	}
+	// Fields or Schema are only used for statements that return result set.
+	if e.Schema().Len() == 0 {
+		return a.handleNoDelayExecutor(e, ctx, pi)
+	}
+
+	return &recordSet{
+		executor:    e,
+		stmt:        a,
+		processinfo: pi,
+	}, nil
+}
+
+func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
+	// Check if "tidb_snapshot" is set for the write executors.
+	// In history read mode, we can not do write operations.
+	switch e.(type) {
+	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
+		snapshotTS := ctx.GetSessionVars().SnapshotTS
+		if snapshotTS != 0 {
+			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
+		}
+	}
+
+	defer func() {
+		if pi != nil {
+			pi.SetProcessInfo("")
+		}
+		terror.Log(errors.Trace(e.Close()))
+		a.logSlowQuery()
+	}()
+	for {
+		row, err := e.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Even though there isn't any result set, the row is still used to indicate if there is
+		// more work to do.
+		// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
+		// There is no more rows to update.
+		if row == nil {
+			return nil, nil
+		}
+	}
+}
+
+// buildExecutor build a executor from plan, prepared statement may need additional procedure.
+func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
+	priority := kv.PriorityNormal
+	if _, ok := a.Plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
 		var err error
-		if IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.plan) {
-			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.text)
+		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		if isPointGet {
+			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
-			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.text)
+			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
+		if stmtPri := ctx.GetSessionVars().StmtCtx.Priority; stmtPri != mysql.NoPriority {
+			priority = int(stmtPri)
+		} else {
+			switch {
+			case isPointGet:
+				priority = kv.PriorityHigh
+			case a.Expensive:
+				priority = kv.PriorityLow
+			}
+		}
+	}
+	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+		priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.is)
-	e := b.build(a.plan)
+	b := newExecutorBuilder(ctx, a.InfoSchema, priority)
+	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
 	}
@@ -140,77 +262,32 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.text = executorExec.Stmt.Text()
+		a.Text = executorExec.Stmt.Text()
 		a.isPreparedStmt = true
-		a.plan = executorExec.Plan
+		a.Plan = executorExec.Plan
 		e = executorExec.StmtExec
 	}
-
-	err := e.Open()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var pi processinfoSetter
-	if raw, ok := ctx.(processinfoSetter); ok {
-		pi = raw
-		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(a.OriginText())
-	}
-
-	// Fields or Schema are only used for statements that return result set.
-	if e.Schema().Len() == 0 {
-		// Check if "tidb_snapshot" is set for the write executors.
-		// In history read mode, we can not do write operations.
-		switch e.(type) {
-		case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
-			snapshotTS := ctx.GetSessionVars().SnapshotTS
-			if snapshotTS != 0 {
-				return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
-			}
-		}
-
-		defer func() {
-			if pi != nil {
-				pi.SetProcessInfo("")
-			}
-			e.Close()
-			a.logSlowQuery()
-		}()
-		for {
-			row, err := e.Next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			// Even though there isn't any result set, the row is still used to indicate if there is
-			// more work to do.
-			// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
-			// There is no more rows to update.
-			if row == nil {
-				return nil, nil
-			}
-		}
-	}
-
-	return &recordSet{
-		executor:    e,
-		stmt:        a,
-		processinfo: pi,
-	}, nil
+	return e, nil
 }
 
-func (a *statement) logSlowQuery() {
+func (a *ExecStmt) logSlowQuery() {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
-	sql := a.text
-	if len(sql) > cfg.QueryLogMaxlen {
-		sql = sql[:cfg.QueryLogMaxlen] + fmt.Sprintf("(len:%d)", len(sql))
+	sql := a.Text
+	if len(sql) > cfg.Log.QueryLogMaxLen {
+		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
-	if costTime < time.Duration(cfg.SlowThreshold)*time.Millisecond {
-		log.Debugf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
+	logEntry := log.NewEntry(logutil.SlowQueryLogger)
+	logEntry.Data = log.Fields{
+		"connectionId": connID,
+		"costTime":     costTime,
+		"sql":          sql,
+	}
+	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
+		logEntry.WithField("type", "query").Debugf("query")
 	} else {
-		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
+		logEntry.WithField("type", "slow-query").Warnf("slow-query")
 	}
 }
 

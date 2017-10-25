@@ -85,6 +85,10 @@ func (t *testMvccSuite) SetUpTest(c *C) {
 	txn.Commit()
 }
 
+func (t *testMvccSuite) TearDownSuite(c *C) {
+	t.s.Close()
+}
+
 func (t *testMvccSuite) TestMvccGet(c *C) {
 	txn, err := t.s.Begin()
 	c.Assert(err, IsNil)

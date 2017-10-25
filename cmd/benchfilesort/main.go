@@ -24,11 +24,13 @@ import (
 	"runtime/pprof"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/filesort"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -194,7 +196,7 @@ func export() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer outputFile.Close()
+	defer terror.Call(outputFile.Close)
 
 	outputBytes = encodeMeta(outputBytes, scale, keySize, valSize)
 
@@ -230,7 +232,7 @@ func load(ratio int) ([]*comparableRow, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer fd.Close()
+	defer terror.Call(fd.Close)
 
 	err = decodeMeta(fd)
 	if err != nil {
@@ -258,7 +260,8 @@ func load(ratio int) ([]*comparableRow, error) {
 }
 
 func driveGenCmd() {
-	genCmd.Parse(os.Args[2:])
+	err := genCmd.Parse(os.Args[2:])
+	terror.MustNil(err)
 	// Sanity checks
 	if keySize <= 0 {
 		log.Fatal(errors.New("key size must be positive"))
@@ -269,7 +272,7 @@ func driveGenCmd() {
 	if scale <= 0 {
 		log.Fatal(errors.New("scale must be positive"))
 	}
-	if _, err := os.Stat(tmpDir); err != nil {
+	if _, err = os.Stat(tmpDir); err != nil {
 		if os.IsNotExist(err) {
 			log.Fatal(errors.New("tmpDir does not exist"))
 		}
@@ -278,9 +281,8 @@ func driveGenCmd() {
 
 	cLog("Generating...")
 	start := time.Now()
-	if err := export(); err != nil {
-		log.Fatal(err)
-	}
+	err = export()
+	terror.MustNil(err)
 	cLog("Done!")
 	cLogf("Data placed in: %s", path.Join(tmpDir, "data.out"))
 	cLog("Time used: ", time.Since(start))
@@ -288,7 +290,8 @@ func driveGenCmd() {
 }
 
 func driveRunCmd() {
-	runCmd.Parse(os.Args[2:])
+	err := runCmd.Parse(os.Args[2:])
+	terror.MustNil(err)
 	// Sanity checks
 	if bufSize <= 0 {
 		log.Fatal(errors.New("buffer size must be positive"))
@@ -302,11 +305,11 @@ func driveRunCmd() {
 	if outputRatio < 0 || outputRatio > 100 {
 		log.Fatal(errors.New("output ratio must between 0 and 100 (inclusive)"))
 	}
-	if _, err := os.Stat(tmpDir); err != nil {
+	if _, err = os.Stat(tmpDir); err != nil {
 		if os.IsNotExist(err) {
 			log.Fatal(errors.New("tmpDir does not exist"))
 		}
-		log.Fatal(err)
+		terror.MustNil(err)
 	}
 
 	var (
@@ -317,9 +320,7 @@ func driveRunCmd() {
 	cLog("Loading...")
 	start := time.Now()
 	data, err := load(inputRatio)
-	if err != nil {
-		log.Fatal(err)
-	}
+	terror.MustNil(err)
 	cLog("Done!")
 	cLogf("Loaded %d rows", len(data))
 	cLog("Time used: ", time.Since(start))
@@ -332,28 +333,20 @@ func driveRunCmd() {
 		byDesc[i] = false
 	}
 	dir, err = ioutil.TempDir(tmpDir, "benchfilesort_test")
-	if err != nil {
-		log.Fatal(err)
-	}
+	terror.MustNil(err)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(nWorkers).SetDesc(byDesc).SetDir(dir).Build()
-	if err != nil {
-		log.Fatal(err)
-	}
+	terror.MustNil(err)
 
 	if cpuprofile != "" {
 		profile, err = os.Create(cpuprofile)
-		if err != nil {
-			log.Fatal(err)
-		}
+		terror.MustNil(err)
 	}
 
 	cLog("Inputing...")
 	start = time.Now()
 	for _, r := range data {
 		err = fs.Input(r.key, r.val, r.handle)
-		if err != nil {
-			log.Fatal(err)
-		}
+		terror.MustNil(err)
 	}
 	cLog("Done!")
 	cLogf("Input %d rows", len(data))
@@ -364,13 +357,12 @@ func driveRunCmd() {
 	totalRows := int(float64(len(data)) * (float64(outputRatio) / 100.0))
 	start = time.Now()
 	if cpuprofile != "" {
-		pprof.StartCPUProfile(profile)
+		err = pprof.StartCPUProfile(profile)
+		terror.MustNil(err)
 	}
 	for i := 0; i < totalRows; i++ {
 		_, _, _, err = fs.Output()
-		if err != nil {
-			log.Fatal(err)
-		}
+		terror.MustNil(err)
 	}
 	if cpuprofile != "" {
 		pprof.StopCPUProfile()
@@ -383,21 +375,19 @@ func driveRunCmd() {
 	cLog("Closing...")
 	start = time.Now()
 	err = fs.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
+	terror.MustNil(err)
 	cLog("Done!")
 	cLog("Time used: ", time.Since(start))
 	cLog("=================================")
 }
 
 func init() {
-	log.SetLevelByString(logLevel)
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
+	err := logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
+	terror.MustNil(err)
+	cwd, err1 := os.Getwd()
+	terror.MustNil(err1)
 
 	genCmd.StringVar(&tmpDir, "dir", cwd, "where to store the generated rows")
 	genCmd.IntVar(&keySize, "keySize", 8, "the size of key")
@@ -417,9 +407,9 @@ func main() {
 	flag.Parse()
 
 	if len(os.Args) == 1 {
-		fmt.Println("Usage:\n")
-		fmt.Println("\tbenchfilesort command [arguments]\n")
-		fmt.Println("The commands are:\n")
+		fmt.Printf("Usage:\n\n")
+		fmt.Printf("\tbenchfilesort command [arguments]\n\n")
+		fmt.Printf("The commands are:\n\n")
 		fmt.Println("\tgen\t", "generate rows")
 		fmt.Println("\trun\t", "run tests")
 		fmt.Println("")

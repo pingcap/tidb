@@ -14,41 +14,41 @@
 package executor
 
 import (
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
 )
 
-// Compiler compiles an ast.StmtNode to a stmt.Statement.
+// Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
 }
 
-// Compile compiles an ast.StmtNode to an ast.Statement.
-// After preprocessed and validated, it will be optimized to a plan,
-// then wrappped to an adapter *statement as stmt.Statement.
-func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
-	is := GetInfoSchema(ctx)
-	if err := plan.Preprocess(node, is, ctx); err != nil {
+// Compile compiles an ast.StmtNode to a physical plan.
+func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+	infoSchema := GetInfoSchema(ctx)
+	if err := plan.ResolveName(stmtNode, infoSchema, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Validate should be after NameResolve.
-	if err := plan.Validate(node, false); err != nil {
+	// Preprocess should be after NameResolve.
+	if err := plan.Preprocess(ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
 	}
-	p, err := plan.Optimize(ctx, node, is)
+
+	finalPlan, err := plan.Optimize(ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	stmtCount(node, p)
-	sa := &statement{
-		is:   is,
-		plan: p,
-		text: node.Text(),
-	}
-	return sa, nil
+
+	return &ExecStmt{
+		InfoSchema: infoSchema,
+		Plan:       finalPlan,
+		Expensive:  stmtCount(stmtNode, finalPlan, ctx.GetSessionVars().InRestrictedSQL),
+		Cacheable:  plan.Cacheable(stmtNode),
+		Text:       stmtNode.Text(),
+	}, nil
 }
 
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,

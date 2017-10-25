@@ -16,9 +16,10 @@ package localstore
 import (
 	"fmt"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
 )
 
 var (
@@ -119,9 +120,7 @@ func (txn *dbTxn) Commit() error {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	log.Debugf("[kv] commit txn %d", txn.tid)
-	defer func() {
-		txn.close()
-	}()
+	defer terror.Call(txn.close)
 
 	return errors.Trace(txn.doCommit())
 }

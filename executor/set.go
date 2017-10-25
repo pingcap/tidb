@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -41,7 +42,7 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next() (*Row, error) {
+func (e *SetExecutor) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -59,12 +60,16 @@ func (e *SetExecutor) executeSet() error {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
 			// This is set charset stmt.
-			cs := v.Expr.(*expression.Constant).Value.GetString()
+			dt, err := v.Expr.(*expression.Constant).Eval(nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cs := dt.GetString()
 			var co string
 			if v.ExtendValue != nil {
 				co = v.ExtendValue.Value.GetString()
 			}
-			err := e.setCharset(cs, co)
+			err = e.setCharset(cs, co)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -140,8 +145,13 @@ func (e *SetExecutor) executeSet() error {
 					return errors.Trace(err)
 				}
 			}
-			e.loadSnapshotInfoSchemaIfNeeded(name)
-			valStr, _ := value.ToString()
+			err = e.loadSnapshotInfoSchemaIfNeeded(name)
+			if err != nil {
+				sessionVars.SnapshotTS = oldSnapshotTS
+				return errors.Trace(err)
+			}
+			valStr, err := value.ToString()
+			terror.Log(errors.Trace(err))
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 

@@ -138,6 +138,10 @@ func (s *mockStorage) GetOracle() oracle.Oracle {
 	return nil
 }
 
+func (s *mockStorage) SupportDeleteRange() (supported bool) {
+	return false
+}
+
 // MockTxn is used for test cases that need more interfaces than Transaction.
 type MockTxn interface {
 	Transaction

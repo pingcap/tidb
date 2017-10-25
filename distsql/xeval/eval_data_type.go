@@ -58,7 +58,8 @@ func (e *Evaluator) evalColumnRef(val []byte) (types.Datum, error) {
 
 	// TODO: Remove this case.
 	if e.ColVals == nil {
-		d, ok := e.Row[i]
+		var ok bool
+		d, ok = e.Row[i]
 		if !ok {
 			return d, ErrInvalid.Gen("column % x not found", val)
 		}

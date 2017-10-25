@@ -2,10 +2,12 @@ package: github.com/pingcap/tidb
 import:
 - package: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
+- package: github.com/BurntSushi/toml
+  version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - package: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - package: github.com/coreos/etcd
-  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
+  version: v3.2.6
   subpackages:
   - auth/authpb
   - clientv3
@@ -14,7 +16,7 @@ import:
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
-  - pkg/monotime
+  - contrib/recipes
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -24,7 +26,7 @@ import:
 - package: github.com/ghodss/yaml
   version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - package: github.com/go-sql-driver/mysql
-  version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
+  version: 3955978caca48c1658a4bb7a9c6a0f084e326af3
 - package: github.com/golang/protobuf
   version: 8ee79997227bf9b34611aee7946ae64735e6fd93
   subpackages:
@@ -36,8 +38,6 @@ import:
   version: b2c7a7da5b2995941048f60146e67702a292e468
 - package: github.com/ngaut/deadline
   version: fae8f9dfd7048de16575b9d4c255278e38c28a4f
-- package: github.com/ngaut/log
-  version: cec23d3e10b016363780d894a0eb732a12c06e02
 - package: github.com/ngaut/pools
   version: 6352e005618615ffaf1cb1c6622b8e91435751fe
 - package: github.com/ngaut/sync2
@@ -51,7 +51,7 @@ import:
 - package: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - package: github.com/pingcap/goleveldb
-  version: 158edde5a354460121af007d02a00b01c8d03443
+  version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
   - leveldb
   - leveldb/cache
@@ -65,6 +65,8 @@ import:
   - leveldb/storage
   - leveldb/table
   - leveldb/util
+- package: github.com/Sirupsen/logrus
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - package: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - package: golang.org/x/net
@@ -75,6 +77,10 @@ import:
   - http2/hpack
   - internal/timeseries
   - trace
+- package: google.golang.org/genproto
+  version: 6b7d9516179cd47f4714cfeb0103ad1dede756c4
+  subpackages:
+  - googleapis/rpc/status
 - package: google.golang.org/grpc
   version: 3419b42955675df23457629c75f58eb8dcd56954
   subpackages:
@@ -86,8 +92,6 @@ import:
   - naming
   - peer
   - transport
-- package: github.com/ngaut/systimemon
-  version: c2ca1c75c6af5556eb6ce67994120adf12f2ccef
 - package: github.com/cznic/mathutil
   version: 78ad7f262603437f0ecfebc835d80094f89c8f54
 - package: github.com/cznic/parser
@@ -135,21 +139,31 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
+  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
 - package: github.com/pingcap/tipb
-  version: 5e4b9cf7c32d2b09ba71aa9ab6675ec135f9fbd
+  version: eccd39c3992538c382a6351430a77233f42b1344
   subpackages:
   - go-binlog
+  - go-mysqlx
+  - go-mysqlx/Connection
+  - go-mysqlx/Crud
+  - go-mysqlx/Datatypes
+  - go-mysqlx/Expect
+  - go-mysqlx/Expr
+  - go-mysqlx/Notice
+  - go-mysqlx/Resultset
+  - go-mysqlx/Session
+  - go-mysqlx/Sql
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: bef5d90e19c200dff99effb226a5bc336ee6b258
+  version: 3c5b40fb2000acb6b3441d5695cb470a23e8f1b5
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
   - proto
 - package: github.com/prometheus/client_golang
-  version: ^0.8.0
+  version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
   - prometheus/push
 - package: golang.org/x/time
@@ -181,3 +195,56 @@ import:
   version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
 - package: github.com/grpc-ecosystem/go-grpc-prometheus
   version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
+- package: github.com/spaolacci/murmur3
+  version: v1.0
+- package: github.com/pingcap/mysqlx-driver
+  version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
+  repo: git@github.com:pingcap/mysqlx-driver.git
+- package: github.com/apache/thrift
+  version: ">=0.9.3, <0.11.0"
+  subpackages:
+  - lib/go/thrift
+- package: github.com/opentracing/opentracing-go
+  version: ^1
+  subpackages:
+  - ext
+  - log
+- package: github.com/uber/tchannel-go
+  version: ^1.1.0
+  subpackages:
+  - atomic
+  - thrift
+  - thrift/gen-go/meta
+  - tnet
+  - trace/thrift/gen-go/tcollector
+  - typed
+- package: github.com/stretchr/testify
+  version: ^1.1.3
+  subpackages:
+  - assert
+  - require
+  - suite
+- package: github.com/crossdock/crossdock-go
+- package: github.com/uber/jaeger-lib
+  version: ^1.0.0
+  subpackages:
+  - metrics
+- package: github.com/uber/jaeger-client-go
+  version: d021e646f5187d77b55592c3efee1a2810e895d7
+  subpackages:
+  - config
+  - internal/spanlog
+  - log
+  - rpcmetrics
+  - thrift-gen/agent
+  - thrift-gen/jaeger
+  - thrift-gen/sampling
+  - thrift-gen/zipkincore
+  - utils
+- package: github.com/codahale/hdrhistogram
+  version: f8ad88b59a584afeee9d334eff879b104439117b
+- package: github.com/grpc-ecosystem/go-grpc-middleware
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
+  subpackages:
+  - tags
+  - tracing/opentracing

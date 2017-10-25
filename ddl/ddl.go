@@ -22,9 +22,10 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -39,13 +41,31 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
+const (
+	// currentVersion is for all new DDL jobs.
+	currentVersion = 1
+	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
+	ddlPrompt   = "ddl"
+)
+
+var (
+	// TableColumnCountLimit is limit of the number of columns in a table.
+	// It's exported for testing.
+	TableColumnCountLimit = 512
+	// EnableSplitTableRegion is a flag to decide whether to split a new region for
+	// a newly created table. It takes effect only if the Storage supports split
+	// region.
+	EnableSplitTableRegion = false
+)
+
 var (
 	// errWorkerClosed means we have already closed the DDL worker.
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
-	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid ddl job")
-	errInvalidBgJob          = terror.ClassDDL.New(codeInvalidBgJob, "invalid background job")
+	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid DDL job")
+	errCancelledDDLJob       = terror.ClassDDL.New(codeCancelledDDLJob, "cancelled DDL job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
 	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
@@ -67,11 +87,12 @@ var (
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
+	errInvalidJobVersion     = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
-	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errTooManyFields         = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -85,6 +106,7 @@ var (
 	errJSONUsedAsKey = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
 	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
 	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
+	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -116,6 +138,8 @@ var (
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	// ErrWrongNameForIndex returns for wrong index name.
+	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -139,7 +163,7 @@ type DDL interface {
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
-	Stats() (map[string]interface{}, error)
+	Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 	// GetScope gets the status variables scope.
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
@@ -149,11 +173,13 @@ type DDL interface {
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager, and it's used for testing.
-	OwnerManager() OwnerManager
+	OwnerManager() owner.Manager
 	// WorkerVars gets the session variables for DDL worker.
 	WorkerVars() *variable.SessionVars
 	// SetHook sets the hook. It's exported for testing.
 	SetHook(h Callback)
+	// GetHook gets the hook. It's exported for testing.
+	GetHook() Callback
 }
 
 // Event is an event that a ddl operation happened.
@@ -187,7 +213,7 @@ type ddl struct {
 	hook         Callback
 	hookMu       sync.RWMutex
 	store        kv.Storage
-	ownerManager OwnerManager
+	ownerManager owner.Manager
 	schemaSyncer SchemaSyncer
 	// lease is schema seconds.
 	lease        time.Duration
@@ -195,8 +221,7 @@ type ddl struct {
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *Event
-	// Drop database/table job that runs in the background.
-	bgJobCh chan struct{}
+
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
@@ -204,11 +229,15 @@ type ddl struct {
 	reorgDoneCh chan error
 	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
 	reorgRowCount int64
+	// notifyCancelReorgJob is for reorganization, it used to notify the backfilling goroutine if the DDL job is cancelled.
+	notifyCancelReorgJob chan struct{}
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
 
 	workerVars *variable.SessionVars
+
+	delRangeManager delRangeManager
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -242,49 +271,55 @@ func (d *ddl) asyncNotifyEvent(e *Event) {
 
 // NewDDL creates a new DDL.
 func NewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
-	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
-	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease)
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) DDL {
+	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, ctxPool)
 }
 
 func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
-	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) *ddl {
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
 
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
-	var manager OwnerManager
+	var manager owner.Manager
 	var syncer SchemaSyncer
-	// If etcdCli is nil, it's the local store, so use the mockOwnerManager and mockSchemaSyncer.
-	// It's always used for testing.
 	if etcdCli == nil {
-		manager = NewMockOwnerManager(id, cancelFunc)
+		// The etcdCli is nil if the store is localstore which is only used for testing.
+		// So we use mockOwnerManager and mockSchemaSyncer.
+		manager = owner.NewMockManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
-		manager = NewOwnerManager(etcdCli, id, cancelFunc)
+		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
-		infoHandle:   infoHandle,
-		hook:         hook,
-		store:        store,
-		uuid:         id,
-		lease:        lease,
-		ddlJobCh:     make(chan struct{}, 1),
-		ddlJobDoneCh: make(chan struct{}, 1),
-		bgJobCh:      make(chan struct{}, 1),
-		ownerManager: manager,
-		schemaSyncer: syncer,
-		workerVars:   variable.NewSessionVars(),
+		infoHandle:           infoHandle,
+		hook:                 hook,
+		store:                store,
+		uuid:                 id,
+		lease:                lease,
+		ddlJobCh:             make(chan struct{}, 1),
+		ddlJobDoneCh:         make(chan struct{}, 1),
+		notifyCancelReorgJob: make(chan struct{}, 1),
+		ownerManager:         manager,
+		schemaSyncer:         syncer,
+		workerVars:           variable.NewSessionVars(),
 	}
 	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
+	if ctxPool != nil {
+		supportDelRange := store.SupportDeleteRange()
+		d.delRangeManager = newDelRangeManager(d, ctxPool, supportDelRange)
+		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !supportDelRange)
+	} else {
+		d.delRangeManager = newMockDelRangeManager()
+	}
+
 	d.start(ctx)
-
 	variable.RegisterStatistics(d)
-	log.Infof("start DDL:%s", d.uuid)
-
+	log.Infof("[ddl] start DDL:%s", d.uuid)
 	return d
 }
 
@@ -300,31 +335,30 @@ func (d *ddl) Stop() error {
 
 func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
-	d.ownerManager.CampaignOwners(ctx)
-
-	d.wait.Add(2)
-	go d.onBackgroundWorker()
+	err := d.ownerManager.CampaignOwner(ctx)
+	terror.Log(errors.Trace(err))
+	d.wait.Add(1)
 	go d.onDDLWorker()
 
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
-	asyncNotify(d.bgJobCh)
+
+	d.delRangeManager.start()
 }
 
 func (d *ddl) close() {
 	if d.isClosed() {
 		return
 	}
-
 	close(d.quitCh)
 	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
-
 	d.wait.Wait()
+	d.delRangeManager.clear()
 	log.Infof("close DDL:%s", d.uuid)
 }
 
@@ -387,8 +421,17 @@ func (d *ddl) SchemaSyncer() SchemaSyncer {
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
-func (d *ddl) OwnerManager() OwnerManager {
+func (d *ddl) OwnerManager() owner.Manager {
 	return d.ownerManager
+}
+
+func checkJobMaxInterval(job *model.Job) time.Duration {
+	// The job of adding index takes more time to process.
+	// So it uses the longer time.
+	if job.Type == model.ActionAddIndex {
+		return 3 * time.Second
+	}
+	return 1 * time.Second
 }
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
@@ -411,19 +454,18 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	jobID := job.ID
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
-	// But we use etcd to speed up, normally it takes less than 1s now, so we use 3s as the max value.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 3*time.Second))
+	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s or 3s as the max value.
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
 	startTime := time.Now()
-	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
+	jobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
 		ticker.Stop()
-		jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Dec()
+		jobsGauge.WithLabelValues(job.Type.String()).Dec()
 		retLabel := handleJobSucc
 		if err != nil {
 			retLabel = handleJobFailed
 		}
-		handleJobHistogram.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String(),
-			retLabel).Observe(time.Since(startTime).Seconds())
+		handleJobHistogram.WithLabelValues(job.Type.String(), retLabel).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		select {
@@ -436,7 +478,7 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 			log.Errorf("[ddl] get history DDL job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Infof("[ddl] DDL job %d is not in history, maybe not run", jobID)
+			log.Debugf("[ddl] DDL job %d is not in history, maybe not run", jobID)
 			continue
 		}
 
@@ -466,6 +508,14 @@ func (d *ddl) SetHook(h Callback) {
 	d.hook = h
 }
 
+// GetHook implements DDL.GetHook interface.
+func (d *ddl) GetHook() Callback {
+	d.hookMu.RLock()
+	defer d.hookMu.RUnlock()
+
+	return d.hook
+}
+
 func (d *ddl) WorkerVars() *variable.SessionVars {
 	return d.workerVars
 }
@@ -482,13 +532,14 @@ const (
 	codeInvalidWorker         terror.ErrCode = 1
 	codeNotOwner                             = 2
 	codeInvalidDDLJob                        = 3
-	codeInvalidBgJob                         = 4
 	codeInvalidJobFlag                       = 5
 	codeRunMultiSchemaChanges                = 6
 	codeWaitReorgTimeout                     = 7
 	codeInvalidStoreVer                      = 8
 	codeUnknownTypeLength                    = 9
 	codeUnknownFractionLength                = 10
+	codeInvalidJobVersion                    = 11
+	codeCancelledDDLJob                      = 12
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
@@ -509,7 +560,6 @@ const (
 	codeBadField                     = 1054
 	codeTooLongIdent                 = 1059
 	codeDupKeyName                   = 1061
-	codeInvalidDefault               = 1067
 	codeTooLongKey                   = 1071
 	codeKeyColumnDoesNotExits        = 1072
 	codeIncorrectPrefixKey           = 1089
@@ -518,6 +568,7 @@ const (
 	codeBlobCantHaveDefault          = 1101
 	codeWrongDBName                  = 1102
 	codeWrongTableName               = 1103
+	codeTooManyFields                = 1117
 	codeInvalidUseOfNull             = 1138
 	codeWrongColumnName              = 1166
 	codeWrongKeyColumn               = 1167
@@ -527,6 +578,8 @@ const (
 	codeGeneratedColumnNonPrior      = 3107
 	codeDependentByGeneratedColumn   = 3108
 	codeJSONUsedAsKey                = 3152
+	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
+	codeErrTooLongIndexComment       = terror.ErrCode(mysql.ErrTooLongIndexComment)
 )
 
 func init() {
@@ -546,7 +599,6 @@ func init() {
 		codeFileNotFound:                 mysql.ErrFileNotFound,
 		codeErrorOnRename:                mysql.ErrErrorOnRename,
 		codeBadField:                     mysql.ErrBadField,
-		codeInvalidDefault:               mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:             mysql.ErrInvalidUseOfNull,
 		codeUnsupportedOnGeneratedColumn: mysql.ErrUnsupportedOnGeneratedColumn,
 		codeGeneratedColumnNonPrior:      mysql.ErrGeneratedColumnNonPrior,
@@ -555,6 +607,9 @@ func init() {
 		codeBlobCantHaveDefault:          mysql.ErrBlobCantHaveDefault,
 		codeWrongColumnName:              mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
+		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
+		codeTooManyFields:                mysql.ErrTooManyFields,
+		codeErrTooLongIndexComment:       mysql.ErrTooLongIndexComment,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

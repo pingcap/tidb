@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -26,7 +27,7 @@ import (
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *basePhysicalPlan) ToPB(_ context.Context) (*tipb.Executor, error) {
-	return nil, errors.Errorf("plan %s fails converts to PB", p.basePlan.id)
+	return nil, errors.Errorf("plan %d fails converts to PB", p.basePlan.id)
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -37,7 +38,7 @@ func (p *PhysicalAggregation) ToPB(ctx context.Context) (*tipb.Executor, error) 
 		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, expression.AggFuncToPBExpr(sc, client, aggFunc))
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeAggregation, Aggregation: aggExec}, nil
 }
@@ -75,9 +76,10 @@ func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
+	columns := p.Columns
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: distsql.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
+		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
@@ -88,7 +90,14 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	for _, col := range p.schema.Columns {
-		columns = append(columns, p.Table.Columns[col.Position])
+		if col.ID == model.ExtraHandleID {
+			columns = append(columns, &model.ColumnInfo{
+				ID:   model.ExtraHandleID,
+				Name: model.NewCIStr("_rowid"),
+			})
+		} else {
+			columns = append(columns, p.Table.Columns[col.Position])
+		}
 	}
 	idxExec := &tipb.IndexScan{
 		TableId: p.Table.ID,

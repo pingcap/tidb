@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"bytes"
 	"math"
 	"testing"
 
@@ -131,7 +132,7 @@ func encodeKey(key types.Datum) types.Datum {
 }
 
 func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(ctx, numBuckets, id, true)
+	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
 	for {
 		row, err := records.Next()
 		if err != nil {
@@ -140,21 +141,42 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 		if row == nil {
 			break
 		}
-		err = b.Iterate(row.Data)
+		err = b.Iterate(row.Data[0])
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 	}
-	return b.Count, b.Hist, nil
+	return b.Count, b.hist, nil
+}
+
+func calculateScalar(hist *Histogram) {
+	for i, bkt := range hist.Buckets {
+		bkt.lowerScalar, bkt.upperScalar, bkt.commonPfxLen = preCalculateDatumScalar(&bkt.LowerBound, &bkt.UpperBound)
+		hist.Buckets[i] = bkt
+	}
+}
+
+func checkRepeats(c *C, hg *Histogram) {
+	for _, bkt := range hg.Buckets {
+		c.Assert(bkt.Repeats, Greater, int64(0))
+	}
 }
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
 	bucketCount := int64(256)
-	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
+	sketch, _, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 
-	col, err := BuildColumn(ctx, bucketCount, 2, ndv, s.count, 0, s.samples)
+	collector := &SampleCollector{
+		Count:     s.count,
+		NullCount: 0,
+		Samples:   s.samples,
+		Sketch:    sketch,
+	}
+	col, err := BuildColumn(ctx, bucketCount, 2, collector)
+	checkRepeats(c, col)
+	calculateScalar(col)
 	c.Check(err, IsNil)
 	c.Check(len(col.Buckets), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
@@ -165,10 +187,10 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 10000)
 	count, err = col.lessRowCount(sc, types.NewIntDatum(2000))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 19964)
+	c.Check(int(count), Equals, 19995)
 	count, err = col.greaterRowCount(sc, types.NewIntDatum(2000))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 80034)
+	c.Check(int(count), Equals, 80003)
 	count, err = col.lessRowCount(sc, types.NewIntDatum(200000000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 100000)
@@ -180,12 +202,30 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(count, Equals, 0.0)
 	count, err = col.betweenRowCount(sc, types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 5075)
+	c.Check(int(count), Equals, 5008)
 	count, err = col.lessRowCount(sc, types.NewIntDatum(1))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 9)
 
+	builder := SampleBuilder{
+		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
+		RecordSet:     s.pk,
+		ColLen:        1,
+		PkID:          -1,
+		MaxSampleSize: 1000,
+		MaxSketchSize: 1000,
+	}
+	s.pk.Close()
+	collectors, _, err := builder.CollectSamplesAndEstimateNDVs()
+	c.Assert(err, IsNil)
+	c.Assert(len(collectors), Equals, 1)
+	col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0])
+	c.Assert(err, IsNil)
+	checkRepeats(c, col)
+
 	tblCount, col, err := BuildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
+	checkRepeats(c, col)
+	calculateScalar(col)
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, encodeKey(types.NewIntDatum(10000)))
@@ -193,16 +233,18 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 1)
 	count, err = col.lessRowCount(sc, encodeKey(types.NewIntDatum(20000)))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 19983)
+	c.Check(int(count), Equals, 19999)
 	count, err = col.betweenRowCount(sc, encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 4618)
+	c.Check(int(count), Equals, 4999)
 	count, err = col.lessRowCount(sc, encodeKey(types.NewIntDatum(0)))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 0)
 
 	s.pk.(*recordSet).cursor = 0
 	tblCount, col, err = buildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
+	checkRepeats(c, col)
+	calculateScalar(col)
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
@@ -210,13 +252,13 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 1)
 	count, err = col.lessRowCount(sc, types.NewIntDatum(20000))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 20223)
+	c.Check(int(count), Equals, 20000)
 	count, err = col.betweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 5120)
+	c.Check(int(count), Equals, 5000)
 	count, err = col.greaterAndEqRowCount(sc, types.NewIntDatum(1001))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 99232)
+	c.Check(int(count), Equals, 98999)
 	count, err = col.lessAndEqRowCount(sc, types.NewIntDatum(99999))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 100000)
@@ -225,10 +267,100 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 0)
 	count, err = col.greaterRowCount(sc, types.NewIntDatum(1001))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 99231)
+	c.Check(int(count), Equals, 98998)
 	count, err = col.lessRowCount(sc, types.NewIntDatum(99999))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 99999)
+}
+
+func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
+	ctx := mock.NewContext()
+	s.rc.Close()
+	tblCount, col, err := BuildIndex(ctx, 256, 1, ast.RecordSet(s.rc))
+	c.Check(err, IsNil)
+	c.Check(int(tblCount), Equals, 100000)
+
+	p := HistogramToProto(col)
+	h := HistogramFromProto(p)
+	c.Assert(col.NDV, Equals, h.NDV)
+	c.Assert(len(col.Buckets), Equals, len(h.Buckets))
+	for i, bkt := range col.Buckets {
+		c.Assert(bkt.Count, Equals, h.Buckets[i].Count)
+		c.Assert(bkt.Repeats, Equals, h.Buckets[i].Repeats)
+		c.Assert(bytes.Equal(bkt.LowerBound.GetBytes(), h.Buckets[i].LowerBound.GetBytes()), IsTrue)
+		c.Assert(bytes.Equal(bkt.UpperBound.GetBytes(), h.Buckets[i].UpperBound.GetBytes()), IsTrue)
+	}
+}
+
+func mockHistogram(lower, num int64) *Histogram {
+	h := &Histogram{
+		NDV: num,
+	}
+	for i := int64(0); i < num; i++ {
+		bkt := Bucket{
+			LowerBound: types.NewIntDatum(lower + i),
+			UpperBound: types.NewIntDatum(lower + i),
+			Count:      i + 1,
+			Repeats:    1,
+		}
+		h.Buckets = append(h.Buckets, bkt)
+	}
+	return h
+}
+
+func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
+	tests := []struct {
+		leftLower  int64
+		leftNum    int64
+		rightLower int64
+		rightNum   int64
+		bucketNum  int
+		ndv        int64
+	}{
+		{
+			leftLower:  0,
+			leftNum:    0,
+			rightLower: 0,
+			rightNum:   1,
+			bucketNum:  1,
+			ndv:        1,
+		},
+		{
+			leftLower:  0,
+			leftNum:    200,
+			rightLower: 200,
+			rightNum:   200,
+			bucketNum:  200,
+			ndv:        400,
+		},
+		{
+			leftLower:  0,
+			leftNum:    200,
+			rightLower: 199,
+			rightNum:   200,
+			bucketNum:  200,
+			ndv:        399,
+		},
+	}
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	bucketCount := 256
+	for _, t := range tests {
+		lh := mockHistogram(t.leftLower, t.leftNum)
+		rh := mockHistogram(t.rightLower, t.rightNum)
+		h, err := MergeHistograms(sc, lh, rh, bucketCount)
+		c.Assert(err, IsNil)
+		c.Assert(h.NDV, Equals, t.ndv)
+		c.Assert(len(h.Buckets), Equals, t.bucketNum)
+		c.Assert(h.Buckets[len(h.Buckets)-1].Count, Equals, t.leftNum+t.rightNum)
+		expectLower := types.NewIntDatum(t.leftLower)
+		cmp, err := h.Buckets[0].LowerBound.CompareDatum(sc, &expectLower)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+		expectUpper := types.NewIntDatum(t.rightLower + t.rightNum - 1)
+		cmp, err = h.Buckets[len(h.Buckets)-1].UpperBound.CompareDatum(sc, &expectUpper)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
 }
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {
@@ -241,24 +373,31 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	tbl := PseudoTable(ti.ID)
 	c.Assert(tbl.Count, Greater, int64(0))
 	sc := new(variable.StatementContext)
-	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo)
+	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 3333)
-	count, err = tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo)
+	count, err = tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 10)
-	count, err = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo)
+	count, err = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 250)
 }
 
 func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	bucketCount := int64(256)
-	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
+	sketch, _, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 
-	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, 0, s.samples)
+	collector := &SampleCollector{
+		Count:     s.count,
+		NullCount: 0,
+		Samples:   s.samples,
+		Sketch:    sketch,
+	}
+	hg, err := BuildColumn(ctx, bucketCount, 2, collector)
+	calculateScalar(hg)
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
 	tbl := &Table{
@@ -305,12 +444,12 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	ran[0].HighExcl = true
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9964)
+	c.Assert(int(count), Equals, 9995)
 	ran[0].LowExcl = false
 	ran[0].HighExcl = false
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9965)
+	c.Assert(int(count), Equals, 9996)
 	ran[0].Low = ran[0].High
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
@@ -324,6 +463,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 
 	s.pk.(*recordSet).cursor = 0
 	rowCount, hg, err := buildPK(ctx, bucketCount, 0, s.pk)
+	calculateScalar(hg)
 	c.Check(err, IsNil)
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg}

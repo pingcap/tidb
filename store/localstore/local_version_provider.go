@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -49,7 +49,7 @@ func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 			continue
 		}
 
-		if l.lastTimestamp == uint64(ts) {
+		if l.lastTimestamp == ts {
 			l.logical++
 			if l.logical >= 1<<timePrecisionOffset {
 				return kv.Version{}, ErrOverflow

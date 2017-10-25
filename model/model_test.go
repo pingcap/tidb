@@ -148,12 +148,13 @@ func (*testModelSuite) TestJobCodec(c *C) {
 	c.Assert(a, DeepEquals, A{Name: ""})
 	c.Assert(len(newJob.String()), Greater, 0)
 
+	job.BinlogInfo.Clean()
 	b1, err := job.Encode(true)
 	c.Assert(err, IsNil)
 	newJob = &Job{}
 	err = newJob.Decode(b1)
 	c.Assert(err, IsNil)
-	c.Assert(newJob.BinlogInfo, DeepEquals, job.BinlogInfo)
+	c.Assert(newJob.BinlogInfo, DeepEquals, &HistoryInfo{})
 	name = CIStr{}
 	a = A{}
 	err = newJob.DecodeArgs(&name, &a)
@@ -174,7 +175,7 @@ func (*testModelSuite) TestJobCodec(c *C) {
 	c.Assert(name, DeepEquals, NewCIStr("a"))
 	c.Assert(len(newJob.String()), Greater, 0)
 
-	job.State = JobDone
+	job.State = JobStateDone
 	c.Assert(job.IsDone(), IsTrue)
 	c.Assert(job.IsFinished(), IsTrue)
 	c.Assert(job.IsRunning(), IsFalse)
@@ -197,12 +198,12 @@ func (testModelSuite) TestState(c *C) {
 	}
 
 	jobTbl := []JobState{
-		JobRunning,
-		JobDone,
-		JobCancelled,
-		JobRollback,
-		JobRollbackDone,
-		JobSynced,
+		JobStateRunning,
+		JobStateDone,
+		JobStateCancelled,
+		JobStateRollingback,
+		JobStateRollbackDone,
+		JobStateSynced,
 	}
 
 	for _, state := range jobTbl {

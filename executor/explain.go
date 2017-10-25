@@ -21,7 +21,7 @@ import (
 type ExplainExec struct {
 	baseExecutor
 
-	rows   []*Row
+	rows   []Row
 	cursor int
 }
 
@@ -31,7 +31,7 @@ func (e *ExplainExec) Schema() *expression.Schema {
 }
 
 // Next implements Execution Next interface.
-func (e *ExplainExec) Next() (*Row, error) {
+func (e *ExplainExec) Next() (Row, error) {
 	if e.cursor >= len(e.rows) {
 		return nil, nil
 	}

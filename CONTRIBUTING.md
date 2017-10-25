@@ -37,7 +37,7 @@ TiDB is written in [Go](http://golang.org).
 If you don't have a Go development environment,
 please [set one up](http://golang.org/doc/code.html).
 
-The version of GO should be **1.8.1** or above.
+The version of GO should be **1.9** or above.
 
 After installation, you'll need `GOPATH` defined,
 and `PATH` modified to access your Go binaries.
@@ -108,7 +108,7 @@ git remote set-url --push upstream no_push
 # origin    git@github.com:$(user)/tidb.git (fetch)
 # origin    git@github.com:$(user)/tidb.git (push)
 # upstream  https://github.com/pingcap/tidb (fetch)
-# upstream  https://github.com/pingcap/tidb (push)
+# upstream  no_push (push)
 git remote -v
 ```
 
@@ -194,7 +194,7 @@ git push -f origin myfeature
 1. Visit your fork at https://github.com/$user/tidb (replace `$user` obviously).
 2. Click the `Compare & pull request` button next to your `myfeature` branch.
 
-#### Step 8: get a code review
+### Step 8: Get a code review
 
 Once your pull request has been opened, it will be assigned to at least two
 reviewers. Those reviewers will do a thorough code review, looking for

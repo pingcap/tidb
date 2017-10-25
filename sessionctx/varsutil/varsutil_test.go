@@ -118,7 +118,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		{"-6:00", "UTC", true, 6 * time.Hour},
 	}
 	for _, tt := range tests {
-		err := SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
+		err = SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
 		c.Assert(err, IsNil)
 		c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		if tt.compareValue {
@@ -135,6 +135,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
 		SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(str))
+		if modeParts, exists := mysql.CombinationSQLMode[str]; exists {
+			for _, part := range modeParts {
+				mode |= mysql.Str2SQLMode[part]
+			}
+		}
 		c.Assert(v.SQLMode, Equals, mode)
 	}
 

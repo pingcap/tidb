@@ -38,7 +38,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
-	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	time.Sleep(testLease)
@@ -64,7 +64,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rowCount := int64(10)
 	f := func() error {
 		d.setReorgRowCount(rowCount)
-		time.Sleep(4 * testLease)
+		time.Sleep(20 * testLease)
 		return nil
 	}
 	job := &model.Job{}
@@ -127,14 +127,14 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
-	d1 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
 	ctx := testNewContext(d1)
 
-	testCheckOwner(c, d1, true, ddlJobFlag)
+	testCheckOwner(c, d1, true)
 
-	d2 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d2 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d2.Stop()
 
 	dbInfo := testSchemaInfo(c, d1, "test")

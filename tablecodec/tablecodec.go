@@ -140,7 +140,9 @@ func DecodeTableID(key kv.Key) int64 {
 		return 0
 	}
 	key = key[len(tablePrefix):]
-	_, tableID, _ := codec.DecodeInt(key)
+	_, tableID, err := codec.DecodeInt(key)
+	// TODO: return error.
+	terror.Log(errors.Trace(err))
 	return tableID
 }
 
@@ -190,7 +192,10 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
 		if t.Type == mysql.TypeTimestamp && loc != time.UTC {
-			t.ConvertTimeZone(loc, time.UTC)
+			err := t.ConvertTimeZone(loc, time.UTC)
+			if err != nil {
+				return data, errors.Trace(err)
+			}
 		}
 		v, err := t.ToPackedUint()
 		return types.NewUintDatum(v), errors.Trace(err)
@@ -204,37 +209,17 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	case types.KindMysqlSet:
 		data.SetUint64(data.GetMysqlSet().Value)
 		return data, nil
-	case types.KindMysqlBit:
-		data.SetUint64(data.GetMysqlBit().Value)
-		return data, nil
-	case types.KindMysqlHex:
-		data.SetInt64(data.GetMysqlHex().Value)
+	case types.KindBinaryLiteral, types.KindMysqlBit:
+		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+		val, err := data.GetBinaryLiteral().ToInt()
+		if err != nil {
+			return data, errors.Trace(err)
+		}
+		data.SetUint64(val)
 		return data, nil
 	default:
 		return data, nil
 	}
-}
-
-// DecodeValues decodes a byte slice into datums with column types.
-func DecodeValues(data []byte, fts []*types.FieldType, loc *time.Location) ([]types.Datum, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-	values, err := codec.Decode(data, len(fts))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(values) > len(fts) {
-		return nil, errInvalidColumnCount.Gen("invalid column count %d is less than value count %d", len(fts), len(values))
-	}
-
-	for i := range values {
-		values[i], err = unflatten(values[i], fts[i], loc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return values, nil
 }
 
 // DecodeColumnValue decodes data to a Datum according to the column info.
@@ -250,16 +235,18 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	return colDatum, nil
 }
 
-// DecodeRow decodes a byte slice into datums.
+// DecodeRowWithMap decodes a byte slice into datums with a existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
-func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
+func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	if row == nil {
+		row = make(map[int64]types.Datum, len(cols))
+	}
 	if b == nil {
 		return nil, nil
 	}
 	if len(b) == 1 && b[0] == codec.NilFlag {
 		return nil, nil
 	}
-	row := make(map[int64]types.Datum, len(cols))
 	cnt := 0
 	var (
 		data []byte
@@ -300,6 +287,12 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (m
 		}
 	}
 	return row, nil
+}
+
+// DecodeRow decodes a byte slice into datums.
+// Row layout: colID1, value1, colID2, value2, .....
+func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
+	return DecodeRowWithMap(b, cols, loc, nil)
 }
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.
@@ -407,7 +400,10 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 			return datum, errors.Trace(err)
 		}
 		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
-			t.ConvertTimeZone(time.UTC, loc)
+			err = t.ConvertTimeZone(time.UTC, loc)
+			if err != nil {
+				return datum, errors.Trace(err)
+			}
 		}
 		datum.SetMysqlTime(t)
 		return datum, nil
@@ -417,7 +413,10 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		return datum, nil
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
-		enum, _ := types.ParseEnumValue(ft.Elems, datum.GetUint64())
+		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
+		if err != nil {
+			enum = types.Enum{}
+		}
 		datum.SetValue(enum)
 		return datum, nil
 	case mysql.TypeSet:
@@ -428,9 +427,9 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetValue(set)
 		return datum, nil
 	case mysql.TypeBit:
-		bit := types.Bit{Value: datum.GetUint64(), Width: ft.Flen}
-		datum.SetValue(bit)
-		return datum, nil
+		val := datum.GetUint64()
+		byteSize := (ft.Flen + 7) >> 3
+		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
 	}
 	return datum, nil
 }
@@ -526,6 +525,14 @@ func GenTableRecordPrefix(tableID int64) kv.Key {
 func GenTableIndexPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(tablePrefix)+8+len(indexPrefixSep))
 	return appendTableIndexPrefix(buf, tableID)
+}
+
+// GenTablePrefix composes table record and index prefix: "t[tableID]".
+func GenTablePrefix(tableID int64) kv.Key {
+	buf := make([]byte, 0, len(tablePrefix)+8)
+	buf = append(buf, tablePrefix...)
+	buf = codec.EncodeInt(buf, tableID)
+	return buf
 }
 
 // TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.

@@ -20,12 +20,13 @@ import (
 )
 
 type mysqlTime struct {
-	year        uint16 // year <= 9999
-	month       uint8  // month <= 12
-	day         uint8  // day <= 31
-	hour        uint8  // hour <= 23
-	minute      uint8  // minute <= 59
-	second      uint8  // second <= 59
+	year  uint16 // year <= 9999
+	month uint8  // month <= 12
+	day   uint8  // day <= 31
+	// When it's type is Time, HH:MM:SS may be 839:59:59, so use int to avoid overflow.
+	hour        int   // hour <= 23
+	minute      uint8 // minute <= 59
+	second      uint8 // second <= 59
 	microsecond uint32
 }
 
@@ -42,7 +43,7 @@ func (t mysqlTime) Day() int {
 }
 
 func (t mysqlTime) Hour() int {
-	return int(t.hour)
+	return t.hour
 }
 
 func (t mysqlTime) Minute() int {
@@ -103,12 +104,16 @@ func (t mysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	return tm, nil
 }
 
+func (t mysqlTime) IsLeapYear() bool {
+	return (t.year%4 == 0 && t.year%100 != 0) || t.year%400 == 0
+}
+
 func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysqlTime {
 	return mysqlTime{
 		uint16(year),
 		uint8(month),
 		uint8(day),
-		uint8(hour),
+		hour,
 		uint8(minute),
 		uint8(second),
 		uint32(microsecond),
@@ -116,7 +121,7 @@ func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysql
 }
 
 func calcTimeFromSec(to *mysqlTime, seconds, microseconds int) {
-	to.hour = uint8(seconds / 3600)
+	to.hour = seconds / 3600
 	seconds = seconds % 3600
 	to.minute = uint8(seconds / 60)
 	to.second = uint8(seconds % 60)
@@ -130,7 +135,8 @@ const secondsIn24Hour = 86400
 // sign can be +1 or -1, and t2 is preprocessed with sign first.
 func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg bool) {
 	days := calcDaynr(t1.Year(), t1.Month(), t1.Day())
-	days -= sign * calcDaynr(t2.Year(), t2.Month(), t2.Day())
+	days2 := calcDaynr(t2.Year(), t2.Month(), t2.Day())
+	days -= sign * days2
 
 	tmp := (int64(days)*secondsIn24Hour+
 		int64(t1.Hour())*3600+int64(t1.Minute())*60+
@@ -156,16 +162,16 @@ func datetimeToUint64(t TimeInternal) uint64 {
 
 // dateToUint64 converts time value to integer in YYYYMMDD format.
 func dateToUint64(t TimeInternal) uint64 {
-	return (uint64)(uint64(t.Year())*10000 +
+	return uint64(t.Year())*10000 +
 		uint64(t.Month())*100 +
-		uint64(t.Day()))
+		uint64(t.Day())
 }
 
 // timeToUint64 converts time value to integer in HHMMSS format.
 func timeToUint64(t TimeInternal) uint64 {
-	return uint64(uint64(t.Hour())*10000 +
+	return uint64(t.Hour())*10000 +
 		uint64(t.Minute())*100 +
-		uint64(t.Second()))
+		uint64(t.Second())
 }
 
 // calcDaynr calculates days since 0000-00-00.
@@ -241,7 +247,7 @@ func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 	weekYear := wb.test(weekBehaviourYear)
 	firstWeekday := wb.test(weekBehaviourFirstWeekday)
 
-	weekday := calcWeekday(int(firstDaynr), !mondayFirst)
+	weekday := calcWeekday(firstDaynr, !mondayFirst)
 
 	year = int(t.year)
 
@@ -293,7 +299,7 @@ func mixDateAndTime(date, time *mysqlTime, neg bool) {
 	if neg {
 		sign = 1
 	}
-	seconds, microseconds, neg := calcTimeDiff(date, time, sign)
+	seconds, microseconds, _ := calcTimeDiff(date, time, sign)
 
 	// If we want to use this function with arbitrary dates, this code will need
 	// to cover cases when time is negative and "date < -time".
@@ -317,7 +323,7 @@ func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
 
 	year = daynr * 100 / 36525
 	temp := (((year-1)/100 + 1) * 3) / 4
-	dayOfYear := uint(daynr-year*365) - (year-1)/4 + temp
+	dayOfYear := daynr - year*365 - (year-1)/4 + temp
 
 	daysInYear := calcDaysInYear(int(year))
 	for dayOfYear > uint(daysInYear) {

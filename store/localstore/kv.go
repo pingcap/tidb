@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -175,8 +175,8 @@ func (s *dbStore) doCommit(txn *dbTxn) error {
 		return errors.Trace(err)
 	}
 	b := s.db.NewBatch()
-	txn.us.WalkBuffer(func(k kv.Key, value []byte) error {
-		mvccKey := MvccEncodeVersionKey(kv.Key(k), commitVer)
+	err = txn.us.WalkBuffer(func(k kv.Key, value []byte) error {
+		mvccKey := MvccEncodeVersionKey(k, commitVer)
 		if len(value) == 0 { // Deleted marker
 			b.Put(mvccKey, nil)
 			s.compactor.OnDelete(k)
@@ -186,6 +186,9 @@ func (s *dbStore) doCommit(txn *dbTxn) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = s.writeBatch(b)
 	if err != nil {
 		return errors.Trace(err)
@@ -409,6 +412,10 @@ func (s *dbStore) writeBatch(b engine.Batch) error {
 	}
 
 	return nil
+}
+
+func (s *dbStore) SupportDeleteRange() (supported bool) {
+	return false
 }
 
 func (s *dbStore) newBatch() engine.Batch {

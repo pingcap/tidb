@@ -16,10 +16,14 @@ package statistics
 import (
 	"fmt"
 	"sync"
+	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -48,7 +52,7 @@ type SessionStatsCollector struct {
 	mapper tableDeltaMap
 	prev   *SessionStatsCollector
 	next   *SessionStatsCollector
-	// If a session is closed, it only sets this flag true. Every time we sweep the list, we will remove the useless collector.
+	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
 
@@ -121,10 +125,87 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), delta.Delta, delta.Count, id))
+	op := "+"
+	if delta.Delta < 0 {
+		op = "-"
+		delta.Delta = -delta.Delta
+	}
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count %s %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), op, delta.Delta, delta.Count, id))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
+	return errors.Trace(err)
+}
+
+const (
+	// StatsOwnerKey is the stats owner path that is saved to etcd.
+	StatsOwnerKey = "/tidb/stats/owner"
+	// StatsPrompt is the prompt for stats owner manager.
+	StatsPrompt = "stats"
+)
+
+func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
+	if tbl.ModifyCount == 0 {
+		return false
+	}
+	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
+	if time.Since(t) < limit {
+		return false
+	}
+	for _, col := range tbl.Columns {
+		if len(col.Buckets) > 0 {
+			return false
+		}
+	}
+	for _, idx := range tbl.Indices {
+		if len(idx.Buckets) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// HandleAutoAnalyze analyzes the newly created table or index.
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
+	dbs := is.AllSchemaNames()
+	for _, db := range dbs {
+		tbls := is.SchemaTables(model.NewCIStr(db))
+		for _, tbl := range tbls {
+			tblInfo := tbl.Meta()
+			statsTbl := h.GetTableStats(tblInfo.ID)
+			if statsTbl.Pseudo || statsTbl.Count == 0 {
+				continue
+			}
+			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
+			if needAnalyzeTable(statsTbl, 20*h.Lease) {
+				sql := fmt.Sprintf("analyze table %s", tblName)
+				log.Infof("[stats] auto analyze table %s now", tblName)
+				return errors.Trace(h.execAutoAnalyze(sql))
+			}
+			for _, idx := range tblInfo.Indices {
+				if idx.State != model.StatePublic {
+					continue
+				}
+				if _, ok := statsTbl.Indices[idx.ID]; !ok {
+					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
+					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
+					return errors.Trace(h.execAutoAnalyze(sql))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (h *Handle) execAutoAnalyze(sql string) error {
+	startTime := time.Now()
+	_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+	autoAnalyzeHistgram.Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		autoAnalyzeCounter.WithLabelValues("failed").Inc()
+	} else {
+		autoAnalyzeCounter.WithLabelValues("succ").Inc()
+	}
 	return errors.Trace(err)
 }

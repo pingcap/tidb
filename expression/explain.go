@@ -16,13 +16,15 @@ package expression
 import (
 	"bytes"
 	"fmt"
+
+	"github.com/pingcap/tidb/util/types"
 )
 
 // ExplainInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", expr.FuncName.L))
 	for i, arg := range expr.GetArgs() {
-		buffer.WriteString(fmt.Sprintf("%s", arg.ExplainInfo()))
+		buffer.WriteString(arg.ExplainInfo())
 		if i+1 < len(expr.GetArgs()) {
 			buffer.WriteString(", ")
 		}
@@ -38,25 +40,43 @@ func (expr *Column) ExplainInfo() string {
 
 // ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo() string {
-	valStr, err := expr.Value.ToString()
+	dt, err := expr.Eval(nil)
 	if err != nil {
-		valStr = "not recognized const value"
+		if expr.Value.Kind() == types.KindNull {
+			return "null"
+		}
+		return "not recognized const vanue"
+	}
+	valStr, err := dt.ToString()
+	if err != nil {
+		if expr.Value.Kind() == types.KindNull {
+			return "null"
+		}
+		return "not recognized const vanue"
 	}
 	return valStr
 }
 
-// ExplainAggFunc generates explain information for a aggregation function.
-func ExplainAggFunc(agg AggregationFunction) string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.GetName()))
-	if agg.IsDistinct() {
-		buffer.WriteString("distinct ")
-	}
-	for i, arg := range agg.GetArgs() {
-		buffer.WriteString(arg.ExplainInfo())
-		if i+1 < len(agg.GetArgs()) {
+// ExplainExpressionList generates explain information for a list of expressions.
+func ExplainExpressionList(exprs []Expression) []byte {
+	buffer := bytes.NewBufferString("")
+	for i, expr := range exprs {
+		buffer.WriteString(expr.ExplainInfo())
+		if i+1 < len(exprs) {
 			buffer.WriteString(", ")
 		}
 	}
-	buffer.WriteString(")")
-	return buffer.String()
+	return buffer.Bytes()
+}
+
+// ExplainColumnList generates explain information for a list of columns.
+func ExplainColumnList(cols []*Column) []byte {
+	buffer := bytes.NewBufferString("")
+	for i, col := range cols {
+		buffer.WriteString(col.ExplainInfo())
+		if i+1 < len(cols) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.Bytes()
 }

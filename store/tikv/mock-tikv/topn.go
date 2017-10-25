@@ -24,7 +24,6 @@ import (
 
 type sortRow struct {
 	key  []types.Datum
-	meta tipb.RowMeta
 	data [][]byte
 }
 
@@ -49,7 +48,7 @@ func (t *topNSorter) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(t.sc, v2)
+		ret, err := v1.CompareDatum(t.sc, &v2)
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -98,7 +97,7 @@ func (t *topNHeap) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(t.sc, v2)
+		ret, err := v1.CompareDatum(t.sc, &v2)
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -137,31 +136,4 @@ func (t *topNHeap) tryToAddRow(row *sortRow) bool {
 		success = true
 	}
 	return success
-}
-
-// evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
-// And this function will check if this record can replace one of the old records.
-func (h *rpcHandler) evalTopN(ctx *selectContext, handle int64, values map[int64][]byte, columns []*tipb.ColumnInfo) error {
-	err := setColumnValueToEval(ctx.eval, handle, values, ctx.topNColumns)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newRow := &sortRow{
-		meta: tipb.RowMeta{Handle: handle},
-	}
-	for _, item := range ctx.topNHeap.orderByItems {
-		result, err := ctx.eval.Eval(item.Expr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		newRow.key = append(newRow.key, result)
-	}
-	if ctx.topNHeap.tryToAddRow(newRow) {
-		for _, col := range columns {
-			val := values[col.GetColumnId()]
-			newRow.data = append(newRow.data, val)
-			newRow.meta.Length += int64(len(val))
-		}
-	}
-	return errors.Trace(ctx.topNHeap.err)
 }

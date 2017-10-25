@@ -35,6 +35,7 @@ var (
 type RawKVClient struct {
 	clusterID   uint64
 	regionCache *RegionCache
+	pdClient    pd.Client
 	rpcClient   Client
 }
 
@@ -47,8 +48,15 @@ func NewRawKVClient(pdAddrs []string) (*RawKVClient, error) {
 	return &RawKVClient{
 		clusterID:   pdCli.GetClusterID(goctx.TODO()),
 		regionCache: NewRegionCache(pdCli),
+		pdClient:    pdCli,
 		rpcClient:   newRPCClient(),
 	}, nil
+}
+
+// Close closes the client.
+func (c *RawKVClient) Close() error {
+	c.pdClient.Close()
+	return c.rpcClient.Close()
 }
 
 // ClusterID returns the TiKV cluster ID.
@@ -181,7 +189,7 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, *KeyLocation, error) {
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient, kvrpcpb.IsolationLevel_SI)
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)
 		if err != nil {

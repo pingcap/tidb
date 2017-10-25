@@ -90,7 +90,7 @@ func (e *Evaluator) compareTwoChildren(expr *tipb.Expr) (int, error) {
 	if left.IsNull() || right.IsNull() {
 		return compareResultNull, nil
 	}
-	return left.CompareDatum(e.StatementCtx, right)
+	return left.CompareDatum(e.StatementCtx, &right)
 }
 
 func (e *Evaluator) evalLT(cmp int) (types.Datum, error) {
@@ -140,7 +140,7 @@ func (e *Evaluator) evalNullEQ(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	cmp, err := left.CompareDatum(e.StatementCtx, right)
+	cmp, err := left.CompareDatum(e.StatementCtx, &right)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -180,7 +180,7 @@ func (e *Evaluator) evalLike(expr *tipb.Expr) (types.Datum, error) {
 	case matchSuffix:
 		matched = strings.HasSuffix(targetStr, trimmedPattern)
 	case matchMiddle:
-		matched = strings.Index(targetStr, trimmedPattern) != -1
+		matched = strings.Contains(targetStr, trimmedPattern)
 	}
 	if matched {
 		return types.NewIntDatum(1), nil
@@ -267,7 +267,7 @@ func (e *Evaluator) checkIn(target types.Datum, list []types.Datum) (bool, error
 	var outerErr error
 	n := sort.Search(len(list), func(i int) bool {
 		val := list[i]
-		cmp, err := val.CompareDatum(e.StatementCtx, target)
+		cmp, err := val.CompareDatum(e.StatementCtx, &target)
 		if err != nil {
 			outerErr = errors.Trace(err)
 			return false
@@ -280,7 +280,7 @@ func (e *Evaluator) checkIn(target types.Datum, list []types.Datum) (bool, error
 	if n < 0 || n >= len(list) {
 		return false, nil
 	}
-	cmp, err := list[n].CompareDatum(e.StatementCtx, target)
+	cmp, err := list[n].CompareDatum(e.StatementCtx, &target)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

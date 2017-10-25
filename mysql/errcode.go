@@ -890,4 +890,14 @@ const (
 	ErrInvalidJSONPath                                              = 3143
 	ErrInvalidJSONData                                              = 3146
 	ErrJSONUsedAsKey                                                = 3152
+
+	// TiKV/PD errors.
+	ErrPDServerTimeout    = 9001
+	ErrTiKVServerTimeout  = 9002
+	ErrTiKVServerBusy     = 9003
+	ErrResolveLockTimeout = 9004
+	ErrRegionUnavaiable   = 9005
+	ErrGCTooEarly         = 9006
+
+	ErrTxnTooLarge = 9500
 )

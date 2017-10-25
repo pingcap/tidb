@@ -33,7 +33,7 @@ func (s testUtilsSuite) TestIncInt64(c *C) {
 	c.Check(v, Equals, int64(11))
 
 	mb.Set(key, []byte("not int"))
-	v, err = IncInt64(mb, key, 1)
+	_, err = IncInt64(mb, key, 1)
 	c.Check(err, NotNil)
 }
 

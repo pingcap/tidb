@@ -19,92 +19,11 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/model"
 	goctx "golang.org/x/net/context"
 )
 
-var _ OwnerManager = &mockOwnerManager{}
 var _ SchemaSyncer = &mockSchemaSyncer{}
-
-// mockOwnerManager represents the structure which is used for electing owner.
-// It's used for local store and testing.
-// So this worker will always be the ddl owner and background owner.
-type mockOwnerManager struct {
-	ddlOwner int32
-	bgOwner  int32
-	ddlID    string // id is the ID of DDL.
-	cancel   goctx.CancelFunc
-}
-
-// NewMockOwnerManager creates a new mock OwnerManager.
-func NewMockOwnerManager(id string, cancel goctx.CancelFunc) OwnerManager {
-	return &mockOwnerManager{
-		ddlID:  id,
-		cancel: cancel,
-	}
-}
-
-// ID implements mockOwnerManager.ID interface.
-func (m *mockOwnerManager) ID() string {
-	return m.ddlID
-}
-
-// IsOwner implements mockOwnerManager.IsOwner interface.
-func (m *mockOwnerManager) IsOwner() bool {
-	return atomic.LoadInt32(&m.ddlOwner) == 1
-}
-
-// SetOwner implements mockOwnerManager.SetOwner interface.
-func (m *mockOwnerManager) SetOwner(isOwner bool) {
-	if isOwner {
-		atomic.StoreInt32(&m.ddlOwner, 1)
-	} else {
-		atomic.StoreInt32(&m.ddlOwner, 0)
-	}
-}
-
-// Cancel implements mockOwnerManager.Cancel interface.
-func (m *mockOwnerManager) Cancel() {
-	m.cancel()
-}
-
-// IsBgOwner implements mockOwnerManager.IsBgOwner interface.
-func (m *mockOwnerManager) IsBgOwner() bool {
-	return atomic.LoadInt32(&m.bgOwner) == 1
-}
-
-// SetBgOwner implements mockOwnerManager.SetBgOwner interface.
-func (m *mockOwnerManager) SetBgOwner(isOwner bool) {
-	if isOwner {
-		atomic.StoreInt32(&m.bgOwner, 1)
-	} else {
-		atomic.StoreInt32(&m.bgOwner, 0)
-	}
-}
-
-// GetOwnerID implements OwnerManager.GetOwnerID interface.
-func (m *mockOwnerManager) GetOwnerID(ctx goctx.Context, key string) (string, error) {
-	if key != DDLOwnerKey && key != BgOwnerKey {
-		return "", errors.New("invalid owner key")
-	}
-
-	if key == DDLOwnerKey {
-		if m.IsOwner() {
-			return m.ID(), nil
-		}
-		return "", errors.New("no owner")
-	}
-	if m.IsBgOwner() {
-		return m.ID(), nil
-	}
-	return "", errors.New("no owner")
-}
-
-// CampaignOwners implements mockOwnerManager.CampaignOwners interface.
-func (m *mockOwnerManager) CampaignOwners(_ goctx.Context) error {
-	m.SetOwner(true)
-	m.SetBgOwner(true)
-	return nil
-}
 
 const mockCheckVersInterval = 2 * time.Millisecond
 
@@ -155,6 +74,11 @@ func (s *mockSchemaSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, version i
 	return nil
 }
 
+// MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
+func (s *mockSchemaSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, error) {
+	return 0, nil
+}
+
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error {
 	ticker := time.NewTicker(mockCheckVersInterval)
@@ -171,4 +95,27 @@ func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer in
 			}
 		}
 	}
+}
+
+type mockDelRange struct {
+}
+
+// newMockDelRangeManager creates a mock delRangeManager only used for test.
+func newMockDelRangeManager() delRangeManager {
+	return &mockDelRange{}
+}
+
+// addDelRangeJob implements delRangeManager interface.
+func (dr *mockDelRange) addDelRangeJob(job *model.Job) error {
+	return nil
+}
+
+// start implements delRangeManager interface.
+func (dr *mockDelRange) start() {
+	return
+}
+
+// clear implements delRangeManager interface.
+func (dr *mockDelRange) clear() {
+	return
 }

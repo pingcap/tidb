@@ -108,7 +108,7 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 	var stored = [2]bool{false, false}
 	var cols = [2]*table.Column{oldCol, newCol}
 	for i, col := range cols {
-		if len(col.GeneratedExprString) == 0 || col.GeneratedStored {
+		if !col.IsGenerated() || col.GeneratedStored {
 			stored[i] = true
 		}
 	}
@@ -122,10 +122,10 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 		if column == oldCol {
 			colName2Generation[newCol.Name.L] = columnGenerationInDDL{
 				position:    i,
-				generated:   len(newCol.GeneratedExprString) != 0,
+				generated:   newCol.IsGenerated(),
 				dependences: newCol.Dependences,
 			}
-		} else if len(column.GeneratedExprString) == -1 {
+		} else if !column.IsGenerated() {
 			colName2Generation[column.Name.L] = columnGenerationInDDL{
 				position:  i,
 				generated: false,

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -41,7 +41,9 @@ func (s *testBootstrapSuite) SetUpSuite(c *C) {
 
 func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer dom.Close()
+	defer store.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
@@ -51,7 +53,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(row, NotNil)
 	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
-	c.Assert(se.Auth("root@anyhost", []byte(""), []byte("")), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -168,7 +170,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 // TestUpgrade tests upgrading
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store, _ := newStoreWithBootstrap(c, s.dbName)
 	defer store.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
@@ -211,7 +213,9 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(ver, Equals, int64(0))
 
 	// Create a new session then upgrade() will run automatically.
-	BootstrapSession(store)
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	row, err = r.Next()
@@ -228,7 +232,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
 	pwd := "abc"
-	oldpwd := fmt.Sprintf("%X", util.Sha1Hash([]byte(pwd)))
+	oldpwd := fmt.Sprintf("%X", auth.Sha1Hash([]byte(pwd)))
 	newpwd, err := oldPasswordUpgrade(oldpwd)
 	c.Assert(err, IsNil)
 	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")

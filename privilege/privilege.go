@@ -16,6 +16,7 @@ package privilege
 import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -28,7 +29,7 @@ func (k keyType) String() string {
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
-	ShowGrants(ctx context.Context, user string) ([]string, error)
+	ShowGrants(ctx context.Context, user *auth.UserIdentity) ([]string, error)
 
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.

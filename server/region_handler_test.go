@@ -45,9 +45,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 	startKey := codec.EncodeBytes(nil, tablecodec.EncodeTableIndexPrefix(sTableID, sIndex))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -70,9 +70,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	startKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(sTableID))
 	endKey := codec.EncodeBytes(nil, []byte("z_aaaaafdfd"))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -95,9 +95,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C)
 	startKey := codec.EncodeBytes(nil, []byte("m_aaaaafdfd"))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -169,28 +169,44 @@ func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	defer resp.Body.Close()
 }
 
+func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/regions/meta")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	// Verify the resp body.
+	decoder := json.NewDecoder(resp.Body)
+	metas := make([]RegionMeta, 0)
+	err = decoder.Decode(&metas)
+	c.Assert(err, IsNil)
+	for _, meta := range metas {
+		c.Assert(meta.ID != 0, IsTrue)
+	}
+}
+
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := tikv.NewMockTikvStore(tikv.WithCluster(cluster))
+	mvccStore := mocktikv.NewMvccStore()
+	store, err := tikv.NewMockTikvStore(tikv.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
 
 	cfg := &config.Config{
-		Addr:         ":4001",
-		LogLevel:     "debug",
-		StatusAddr:   ":10090",
-		ReportStatus: true,
-		Store:        "tikv",
+		Port:  4001,
+		Store: "tikv",
 	}
+	cfg.Status.StatusPort = 10090
+	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go server.Run()
-	waitUntilServerOnline(cfg.StatusAddr)
+	waitUntilServerOnline(cfg.Status.StatusPort)
 }
 
 func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
@@ -200,7 +216,7 @@ func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
 }
 
 func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("mysql", getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}

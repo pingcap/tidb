@@ -122,6 +122,23 @@ type IndexRange struct {
 	HighExclude bool // High value is exclusive.
 }
 
+// Clone clones a IndexRange.
+func (ir *IndexRange) Clone() *IndexRange {
+	newRange := &IndexRange{
+		LowVal:      make([]Datum, 0, len(ir.LowVal)),
+		HighVal:     make([]Datum, 0, len(ir.HighVal)),
+		LowExclude:  ir.LowExclude,
+		HighExclude: ir.HighExclude,
+	}
+	for i, length := 0, len(ir.LowVal); i < length; i++ {
+		newRange.LowVal = append(newRange.LowVal, ir.LowVal[i])
+	}
+	for i, length := 0, len(ir.HighVal); i < length; i++ {
+		newRange.HighVal = append(newRange.HighVal, ir.HighVal[i])
+	}
+	return newRange
+}
+
 // IsPoint returns if the index range is a point.
 func (ir *IndexRange) IsPoint(sc *variable.StatementContext) bool {
 	if len(ir.LowVal) != len(ir.HighVal) {
@@ -133,7 +150,7 @@ func (ir *IndexRange) IsPoint(sc *variable.StatementContext) bool {
 		if a.Kind() == KindMinNotNull || b.Kind() == KindMaxValue {
 			return false
 		}
-		cmp, err := a.CompareDatum(sc, b)
+		cmp, err := a.CompareDatum(sc, &b)
 		if err != nil {
 			return false
 		}
@@ -202,7 +219,7 @@ func (ir *IndexRange) Align(numColumns int) {
 func (ir *IndexRange) PrefixEqualLen(sc *variable.StatementContext) (int, error) {
 	// Here, len(ir.LowVal) always equal to len(ir.HighVal)
 	for i := 0; i < len(ir.LowVal); i++ {
-		cmp, err := ir.LowVal[i].CompareDatum(sc, ir.HighVal[i])
+		cmp, err := ir.LowVal[i].CompareDatum(sc, &ir.HighVal[i])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

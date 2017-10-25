@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -35,10 +36,14 @@ var (
 	_ PartialResult = &partialResult{}
 )
 
+var selectResultGP = gp.New(2 * time.Minute)
+
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Next gets the next partial result.
 	Next() (PartialResult, error)
+	// NextRaw gets the next raw result.
+	NextRaw() ([]byte, error)
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -66,12 +71,14 @@ type selectResult struct {
 }
 
 type resultWithErr struct {
-	result PartialResult
+	result []byte
 	err    error
 }
 
 func (r *selectResult) Fetch(ctx goctx.Context) {
-	go r.fetch(ctx)
+	selectResultGP.Go(func() {
+		r.fetch(ctx)
+	})
 }
 
 func (r *selectResult) fetch(ctx goctx.Context) {
@@ -90,11 +97,9 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 		if resultSubset == nil {
 			return
 		}
-		pr := &partialResult{}
-		pr.unmarshal(resultSubset)
 
 		select {
-		case r.results <- resultWithErr{result: pr}:
+		case r.results <- resultWithErr{result: resultSubset}:
 		case <-r.closed:
 			// if selectResult called Close() already, make fetch goroutine exit
 			return
@@ -106,6 +111,20 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 
 // Next returns the next row.
 func (r *selectResult) Next() (PartialResult, error) {
+	re := <-r.results
+	if re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	if re.result == nil {
+		return nil, nil
+	}
+	pr := &partialResult{}
+	err := pr.unmarshal(re.result)
+	return pr, errors.Trace(err)
+}
+
+// NextRaw returns the next raw partial result.
+func (r *selectResult) NextRaw() ([]byte, error) {
 	re := <-r.results
 	return re.result, errors.Trace(re.err)
 }
@@ -184,7 +203,7 @@ func (pr *partialResult) Close() error {
 // concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel) (SelectResult, error) {
+func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel, priority int) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics
@@ -196,7 +215,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 	}()
 
 	// Convert tipb.*Request to kv.Request.
-	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder, isolationLevel)
+	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder, isolationLevel, priority)
 	if err1 != nil {
 		err = errors.Trace(err1)
 		return nil, err
@@ -204,8 +223,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, err
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
 		resp:    resp,
@@ -225,55 +243,15 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 	return result, nil
 }
 
-// SelectDAG sends a DAG request, returns SelectResult.
-// concurrency: The max concurrency for underlying coprocessor request.
-// keepOrder: If the result should returned in key order. For example if we need keep data in order by
-//            scan index, we should set keepOrder to true.
-func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, desc bool, isolationLevel kv.IsoLevel) (SelectResult, error) {
-	var err error
-	defer func() {
-		// Add metrics.
-		if err != nil {
-			queryCounter.WithLabelValues(queryFailed).Inc()
-		} else {
-			queryCounter.WithLabelValues(querySucc).Inc()
-		}
-	}()
-
-	kvReq := &kv.Request{
-		Tp:             kv.ReqTypeDAG,
-		Concurrency:    concurrency,
-		KeepOrder:      keepOrder,
-		KeyRanges:      keyRanges,
-		Desc:           desc,
-		IsolationLevel: isolationLevel,
-	}
-	kvReq.Data, err = dag.Marshal()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	resp := client.Send(ctx, kvReq)
-	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, errors.Trace(err)
-	}
-	result := &selectResult{
-		label:   "dag",
-		resp:    resp,
-		results: make(chan resultWithErr, concurrency),
-		closed:  make(chan struct{}),
-	}
-	return result, nil
-}
-
 // Convert tipb.Request to kv.Request.
-func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel) (*kv.Request, error) {
+func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel, priority int) (*kv.Request, error) {
 	kvReq := &kv.Request{
+		StartTs:        req.StartTs,
 		Concurrency:    concurrency,
 		KeepOrder:      keepOrder,
 		KeyRanges:      keyRanges,
 		IsolationLevel: isolationLevel,
+		Priority:       priority,
 	}
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex
@@ -335,7 +313,9 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
 	for _, c := range columns {
 		col := columnToProto(c)
-		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
+		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
+		// is abandoned.
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
 			col.PkHandle = true
 		} else {
 			col.PkHandle = false

@@ -25,8 +25,8 @@ import (
 
 // orderByRow binds a row to its order values, so it can be sorted.
 type orderByRow struct {
-	key []types.Datum
-	row *Row
+	key []*types.Datum
+	row Row
 }
 
 // SortExec represents sorting executor.
@@ -93,7 +93,7 @@ func (e *SortExec) Less(i, j int) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *SortExec) Next() (*Row, error) {
+func (e *SortExec) Next() (Row, error) {
 	if !e.fetched {
 		for {
 			srcRow, err := e.children[0].Next()
@@ -105,13 +105,14 @@ func (e *SortExec) Next() (*Row, error) {
 			}
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]types.Datum, len(e.ByItems)),
+				key: make([]*types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data)
+				key, err := byItem.Expr.Eval(srcRow)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
+				orderRow.key[i] = &key
 			}
 			e.Rows = append(e.Rows, orderRow)
 		}
@@ -183,7 +184,7 @@ func (e *TopNExec) Pop() interface{} {
 }
 
 // Next implements the Executor Next interface.
-func (e *TopNExec) Next() (*Row, error) {
+func (e *TopNExec) Next() (Row, error) {
 	if !e.fetched {
 		e.Idx = int(e.limit.Offset)
 		e.totalCount = int(e.limit.Offset + e.limit.Count)
@@ -204,13 +205,14 @@ func (e *TopNExec) Next() (*Row, error) {
 			// build orderRow from srcRow.
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]types.Datum, len(e.ByItems)),
+				key: make([]*types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data)
+				key, err := byItem.Expr.Eval(srcRow)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
+				orderRow.key[i] = &key
 			}
 			if e.totalCount == e.heapSize {
 				// An equivalent of Push and Pop. We don't use the standard Push and Pop

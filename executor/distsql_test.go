@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"runtime/pprof"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -36,8 +37,8 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 		// Make sure the store is tikv store.
 		return
 	}
-	originSize := executor.LookupTableTaskChannelSize
-	executor.LookupTableTaskChannelSize = 1
+	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
@@ -60,7 +61,7 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	rs.Close()
 	time.Sleep(time.Millisecond * 50)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
-	executor.LookupTableTaskChannelSize = originSize
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
 func checkGoroutineExists(keyword string) bool {

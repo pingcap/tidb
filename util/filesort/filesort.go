@@ -27,6 +27,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -57,7 +58,7 @@ func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, b
 		v1 := i[k]
 		v2 := j[k]
 
-		ret, err := v1.CompareDatum(sc, v2)
+		ret, err := v1.CompareDatum(sc, &v2)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -384,12 +385,12 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
-			im := &item{
+			nextIm := &item{
 				index: im.index,
 				value: row,
 			}
 
-			heap.Push(fs.rowHeap, im)
+			heap.Push(fs.rowHeap, nextIm)
 			if fs.rowHeap.err != nil {
 				return nil, errors.Trace(fs.rowHeap.err)
 			}
@@ -483,7 +484,7 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 			// all workers are busy now, cooldown and retry
 			time.Sleep(cooldownTime)
 		}
-		if time.Now().Sub(origin) >= abortTime {
+		if time.Since(origin) >= abortTime {
 			// weird: all workers are busy for at least 1 min
 			// choose to abort for safety
 			return errors.New("can not make progress since all workers are busy")
@@ -579,7 +580,7 @@ func (w *Worker) flushToFile() {
 		w.err = errors.Trace(err)
 		return
 	}
-	defer outputFile.Close()
+	defer terror.Call(outputFile.Close)
 
 	for _, row := range w.buf {
 		prevLen = len(outputByte)

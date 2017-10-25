@@ -197,6 +197,12 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "skip_networking", "OFF"},
 	{ScopeGlobal, "innodb_monitor_reset", ""},
 	{ScopeNone, "have_ssl", "DISABLED"},
+	{ScopeNone, "have_openssl", "DISABLED"},
+	{ScopeNone, "ssl_ca", ""},
+	{ScopeNone, "ssl_cert", ""},
+	{ScopeNone, "ssl_key", ""},
+	{ScopeNone, "ssl_cipher", ""},
+	{ScopeNone, "tls_version", "TLSv1,TLSv1.1,TLSv1.2"},
 	{ScopeNone, "system_time_zone", "CST"},
 	{ScopeGlobal, "innodb_print_all_deadlocks", "OFF"},
 	{ScopeNone, "innodb_autoinc_lock_mode", "1"},
@@ -417,7 +423,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "version", mysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
 	{ScopeGlobal, "sql_slave_skip_counter", "0"},
-	{ScopeNone, "have_openssl", "DISABLED"},
 	{ScopeGlobal, "innodb_large_prefix", "OFF"},
 	{ScopeNone, "performance_schema_max_cond_classes", "80"},
 	{ScopeGlobal, "innodb_io_capacity", "200"},
@@ -603,12 +608,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBOptInSubqUnFolding, boolToIntStr(DefOptInSubqUnfolding)},
 	{ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBMaxRowCountForINLJ, strconv.Itoa(DefMaxRowCountForINLJ)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
+	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 }
 
@@ -620,6 +627,8 @@ var SetNamesVariables = []string{
 }
 
 const (
+	// CharacterSetConnection is the name for character_set_connection system variable.
+	CharacterSetConnection = "character_set_connection"
 	// CollationConnection is the name for collation_connection system variable.
 	CollationConnection = "collation_connection"
 	// CharsetDatabase is the name for character_set_database system variable.

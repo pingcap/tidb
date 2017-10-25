@@ -73,7 +73,9 @@ var (
 
 func init() {
 	kvMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeKeyExists: mysql.ErrDupEntry,
+		codeKeyExists:     mysql.ErrDupEntry,
+		codeEntryTooLarge: mysql.ErrTooBigRowsize,
+		codeTxnTooLarge:   mysql.ErrTxnTooLarge,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassKV] = kvMySQLErrCodes
 }
@@ -84,9 +86,9 @@ func IsRetryableError(err error) bool {
 		return false
 	}
 
-	if terror.ErrorEqual(err, ErrRetryable) ||
-		terror.ErrorEqual(err, ErrLockConflict) ||
-		terror.ErrorEqual(err, ErrConditionNotMatch) ||
+	if ErrRetryable.Equal(err) ||
+		ErrLockConflict.Equal(err) ||
+		ErrConditionNotMatch.Equal(err) ||
 		// TiKV exception message will tell you if you should retry or not
 		strings.Contains(err.Error(), "try again later") {
 		return true
@@ -97,7 +99,7 @@ func IsRetryableError(err error) bool {
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
-	if terror.ErrorEqual(err, ErrNotExist) {
+	if ErrNotExist.Equal(err) {
 		return true
 	}
 

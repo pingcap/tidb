@@ -22,9 +22,12 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/cache"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -70,6 +73,7 @@ type Prepared struct {
 	Stmt          ast.StmtNode
 	Params        []*ast.ParamMarkerExpr
 	SchemaVersion int64
+	UseCache      bool
 }
 
 // PrepareExec represents a PREPARE executor.
@@ -92,7 +96,7 @@ func (e *PrepareExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next() (*Row, error) {
+func (e *PrepareExec) Next() (Row, error) {
 	e.DoPrepare()
 	return nil, e.Err
 }
@@ -144,7 +148,7 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.Preprocess(stmt, e.IS, e.Ctx)
+	err = plan.ResolveName(stmt, e.IS, e.Ctx)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -159,11 +163,15 @@ func (e *PrepareExec) DoPrepare() {
 	sorter := &paramMarkerSorter{markers: extractor.markers}
 	sort.Sort(sorter)
 	e.ParamCount = len(sorter.markers)
+	for i := 0; i < e.ParamCount; i++ {
+		sorter.markers[i].Order = i
+	}
 	prepared := &Prepared{
 		Stmt:          stmt,
 		Params:        sorter.markers,
 		SchemaVersion: e.IS.SchemaMetaVersion(),
 	}
+	prepared.UseCache = cache.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
 	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
 	if err != nil {
@@ -201,7 +209,7 @@ func (e *ExecuteExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next() (*Row, error) {
+func (e *ExecuteExec) Next() (Row, error) {
 	// Will never be called.
 	return nil, nil
 }
@@ -234,12 +242,16 @@ func (e *ExecuteExec) Build() error {
 		return errors.Trace(ErrWrongParamCount)
 	}
 
+	if cap(vars.PreparedParams) < len(e.UsingVars) {
+		vars.PreparedParams = make([]interface{}, len(e.UsingVars))
+	}
 	for i, usingVar := range e.UsingVars {
 		val, err := usingVar.Eval(nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		prepared.Params[i].SetDatum(val)
+		vars.PreparedParams[i] = val
 	}
 	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
 		// If the schema version has changed we need to prepare it again,
@@ -250,7 +262,7 @@ func (e *ExecuteExec) Build() error {
 		}
 		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
 	}
-	p, err := plan.Optimize(e.Ctx, prepared.Stmt, e.IS)
+	p, err := e.getPhysicalPlan(e.Ctx, e.IS, e.ID, prepared.SchemaVersion, prepared.Stmt, prepared.UseCache)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -262,7 +274,7 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := newExecutorBuilder(e.Ctx, e.IS)
+	b := newExecutorBuilder(e.Ctx, e.IS, kv.PriorityNormal)
 	stmtExec := b.build(p)
 	if b.err != nil {
 		return errors.Trace(b.err)
@@ -271,8 +283,29 @@ func (e *ExecuteExec) Build() error {
 	e.Stmt = prepared.Stmt
 	e.Plan = p
 	ResetStmtCtx(e.Ctx, e.Stmt)
-	stmtCount(e.Stmt, e.Plan)
+	stmtCount(e.Stmt, e.Plan, e.Ctx.GetSessionVars().InRestrictedSQL)
 	return nil
+}
+
+// getPhysicalPlan allows us to reuse the compiled plan of a prepared statement in the same session.
+func (e *ExecuteExec) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema, pstmtID uint32, schemaVer int64, node ast.Node, useCache bool) (plan.Plan, error) {
+	var cacheKey kvcache.Key
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.StmtCtx.UseCache = useCache
+	if useCache {
+		cacheKey = cache.NewPSTMTPlanCacheKey(sessionVars, pstmtID, schemaVer)
+		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
+			return cacheValue.(*cache.PSTMTPlanCacheValue).Plan, nil
+		}
+	}
+	p, err := plan.Optimize(ctx, node, is)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if useCache {
+		ctx.PreparedPlanCache().Put(cacheKey, cache.NewPSTMTPlanCacheValue(p))
+	}
+	return p, err
 }
 
 // DeallocateExec represent a DEALLOCATE executor.
@@ -288,7 +321,7 @@ func (e *DeallocateExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next() (*Row, error) {
+func (e *DeallocateExec) Next() (Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -317,14 +350,14 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		value := ast.NewValueExpr(val)
 		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
 	}
-	sa := &statement{
-		is:   GetInfoSchema(ctx),
-		plan: execPlan,
+	stmt := &ExecStmt{
+		InfoSchema: GetInfoSchema(ctx),
+		Plan:       execPlan,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*Prepared); ok {
-		sa.text = prepared.Stmt.Text()
+		stmt.Text = prepared.Stmt.Text()
 	}
-	return sa
+	return stmt
 }
 
 // ResetStmtCtx resets the StmtContext.
@@ -333,40 +366,64 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(variable.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
-	switch s.(type) {
-	case *ast.UpdateStmt, *ast.DeleteStmt:
+
+	switch stmt := s.(type) {
+	case *ast.UpdateStmt:
 		sc.IgnoreTruncate = false
-		sc.IgnoreOverflow = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.OverflowAsWarning = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+	case *ast.DeleteStmt:
+		sc.IgnoreTruncate = false
+		sc.OverflowAsWarning = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.InUpdateOrDeleteStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
-		sc.IgnoreOverflow = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false
-		sc.IgnoreOverflow = false
+		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
 		sc.IgnoreTruncate = false
-		sc.IgnoreOverflow = false
+		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	case *ast.SelectStmt:
-		sc.IgnoreOverflow = true
+		sc.InSelectStmt = true
+
+		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
+		// said "For statements such as SELECT that do not change data, invalid values
+		// generate a warning in strict mode, not an error."
+		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+		sc.OverflowAsWarning = true
+
 		// Return warning for truncate error in selection.
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = true
+		sc.IgnoreZeroInDate = true
+		if opts := stmt.SelectStmtOpts; opts != nil {
+			sc.Priority = opts.Priority
+			sc.NotFillCache = !opts.SQLCache
+		}
 	default:
 		sc.IgnoreTruncate = true
-		sc.IgnoreOverflow = false
+		sc.OverflowAsWarning = false
 		if show, ok := s.(*ast.ShowStmt); ok {
 			if show.Tp == ast.ShowWarnings {
 				sc.InShowWarning = true
 				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 			}
 		}
+		sc.IgnoreZeroInDate = true
 	}
 	if sessVars.LastInsertID > 0 {
 		sessVars.PrevLastInsertID = sessVars.LastInsertID

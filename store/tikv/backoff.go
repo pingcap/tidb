@@ -19,9 +19,10 @@ import (
 	"math/rand"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
 
@@ -115,6 +116,22 @@ func (t backoffType) String() string {
 	return ""
 }
 
+func (t backoffType) TError() *terror.Error {
+	switch t {
+	case boTiKVRPC:
+		return ErrTiKVServerTimeout
+	case boTxnLock, boTxnLockFast:
+		return ErrResolveLockTimeout
+	case boPDRPC:
+		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
+	case boRegionMiss:
+		return ErrRegionUnavaiable
+	case boServerBusy:
+		return ErrTiKVServerBusy
+	}
+	return terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
+}
+
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	copBuildTaskMaxBackoff  = 5000
@@ -127,7 +144,9 @@ const (
 	cleanupMaxBackoff       = 20000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
+	gcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
+	splitRegionBackoff      = 20000
 )
 
 var commitMaxBackoff = 20000
@@ -179,11 +198,13 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLogLevel() >= log.LOG_LEVEL_DEBUG || i >= len(b.errors)-3 {
+			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {
 				errMsg += "\n" + err.Error()
 			}
 		}
-		return errors.Annotate(errors.New(errMsg), txnRetryableMark)
+		log.Warn(errMsg)
+		// Use the last backoff type to generate a MySQL error.
+		return typ.TError()
 	}
 	return nil
 }
@@ -209,7 +230,7 @@ func (b *Backoffer) Clone() *Backoffer {
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
 // a child context of current Backoffer's context.
 func (b *Backoffer) Fork() (*Backoffer, goctx.CancelFunc) {
-	ctx, cancel := util.WithCancel(b.ctx)
+	ctx, cancel := goctx.WithCancel(b.ctx)
 	return &Backoffer{
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,

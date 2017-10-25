@@ -33,15 +33,13 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
-				row := &Row{
-					Data: types.MakeDatums(
-						db.Name.O,
-						tbl.Name.O,
-						e.versionToTime(statsTbl.Version),
-						statsTbl.ModifyCount,
-						statsTbl.Count,
-					),
-				}
+				row := types.MakeDatums(
+					db.Name.O,
+					tbl.Name.O,
+					e.versionToTime(statsTbl.Version),
+					statsTbl.ModifyCount,
+					statsTbl.Count,
+				)
 				e.rows = append(e.rows, row)
 			}
 		}
@@ -69,18 +67,16 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	return nil
 }
 
-func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) *Row {
-	return &Row{
-		Data: types.MakeDatums(
-			dbName,
-			tblName,
-			colName,
-			isIndex,
-			e.versionToTime(hist.LastUpdateVersion),
-			hist.NDV,
-			hist.NullCount,
-		),
-	}
+func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) Row {
+	return types.MakeDatums(
+		dbName,
+		tblName,
+		colName,
+		isIndex,
+		e.versionToTime(hist.LastUpdateVersion),
+		hist.NDV,
+		hist.NullCount,
+	)
 }
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
@@ -118,12 +114,12 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 
 // bucketsToRows converts histogram buckets to rows. If the histogram is built from index, then numOfCols equals to number
 // of index columns, else numOfCols is 0.
-func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram) ([]*Row, error) {
+func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram) ([]Row, error) {
 	isIndex := 0
 	if numOfCols > 0 {
 		isIndex = 1
 	}
-	var rows []*Row
+	var rows []Row
 	for i, bkt := range hist.Buckets {
 		lowerBoundStr, err := e.valueToString(bkt.LowerBound, numOfCols)
 		if err != nil {
@@ -133,19 +129,17 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row := &Row{
-			Data: types.MakeDatums(
-				dbName,
-				tblName,
-				colName,
-				isIndex,
-				i,
-				bkt.Count,
-				bkt.Repeats,
-				lowerBoundStr,
-				upperBoundStr,
-			),
-		}
+		row := types.MakeDatums(
+			dbName,
+			tblName,
+			colName,
+			isIndex,
+			i,
+			bkt.Count,
+			bkt.Repeats,
+			lowerBoundStr,
+			upperBoundStr,
+		)
 		rows = append(rows, row)
 	}
 	return rows, nil

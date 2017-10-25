@@ -63,115 +63,189 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("create table t(a int, b int)")
 
 	tests := []struct {
-		exprStr   string
-		resultStr string
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
 	}{
 		{
-			exprStr:   "a = 1",
-			resultStr: "[[1,1]]",
+			exprStr:     "a = 1",
+			accessConds: "[eq(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1]]",
 		},
 		{
-			exprStr:   "1 = a",
-			resultStr: "[[1,1]]",
+			exprStr:     "1 = a",
+			accessConds: "[eq(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1]]",
 		},
 		{
-			exprStr:   "a != 1",
-			resultStr: "[(-inf,0] [2,+inf)]",
+			exprStr:     "a != 1",
+			accessConds: "[ne(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,0] [2,+inf)]",
 		},
 		{
-			exprStr:   "1 != a",
-			resultStr: "[(-inf,0] [2,+inf)]",
+			exprStr:     "1 != a",
+			accessConds: "[ne(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,0] [2,+inf)]",
 		},
 		{
-			exprStr:   "a > 1",
-			resultStr: "[[2,+inf)]",
+			exprStr:     "a > 1",
+			accessConds: "[gt(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[2,+inf)]",
 		},
 		{
-			exprStr:   "1 < a",
-			resultStr: "[[2,+inf)]",
+			exprStr:     "1 < a",
+			accessConds: "[lt(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[2,+inf)]",
 		},
 		{
-			exprStr:   "a >= 1",
-			resultStr: "[[1,+inf)]",
+			exprStr:     "a >= 1",
+			accessConds: "[ge(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[1,+inf)]",
 		},
 		{
-			exprStr:   "1 <= a",
-			resultStr: "[[1,+inf)]",
+			exprStr:     "1 <= a",
+			accessConds: "[le(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[1,+inf)]",
 		},
 		{
-			exprStr:   "a < 1",
-			resultStr: "[(-inf,0]]",
+			exprStr:     "a < 1",
+			accessConds: "[lt(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,0]]",
 		},
 		{
-			exprStr:   "1 > a",
-			resultStr: "[(-inf,0]]",
+			exprStr:     "1 > a",
+			accessConds: "[gt(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,0]]",
 		},
 		{
-			exprStr:   "a <= 1",
-			resultStr: "[(-inf,1]]",
+			exprStr:     "a <= 1",
+			accessConds: "[le(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,1]]",
 		},
 		{
-			exprStr:   "1 >= a",
-			resultStr: "[(-inf,1]]",
+			exprStr:     "1 >= test.t.a",
+			accessConds: "[ge(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,1]]",
 		},
 		{
-			exprStr:   "(a)",
-			resultStr: "[(-inf,-1] [1,+inf)]",
+			exprStr:     "(a)",
+			accessConds: "[test.t.a]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,-1] [1,+inf)]",
+		},
+		// TODO: cast will change the extraction behavior of accessCondition.
+		//{
+		//	exprStr:   "a in (1, 3, NULL, 2)",
+		//	resultStr: "[(-inf,-inf) [1,1] [2,2] [3,3]]",
+		//},
+		{
+			exprStr:     `a IN (8,8,81,45)`,
+			accessConds: "[or(or(eq(test.t.a, 8), eq(test.t.a, 8)), or(eq(test.t.a, 81), eq(test.t.a, 45)))]",
+			filterConds: "[]",
+			resultStr:   `[[8,8] [45,45] [81,81]]`,
 		},
 		{
-			exprStr:   "a in (1, 3, NULL, 2)",
-			resultStr: "[(-inf,-inf) [1,1] [2,2] [3,3]]",
+			exprStr:     "a between 1 and 2",
+			accessConds: "[ge(test.t.a, 1) le(test.t.a, 2)]",
+			filterConds: "[]",
+			resultStr:   "[[1,2]]",
 		},
 		{
-			exprStr:   `a IN (8,8,81,45)`,
-			resultStr: `[[8,8] [45,45] [81,81]]`,
+			exprStr:     "a not between 1 and 2",
+			accessConds: "[or(lt(test.t.a, 1), gt(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,0] [3,+inf)]",
+		},
+		// TODO:deal with the case that when compare to null we'll add a cast function.
+		/*
+			{
+				exprStr:   "a not between null and 0",
+				accessConds: "",
+				filterConds: "[]",
+				resultStr: "[(-inf,+inf)]",
+			},
+		*/
+		{
+			exprStr:     "a between 2 and 1",
+			accessConds: "[ge(test.t.a, 2) le(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[]",
 		},
 		{
-			exprStr:   "a between 1 and 2",
-			resultStr: "[[1,2]]",
+			exprStr:     "a not between 2 and 1",
+			accessConds: "[or(lt(test.t.a, 2), gt(test.t.a, 1))]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,+inf)]",
 		},
 		{
-			exprStr:   "a not between 1 and 2",
-			resultStr: "[(-inf,0] [3,+inf)]",
+			exprStr:     "a IS NULL",
+			accessConds: "[isnull(test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,-inf)]",
 		},
 		{
-			exprStr:   "a not between null and 0",
-			resultStr: "[(-inf,+inf)]",
+			exprStr:     "a IS NOT NULL",
+			accessConds: "[not(isnull(test.t.a))]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,+inf)]",
 		},
 		{
-			exprStr:   "a between 2 and 1",
-			resultStr: "[]",
+			exprStr:     "a IS TRUE",
+			accessConds: "[istrue(test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,-1] [1,+inf)]",
 		},
 		{
-			exprStr:   "a not between 2 and 1",
-			resultStr: "[(-inf,+inf)]",
+			exprStr:     "a IS NOT TRUE",
+			accessConds: "[not(istrue(test.t.a))]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,-inf) [0,0]]",
 		},
 		{
-			exprStr:   "a IS NULL",
-			resultStr: "[(-inf,-inf)]",
+			exprStr:     "a IS FALSE",
+			accessConds: "[isfalse(test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[0,0]]",
 		},
 		{
-			exprStr:   "a IS NOT NULL",
-			resultStr: "[(-inf,+inf)]",
+			exprStr:     "a IS NOT FALSE",
+			accessConds: "[not(isfalse(test.t.a))]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,-1] [1,+inf)]",
 		},
 		{
-			exprStr:   "a IS TRUE",
-			resultStr: "[(-inf,-1] [1,+inf)]",
+			exprStr:     "a = 1 or a = 3 or a = 4 or (a > 1 and (a = -1 or a = 5))",
+			accessConds: "[or(or(eq(test.t.a, 1), eq(test.t.a, 3)), or(eq(test.t.a, 4), and(gt(test.t.a, 1), or(eq(test.t.a, -1), eq(test.t.a, 5)))))]",
+			filterConds: "[]",
+			resultStr:   "[[1,1] [3,3] [4,4] [5,5]]",
 		},
 		{
-			exprStr:   "a IS NOT TRUE",
-			resultStr: "[(-inf,-inf) [0,0]]",
+			exprStr:     "(a = 1 and b = 1) or (a = 2 and b = 2)",
+			accessConds: "[or(eq(test.t.a, 1), eq(test.t.a, 2))]",
+			filterConds: "[or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))]",
+			resultStr:   "[[1,1] [2,2]]",
 		},
 		{
-			exprStr:   "a IS FALSE",
-			resultStr: "[[0,0]]",
-		},
-		{
-			exprStr:   "a IS NOT FALSE",
-			resultStr: "[(-inf,-1] [1,+inf)]",
+			exprStr:     "a = 1 or a = 3 or a = 4 or (b > 1 and (a = -1 or a = 5))",
+			accessConds: "[or(or(eq(test.t.a, 1), eq(test.t.a, 3)), or(eq(test.t.a, 4), or(eq(test.t.a, -1), eq(test.t.a, 5))))]",
+			filterConds: "[or(or(or(eq(test.t.a, 1), eq(test.t.a, 3)), eq(test.t.a, 4)), and(gt(test.t.b, 1), or(eq(test.t.a, -1), eq(test.t.a, 5))))]",
+			resultStr:   "[[-1,-1] [1,1] [3,3] [4,4] [5,5]]",
 		},
 	}
 
@@ -188,9 +262,9 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
 		for _, child := range p.Children() {
-			plan, ok := child.(*plan.Selection)
+			p, ok := child.(*plan.Selection)
 			if ok {
-				selection = plan
+				selection = p
 				break
 			}
 		}
@@ -202,7 +276,11 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 		c.Assert(col, NotNil)
-		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
+		var filter []expression.Expression
+		conds, filter = ranger.DetachCondsForTableRange(ctx, conds, col)
+		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -289,9 +367,9 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
 		for _, child := range p.Children() {
-			plan, ok := child.(*plan.Selection)
+			p, ok := child.(*plan.Selection)
 			if ok {
-				selection = plan
+				selection = p
 				break
 			}
 		}
@@ -303,7 +381,8 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[0])
 		c.Assert(cols, NotNil)
-		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
+		conds, _ = ranger.DetachIndexConditions(conds, cols, lengths)
+		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -380,10 +459,11 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			exprStr:   "(a)",
 			resultStr: "[[-inf,0) (0,+inf]]",
 		},
-		{
-			exprStr:   "a in (1, 3, NULL, 2)",
-			resultStr: "[[<nil>,<nil>] [1,1] [2,2] [3,3]]",
-		},
+		// TODO: cast will change the extraction behavior of accessCondition.
+		//{
+		//	exprStr:   "a in (1, 3, NULL, 2)",
+		//	resultStr: "[[<nil>,<nil>] [1,1] [2,2] [3,3]]",
+		//},
 		{
 			exprStr:   `a IN (8,8,81,45)`,
 			resultStr: `[[8,8] [45,45] [81,81]]`,
@@ -463,7 +543,8 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[0])
 		c.Assert(col, NotNil)
-		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
+		conds, _ = ranger.DetachColumnConditions(conds, col.ColName)
+		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%s", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))

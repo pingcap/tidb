@@ -26,10 +26,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 )
 
 type testRegionRequestSuite struct {
@@ -53,7 +51,7 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.bo = NewBackoffer(1, goctx.Background())
 	s.mvccStore = mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
-	s.regionRequestSender = NewRegionRequestSender(s.cache, client, kvrpcpb.IsolationLevel_SI)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
@@ -152,7 +150,7 @@ type cancelContextClient struct {
 }
 
 func (c *cancelContextClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	childCtx, cancel := util.WithCancel(ctx)
+	childCtx, cancel := goctx.WithCancel(ctx)
 	cancel()
 	return c.Client.SendReq(childCtx, c.redirectAddr, req)
 }
@@ -194,6 +192,9 @@ func (s *mockTikvGrpcServer) KvResolveLock(goctx.Context, *kvrpcpb.ResolveLockRe
 func (s *mockTikvGrpcServer) KvGC(goctx.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) KvDeleteRange(goctx.Context, *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
+	return nil, errors.New("unreachable")
+}
 
 func (s *mockTikvGrpcServer) RawGet(goctx.Context, *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	return nil, errors.New("unreachable")
@@ -202,9 +203,6 @@ func (s *mockTikvGrpcServer) RawPut(goctx.Context, *kvrpcpb.RawPutRequest) (*kvr
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) RawDelete(goctx.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
-	return nil, errors.New("unreachable")
-}
-func (s *mockTikvGrpcServer) KvDeleteRange(goctx.Context, *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) RawScan(goctx.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
@@ -225,6 +223,9 @@ func (s *mockTikvGrpcServer) MvccGetByKey(goctx.Context, *kvrpcpb.MvccGetByKeyRe
 func (s *mockTikvGrpcServer) MvccGetByStartTs(goctx.Context, *kvrpcpb.MvccGetByStartTsRequest) (*kvrpcpb.MvccGetByStartTsResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) SplitRegion(goctx.Context, *kvrpcpb.SplitRegionRequest) (*kvrpcpb.SplitRegionResponse, error) {
+	return nil, errors.New("unreachable")
+}
 
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
@@ -240,11 +241,8 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 		wg.Done()
 	}()
 
-	client := &cancelContextClient{
-		Client:       newRPCClient(),
-		redirectAddr: addr,
-	}
-	sender := NewRegionRequestSender(s.cache, client, kvrpcpb.IsolationLevel_SI)
+	client := newRPCClient()
+	sender := NewRegionRequestSender(s.cache, client)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
 		RawPut: &kvrpcpb.RawPutRequest{
@@ -255,9 +253,19 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 
-	_, err = sender.SendReq(s.bo, req, region.Region, 3*time.Second)
-	c.Assert(grpc.Code(errors.Cause(err)), Equals, codes.Canceled)
+	bo, cancel := s.bo.Fork()
+	cancel()
+	_, err = sender.SendReq(bo, req, region.Region, 3*time.Second)
+	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
 	c.Assert(s.cache.getRegionByIDFromCache(s.region), NotNil)
+
+	// Just for covering error code = codes.Canceled.
+	client1 := &cancelContextClient{
+		Client:       newRPCClient(),
+		redirectAddr: addr,
+	}
+	sender = NewRegionRequestSender(s.cache, client1)
+	sender.SendReq(s.bo, req, region.Region, 3*time.Second)
 
 	// cleanup
 	server.Stop()

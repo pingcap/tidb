@@ -14,8 +14,8 @@
 package tikv
 
 import (
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -131,7 +131,7 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
-	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client, pbIsolationLevel(s.snapshot.isolationLevel))
+	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
 		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
@@ -139,12 +139,16 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 		req := &tikvrpc.Request{
-			Type:     tikvrpc.CmdScan,
-			Priority: s.snapshot.priority,
+			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
-				StartKey: []byte(s.nextStartKey),
+				StartKey: s.nextStartKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
+			},
+			Context: pb.Context{
+				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
+				Priority:       s.snapshot.priority,
+				NotFillCache:   s.snapshot.notFillCache,
 			},
 		}
 		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutMedium)
@@ -166,6 +170,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		cmdScanResp := resp.Scan
 		if cmdScanResp == nil {
 			return errors.Trace(errBodyMissing)
+		}
+
+		err = s.snapshot.store.CheckVisibility(s.startTS())
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		kvPairs := cmdScanResp.Pairs

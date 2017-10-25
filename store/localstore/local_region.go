@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -75,7 +74,7 @@ func (t *topnSorter) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(t.ctx.sc, v2)
+		ret, err := v1.CompareDatum(t.ctx.sc, &v2)
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -124,7 +123,7 @@ func (t *topnHeap) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.CompareDatum(t.ctx.sc, v2)
+		ret, err := v1.CompareDatum(t.ctx.sc, &v2)
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -201,7 +200,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		txn := newTxn(rs.store, kv.Version{Ver: uint64(sel.StartTs)})
+		txn := newTxn(rs.store, kv.Version{Ver: sel.StartTs})
 		ctx := &selectContext{
 			sel:       sel,
 			txn:       txn,
@@ -212,7 +211,10 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 		ctx.eval = xeval.NewEvaluator(ctx.sc, loc)
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
-			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
+			err = collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		if len(sel.OrderBy) > 0 {
 			if sel.OrderBy[0].Expr == nil {
@@ -231,7 +233,10 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 				}
 				ctx.topnColumns = make(map[int64]*tipb.ColumnInfo)
 				for _, item := range sel.OrderBy {
-					collectColumnsInExpr(item.Expr, ctx, ctx.topnColumns)
+					err = collectColumnsInExpr(item.Expr, ctx, ctx.topnColumns)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 				}
 				for k := range ctx.whereColumns {
 					// It will be handled in where.
@@ -247,12 +252,18 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			for _, agg := range sel.Aggregates {
 				aggExpr := &aggregateFuncExpr{expr: agg}
 				ctx.aggregates = append(ctx.aggregates, aggExpr)
-				collectColumnsInExpr(agg, ctx, ctx.aggColumns)
+				err = collectColumnsInExpr(agg, ctx, ctx.aggColumns)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			ctx.groups = make(map[string]bool)
 			ctx.groupKeys = make([][]byte, 0)
 			for _, item := range ctx.sel.GetGroupBy() {
-				collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
+				err = collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			for k := range ctx.whereColumns {
 				// It will be handled in where.
@@ -435,7 +446,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 	if ran.IsPoint() {
 		var value []byte
 		value, err = ctx.txn.Get(ran.StartKey)
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
+		if kv.ErrNotExist.Equal(err) {
 			return 0, nil
 		} else if err != nil {
 			return 0, errors.Trace(err)
@@ -708,7 +719,7 @@ func (rs *localRegion) getRowsFromIndexReq(ctx *selectContext) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		limit -= int64(count)
+		limit -= count
 	}
 	if ctx.aggregate {
 		return rs.getRowsFromAgg(ctx)
@@ -827,5 +838,5 @@ func buildLocalRegionServers(store *dbStore) []*localRegion {
 }
 
 func isDefaultNull(err error, col *tipb.ColumnInfo) bool {
-	return terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(uint(col.GetFlag()))
+	return kv.ErrNotExist.Equal(err) && !mysql.HasNotNullFlag(uint(col.GetFlag()))
 }

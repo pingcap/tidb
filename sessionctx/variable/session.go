@@ -14,12 +14,14 @@
 package variable
 
 import (
+	"crypto/tls"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 const (
@@ -111,6 +113,8 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
+	// params for prepared statements
+	PreparedParams []interface{}
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -127,11 +131,14 @@ type SessionVars struct {
 	// ClientCapability is client's capability.
 	ClientCapability uint32
 
+	// TLSConnectionState is the TLS connection state (nil if not using TLS).
+	TLSConnectionState *tls.ConnectionState
+
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// User is the username with which the session login.
-	User string
+	// User is the user identity with which the session login.
+	User *auth.UserIdentity
 
 	// CurrentDB is the default database of this session.
 	CurrentDB string
@@ -191,6 +198,9 @@ type SessionVars struct {
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int
 
+	// IndexJoinBatchSize is the batch size of a index lookup join.
+	IndexJoinBatchSize int
+
 	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
 	IndexLookupSize int
 
@@ -206,6 +216,9 @@ type SessionVars struct {
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
+	// BatchDelete indicates if we should split delete data into multiple batches.
+	BatchDelete bool
+
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 }
@@ -217,13 +230,15 @@ func NewSessionVars() *SessionVars {
 		Systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
 		PreparedStmtNameToID:       make(map[string]uint32),
+		PreparedParams:             make([]interface{}, 10),
 		TxnCtx:                     &TransactionContext{},
 		RetryInfo:                  &RetryInfo{},
 		StrictSQLMode:              true,
 		Status:                     mysql.ServerStatusAutocommit,
 		StmtCtx:                    new(StatementContext),
-		AllowAggPushDown:           true,
+		AllowAggPushDown:           false,
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexJoinBatchSize:         DefIndexJoinBatchSize,
 		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
@@ -231,11 +246,6 @@ func NewSessionVars() *SessionVars {
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 	}
 }
-
-const (
-	characterSetConnection = "character_set_connection"
-	collationConnection    = "collation_connection"
-)
 
 // GetCharsetInfo gets charset and collation for current context.
 // What character set should the server translate a statement to after receiving it?
@@ -247,8 +257,8 @@ const (
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
-	charset = s.Systems[characterSetConnection]
-	collation = s.Systems[collationConnection]
+	charset = s.Systems[CharacterSetConnection]
+	collation = s.Systems[CollationConnection]
 	return
 }
 
@@ -320,23 +330,30 @@ type TableDelta struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
-	InInsertStmt         bool
-	InUpdateOrDeleteStmt bool
-	IgnoreOverflow       bool
-	IgnoreTruncate       bool
-	TruncateAsWarning    bool
-	InShowWarning        bool
+	InInsertStmt           bool
+	InUpdateOrDeleteStmt   bool
+	InSelectStmt           bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	DividedByZeroAsWarning bool
+	TruncateAsWarning      bool
+	OverflowAsWarning      bool
+	InShowWarning          bool
+	UseCache               bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
-		affectedRows uint64
-		foundRows    uint64
-		warnings     []error
+		affectedRows      uint64
+		foundRows         uint64
+		warnings          []error
+		histogramsNotLoad bool
 	}
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone *time.Location
+	TimeZone     *time.Location
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
 }
 
 // AddAffectedRows adds affected rows.
@@ -405,6 +422,21 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Unlock()
 }
 
+// SetHistogramsNotLoad sets histogramsNotLoad.
+func (sc *StatementContext) SetHistogramsNotLoad() {
+	sc.mu.Lock()
+	sc.mu.histogramsNotLoad = true
+	sc.mu.Unlock()
+}
+
+// HistogramsNotLoad gets histogramsNotLoad.
+func (sc *StatementContext) HistogramsNotLoad() bool {
+	sc.mu.Lock()
+	notLoad := sc.mu.histogramsNotLoad
+	sc.mu.Unlock()
+	return notLoad
+}
+
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
@@ -422,6 +454,19 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	return err
 }
 
+// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
+func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
+	if err == nil {
+		return nil
+	}
+
+	if sc.OverflowAsWarning {
+		sc.AppendWarning(warnErr)
+		return nil
+	}
+	return err
+}
+
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
 	sc.mu.Lock()
@@ -429,4 +474,14 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+}
+
+// MostRestrictStateContext gets a most restrict StatementContext.
+func MostRestrictStateContext() *StatementContext {
+	return &StatementContext{
+		IgnoreTruncate:    false,
+		OverflowAsWarning: false,
+		TruncateAsWarning: false,
+		TimeZone:          time.UTC,
+	}
 }

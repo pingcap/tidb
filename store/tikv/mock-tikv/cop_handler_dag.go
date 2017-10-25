@@ -14,19 +14,26 @@
 package mocktikv
 
 import (
+	"bytes"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+var dummySlice = make([]byte, 0)
 
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
@@ -34,23 +41,24 @@ type dagContext struct {
 	evalCtx   *evalContext
 }
 
-func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
+func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	if len(req.Ranges) == 0 {
-		return resp, nil
+		return resp
 	}
 	if req.GetTp() != kv.ReqTypeDAG {
-		return resp, nil
+		return resp
 	}
 	if err := h.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
-		return resp, nil
+		return resp
 	}
 
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		return nil, errors.Trace(err)
+		resp.OtherError = err.Error()
+		return resp
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
 	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
@@ -61,13 +69,19 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return &coprocessor.Response{
+			OtherError: err.Error(),
+		}
 	}
-	var chunks []tipb.Chunk
+	var (
+		chunks []tipb.Chunk
+		rowCnt int
+	)
 	for {
-		handle, row, err := e.Next()
+		var row [][]byte
+		row, err = e.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			break
 		}
 		if row == nil {
 			break
@@ -76,7 +90,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		for _, offset := range dagReq.OutputOffsets {
 			data = append(data, row[offset]...)
 		}
-		chunks = appendRow(chunks, handle, data)
+		chunks = appendRow(chunks, data, rowCnt)
+		rowCnt++
 	}
 	return buildResp(chunks, err)
 }
@@ -137,10 +152,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	var pkCol *tipb.ColumnInfo
+	pkStatus := pkColNotExists
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
-		pkCol = columns[length-1]
+		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
+			pkStatus = pkColIsUnsigned
+		} else {
+			pkStatus = pkColIsSigned
+		}
+		columns = columns[:length-1]
+	} else if columns[length-1].ColumnId == model.ExtraHandleID {
+		pkStatus = pkColIsSigned
 		columns = columns[:length-1]
 	}
 	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -152,7 +174,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
-		pkCol:          pkCol,
+		pkStatus:       pkStatus,
 	}
 }
 
@@ -181,11 +203,12 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 
 func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) (*aggregateExec, error) {
 	length := len(executor.Aggregation.AggFunc)
-	aggs := make([]expression.AggregationFunction, 0, length)
+	aggs := make([]aggregation.Aggregation, 0, length)
 	var err error
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
-		aggExpr, err := expression.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
+		var aggExpr aggregation.Aggregation
+		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -301,4 +324,129 @@ func flagsToStatementContext(flags uint64) *variable.StatementContext {
 	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
 	return sc
+}
+
+func buildResp(chunks []tipb.Chunk, err error) *coprocessor.Response {
+	resp := &coprocessor.Response{}
+	selResp := &tipb.SelectResponse{
+		Error:  toPBError(err),
+		Chunks: chunks,
+	}
+	if err != nil {
+		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+			resp.Locked = &kvrpcpb.LockInfo{
+				Key:         locked.Key,
+				PrimaryLock: locked.Primary,
+				LockVersion: locked.StartTS,
+				LockTtl:     locked.TTL,
+			}
+		} else {
+			resp.OtherError = err.Error()
+		}
+	}
+	data, err := proto.Marshal(selResp)
+	if err != nil {
+		resp.OtherError = err.Error()
+		return resp
+	}
+	resp.Data = data
+	return resp
+}
+
+func toPBError(err error) *tipb.Error {
+	if err == nil {
+		return nil
+	}
+	perr := new(tipb.Error)
+	perr.Code = int32(1)
+	errStr := err.Error()
+	perr.Msg = errStr
+	return perr
+}
+
+// extractKVRanges extracts kv.KeyRanges slice from a SelectRequest.
+func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange) {
+	for _, kran := range keyRanges {
+		upperKey := kran.GetEnd()
+		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
+			continue
+		}
+		lowerKey := kran.GetStart()
+		if len(h.rawEndKey) != 0 && bytes.Compare(lowerKey, h.rawEndKey) >= 0 {
+			break
+		}
+		var kvr kv.KeyRange
+		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.rawStartKey))
+		kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
+		kvRanges = append(kvRanges, kvr)
+	}
+	if descScan {
+		reverseKVRanges(kvRanges)
+	}
+	return
+}
+
+func reverseKVRanges(kvRanges []kv.KeyRange) {
+	for i := 0; i < len(kvRanges)/2; i++ {
+		j := len(kvRanges) - i - 1
+		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
+	}
+}
+
+const rowsPerChunk = 64
+
+func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
+	if rowCnt%rowsPerChunk == 0 {
+		chunks = append(chunks, tipb.Chunk{})
+	}
+	cur := &chunks[len(chunks)-1]
+	cur.RowsData = append(cur.RowsData, data...)
+	return chunks
+}
+
+func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {
+	if bytes.Compare([]byte(rangeStartKey), regionStartKey) > 0 {
+		return []byte(rangeStartKey)
+	}
+	return regionStartKey
+}
+
+func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
+	if len(regionEndKey) == 0 || bytes.Compare([]byte(rangeEndKey), regionEndKey) < 0 {
+		return []byte(rangeEndKey)
+	}
+	return regionEndKey
+}
+
+func isDuplicated(offsets []int, offset int) bool {
+	for _, idx := range offsets {
+		if idx == offset {
+			return true
+		}
+	}
+	return false
+}
+
+func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector []int) ([]int, error) {
+	if expr == nil {
+		return nil, nil
+	}
+	if expr.GetTp() == tipb.ExprType_ColumnRef {
+		_, idx, err := codec.DecodeInt(expr.Val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !isDuplicated(collector, int(idx)) {
+			collector = append(collector, int(idx))
+		}
+		return collector, nil
+	}
+	var err error
+	for _, child := range expr.Children {
+		collector, err = extractOffsetsInExpr(child, columns, collector)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return collector, nil
 }

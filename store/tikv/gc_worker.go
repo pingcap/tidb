@@ -14,22 +14,25 @@
 package tikv
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
 
@@ -38,15 +41,114 @@ type GCWorker struct {
 	uuid        string
 	desc        string
 	store       *tikvStore
-	session     tidb.Session
 	gcIsRunning bool
 	lastFinish  time.Time
 	cancel      goctx.CancelFunc
 	done        chan error
+
+	session tidb.Session
+}
+
+// SafePointKV is used for a seamingless integration for mockTest and runtime.
+type SafePointKV interface {
+	Put(k string, v string) error
+	Get(k string) (string, error)
+}
+
+// MockSafePointKV implements SafePointKV at mock test
+type MockSafePointKV struct {
+	store    map[string]string
+	mockLock sync.RWMutex
+}
+
+// NewMockSafePointKV creates an instance of MockSafePointKV
+func NewMockSafePointKV() *MockSafePointKV {
+	return &MockSafePointKV{
+		store: make(map[string]string),
+	}
+}
+
+// Put implements the Put method for SafePointKV
+func (w *MockSafePointKV) Put(k string, v string) error {
+	w.mockLock.Lock()
+	defer w.mockLock.Unlock()
+	w.store[k] = v
+	return nil
+}
+
+// Get implements the Get method for SafePointKV
+func (w *MockSafePointKV) Get(k string) (string, error) {
+	w.mockLock.RLock()
+	defer w.mockLock.RUnlock()
+	elem, _ := w.store[k]
+	return elem, nil
+}
+
+// EtcdSafePointKV implements SafePointKV at runtime
+type EtcdSafePointKV struct {
+	cli *clientv3.Client
+}
+
+// NewEtcdSafePointKV creates an instance of EtcdSafePointKV
+func NewEtcdSafePointKV(addrs []string) (*EtcdSafePointKV, error) {
+	etcdCli, err := createEtcdKV(addrs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &EtcdSafePointKV{cli: etcdCli}, nil
+}
+
+// Put implements the Put method for SafePointKV
+func (w *EtcdSafePointKV) Put(k string, v string) error {
+	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second*5)
+	_, err := w.cli.Put(ctx, k, v)
+	cancel()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// Get implements the Get method for SafePointKV
+func (w *EtcdSafePointKV) Get(k string) (string, error) {
+	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second*5)
+	resp, err := w.cli.Get(ctx, k)
+	cancel()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if len(resp.Kvs) > 0 {
+		return string(resp.Kvs[0].Value), nil
+	}
+	return "", nil
+}
+
+// StartSafePointChecker triggers SafePoint Checker on each tidb
+func (w *GCWorker) StartSafePointChecker() {
+	go func() {
+		d := gcSafePointUpdateInterval
+		for {
+			select {
+			case spCachedTime := <-time.After(d):
+				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
+				if err == nil {
+					gcWorkerCounter.WithLabelValues("check_safepoint_ok").Inc()
+					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
+					d = gcSafePointUpdateInterval
+				} else {
+					gcWorkerCounter.WithLabelValues("check_safepoint_fail").Inc()
+					log.Errorf("[gc worker] fail to load safepoint: %v", err)
+					d = gcSafePointQuickRepeatInterval
+				}
+			case <-w.store.closed:
+				return
+			}
+		}
+	}()
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store kv.Storage) (*GCWorker, error) {
+func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -63,9 +165,19 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
+
+	worker.StartSafePointChecker()
+
 	var ctx goctx.Context
-	ctx, worker.cancel = util.WithCancel(goctx.Background())
-	go worker.start(ctx)
+	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
+	var wg sync.WaitGroup
+
+	if enableGC {
+		wg.Add(1)
+		go worker.start(ctx, &wg)
+		wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
+	}
+
 	return worker, nil
 }
 
@@ -75,8 +187,7 @@ func (w *GCWorker) Close() {
 }
 
 const (
-	gcTimeFormat = "20060102-15:04:05 -0700 MST"
-
+	gcTimeFormat         = "20060102-15:04:05 -0700 MST"
 	gcWorkerTickInterval = time.Minute
 	gcWorkerLease        = time.Minute * 2
 	gcLeaderUUIDKey      = "tikv_gc_leader_uuid"
@@ -88,9 +199,14 @@ const (
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 10
 
-	gcLifeTimeKey     = "tikv_gc_life_time"
-	gcDefaultLifeTime = time.Minute * 10
-	gcSafePointKey    = "tikv_gc_safe_point"
+	gcLifeTimeKey                  = "tikv_gc_life_time"
+	gcDefaultLifeTime              = time.Minute * 10
+	gcSafePointKey                 = "tikv_gc_safe_point"
+	gcSavedSafePoint               = "/tidb/store/gcworker/saved_safe_point"
+	gcSafePointCacheInterval       = time.Second * 100
+	gcSafePointUpdateInterval      = time.Second * 10
+	gcSafePointQuickRepeatInterval = time.Second
+	gcCPUTimeInaccuracyBound       = time.Second
 )
 
 var gcVariableComments = map[string]string{
@@ -103,41 +219,20 @@ var gcVariableComments = map[string]string{
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 }
 
-func (w *GCWorker) start(ctx goctx.Context) {
+func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 	log.Infof("[gc worker] %s start.", w.uuid)
+
+	w.session = createSession(w.store)
+
+	w.tick(ctx) // Immediately tick once to initialize configs.
+	wg.Done()
+
 	ticker := time.NewTicker(gcWorkerTickInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			if w.session == nil {
-				if !w.storeIsBootstrapped() {
-					break
-				}
-				var err error
-				w.session, err = tidb.CreateSession(w.store)
-				if err != nil {
-					log.Warnf("[gc worker] create session err: %v", err)
-					break
-				}
-				// Disable privilege check for gc worker session.
-				privilege.BindPrivilegeManager(w.session, nil)
-			}
-
-			isLeader, err := w.checkLeader()
-			if err != nil {
-				log.Warnf("[gc worker] check leader err: %v", err)
-				break
-			}
-			if isLeader {
-				err = w.leaderTick(ctx)
-				if err != nil {
-					log.Warnf("[gc worker] leader tick err: %v", err)
-				}
-			} else {
-				// Config metrics should always be updated by leader.
-				gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
-				gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
-			}
+			w.tick(ctx)
 		case err := <-w.done:
 			w.gcIsRunning = false
 			w.lastFinish = time.Now()
@@ -149,6 +244,38 @@ func (w *GCWorker) start(ctx goctx.Context) {
 			log.Infof("[gc worker] (%s) quit.", w.uuid)
 			return
 		}
+	}
+}
+
+func createSession(store kv.Storage) tidb.Session {
+	for {
+		session, err := tidb.CreateSession(store)
+		if err != nil {
+			log.Warnf("[gc worker] create session err: %v", err)
+			continue
+		}
+		// Disable privilege check for gc worker session.
+		privilege.BindPrivilegeManager(session, nil)
+		session.GetSessionVars().InRestrictedSQL = true
+		return session
+	}
+}
+
+func (w *GCWorker) tick(ctx goctx.Context) {
+	isLeader, err := w.checkLeader()
+	if err != nil {
+		log.Warnf("[gc worker] check leader err: %v", err)
+		return
+	}
+	if isLeader {
+		err = w.leaderTick(ctx)
+		if err != nil {
+			log.Warnf("[gc worker] leader tick err: %v", err)
+		}
+	} else {
+		// Config metrics should always be updated by leader, set them to 0 when current instance is not leader.
+		gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
+		gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
 	}
 }
 
@@ -174,15 +301,17 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 	if w.gcIsRunning {
 		return nil
 	}
-	// When the worker is just started, or an old GC job has just finished,
-	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
-		return nil
-	}
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
+		w.gcIsRunning = false
 		return errors.Trace(err)
+	}
+	// When the worker is just started, or an old GC job has just finished,
+	// wait a while before starting a new job.
+	if time.Since(w.lastFinish) < gcWaitTime {
+		w.gcIsRunning = false
+		return nil
 	}
 
 	w.gcIsRunning = true
@@ -206,11 +335,11 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcLastRunTimeKey, now)
+	err = w.saveTime(gcLastRunTimeKey, now, w.session)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcSafePointKey, *newSafePoint)
+	err = w.saveTime(gcSafePointKey, *newSafePoint, w.session)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -232,14 +361,16 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(float64(runInterval.Seconds()))
-	lastRun, err := w.loadTime(gcLastRunTimeKey)
+	gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(runInterval.Seconds())
+	lastRun, err := w.loadTime(gcLastRunTimeKey, w.session)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
 		return false, nil
 	}
+
 	return true, nil
 }
 
@@ -248,8 +379,8 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(float64(lifeTime.Seconds()))
-	lastSafePoint, err := w.loadTime(gcSafePointKey)
+	gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
+	lastSafePoint, err := w.loadTime(gcSafePointKey, w.session)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -280,12 +411,105 @@ func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier 
 
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
-	err := RunGCJob(ctx, w.store, safePoint, w.uuid)
+	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
 		w.done <- errors.Trace(err)
 		return
 	}
+	err = w.deleteRanges(ctx, safePoint)
+	if err != nil {
+		w.done <- errors.Trace(err)
+		return
+	}
+	err = doGC(ctx, w.store, safePoint, w.uuid)
+	if err != nil {
+		log.Error("do GC returns an error", err)
+		w.gcIsRunning = false
+		w.done <- errors.Trace(err)
+		return
+	}
 	w.done <- nil
+}
+
+func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
+	gcWorkerCounter.WithLabelValues("delete_range").Inc()
+
+	session := createSession(w.store)
+	ranges, err := util.LoadDeleteRanges(session, safePoint)
+	session.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	bo := NewBackoffer(gcDeleteRangeMaxBackoff, goctx.Background())
+	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
+	startTime := time.Now()
+	regions := 0
+	for _, r := range ranges {
+		startKey, rangeEndKey := r.Range()
+		for {
+			select {
+			case <-ctx.Done():
+				return errors.New("[gc worker] gc job canceled")
+			default:
+			}
+
+			loc, err := w.store.regionCache.LocateKey(bo, startKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			endKey := loc.EndKey
+			if loc.Contains(rangeEndKey) {
+				endKey = rangeEndKey
+			}
+
+			req := &tikvrpc.Request{
+				Type: tikvrpc.CmdDeleteRange,
+				DeleteRange: &kvrpcpb.DeleteRangeRequest{
+					StartKey: startKey,
+					EndKey:   endKey,
+				},
+			}
+
+			resp, err := w.store.SendReq(bo, req, loc.Region, readTimeoutMedium)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			regionErr, err := resp.GetRegionError()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if regionErr != nil {
+				err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
+				continue
+			}
+			deleteRangeResp := resp.DeleteRange
+			if deleteRangeResp == nil {
+				return errors.Trace(errBodyMissing)
+			}
+			if err := deleteRangeResp.GetError(); err != "" {
+				return errors.Errorf("unexpected delete range err: %v", err)
+			}
+			regions++
+			if bytes.Equal(endKey, rangeEndKey) {
+				break
+			}
+			startKey = endKey
+		}
+		session := createSession(w.store)
+		err := util.CompleteDeleteRange(session, r)
+		session.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	log.Infof("[gc worker] %s finish delete %v ranges, regions: %v, cost time: %s", w.uuid, len(ranges), regions, time.Since(startTime))
+	gcHistogram.WithLabelValues("delete_ranges").Observe(time.Since(startTime).Seconds())
+	return nil
 }
 
 func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {
@@ -367,6 +591,14 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
+	err := store.gcWorker.saveSafePoint(gcSavedSafePoint, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Sleep to wait for all other tidb instances update their safepoint cache.
+	time.Sleep(gcSafePointCacheInterval)
+
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
@@ -426,30 +658,39 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 
 func (w *GCWorker) checkLeader() (bool, error) {
 	gcWorkerCounter.WithLabelValues("check_leader").Inc()
+	session := createSession(w.store)
+	defer session.Close()
 
-	_, err := w.session.Execute("BEGIN")
+	_, err := session.Execute("BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey)
+	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey, session)
 	if err != nil {
-		w.session.Execute("ROLLBACK")
+		_, err1 := session.Execute("ROLLBACK")
+		terror.Log(errors.Trace(err1))
 		return false, errors.Trace(err)
 	}
 	log.Debugf("[gc worker] got leader: %s", leader)
 	if leader == w.uuid {
-		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
+		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
-			w.session.Execute("ROLLBACK")
+			_, err1 := session.Execute("ROLLBACK")
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		_, err = w.session.Execute("COMMIT")
+		_, err = session.Execute("COMMIT")
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
-	lease, err := w.loadTime(gcLeaderLeaseKey)
+
+	_, err = session.Execute("BEGIN")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	lease, err := w.loadTime(gcLeaderLeaseKey, session)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -457,38 +698,70 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		log.Debugf("[gc worker] register %s as leader", w.uuid)
 		gcWorkerCounter.WithLabelValues("register_leader").Inc()
 
-		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
+		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid, session)
 		if err != nil {
-			w.session.Execute("ROLLBACK")
+			_, err1 := session.Execute("ROLLBACK")
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc)
+		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc, session)
 		if err != nil {
-			w.session.Execute("ROLLBACK")
+			_, err1 := session.Execute("ROLLBACK")
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
+		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
-			w.session.Execute("ROLLBACK")
+			_, err1 := session.Execute("ROLLBACK")
+			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		_, err = w.session.Execute("COMMIT")
+		_, err = session.Execute("COMMIT")
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
-	w.session.Execute("ROLLBACK")
+	_, err1 := session.Execute("ROLLBACK")
+	terror.Log(errors.Trace(err1))
 	return false, nil
 }
 
-func (w *GCWorker) saveTime(key string, t time.Time) error {
-	err := w.saveValueToSysTable(key, t.Format(gcTimeFormat))
+func (w *GCWorker) saveSafePoint(key string, t uint64) error {
+	s := strconv.FormatUint(t, 10)
+	err := w.store.kv.Put(gcSavedSafePoint, s)
+	if err != nil {
+		log.Error("save safepoint failed:", err)
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (w *GCWorker) loadSafePoint(key string) (uint64, error) {
+	str, err := w.store.kv.Get(gcSavedSafePoint)
+
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if str == "" {
+		return 0, nil
+	}
+
+	t, err := strconv.ParseUint(str, 10, 64)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return t, nil
+}
+
+func (w *GCWorker) saveTime(key string, t time.Time, s tidb.Session) error {
+	err := w.saveValueToSysTable(key, t.Format(gcTimeFormat), s)
 	return errors.Trace(err)
 }
 
-func (w *GCWorker) loadTime(key string) (*time.Time, error) {
-	str, err := w.loadValueFromSysTable(key)
+func (w *GCWorker) loadTime(key string, s tidb.Session) (*time.Time, error) {
+	str, err := w.loadValueFromSysTable(key, s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -503,12 +776,12 @@ func (w *GCWorker) loadTime(key string) (*time.Time, error) {
 }
 
 func (w *GCWorker) saveDuration(key string, d time.Duration) error {
-	err := w.saveValueToSysTable(key, d.String())
+	err := w.saveValueToSysTable(key, d.String(), w.session)
 	return errors.Trace(err)
 }
 
 func (w *GCWorker) loadDuration(key string) (*time.Duration, error) {
-	str, err := w.loadValueFromSysTable(key)
+	str, err := w.loadValueFromSysTable(key, w.session)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -537,9 +810,9 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 	return d, nil
 }
 
-func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
+func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
+	rs, err := s.Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -556,12 +829,54 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	return value, nil
 }
 
-func (w *GCWorker) saveValueToSysTable(key, value string) error {
+func (w *GCWorker) saveValueToSysTable(key, value string, s tidb.Session) error {
 	stmt := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
-	_, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
+	if s == nil {
+		return errors.New("[saveValueToSysTable session is nil]")
+	}
+	_, err := s.Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
+}
+
+// MockGCWorker is for test.
+type MockGCWorker struct {
+	worker *GCWorker
+}
+
+// NewMockGCWorker creates a MockGCWorker instance ONLY for test.
+func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
+	ver, err := store.CurrentVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hostName, err := os.Hostname()
+	if err != nil {
+		hostName = "unknown"
+	}
+	worker := &GCWorker{
+		uuid:        strconv.FormatUint(ver.Ver, 16),
+		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		store:       store.(*tikvStore),
+		gcIsRunning: false,
+		lastFinish:  time.Now(),
+		done:        make(chan error),
+	}
+	worker.session, err = tidb.CreateSession(worker.store)
+	if err != nil {
+		log.Errorf("initialize MockGCWorker session fail: %s", err)
+		return nil, errors.Trace(err)
+	}
+	privilege.BindPrivilegeManager(worker.session, nil)
+	worker.session.GetSessionVars().InRestrictedSQL = true
+	return &MockGCWorker{worker: worker}, nil
+}
+
+// DeleteRanges call deleteRanges internally, just for test.
+func (w *MockGCWorker) DeleteRanges(ctx goctx.Context, safePoint uint64) error {
+	log.Errorf("deleteRanges is called")
+	return w.worker.deleteRanges(ctx, safePoint)
 }
