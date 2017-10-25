@@ -246,7 +246,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 		if compareResult < 0 {
 			e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerRows, e.resultBuffer)
 		} else {
-			err := e.doJoin()
+			err = e.doJoin()
 			if err != nil {
 				return false, errors.Trace(err)
 			}
