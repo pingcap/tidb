@@ -72,7 +72,7 @@ type builtinRowSig struct {
 }
 
 // evalString rowFunc should always be flattened in expression rewrite phrase.
-func (b *builtinRowSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinRowSig) evalString(row []types.Datum) (string, bool, error) {
 	panic("builtinRowSig.evalString() should never be called.")
 }
 
