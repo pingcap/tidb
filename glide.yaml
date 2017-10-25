@@ -243,3 +243,8 @@ import:
   - utils
 - package: github.com/codahale/hdrhistogram
   version: f8ad88b59a584afeee9d334eff879b104439117b
+- package: github.com/grpc-ecosystem/go-grpc-middleware
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
+  subpackages:
+  - tags
+  - tracing/opentracing
