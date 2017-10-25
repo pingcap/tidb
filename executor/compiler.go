@@ -29,11 +29,11 @@ type Compiler struct {
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
 	infoSchema := GetInfoSchema(ctx)
-	if err := plan.Preprocess(stmtNode, infoSchema, ctx); err != nil {
+	if err := plan.ResolveName(stmtNode, infoSchema, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Validate should be after NameResolve.
-	if err := plan.Validate(stmtNode, false); err != nil {
+	// Preprocess should be after NameResolve.
+	if err := plan.Preprocess(ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
 	}
 
