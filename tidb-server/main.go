@@ -26,6 +26,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -127,6 +128,7 @@ func main() {
 	validateConfig()
 	setGlobalVars()
 	setupLog()
+	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
 	createStoreAndDomain()
@@ -164,8 +166,7 @@ func setupBinlogClient() {
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	var clientConn *grpc.ClientConn
-	err := tidb.DialPumpClientWithRetry(cfg.BinlogSocket, clientConn, util.DefaultMaxRetries, dialerOpt)
+	clientConn, err := tidb.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s", cfg.BinlogSocket)
@@ -388,6 +389,15 @@ func setupMetrics() {
 	})
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
+}
+
+func setupTracing() {
+	tracingCfg := cfg.OpenTracing.ToTracingConfig()
+	tracer, _, err := tracingCfg.New("TiDB")
+	if err != nil {
+		log.Fatal("cannot initialize Jaeger Tracer", err)
+	}
+	opentracing.SetGlobalTracer(tracer)
 }
 
 func runServer() {
