@@ -369,7 +369,8 @@ type getParamFunctionClass struct {
 	baseFunctionClass
 }
 
-//TODO: getFunction more typed functions will be added when typed parameters are supported.
+// getFunction
+// TODO: more typed functions will be added when typed parameters are supported.
 func (c *getParamFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
