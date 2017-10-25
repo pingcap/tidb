@@ -306,10 +306,5 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 		buffer.WriteString(fmt.Sprintf(", right key:%s",
 			expression.ExplainColumnList(p.rightKeys)))
 	}
-	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin {
-		if p.Anti {
-			buffer.WriteString(", anti")
-		}
-	}
 	return buffer.String()
 }

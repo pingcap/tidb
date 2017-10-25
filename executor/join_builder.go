@@ -32,14 +32,12 @@ type joinBuilder struct {
 	schema        *expression.Schema
 	joinType      plan.JoinType
 	defaultValues []types.Datum
-	isAntiMode    bool
 }
 
 func newJoinBuilder(ctx context.Context, lhs, rhs Executor, joinType plan.JoinType,
 	equalConds []*expression.ScalarFunction,
 	lhsFilter, rhsFilter, otherFilter []expression.Expression,
-	schema *expression.Schema, defaultValues []types.Datum,
-	isAntiMode bool) *joinBuilder {
+	schema *expression.Schema, defaultValues []types.Datum) *joinBuilder {
 	return &joinBuilder{
 		context:       ctx,
 		leftChild:     lhs,
@@ -51,7 +49,6 @@ func newJoinBuilder(ctx context.Context, lhs, rhs Executor, joinType plan.JoinTy
 		schema:        schema,
 		joinType:      joinType,
 		defaultValues: defaultValues,
-		isAntiMode:    isAntiMode,
 	}
 }
 
@@ -95,7 +92,7 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		innerIter:     rightRowBlock,
 		schema:        b.schema,
 		desc:          assumeSortedDesc,
-		resultEmitter: newMergeJoinOutputer(b.context, b.joinType, b.isAntiMode, b.defaultValues, b.otherFilter),
+		resultEmitter: newMergeJoinOutputer(b.context, b.joinType, b.defaultValues, b.otherFilter),
 	}
 
 	if b.joinType == plan.RightOuterJoin {

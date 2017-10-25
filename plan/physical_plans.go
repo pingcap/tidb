@@ -528,9 +528,6 @@ type PhysicalMergeJoin struct {
 
 	leftKeys  []*expression.Column
 	rightKeys []*expression.Column
-
-	// for semi joins
-	Anti bool
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
@@ -1179,9 +1176,9 @@ func buildSchema(p PhysicalPlan) {
 	case *PhysicalHashJoin, *PhysicalIndexJoin:
 		p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
 	case *PhysicalMergeJoin:
-		if x.JoinType == SemiJoin {
+		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
 			x.SetSchema(x.children[0].Schema().Clone())
-		} else if x.JoinType == LeftOuterSemiJoin {
+		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
 			auxCol := x.schema.Columns[x.Schema().Len()-1]
 			x.SetSchema(x.children[0].Schema().Clone())
 			x.schema.Append(auxCol)
