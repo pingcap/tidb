@@ -150,9 +150,6 @@ func (d *ddl) splitTableRegion(tableID int64) error {
 	return nil
 }
 
-// Maximum number of keys to delete for each reorg table job run.
-var reorgTableDeleteLimit = 65536
-
 func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.OldSchemaID != 0 {
 		schemaID = tblInfo.OldSchemaID
