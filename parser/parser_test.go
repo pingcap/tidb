@@ -62,7 +62,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
-		"generated", "virtual", "stored",
+		"generated", "virtual", "stored", "usage",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -95,7 +95,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
-		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version",
+		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version", "replication", "slave", "client",
+		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -1621,7 +1622,8 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
-		{"GRANT SELECT ON test.* to 'test'", true}, // For issue 2654.
+		{"GRANT SELECT ON test.* to 'test'", true},                                                                                                            // For issue 2654.
+		{"grant PROCESS,usage, REPLICATION SLAVE, REPLICATION CLIENT on *.* to 'xxxxxxxxxx'@'%' identified by password 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx'", true}, // For issue 4865
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},
