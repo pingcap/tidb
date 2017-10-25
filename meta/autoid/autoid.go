@@ -64,6 +64,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 		return errInvalidTableID.Gen("Invalid tableID")
 	}
 
+	log.Warnf("table id %v, require base %d, base %v, end %v", tableID, requiredBase, alloc.base, alloc.end)
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if requiredBase <= alloc.base {

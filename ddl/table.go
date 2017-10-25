@@ -118,6 +118,9 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err = t.DropTable(job.SchemaID, job.TableID, true); err != nil {
 			break
 		}
+		if err = cleanAllocatorKey(t, tblInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
@@ -211,6 +214,10 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if err = cleanAllocatorKey(t, tblInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 	tblInfo.ID = newTableID
 	err = t.CreateTable(schemaID, tblInfo)
 	if err != nil {
@@ -242,24 +249,18 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	var baseID int64
 	newSchemaID := job.SchemaID
 	if newSchemaID != oldSchemaID {
 		err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if tblInfo.OldSchemaID != 0 {
-			oldSchemaID = tblInfo.OldSchemaID
-			tblInfo.OldSchemaID = 0
-		}
-		baseID, err = t.GetAutoTableID(oldSchemaID, tblInfo.ID)
-		if err != nil {
-			return ver, errors.Trace(err)
+		if tblInfo.OldSchemaID == 0 {
+			tblInfo.OldSchemaID = oldSchemaID
 		}
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID, true)
+	err = t.DropTable(oldSchemaID, tblInfo.ID, false)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -269,14 +270,6 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-
-	// Update the table's auto increment ID.
-	if newSchemaID != oldSchemaID {
-		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, baseID)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -322,4 +315,16 @@ func updateTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, ori
 	}
 
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
+}
+
+// cleanAllocatorKey cleans up auto ID key.
+func cleanAllocatorKey(t *meta.Meta, tblInfo *model.TableInfo) error {
+	// If OldSchemaID isn't zero, it means this table is renamed, and
+	// it's auto ID key need to clean up.
+	if tblInfo.OldSchemaID != 0 {
+		if err := t.DelAutoTableID(tblInfo.OldSchemaID, tblInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }

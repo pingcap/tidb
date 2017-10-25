@@ -178,6 +178,15 @@ func (s *testSuite) TestMeta(c *C) {
 	n, err = t.GetAutoTableID(1, tid)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
+	// Delete auto ID key.
+	err = t.DelAutoTableID(1, tid)
+	c.Assert(err, IsNil)
+	n, err = t.GetAutoTableID(1, tid)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(0))
+	nonExistentID := int64(1234)
+	_, err = t.GenAutoTableID(1, nonExistentID, 10)
+	c.Assert(err, NotNil)
 
 	err = t.DropDatabase(1)
 	c.Assert(err, IsNil)
