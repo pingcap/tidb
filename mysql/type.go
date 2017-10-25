@@ -27,12 +27,15 @@ const (
 	TypeInt24     byte = 9
 	TypeDate      byte = 10
 	/* Original name was TypeTime, renamed to Duration to resolve the conflict with Go type Time.*/
-	TypeDuration byte = 11
-	TypeDatetime byte = 12
-	TypeYear     byte = 13
-	TypeNewDate  byte = 14
-	TypeVarchar  byte = 15
-	TypeBit      byte = 16
+	TypeDuration   byte = 11
+	TypeDatetime   byte = 12
+	TypeYear       byte = 13
+	TypeNewDate    byte = 14
+	TypeVarchar    byte = 15
+	TypeBit        byte = 16
+	TypeTimestamp2 byte = 17
+	TypeDatetime2  byte = 18
+	TypeTime2      byte = 19
 
 	TypeJSON       byte = 0xf5
 	TypeNewDecimal byte = 0xf6
@@ -146,4 +149,14 @@ func HasParseToJSONFlag(flag uint) bool {
 // HasIsBooleanFlag checks if IsBooleanFlag is set.
 func HasIsBooleanFlag(flag uint) bool {
 	return (flag & IsBooleanFlag) > 0
+}
+
+// HasSetFlag checks if SetFlag is set.
+func HasSetFlag(flag uint) bool {
+	return (flag & SetFlag) > 0
+}
+
+// HasEnumFlag checks if EnumFlag is set.
+func HasEnumFlag(flag uint) bool {
+	return (flag & EnumFlag) > 0
 }

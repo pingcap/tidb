@@ -85,25 +85,127 @@ func (xsql *xSQL) executeStmt(sql string) error {
 	return nil
 }
 
+func setColumnMeta(c *ColumnInfo) Mysqlx_Resultset.ColumnMetaData {
+	var xflags uint32
+	var xctype uint32
+	var xtp Mysqlx_Resultset.ColumnMetaData_FieldType
+	flags := uint(c.Flag)
+	if mysql.HasNotNullFlag(flags) {
+		xflags |= protocol.FlagNotNull
+	}
+	if mysql.HasPriKeyFlag(flags) {
+		xflags |= protocol.FlagPrimaryKey
+	}
+	if mysql.HasUniKeyFlag(flags) {
+		xflags |= protocol.FlagUniqueKey
+	}
+	if mysql.HasMultipleKeyFlag(flags) {
+		xflags |= protocol.FlagMultipleKey
+	}
+	if mysql.HasAutoIncrementFlag(flags) {
+		xflags |= protocol.FlagAutoIncrement
+	}
+	if c.Type == mysql.TypeString {
+		if mysql.HasSetFlag(flags) {
+			c.Type = mysql.TypeSet
+		} else if mysql.HasEnumFlag(flags) {
+			c.Type = mysql.TypeEnum
+		}
+	}
+	switch c.Type {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(flags) {
+			xtp = Mysqlx_Resultset.ColumnMetaData_UINT
+		} else {
+			xtp = Mysqlx_Resultset.ColumnMetaData_SINT
+		}
+
+		if mysql.HasZerofillFlag(flags) {
+			xflags |= protocol.FlagUintZeroFill
+		}
+	case mysql.TypeFloat:
+		if mysql.HasUnsignedFlag(flags) {
+			xflags |= protocol.FlagFloatUnsigned
+		}
+		xtp = Mysqlx_Resultset.ColumnMetaData_FLOAT
+
+	case mysql.TypeDouble:
+		if mysql.HasUnsignedFlag(flags) {
+			xflags |= protocol.FlagDoubleUnsigned
+		}
+		xtp = Mysqlx_Resultset.ColumnMetaData_DOUBLE
+
+	case mysql.TypeDecimal, mysql.TypeNewDecimal:
+		if mysql.HasUnsignedFlag(flags) {
+			xflags |= protocol.FlagDecimalUnsigned
+		}
+		xtp = Mysqlx_Resultset.ColumnMetaData_DECIMAL
+
+	case mysql.TypeString:
+		xtp = Mysqlx_Resultset.ColumnMetaData_BYTES
+		xflags |= protocol.FlagBytesRightpad
+		// TODO: Collation should be set properly here.
+
+	case mysql.TypeSet:
+		xtp = Mysqlx_Resultset.ColumnMetaData_SET
+		// TODO: Collation should be set properly here.
+
+	case mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeVarchar, mysql.TypeVarString:
+		xtp = Mysqlx_Resultset.ColumnMetaData_BYTES
+		// TODO: Collation should be set properly here.
+
+	case mysql.TypeJSON:
+		xtp = Mysqlx_Resultset.ColumnMetaData_BYTES
+		xctype = protocol.ContentTypeJSON
+		// TODO: Collation should be set properly here.
+		break
+
+	case mysql.TypeGeometry:
+		xtp = Mysqlx_Resultset.ColumnMetaData_BYTES
+		xctype = protocol.ContentTypeGeometry
+
+	case mysql.TypeDuration, mysql.TypeTime2:
+		xtp = Mysqlx_Resultset.ColumnMetaData_TIME
+
+	case mysql.TypeNewDate, mysql.TypeDate:
+		xtp = Mysqlx_Resultset.ColumnMetaData_DATETIME
+
+	case mysql.TypeDatetime, mysql.TypeDatetime2:
+		xtp = Mysqlx_Resultset.ColumnMetaData_DATETIME
+
+	case mysql.TypeYear:
+		xtp = Mysqlx_Resultset.ColumnMetaData_UINT
+
+	case mysql.TypeTimestamp, mysql.TypeTimestamp2:
+		xtp = Mysqlx_Resultset.ColumnMetaData_DATETIME
+		xflags = protocol.FlagDatetimeTimestamp
+
+	case mysql.TypeEnum:
+		xtp = Mysqlx_Resultset.ColumnMetaData_ENUM
+		// TODO: Collation should be set properly here.
+
+	case mysql.TypeNull:
+		xtp = Mysqlx_Resultset.ColumnMetaData_BYTES
+
+	case mysql.TypeBit:
+		xtp = Mysqlx_Resultset.ColumnMetaData_BIT
+	}
+	return Mysqlx_Resultset.ColumnMetaData{
+		Type:          &xtp,
+		Name:          []byte(c.Name),
+		Table:         []byte(c.OrgName),
+		OriginalTable: []byte(c.OrgTable),
+		Schema:        []byte(c.Schema),
+		Length:        &c.ColumnLength,
+		Flags:         &xflags,
+		ContentType:   &xctype,
+	}
+}
+
 func writeColumnsInfo(columns []*ColumnInfo, pkt *xpacketio.XPacketIO) error {
 	for _, c := range columns {
-		var tp Mysqlx_Resultset.ColumnMetaData_FieldType
-		tp, err := util.MysqlType2XType(c.Type, mysql.HasUnsignedFlag(uint(c.Flag)))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		flags := uint32(c.Flag)
-		columnMeta := Mysqlx_Resultset.ColumnMetaData{
-			Type:          &tp,
-			Name:          []byte(c.Name),
-			Table:         []byte(c.OrgName),
-			OriginalTable: []byte(c.OrgTable),
-			Schema:        []byte(c.Schema),
-			Length:        &c.ColumnLength,
-			Flags:         &flags,
-		}
-		var data []byte
-		data, err = columnMeta.Marshal()
+		columnMeta := setColumnMeta(c)
+		data, err := columnMeta.Marshal()
 		if err != nil {
 			return errors.Trace(err)
 		}

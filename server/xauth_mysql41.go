@@ -15,11 +15,12 @@ package server
 
 import (
 	"bytes"
+	"net"
+
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	xutil "github.com/pingcap/tidb/xprotocol/util"
-	"net"
 )
 
 type authMysql41State int32
@@ -79,7 +80,7 @@ func (spa *saslMysql41Auth) handleContinue(data []byte) *response {
 			if err != nil {
 				return &response{
 					status:  authFailed,
-					data:    xutil.ErrAccessDenied.ToSQLError().Message,
+					data:    xutil.ErrAccessDenied.GenByArgs(xcc.user, host, "YES").ToSQLError().Message,
 					errCode: xutil.ErrAccessDenied.ToSQLError().Code,
 				}
 			}
@@ -87,7 +88,7 @@ func (spa *saslMysql41Auth) handleContinue(data []byte) *response {
 				passwd, spa.mSalts) {
 				return &response{
 					status:  authFailed,
-					data:    xutil.ErrAccessDenied.ToSQLError().Message,
+					data:    xutil.ErrAccessDenied.GenByArgs(xcc.user, host, "YES").ToSQLError().Message,
 					errCode: xutil.ErrAccessDenied.ToSQLError().Code,
 				}
 			}
