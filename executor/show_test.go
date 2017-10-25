@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -451,4 +452,20 @@ func (s *testSuite) TestShow2(c *C) {
 
 	tk.MustExec("grant all on *.* to 'root'@'%'")
 	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"))
+}
+
+func (s *testSuite) TestCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	rs, err := tk.Exec("show collation;")
+	c.Assert(err, IsNil)
+	fields, err := rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fields[0].Column.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fields[1].Column.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fields[2].Column.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(fields[3].Column.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fields[4].Column.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fields[5].Column.Tp, Equals, mysql.TypeLonglong)
 }
