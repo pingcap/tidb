@@ -16,6 +16,7 @@ package dashbase
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -210,13 +211,19 @@ func (e *selectResultSet) fetchAll() error {
 	numberOfTargetColumns := len(e.fields)
 	resultSetFields := make([]*ast.ResultField, 0)
 	for _, field := range e.fields {
+		var fieldType *types.FieldType
+		if field.dataType == TypeTime {
+			fieldType = types.NewFieldType(mysql.TypeDatetime)
+		} else {
+			fieldType = types.NewFieldType(mysql.TypeString)
+		}
 		rf := ast.ResultField{
 			ColumnAsName: model.NewCIStr(field.name),
 			TableAsName:  model.NewCIStr(e.tableName),
 			DBName:       model.NewCIStr(""),
 			Table:        &model.TableInfo{Name: model.NewCIStr(e.tableName)},
 			Column: &model.ColumnInfo{
-				FieldType: *types.NewFieldType(mysql.TypeVarString),
+				FieldType: *fieldType,
 				Name:      model.NewCIStr(field.name),
 			},
 		}
@@ -224,7 +231,6 @@ func (e *selectResultSet) fetchAll() error {
 	}
 	e.resultSetFields = resultSetFields
 
-	// TODO: support time column
 	// TODO: support aggregation column
 
 	for _, hit := range result.Hits {
@@ -236,11 +242,19 @@ func (e *selectResultSet) fetchAll() error {
 		}
 		datums := make([]types.Datum, numberOfTargetColumns)
 		for i, field := range e.fields {
-			data, ok := loweredKeyRow[strings.ToLower(field.name)]
-			if !ok {
-				datums[i] = types.NewDatum(nil)
+			if field.dataType == TypeTime {
+				datums[i] = types.NewDatum(types.Time{
+					Time:     types.FromGoTime(time.Unix(hit.TimeInSeconds, 0)),
+					Type:     mysql.TypeDatetime,
+					TimeZone: time.Local,
+				})
 			} else {
-				datums[i] = types.NewDatum(data)
+				data, ok := loweredKeyRow[strings.ToLower(field.name)]
+				if !ok {
+					datums[i] = types.NewDatum(nil)
+				} else {
+					datums[i] = types.NewDatum(data)
+				}
 			}
 		}
 		e.rows = append(e.rows, datums)
