@@ -396,7 +396,7 @@ func setupTracing() {
 }
 
 func runServer() {
-	var srvError chan error
+	srvError := make(chan error)
 	go func() {
 		srvError <- svr.Run()
 	}()
@@ -405,11 +405,10 @@ func runServer() {
 			srvError <- xsvr.Run()
 		}()
 	}
-	var err error
 	select {
-	case err = <-srvError:
+	case err := <-srvError:
+		terror.MustNil(err)
 	}
-	terror.MustNil(err)
 }
 
 func cleanup() {
