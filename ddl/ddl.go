@@ -141,9 +141,9 @@ var (
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
 	// ErrWrongNameForIndex returns for wrong index name.
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
-	// ErrViewSelectVariable returns for view's select contains a variable or parameter
+	// ErrViewSelectVariable returns for view's select contains a variable or parameter.
 	ErrViewSelectVariable = terror.ClassDDL.New(codeViewSelectVariable, mysql.MySQLErrName[mysql.ErrViewSelectVariable])
-	// ErrViewInvalid returns for invalid view
+	// ErrViewInvalid returns for invalid view.
 	ErrViewInvalid = terror.ClassDDL.New(codeViewInvalid, mysql.MySQLErrName[mysql.ErrViewInvalid])
 )
 

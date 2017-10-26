@@ -543,6 +543,22 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	return nil
 }
 
+func checkSchemaInfo(ident ast.Ident, colNames []string) (err error) {
+	if err = checkTooLongTable(ident.Name); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkDuplicateColumn(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooLongColumn(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooManyColumns(colNames); err != nil {
+		return errors.Trace(err)
+	}
+	return
+}
+
 func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
 		colName := constr.Keys[0].Column.Name.L
@@ -769,25 +785,15 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	if is.TableExists(ident.Schema, ident.Name) {
 		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
-	if err = checkTooLongTable(ident.Name); err != nil {
-		return errors.Trace(err)
-	}
 
 	var colNames []string
 	for _, col := range colDefs {
 		colNames = append(colNames, col.Name.Name.L)
 	}
-
-	if err = checkDuplicateColumn(colNames); err != nil {
+	if err = checkSchemaInfo(ident, colNames); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkGeneratedColumn(colDefs); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkTooLongColumn(colNames); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkTooManyColumns(colNames); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -836,16 +842,7 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []string
 	if is.TableExists(ident.Schema, ident.Name) {
 		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
-	if err = checkTooLongTable(ident.Name); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkDuplicateColumn(colNames); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkTooLongColumn(colNames); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkTooManyColumns(colNames); err != nil {
+	if err = checkSchemaInfo(ident, colNames); err != nil {
 		return errors.Trace(err)
 	}
 	if len(colNames) != len(selectFields) {
@@ -853,7 +850,6 @@ func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []string
 	}
 
 	cols := buildColumns(colNames)
-
 	tbInfo, err := d.buildViewTableInfo(ident.Name, cols, selectFields, selectText)
 	if err != nil {
 		return errors.Trace(err)
