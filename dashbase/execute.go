@@ -210,6 +210,8 @@ func (e *selectResultSet) fetchAll() error {
 
 	numberOfTargetColumns := len(e.fields)
 	resultSetFields := make([]*ast.ResultField, 0)
+
+	// selection columns
 	for _, field := range e.fields {
 		var fieldType *types.FieldType
 		if field.dataType == TypeTime {
@@ -229,36 +231,80 @@ func (e *selectResultSet) fetchAll() error {
 		}
 		resultSetFields = append(resultSetFields, &rf)
 	}
+
+	// aggregation columns
+	aggregations := make([]string, 0)
+	for key := range result.Request.Aggregations {
+		aggregations = append(aggregations, key)
+		numberOfTargetColumns++
+		rf := ast.ResultField{
+			ColumnAsName: model.NewCIStr(key),
+			TableAsName:  model.NewCIStr(e.tableName),
+			DBName:       model.NewCIStr(""),
+			Table:        &model.TableInfo{Name: model.NewCIStr(e.tableName)},
+			Column: &model.ColumnInfo{
+				FieldType: *types.NewFieldType(mysql.TypeDouble),
+				Name:      model.NewCIStr(key),
+			},
+		}
+		resultSetFields = append(resultSetFields, &rf)
+	}
+
 	e.resultSetFields = resultSetFields
 
-	// TODO: support aggregation column
+	var iterateHitMax int // how many rows should we iterate
+	if len(aggregations) > 0 {
+		iterateHitMax = 1
+	} else {
+		iterateHitMax = len(result.Hits)
+	}
 
-	for _, hit := range result.Hits {
-		loweredKeyRow := make(map[string]string)
-		for key, field := range hit.Payload.Fields {
-			if len(field) > 0 {
-				loweredKeyRow[strings.ToLower(key)] = field[0]
+	for i := 0; i < iterateHitMax; i++ {
+		datums := make([]types.Datum, 0)
+
+		// append field selections
+		if i >= len(result.Hits) {
+			for range e.fields {
+				datums = append(datums, types.NewDatum(nil))
+			}
+		} else {
+			hit := result.Hits[i]
+			loweredKeyRow := make(map[string]string)
+			for key, field := range hit.Payload.Fields {
+				if len(field) > 0 {
+					loweredKeyRow[strings.ToLower(key)] = field[0]
+				}
+			}
+			for _, field := range e.fields {
+				if field.dataType == TypeTime {
+					datums = append(datums, types.NewDatum(types.Time{
+						Time:     types.FromGoTime(time.Unix(hit.TimeInSeconds, 0)),
+						Type:     mysql.TypeDatetime,
+						TimeZone: time.Local,
+					}))
+				} else {
+					data, ok := loweredKeyRow[strings.ToLower(field.name)]
+					if !ok {
+						datums = append(datums, types.NewDatum(nil))
+					} else {
+						datums = append(datums, types.NewDatum(data))
+					}
+				}
 			}
 		}
-		datums := make([]types.Datum, numberOfTargetColumns)
-		for i, field := range e.fields {
-			if field.dataType == TypeTime {
-				datums[i] = types.NewDatum(types.Time{
-					Time:     types.FromGoTime(time.Unix(hit.TimeInSeconds, 0)),
-					Type:     mysql.TypeDatetime,
-					TimeZone: time.Local,
-				})
+
+		// append aggregation selections
+		for _, key := range aggregations {
+			data, ok := result.Aggregations[key]
+			if !ok {
+				datums = append(datums, types.NewDatum(nil))
 			} else {
-				data, ok := loweredKeyRow[strings.ToLower(field.name)]
-				if !ok {
-					datums[i] = types.NewDatum(nil)
-				} else {
-					datums[i] = types.NewDatum(data)
-				}
+				datums = append(datums, types.NewDatum(data.Value))
 			}
 		}
 		e.rows = append(e.rows, datums)
 	}
+
 	return nil
 }
 

@@ -28,11 +28,22 @@ type ApiClient struct {
 }
 
 type ApiSQLResponse struct {
+	Request struct {
+		Aggregations map[string]struct {
+			RequestType string
+			Col         string
+			Type        string
+		}
+	}
 	Hits []struct {
 		TimeInSeconds int64
 		Payload       struct {
 			Fields map[string][]string
 		}
+	}
+	Aggregations map[string]struct {
+		ResponseType string
+		Value        float64
 	}
 	ErrorMessage string `json:"message"`
 }
