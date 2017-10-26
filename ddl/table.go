@@ -115,7 +115,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTable(job.SchemaID, job.TableID, true); err != nil {
+		if err = t.DropTable(job.SchemaID, tblInfo, true); err != nil {
 			break
 		}
 		// Finish this job.
@@ -149,9 +149,6 @@ func (d *ddl) splitTableRegion(tableID int64) error {
 	}
 	return nil
 }
-
-// Maximum number of keys to delete for each reorg table job run.
-var reorgTableDeleteLimit = 65536
 
 func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.OldSchemaID != 0 {
@@ -206,7 +203,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTable(schemaID, tableID, true)
+	err = t.DropTable(schemaID, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -253,7 +250,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID, false)
+	err = t.DropTable(oldSchemaID, tblInfo, false)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

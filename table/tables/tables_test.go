@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -275,7 +276,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
-	c.Assert(ctx.Txn().Commit(), IsNil)
+	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
 }
 
 func (ts *testSuite) TestIterRecords(c *C) {
@@ -298,7 +299,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(totalCount, Equals, 2)
-	c.Assert(ctx.Txn().Commit(), IsNil)
+	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
 }
 
 func (ts *testSuite) TestTableFromMeta(c *C) {
