@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testLocalstoreCompactorSuite{})
@@ -60,22 +61,22 @@ func (s *testLocalstoreCompactorSuite) TestCompactor(c *C) {
 
 	txn, _ := store.Begin()
 	txn.Set([]byte("a"), []byte("1"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	txn, _ = store.Begin()
 	txn.Set([]byte("a"), []byte("2"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	txn, _ = store.Begin()
 	txn.Set([]byte("a"), []byte("3"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	txn, _ = store.Begin()
 	txn.Set([]byte("a"), []byte("3"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	txn, _ = store.Begin()
 	txn.Set([]byte("a"), []byte("4"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	txn, _ = store.Begin()
 	txn.Set([]byte("a"), []byte("5"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	t := count(db)
 	c.Assert(t, Equals, 6)
 
@@ -84,7 +85,7 @@ func (s *testLocalstoreCompactorSuite) TestCompactor(c *C) {
 	// Touch a, tigger GC
 	txn, _ = store.Begin()
 	txn.Set([]byte("a"), []byte("b"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	time.Sleep(1 * time.Second)
 	// Do background GC
 	t = count(db)
@@ -100,16 +101,16 @@ func (s *testLocalstoreCompactorSuite) TestGetAllVersions(c *C) {
 	compactor := store.(*dbStore).compactor
 	txn, _ := store.Begin()
 	txn.Set([]byte("a"), []byte("1"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	txn, _ = store.Begin()
 	txn.Set([]byte("a"), []byte("2"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	txn, _ = store.Begin()
 	txn.Set([]byte("b"), []byte("1"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 	txn, _ = store.Begin()
 	txn.Set([]byte("b"), []byte("2"))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	keys, err := compactor.getAllVersions([]byte("a"))
 	c.Assert(err, IsNil)
