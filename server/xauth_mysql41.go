@@ -84,8 +84,16 @@ func (spa *saslMysql41Auth) handleContinue(data []byte) *response {
 					errCode: xutil.ErrAccessDenied.ToSQLError().Code,
 				}
 			}
+			hpwd, err := auth.DecodePassword(string(passwd))
+			if err != nil {
+				return &response{
+					status:  authFailed,
+					data:    xutil.ErrAccessDenied.GenByArgs(xcc.user, host, "YES").ToSQLError().Message,
+					errCode: xutil.ErrAccessDenied.ToSQLError().Code,
+				}
+			}
 			if !spa.xauth.xcc.ctx.Auth(&auth.UserIdentity{Username: string(user), Hostname: host},
-				passwd, spa.mSalts) {
+				hpwd, spa.mSalts) {
 				return &response{
 					status:  authFailed,
 					data:    xutil.ErrAccessDenied.GenByArgs(xcc.user, host, "YES").ToSQLError().Message,
