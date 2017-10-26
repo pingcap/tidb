@@ -311,6 +311,18 @@ func (s *SessionVars) GetTimeZone() *time.Location {
 	return loc
 }
 
+// ResetPrevAffectedRows reset the prev-affected-rows variable.
+func (s *SessionVars) ResetPrevAffectedRows() {
+	s.PrevAffectedRows = 0
+	if s.StmtCtx != nil {
+		if s.StmtCtx.InUpdateOrDeleteStmt || s.StmtCtx.InInsertStmt {
+			s.PrevAffectedRows = int64(s.StmtCtx.AffectedRows())
+		} else if s.StmtCtx.InSelectStmt {
+			s.PrevAffectedRows = -1
+		}
+	}
+}
+
 // special session variables.
 const (
 	SQLModeVar          = "sql_mode"
