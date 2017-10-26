@@ -210,7 +210,7 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 	leftProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	rightProfile := p.children[1].(LogicalPlan).prepareStatsProfile()
-	if p.JoinType == SemiJoin {
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.profile = &statsProfile{
 			count:       leftProfile.count * selectionFactor,
 			cardinality: make([]float64, len(leftProfile.cardinality)),
@@ -220,7 +220,7 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 		}
 		return p.profile
 	}
-	if p.JoinType == LeftOuterSemiJoin {
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.profile = &statsProfile{
 			count:       leftProfile.count,
 			cardinality: make([]float64, p.schema.Len()),
@@ -270,7 +270,7 @@ func (p *LogicalApply) prepareStatsProfile() *statsProfile {
 		cardinality: make([]float64, p.schema.Len()),
 	}
 	copy(p.profile.cardinality, leftProfile.cardinality)
-	if p.JoinType == LeftOuterSemiJoin {
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.profile.cardinality[len(p.profile.cardinality)-1] = 2.0
 	} else {
 		for i := p.children[0].Schema().Len(); i < p.schema.Len(); i++ {

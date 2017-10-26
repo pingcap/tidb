@@ -244,9 +244,9 @@ func (p *LogicalJoin) mergeSchema() {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	composedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
-	if p.JoinType == SemiJoin {
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.schema = lChild.Schema().Clone()
-	} else if p.JoinType == LeftOuterSemiJoin {
+	} else if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
 		p.schema = lChild.Schema().Clone()
 		p.schema.Append(joinCol)
