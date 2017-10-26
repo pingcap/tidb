@@ -1123,7 +1123,6 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 	return dagReq
 }
 
-//func (b *executorBuilder) constructTableRanges(tbl *model.TableInfo, schema *expression.Schema, conds []expression.Expression) (newRanges []types.IntColumnRange) {
 func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []types.IntColumnRange) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
