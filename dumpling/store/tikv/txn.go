@@ -140,7 +140,7 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 	}
 }
 
-func (txn *tikvTxn) Commit() error {
+func (txn *tikvTxn) Commit(ctx goctx.Context) error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
@@ -162,7 +162,7 @@ func (txn *tikvTxn) Commit() error {
 	if committer == nil {
 		return nil
 	}
-	err = committer.execute()
+	err = committer.execute(ctx)
 	if err != nil {
 		committer.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
 		return errors.Trace(err)
