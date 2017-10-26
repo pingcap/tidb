@@ -35,9 +35,9 @@ var (
 type joinResultGenerator interface {
 	// emitMatchedInners should be called when key in outer row is equal to key in every inner row.
 	emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error)
-	// emitUnMatchedOuter should be called when key in outer row is equal to key in inner row.
-	emitUnMatchedOuter(outer Row, resultBuffer []Row) []Row
 	// emitUnMatchedOuter should be called when outer row is not matched to any inner row.
+	emitUnMatchedOuter(outer Row, resultBuffer []Row) []Row
+	// emitUnMatchedOuters should be called when outer row is not matched to any inner row.
 	emitUnMatchedOuters(outers []Row, resultBuffer []Row) []Row
 }
 
