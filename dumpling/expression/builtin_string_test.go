@@ -634,6 +634,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 	}{
 		{"haha", "utf8", "haha"},
 		{"haha", "ascii", "haha"},
+		{"haha", "binary", "haha"},
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Convert]
