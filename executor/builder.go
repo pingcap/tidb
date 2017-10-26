@@ -904,10 +904,7 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 }
 
 func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk *model.ColumnInfo, cols []*model.ColumnInfo) Executor {
-	startTS := b.getStartTS()
-	if b.err != nil {
-		return nil
-	}
+	startTS := uint64(math.MaxUint64)
 	table, _ := b.is.TableByID(tblInfo.ID)
 	keepOrder := false
 	if pk != nil {
@@ -959,10 +956,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 }
 
 func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
-	startTS := b.getStartTS()
-	if b.err != nil {
-		return nil
-	}
+	startTS := uint64(math.MaxUint64)
 	table, _ := b.is.TableByID(tblInfo.ID)
 	cols := make([]*model.ColumnInfo, len(idxInfo.Columns))
 	for i, col := range idxInfo.Columns {
@@ -1021,10 +1015,6 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
-	startTS := b.getStartTS()
-	if b.err != nil {
-		return nil
-	}
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
 		tblInfo:     task.TableInfo,
@@ -1033,7 +1023,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 		priority:    b.priority,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
-			StartTs:        startTS,
+			StartTs:        math.MaxUint64,
 			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			TimeZoneOffset: timeZoneOffset(b.ctx),
 		},
@@ -1062,7 +1052,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		keepOrder:   keepOrder,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
-			StartTs:        b.getStartTS(),
+			StartTs:        math.MaxUint64,
 			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			TimeZoneOffset: timeZoneOffset(b.ctx),
 		},
@@ -1133,7 +1123,6 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 	return dagReq
 }
 
-//func (b *executorBuilder) constructTableRanges(tbl *model.TableInfo, schema *expression.Schema, conds []expression.Expression) (newRanges []types.IntColumnRange) {
 func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []types.IntColumnRange) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
