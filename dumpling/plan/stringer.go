@@ -82,7 +82,24 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		str = "MergeJoin{" + strings.Join(children, "->") + "}"
+		id := "MergeJoin"
+		switch x.JoinType {
+		case SemiJoin:
+			id = "MergeSemiJoin"
+		case AntiSemiJoin:
+			id = "MergeAntiSemiJoin"
+		case LeftOuterSemiJoin:
+			id = "MergeLeftOuterSemiJoin"
+		case AntiLeftOuterSemiJoin:
+			id = "MergeAntiLeftOuterSemiJoin"
+		case LeftOuterJoin:
+			id = "MergeLeftOuterJoin"
+		case RightOuterJoin:
+			id = "MergeRightOuterJoin"
+		case InnerJoin:
+			id = "MergeInnerJoin"
+		}
+		str = id + "{" + strings.Join(children, "->") + "}"
 		for _, eq := range x.EqualConditions {
 			l := eq.GetArgs()[0].String()
 			r := eq.GetArgs()[1].String()
