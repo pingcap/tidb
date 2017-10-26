@@ -60,7 +60,7 @@ func (spa *saslMysql41Auth) handleStart(mechanism *string, data []byte, initialR
 func (spa *saslMysql41Auth) handleContinue(data []byte) *response {
 	if spa.mState == sWaitingResponse {
 		dbname, user, passwd := spa.extractNullTerminatedElement(data)
-		if dbname == "" || user == "" {
+		if user == "" {
 			return &response{
 				status:  authFailed,
 				data:    xutil.ErrXBadMessage.ToSQLError().Message,
