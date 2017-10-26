@@ -292,7 +292,7 @@ func (s *session) doCommit() error {
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 		relatedTableIDs: tableIDs,
 	})
-	if err := s.txn.Commit(); err != nil {
+	if err := s.txn.Commit(s.GoCtx()); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

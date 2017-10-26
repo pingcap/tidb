@@ -720,7 +720,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 		}
 		return errors.Trace(err)
 	}
-	return errors.Trace(txn.Commit())
+	return errors.Trace(txn.Commit(loadDataInfo.Ctx.GoCtx()))
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
