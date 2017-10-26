@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/coreos/pkg/capnslog"
 	"github.com/juju/errors"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
@@ -58,37 +57,9 @@ type LogConfig struct {
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
 	// File log config.
 	File FileLogConfig `toml:"file" json:"file"`
+	// SlowQueryFile filename, default to File log config on empty.
+	SlowQueryFile string
 }
-
-// redirectFormatter will redirect etcd logs to logrus logs.
-type redirectFormatter struct{}
-
-// Format implements capnslog.Formatter hook.
-func (rf *redirectFormatter) Format(pkg string, level capnslog.LogLevel, depth int, entries ...interface{}) {
-	if pkg != "" {
-		pkg = fmt.Sprint(pkg, ": ")
-	}
-
-	logStr := fmt.Sprint(pkg, entries)
-
-	switch level {
-	case capnslog.CRITICAL:
-		log.Fatalf(logStr)
-	case capnslog.ERROR:
-		log.Errorf(logStr)
-	case capnslog.WARNING:
-		log.Warningf(logStr)
-	case capnslog.NOTICE:
-		log.Infof(logStr)
-	case capnslog.INFO:
-		log.Infof(logStr)
-	case capnslog.DEBUG, capnslog.TRACE:
-		log.Debugf(logStr)
-	}
-}
-
-// Flush only for implementing Formatter.
-func (rf *redirectFormatter) Flush() {}
 
 // isSKippedPackageName tests wether path name is on log library calling stack.
 func isSkippedPackageName(name string) bool {
@@ -139,9 +110,30 @@ func stringToLogLevel(level string) log.Level {
 	return defaultLogLevel
 }
 
+// logTypeToColor converts the Level to a color string.
+func logTypeToColor(level log.Level) string {
+	switch level {
+	case log.DebugLevel:
+		return "[0;37"
+	case log.InfoLevel:
+		return "[0;36"
+	case log.WarnLevel:
+		return "[0;33"
+	case log.ErrorLevel:
+		return "[0;31"
+	case log.FatalLevel:
+		return "[0;31"
+	case log.PanicLevel:
+		return "[0;31"
+	}
+
+	return "[0;37"
+}
+
 // textFormatter is for compatability with ngaut/log
 type textFormatter struct {
 	DisableTimestamp bool
+	EnableColors     bool
 }
 
 // Format implements logrus.Formatter
@@ -152,6 +144,12 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 	} else {
 		b = &bytes.Buffer{}
 	}
+
+	if f.EnableColors {
+		colorStr := logTypeToColor(entry.Level)
+		fmt.Fprintf(b, "\033%sm ", colorStr)
+	}
+
 	if !f.DisableTimestamp {
 		fmt.Fprintf(b, "%s ", entry.Time.Format(defaultLogTimeFormat))
 	}
@@ -165,6 +163,10 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 		}
 	}
 	b.WriteByte('\n')
+
+	if f.EnableColors {
+		b.WriteString("\033[0m")
+	}
 	return b.Bytes(), nil
 }
 
@@ -185,13 +187,18 @@ func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 			TimestampFormat:  defaultLogTimeFormat,
 			DisableTimestamp: disableTimestamp,
 		}
+	case "highlight":
+		return &textFormatter{
+			DisableTimestamp: disableTimestamp,
+			EnableColors:     true,
+		}
 	default:
 		return &textFormatter{}
 	}
 }
 
-// InitFileLog initializes file based logging options.
-func InitFileLog(cfg *FileLogConfig) error {
+// initFileLog initializes file based logging options.
+func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 	if st, err := os.Stat(cfg.Filename); err == nil {
 		if st.IsDir() {
 			return errors.New("can't use directory as log file name")
@@ -210,9 +217,16 @@ func InitFileLog(cfg *FileLogConfig) error {
 		LocalTime:  true,
 	}
 
-	log.SetOutput(output)
+	if logger == nil {
+		log.SetOutput(output)
+	} else {
+		logger.Out = output
+	}
 	return nil
 }
+
+// SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
+var SlowQueryLogger = log.StandardLogger()
 
 // InitLogger initalizes PD's logger.
 func InitLogger(cfg *LogConfig) error {
@@ -222,18 +236,26 @@ func InitLogger(cfg *LogConfig) error {
 	if cfg.Format == "" {
 		cfg.Format = defaultLogFormat
 	}
-	log.SetFormatter(stringToLogFormatter(cfg.Format, cfg.DisableTimestamp))
+	formatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
+	log.SetFormatter(formatter)
 
-	// etcd log
-	capnslog.SetFormatter(&redirectFormatter{})
-
-	if len(cfg.File.Filename) == 0 {
-		return nil
+	if len(cfg.File.Filename) != 0 {
+		if err := initFileLog(&cfg.File, nil); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	err := InitFileLog(&cfg.File)
-	if err != nil {
-		return errors.Trace(err)
+	if len(cfg.SlowQueryFile) != 0 {
+		SlowQueryLogger = log.New()
+		tmp := cfg.File
+		tmp.Filename = cfg.SlowQueryFile
+		if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
+			return errors.Trace(err)
+		}
+		hooks := make(log.LevelHooks)
+		hooks.Add(&contextHook{})
+		SlowQueryLogger.Hooks = hooks
+		SlowQueryLogger.Formatter = formatter
 	}
 
 	return nil
