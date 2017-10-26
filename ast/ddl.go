@@ -539,7 +539,7 @@ type CreateViewStmt struct {
 	OrReplace bool
 	ViewName  *TableName
 	Cols      []string
-	Select    ResultSetNode
+	Select    StmtNode
 }
 
 // Accept implements Node Accept interface.

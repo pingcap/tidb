@@ -51,6 +51,11 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if v.err != nil {
 			return in, true
 		}
+	case *ast.CreateViewStmt:
+		v.checkCreateViewGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
 	case *ast.DropTableStmt:
 		v.checkDropTableGrammar(node)
 		if v.err != nil {
@@ -285,6 +290,41 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (v *validator) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
+	if stmt.ViewName == nil {
+		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+
+	vName := stmt.ViewName.Name.String()
+	if isIncorrectName(vName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(vName)
+		return
+	}
+
+	for _, col := range stmt.Cols {
+		if isIncorrectName(col) {
+			v.err = ddl.ErrWrongColumnName.GenByArgs(col)
+			return
+		}
+	}
+
+	selectstmt := stmt.Select.(*ast.SelectStmt)
+	Fields := selectstmt.Fields.Fields
+	for _, field := range Fields {
+		ok := checkExistVariableExpr(field.Expr)
+		if ok {
+			v.err = ddl.ErrViewSelectVariable.GenByArgs("")
+			return
+		}
+	}
+	ok := checkExistVariableExpr(selectstmt.Where)
+	if ok {
+		v.err = ddl.ErrViewSelectVariable.GenByArgs("")
+	}
+	return
+}
+
 func (v *validator) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	if stmt.Tables == nil {
 		v.err = ddl.ErrWrongTableName.GenByArgs("")
@@ -454,6 +494,57 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		// TODO: Add more types.
 	}
 	return nil
+}
+
+func checkExistVariableExpr(expr ast.ExprNode) bool {
+	switch x := expr.(type) {
+	case *ast.BetweenExpr:
+		return checkExistVariableExpr(x.Left) || checkExistVariableExpr(x.Right)
+	case *ast.BinaryOperationExpr:
+		return checkExistVariableExpr(x.L) || checkExistVariableExpr(x.R)
+	case *ast.CaseExpr:
+		return checkExistVariableExpr(x.Value) || checkExistVariableExpr(x.ElseClause)
+	case *ast.ExistsSubqueryExpr:
+		return checkExistVariableExpr(x.Sel)
+	case *ast.IsNullExpr:
+		return checkExistVariableExpr(x.Expr)
+	case *ast.IsTruthExpr:
+		return checkExistVariableExpr(x.Expr)
+	case *ast.ParenthesesExpr:
+		return checkExistVariableExpr(x.Expr)
+	case *ast.PatternInExpr:
+		ok := checkExistVariableExpr(x.Expr)
+		if ok {
+			return true
+		}
+		for _, val := range x.List {
+			ok = checkExistVariableExpr(val)
+			if ok {
+				return true
+			}
+		}
+		return false
+	case *ast.PatternLikeExpr:
+		return checkExistVariableExpr(x.Expr) || checkExistVariableExpr(x.Pattern)
+	case *ast.PatternRegexpExpr:
+		return checkExistVariableExpr(x.Expr) || checkExistVariableExpr(x.Expr)
+	case *ast.RowExpr:
+		for _, val := range x.Values {
+			ok := checkExistVariableExpr(val)
+			if ok {
+				return true
+			}
+		}
+		return false
+	case *ast.UnaryOperationExpr:
+		return checkExistVariableExpr(x.V)
+	case *ast.VariableExpr:
+		return true
+	case *ast.ColumnNameExpr, *ast.DefaultExpr, *ast.ParamMarkerExpr, *ast.PositionExpr,
+		*ast.SubqueryExpr, *ast.ValueExpr, *ast.ValuesExpr:
+		return false
+	}
+	return false
 }
 
 // isNowSymFunc checks whether defaul value is a NOW() builtin function.

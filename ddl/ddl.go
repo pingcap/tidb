@@ -141,6 +141,8 @@ var (
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
 	// ErrWrongNameForIndex returns for wrong index name.
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
+	// ErrViewSelectVariable returns for view's select contains a variable or parameter
+	ErrViewSelectVariable = terror.ClassDDL.New(CodeViewSelectVariable, "View's SELECT contains a variable or parameter")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -556,27 +558,29 @@ const (
 	codeUnsupportedCharset          = 205
 	codeUnsupportedModifyPrimaryKey = 206
 
-	codeFileNotFound                 = 1017
-	codeErrorOnRename                = 1025
-	codeBadNull                      = 1048
-	codeBadField                     = 1054
-	codeTooLongIdent                 = 1059
-	codeDupKeyName                   = 1061
-	codeTooLongKey                   = 1071
-	codeKeyColumnDoesNotExits        = 1072
-	codeIncorrectPrefixKey           = 1089
-	codeCantRemoveAllFields          = 1090
-	codeCantDropFieldOrKey           = 1091
-	codeBlobCantHaveDefault          = 1101
-	codeWrongDBName                  = 1102
-	codeWrongTableName               = 1103
-	codeTooManyFields                = 1117
-	codeInvalidUseOfNull             = 1138
-	codeWrongColumnName              = 1166
-	codeWrongKeyColumn               = 1167
-	codeBlobKeyWithoutLength         = 1170
-	codeInvalidOnUpdate              = 1294
-	codeViewWrongList                = 1353
+	codeFileNotFound          = 1017
+	codeErrorOnRename         = 1025
+	codeBadNull               = 1048
+	codeBadField              = 1054
+	codeTooLongIdent          = 1059
+	codeDupKeyName            = 1061
+	codeTooLongKey            = 1071
+	codeKeyColumnDoesNotExits = 1072
+	codeIncorrectPrefixKey    = 1089
+	codeCantRemoveAllFields   = 1090
+	codeCantDropFieldOrKey    = 1091
+	codeBlobCantHaveDefault   = 1101
+	codeWrongDBName           = 1102
+	codeWrongTableName        = 1103
+	codeTooManyFields         = 1117
+	codeInvalidUseOfNull      = 1138
+	codeWrongColumnName       = 1166
+	codeWrongKeyColumn        = 1167
+	codeBlobKeyWithoutLength  = 1170
+	codeInvalidOnUpdate       = 1294
+	codeViewWrongList         = 1353
+	CodeViewSelectVariable    = mysql.ErrViewSelectVariable
+
 	codeUnsupportedOnGeneratedColumn = 3106
 	codeGeneratedColumnNonPrior      = 3107
 	codeDependentByGeneratedColumn   = 3108

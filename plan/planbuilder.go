@@ -957,11 +957,6 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 		if b.err != nil {
 			return nil
 		}
-		err := checkViewSelectVariable(v.Select)
-		if err != nil {
-			b.err = err
-			return nil
-		}
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.DropPriv,
@@ -1052,72 +1047,6 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		}
 	}
 	return p
-}
-
-func checkViewSelectVariable(selectstmt ast.ResultSetNode) error {
-	Fields := selectstmt.(*ast.SelectStmt).Fields.Fields
-	for _, field := range Fields {
-		ok := checkExistVariableExpr(field.Expr)
-		if ok {
-			return ErrViewSelectVariable
-		}
-	}
-	ok := checkExistVariableExpr(selectstmt.(*ast.SelectStmt).Where)
-	if ok {
-		return ErrViewSelectVariable
-	}
-	return nil
-}
-
-func checkExistVariableExpr(expr ast.ExprNode) bool {
-	switch x := expr.(type) {
-	case *ast.BetweenExpr:
-		return checkExistVariableExpr(x.Left) || checkExistVariableExpr(x.Right)
-	case *ast.BinaryOperationExpr:
-		return checkExistVariableExpr(x.L) || checkExistVariableExpr(x.R)
-	case *ast.CaseExpr:
-		return checkExistVariableExpr(x.Value) || checkExistVariableExpr(x.ElseClause)
-	case *ast.ExistsSubqueryExpr:
-		return checkExistVariableExpr(x.Sel)
-	case *ast.IsNullExpr:
-		return checkExistVariableExpr(x.Expr)
-	case *ast.IsTruthExpr:
-		return checkExistVariableExpr(x.Expr)
-	case *ast.ParenthesesExpr:
-		return checkExistVariableExpr(x.Expr)
-	case *ast.PatternInExpr:
-		ok := checkExistVariableExpr(x.Expr)
-		if ok {
-			return true
-		}
-		for _, val := range x.List {
-			ok = checkExistVariableExpr(val)
-			if ok {
-				return true
-			}
-		}
-		return false
-	case *ast.PatternLikeExpr:
-		return checkExistVariableExpr(x.Expr) || checkExistVariableExpr(x.Pattern)
-	case *ast.PatternRegexpExpr:
-		return checkExistVariableExpr(x.Expr) || checkExistVariableExpr(x.Expr)
-	case *ast.RowExpr:
-		for _, val := range x.Values {
-			ok := checkExistVariableExpr(val)
-			if ok {
-				return true
-			}
-		}
-		return false
-	case *ast.UnaryOperationExpr:
-		return checkExistVariableExpr(x.V)
-	case *ast.VariableExpr:
-		return true
-	case *ast.ColumnNameExpr, *ast.DefaultExpr, *ast.ParamMarkerExpr, *ast.PositionExpr,
-		*ast.SubqueryExpr, *ast.ValueExpr, *ast.ValuesExpr:
-		return false
-	}
-	return false
 }
 
 func buildShowProcedureSchema() *expression.Schema {
