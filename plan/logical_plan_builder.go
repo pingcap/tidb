@@ -403,7 +403,16 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		if expr == nil {
 			continue
 		}
-		expressions = append(expressions, expression.SplitCNFItems(expr)...)
+		cnfItems := expression.SplitCNFItems(expr)
+		for _, item := range cnfItems {
+			if con, ok := item.(*expression.Constant); ok {
+				ret, err := expression.EvalBool(expression.CNFExprs{con}, nil, b.ctx)
+				if ret || err != nil {
+					continue
+				}
+			}
+			expressions = append(expressions, item)
+		}
 	}
 	if len(expressions) == 0 {
 		return p
