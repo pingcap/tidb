@@ -263,6 +263,8 @@ func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 		Name:      v.Name,
 		UsingVars: v.UsingVars,
 		ID:        v.ExecID,
+		Stmt:      v.Stmt,
+		Plan:      v.Plan,
 	}
 }
 
