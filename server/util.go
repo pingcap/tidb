@@ -250,7 +250,6 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 		err = mysql.ErrMalformPacket
 		return
 	}
-	data = append(data, mysql.OKHeader)
 	nullsLen := ((len(columns) + 7 + 2) / 8)
 	nulls := make([]byte, nullsLen)
 	for i, val := range row {
@@ -260,6 +259,8 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 			nulls[bytePos] |= 1 << bitPos
 		}
 	}
+	data = make([]byte, 0, 1+nullsLen+8*len(row))
+	data = append(data, mysql.OKHeader)
 	data = append(data, nulls...)
 	for i, val := range row {
 		switch val.Kind() {
