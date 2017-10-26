@@ -1886,6 +1886,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb connection 23123", true},
 		{"kill tidb query 23123", true},
 		{"show processlist", true},
+		{"show full processlist", true},
 	}
 	s.RunTest(c, table)
 }
