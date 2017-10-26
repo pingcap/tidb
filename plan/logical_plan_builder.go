@@ -1090,7 +1090,7 @@ func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) map[*expression.
 	}
 }
 
-func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.TableInfo, gbyCols map[*expression.Column]bool, whereDepends, joinDepends map[*expression.Column]*expression.Column) bool {
+func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.TableInfo, gbyCols map[*expression.Column]struct{}, whereDepends, joinDepends map[*expression.Column]*expression.Column) bool {
 	for _, index := range tblInfo.Indices {
 		if !index.Unique {
 			continue
@@ -1169,23 +1169,24 @@ func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.Ta
 }
 
 func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectField, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
-	gbyCols := make(map[*expression.Column]bool, len(fields))
+	gbyCols := make(map[*expression.Column]struct{}, len(fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(fields))
 	schema := p.Schema()
 	for _, byItem := range gby.Items {
 		if colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr); ok {
 			col, err := schema.FindColumn(colExpr.Name)
 			if err != nil {
+				log.Errorf("Can't find column %s from schema %s.", colExpr.Name, p.Schema())
 				continue
 			}
-			gbyCols[col] = true
+			gbyCols[col] = struct{}{}
 		} else {
 			gbyExprs = append(gbyExprs, byItem.Expr)
 		}
 	}
 
 	notInGbyCols := make(map[*expression.Column]int, len(fields))
-	for index, field := range fields {
+	for fieldID, field := range fields {
 		if field.Auxiliary {
 			continue
 		}
@@ -1204,13 +1205,13 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 				continue
 			}
 		}
-		colMap := make(map[*expression.Column]bool, len(schema.Columns))
+		colMap := make(map[*expression.Column]struct{}, len(schema.Columns))
 		allColFromExprNode(p, field, colMap)
 		for col := range colMap {
 			if _, ok := gbyCols[col]; ok {
 				continue
 			}
-			notInGbyCols[col] = index
+			notInGbyCols[col] = fieldID
 		}
 	}
 	if len(notInGbyCols) == 0 {
@@ -1219,7 +1220,7 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 
 	whereDepends := buildWhereFuncDepend(p, where)
 	joinDepends := buildJoinFuncDepend(p, from)
-	tblMap := make(map[*model.TableInfo]bool, len(notInGbyCols))
+	tblMap := make(map[*model.TableInfo]struct{}, len(notInGbyCols))
 	for col, index := range notInGbyCols {
 		tblInfo := tblInfoFromCol(from, col)
 		if tblInfo == nil {
@@ -1232,13 +1233,13 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 			b.err = ErrFieldNotInGroupBy.GenByArgs(index+1, fields[index].Text())
 			return
 		}
-		tblMap[tblInfo] = true
+		tblMap[tblInfo] = struct{}{}
 	}
 }
 
 type colResolver struct {
 	p    LogicalPlan
-	cols map[*expression.Column]bool
+	cols map[*expression.Column]struct{}
 }
 
 func (c *colResolver) Enter(inNode ast.Node) (ast.Node, bool) {
@@ -1256,13 +1257,13 @@ func (c *colResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	case *ast.ColumnNameExpr:
 		col, err := c.p.Schema().FindColumn(v.Name)
 		if err == nil && col != nil {
-			c.cols[col] = true
+			c.cols[col] = struct{}{}
 		}
 	}
 	return inNode, true
 }
 
-func allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*expression.Column]bool) {
+func allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*expression.Column]struct{}) {
 	extractor := &colResolver{
 		p:    p,
 		cols: cols,
