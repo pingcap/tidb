@@ -310,7 +310,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 }
 
 // mockSessionManager is a mocked session manager that wraps one session
-// it returns only this session's current proccess info as processlist for test
+// it returns only this session's current proccess info as processlist for test.
 type mockSessionManager struct {
 	tidb.Session
 }
@@ -326,7 +326,7 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
 func (s *testSuite) TestShowFullProcessList(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("select 1") //for tk.Se init
+	tk.MustExec("select 1") // for tk.Se init
 
 	se := tk.Se
 	se.SetSessionManager(&mockSessionManager{se})
@@ -337,7 +337,7 @@ func (s *testSuite) TestShowFullProcessList(c *C) {
 	tk.MustQuery(fullSQL).Check(testutil.RowsWithSep("|", "218|   Query|0|2|"+fullSQL))
 	tk.MustQuery(simpSQL).Check(testutil.RowsWithSep("|", "218|   Query|0|2|"+simpSQL[:100]))
 
-	se.SetSessionManager(nil) //reset sm so other tests won't use this
+	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }
 
 type stats struct {
