@@ -122,7 +122,7 @@ func (m *Meta) parseDatabaseID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-func (m *Meta) autoTalbeIDKey(tableID int64) []byte {
+func (m *Meta) autoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
 }
 
@@ -140,26 +140,24 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-// GenAutoTableID adds step to the auto id of the table and returns the sum.
+// GenAutoTableID adds step to the auto ID of the table and returns the sum.
 func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
-	// Check if db exists.
 	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
+	id, err := m.txn.HGet(dbKey, m.autoTableIDKey(tableID))
+	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
-	// Check if table exists.
-	tableKey := m.tableKey(tableID)
-	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
+	isNotExisting := len(id) == 0
+	if isNotExisting {
+		return 0, kv.ErrNotExist
 	}
 
-	return m.txn.HInc(dbKey, m.autoTalbeIDKey(tableID), step)
+	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
 }
 
 // GetAutoTableID gets current auto id with table id.
 func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTalbeIDKey(tableID))
+	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -273,6 +271,12 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
+	// Initial the auto ID key.
+	base := []byte(strconv.FormatInt(0, 10))
+	err = m.txn.HSet(dbKey, m.autoTableIDKey(tableInfo.ID), base)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
@@ -294,7 +298,7 @@ func (m *Meta) DropDatabase(dbID int64) error {
 // DropTable drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
+func (m *Meta) DropTable(dbID int64, tblInfo *model.TableInfo, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -302,7 +306,7 @@ func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	}
 
 	// Check if table exists.
-	tableKey := m.tableKey(tableID)
+	tableKey := m.tableKey(tblInfo.ID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -312,7 +316,10 @@ func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	}
 
 	if delAutoID {
-		if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
+		if tblInfo.OldSchemaID != 0 {
+			dbKey = m.dbKey(tblInfo.OldSchemaID)
+		}
+		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblInfo.ID)); err != nil {
 			return errors.Trace(err)
 		}
 	}
