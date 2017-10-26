@@ -33,7 +33,7 @@ type testStatsUpdateSuite struct {
 func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
-	s.store, s.do, err = newStoreWithBootstrap()
+	s.store, s.do, err = newStoreWithBootstrap(0)
 	c.Assert(err, IsNil)
 }
 
@@ -90,7 +90,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 
 	// Test IncreaseFactor.
-	count, err := stats1.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo1.Columns[0])
+	count, err := stats1.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(rowCount1*2))
 

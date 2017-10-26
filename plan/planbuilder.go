@@ -219,6 +219,10 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 			IsSystem: vars.IsSystem,
 		}
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
+			if cn, ok2 := vars.Value.(*ast.ColumnNameExpr); ok2 && cn.Name.Table.L == "" {
+				// Convert column name expression to string value expression.
+				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
+			}
 			mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
@@ -371,6 +375,9 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminShowDDLJobs:
 		p = &ShowDDLJobs{}
 		p.SetSchema(buildShowDDLJobsFields())
+	case ast.AdminCancelDDLJobs:
+		p = &CancelDDLJobs{JobIDs: as.JobIDs}
+		p.SetSchema(buildCancelDDLJobsFields())
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
@@ -476,6 +483,14 @@ func buildShowDDLJobsFields() *expression.Schema {
 	return schema
 }
 
+func buildCancelDDLJobsFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "JOB_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "RESULT", mysql.TypeVarchar, 128))
+
+	return schema
+}
+
 func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
@@ -532,7 +547,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		User:   show.User,
 	}.init(b.allocator, b.ctx)
 	resultPlan = p
-	switch show.Tp {
+	switch showTp := show.Tp; showTp {
 	case ast.ShowProcedureStatus:
 		p.SetSchema(buildShowProcedureSchema())
 	case ast.ShowTriggers:
@@ -542,6 +557,13 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	case ast.ShowWarnings:
 		p.SetSchema(buildShowWarningsSchema())
 	default:
+		switch showTp {
+		case ast.ShowTables, ast.ShowTableStatus:
+			if p.DBName == "" {
+				b.err = ErrNoDB
+				return nil
+			}
+		}
 		p.SetSchema(buildShowSchema(show))
 	}
 	for i, col := range p.schema.Columns {
@@ -549,6 +571,9 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	var conditions []expression.Expression
 	if show.Pattern != nil {
+		show.Pattern.Expr = &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
+		}
 		expr, _, err := b.rewrite(show.Pattern, p, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -1160,6 +1185,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			"Repeats", "Lower_Bound", "Upper_Bound"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProfiles: // ShowProfiles is deprecated.
+		names = []string{"Query_ID", "Duration", "Query"}
+		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
@@ -1169,8 +1197,8 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		}
 		// User varchar as the default return column type.
 		tp := mysql.TypeVarchar
-		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
-			tp = ftypes[0]
+		if len(ftypes) != 0 && ftypes[i] != mysql.TypeUnspecified {
+			tp = ftypes[i]
 		}
 		fieldType := types.NewFieldType(tp)
 		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)

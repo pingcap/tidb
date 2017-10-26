@@ -25,13 +25,15 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"google.golang.org/grpc"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -120,6 +122,21 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
+}
+
+func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
+	retryDialPumpClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
+		return util.RunWithRetry(maxRetries, 10, func() (bool, error) {
+			// Assume that it'll always return an error.
+			return true, errors.New("must fail")
+		})
+	}
+	begin := time.Now()
+	err := retryDialPumpClientMustFail("", nil, 3, nil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "must fail")
+	elapse := time.Since(begin)
+	c.Assert(uint64(elapse), GreaterEqual, uint64(6*10*time.Millisecond))
 }
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {

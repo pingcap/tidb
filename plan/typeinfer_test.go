@@ -85,7 +85,8 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		c_blob_d blob,
 		c_set set('a', 'b', 'c'),
 		c_enum enum('a', 'b', 'c'),
-		c_json JSON
+		c_json JSON,
+		c_year year
 	)`
 	testKit.MustExec(sql)
 
@@ -184,6 +185,7 @@ func (s *testPlanSuite) createTestCase4Cast() []typeInferTestCase {
 func (s *testPlanSuite) createTestCase4Columns() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"c_bit        ", mysql.TypeBit, charset.CharsetBin, mysql.UnsignedFlag, 10, 0},
+		{"c_year       ", mysql.TypeYear, charset.CharsetBin, mysql.UnsignedFlag | mysql.ZerofillFlag, 4, 0},
 		{"c_int_d      ", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"c_uint_d     ", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 10, 0},
 		{"c_bigint_d   ", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},

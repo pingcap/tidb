@@ -38,12 +38,14 @@ type testForeighKeySuite struct {
 }
 
 func (s *testForeighKeySuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_foreign")
 }
 
 func (s *testForeighKeySuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
@@ -110,7 +112,6 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
-	defer testleak.AfterTest(c)()
 	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	s.d = d
@@ -134,7 +135,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	var hookErr error
 	tc := &TestDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
-		if job.State != model.JobDone {
+		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()
@@ -174,7 +175,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	checkOK = false
 	mu.Unlock()
 	tc.onJobUpdated = func(job *model.Job) {
-		if job.State != model.JobDone {
+		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()

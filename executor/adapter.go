@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type processinfoSetter interface {
@@ -274,14 +275,15 @@ func (a *ExecStmt) logSlowQuery() {
 	costTime := time.Since(a.startTime)
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
-		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
-	logEntry := log.WithFields(log.Fields{
+	logEntry := log.NewEntry(logutil.SlowQueryLogger)
+	logEntry.Data = log.Fields{
 		"connectionId": connID,
 		"costTime":     costTime,
 		"sql":          sql,
-	})
+	}
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
 		logEntry.WithField("type", "query").Debugf("query")
 	} else {

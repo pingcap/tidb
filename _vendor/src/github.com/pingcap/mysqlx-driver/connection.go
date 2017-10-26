@@ -13,14 +13,13 @@ package mysql
 
 import (
 	"database/sql/driver"
-	"errors"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/golang/protobuf/proto"
-
+	"github.com/juju/errors"
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
 	"github.com/pingcap/tipb/go-mysqlx/Resultset"
@@ -36,26 +35,21 @@ type mysqlXConn struct {
 	cfg              *xconfig
 	maxPacketAllowed int
 	maxWriteSize     int
-	//	flags            clientFlag
-	//	status           statusFlag
-	//	sequence         uint8
-	parseTime      bool
-	strict         bool
-	state          queryState
-	capabilities   ServerCapabilities
-	systemVariable []byte
+	parseTime        bool
+	strict           bool
+	state            queryState
+	capabilities     ServerCapabilities
+	systemVariable   []byte
 }
 
 func (mc *mysqlXConn) capabilityTestUnknownCapability() error {
 	name := "randomCapability"
-	err := mc.setScalarBoolCapability(name, true)
-	return err
+	return mc.setScalarBoolCapability(name, true)
 }
 
 // second stage of the open once the driver has been selecteed
 func (mc *mysqlXConn) Open2() (driver.Conn, error) {
 	var err error
-
 	// Connect to Server
 	if dial, ok := dials[mc.cfg.net]; ok {
 		mc.netConn, err = dial(mc.cfg.addr)
@@ -64,33 +58,30 @@ func (mc *mysqlXConn) Open2() (driver.Conn, error) {
 		mc.netConn, err = nd.Dial(mc.cfg.net, mc.cfg.addr)
 	}
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	// Enable TCP Keepalives on TCP connections
 	if tc, ok := mc.netConn.(*net.TCPConn); ok {
-		if err := tc.SetKeepAlive(true); err != nil {
+		if err = tc.SetKeepAlive(true); err != nil {
 			// Don't send COM_QUIT before handshake.
-			mc.netConn.Close()
+			if err = mc.netConn.Close(); err != nil {
+				return nil, errors.Trace(err)
+			}
 			mc.netConn = nil
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 	}
 
 	mc.buf = newBuffer(mc.netConn)
 
 	// could/should be optional for performance? e.g. dsn has get_capabilities=0
-	if err := mc.getCapabilities(); err != nil {
-		return nil, fmt.Errorf("mysqlXConn.Open2: getCapabilities() failed: %v", err)
+	if err = mc.getCapabilities(); err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	// can do some random checks here.
-	//	if err := mc.capabilityTestUnknownCapability(); err != nil {
-	//		return nil, fmt.Errorf("mysqlXConn.Open2: could not set unknown capability")
-	//	}
-
 	if !mc.capabilities.Exists("authentication.mechanisms") {
-		return nil, fmt.Errorf("mysqlXConn.Open2: did not find capability: authentication.mechanisms")
+		return nil, errors.Errorf("mysqlXConn.Open2: did not find capability: authentication.mechanisms")
 	}
 
 	// Current known capabilities: as of 5.7.14
@@ -108,14 +99,14 @@ func (mc *mysqlXConn) Open2() (driver.Conn, error) {
 	for i := range values {
 		if values[i].String() == "MYSQL41" {
 			found = true
-			if err := mc.AuthenticateMySQL41(); err != nil {
-				return nil, fmt.Errorf("Authentication failed: %v", err)
+			if err = mc.AuthenticateMySQL41(); err != nil {
+				return nil, errors.Trace(err)
 			}
 			break
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("mysqlXConn.Open2: could not find authentication.mechanism I can deal with. Found: %+v", values)
+		return nil, errors.Errorf("mysqlXConn.Open2: could not find authentication.mechanism I can deal with. Found: %+v", values)
 	}
 
 	//	// Get max allowed packet size
@@ -132,8 +123,10 @@ func (mc *mysqlXConn) Open2() (driver.Conn, error) {
 	// Handle DSN Params
 	err = mc.handleParams()
 	if err != nil {
-		mc.Close()
-		return nil, err
+		if err = mc.Close(); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return nil, errors.Trace(err)
 	}
 
 	return mc, nil
@@ -157,7 +150,7 @@ func (mc *mysqlXConn) getSystemVar(name string) ([]byte, error) {
 		return []byte(response), nil
 	}
 
-	return nil, fmt.Errorf("mysqlXConn.getSystemVar(%s) not implemented", name)
+	return nil, errors.Errorf("mysqlXConn.getSystemVar(%s) not implemented", name)
 }
 
 // Handles parameters set in DSN after the connection is established
@@ -171,7 +164,7 @@ func (mc *mysqlXConn) handleParams() (err error) {
 			charsets := strings.Split(val, ",")
 			for i := range charsets {
 				// ignore errors here - a charset may not exist
-				err = mc.exec("SET NAMES " + charsets[i])
+				err = mc.exec("SET NAMES "+charsets[i], nil)
 				if err == nil {
 					break
 				}
@@ -219,11 +212,11 @@ func (mc *mysqlXConn) handleParams() (err error) {
 			}
 			tls := mc.capabilities.Values("tls")
 			if len(tls) == 1 {
-				return fmt.Errorf("server tls capability returns unexpected result: len(tls) = %d, expecting 1", len(tls))
+				return errors.Errorf("server tls capability returns unexpected result: len(tls) = %d, expecting 1", len(tls))
 			}
 			tlsType := tls[0].Type()
 			if tlsType != "bool" {
-				return fmt.Errorf("server tls capability type unexpected: %s, expecting bool", tlsType)
+				return errors.Errorf("server tls capability type unexpected: %s, expecting bool", tlsType)
 			}
 			tlsValue := tls[0].Bool()
 
@@ -231,31 +224,30 @@ func (mc *mysqlXConn) handleParams() (err error) {
 			// - should have been done by the app before
 
 			// Tell the server we want to go in TLS mode.
-			if err := mc.setScalarBoolCapability("tls", tlsValue); err != nil {
-				return fmt.Errorf("Failed to set Capability TLS <fill in here>: %+v", err)
+			if err = mc.setScalarBoolCapability("tls", tlsValue); err != nil {
+				return errors.Trace(err)
 			}
 			// wait for OK back and if we get it then we go into TLS mode
 
 		// System Vars
 		default:
-			err = mc.exec("SET " + param + "=" + val + "")
+			err = mc.exec("SET "+param+"="+val+"", nil)
 			if err != nil {
 				return
 			}
 		}
 	}
-
 	return
 }
 
 // Internal function to execute commands when we don't expect a resultset
 // e.g. for sending commands.
-func (mc *mysqlXConn) exec(query string) error {
+func (mc *mysqlXConn) exec(query string, args []driver.Value) error {
 
 	// Should be able to use normal "query logic" here
-	rows, err := mc.Query(query, nil)
+	rows, err := mc.Query(query, args)
 	if err != nil {
-		return fmt.Errorf("mysqlXConn.exec failed: %+v", err)
+		return errors.Trace(err)
 	}
 
 	// close the rows and handle any response packets received
@@ -264,11 +256,13 @@ func (mc *mysqlXConn) exec(query string) error {
 
 // methods needed to make things work
 func (mc *mysqlXConn) Begin() (driver.Tx, error) {
-	return nil, fmt.Errorf("DEBUG: mysqlXConn.Begin() not implemented yet")
+	log.Info("Use begin.")
+	return nil, errors.Errorf("cannot use 'begin', mysqlXConn does not support transaction")
 }
 
 // close the connection
 func (mc *mysqlXConn) Close() error {
+	log.Info("Closing connection.")
 	if mc.netConn == nil {
 		return nil
 	}
@@ -277,7 +271,7 @@ func (mc *mysqlXConn) Close() error {
 
 	// send this message
 	if err := mc.writeClose(); err != nil {
-		return fmt.Errorf("mysqlXConn.Close failed: %v", err)
+		return errors.Trace(err)
 	}
 
 	// wait for Ok or Error, and ignore others
@@ -287,43 +281,56 @@ func (mc *mysqlXConn) Close() error {
 	for !done {
 		pb, err = mc.readMsg()
 		if err != nil {
-			return fmt.Errorf("mysqlXConn.Close failed waiting for response to Close: %v", err)
+			return errors.Trace(err)
 		}
 
 		switch Mysqlx.ServerMessages_Type(pb.msgType) {
 		case Mysqlx.ServerMessages_OK:
-			{
-				// show any message
-				ok := new(Mysqlx.Ok)
-				if err := proto.Unmarshal(pb.payload, ok); err != nil {
-					return fmt.Errorf("mysqlXConn.Close: Failed to read Ok: %v", err)
-				}
-				done = true
+			// show any message
+			ok := new(Mysqlx.Ok)
+			if err = proto.Unmarshal(pb.payload, ok); err != nil {
+				return errors.Trace(err)
 			}
+			done = true
 		case Mysqlx.ServerMessages_ERROR:
-			return fmt.Errorf("mysqlXConn.Close received: %+v", err)
+			return errors.Trace(err)
 		case Mysqlx.ServerMessages_NOTICE:
-			mc.processNotice("mysqlXConn.Close()") // process the notice message
-		default:
+			// process the notice message
+			if err = mc.processNotice("mysqlXConn.Close()"); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
-	mc.netConn.Close()
+	if err = mc.netConn.Close(); err != nil {
+		return errors.Trace(err)
+	}
 	mc.netConn = nil
-
 	return nil
 }
+
 func (mc *mysqlXConn) Prepare(query string) (driver.Stmt, error) {
-	return nil, fmt.Errorf("DEBUG: mysqlXConn.Prepare() not implemented yet")
+	log.Infof("Query: %d", query)
+	return nil, errors.Errorf("Prepare statement '%s' error. mysqlXConn dose not support prepare.", query)
 }
+
 func (mc *mysqlXConn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	return nil, fmt.Errorf("DEBUG: mysqlXConn.Exec() not implemented yet")
+	log.Infof("Query: %d", query)
+	mc.affectedRows = 0
+	mc.insertID = 0
+	if err := mc.exec(query, args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &mysqlResult{
+		affectedRows: int64(mc.affectedRows),
+		insertID:     int64(mc.insertID),
+	}, nil
 }
 
 // Query is the public interface to making a query via database/sql
 func (mc *mysqlXConn) Query(query string, args []driver.Value) (driver.Rows, error) {
+	log.Infof("Query: %d", query)
 	if mc.netConn == nil {
-		errLog.Print(ErrInvalidConn)
 		return nil, driver.ErrBadConn
 	}
 
@@ -357,7 +364,7 @@ func (mc *mysqlXConn) Query(query string, args []driver.Value) (driver.Rows, err
 	// write a StmtExecute packet with the given query to the network
 	// - we DO NOT process the result as this will be done later.
 	if err := mc.writeStmtExecute(stmtExecute); err != nil {
-		return nil, fmt.Errorf("mysqlXConn.Query(%q,...) failed: %v", err, query)
+		return nil, errors.Trace(err)
 	}
 
 	// return the iterator

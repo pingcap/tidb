@@ -134,11 +134,16 @@ func (r *builder) build(expr expression.Expression) []point {
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []point {
-	if expr.Value.IsNull() {
+	dt, err := expr.Eval(nil)
+	if err != nil {
+		r.err = err
+		return nil
+	}
+	if dt.IsNull() {
 		return nil
 	}
 
-	val, err := expr.Value.ToBool(r.sc)
+	val, err := dt.ToBool(r.sc)
 	if err != nil {
 		r.err = err
 		return nil
@@ -166,8 +171,9 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	// the operand is column name expression.
 	var value types.Datum
 	var op string
+	var err error
 	if v, ok := expr.GetArgs()[0].(*expression.Constant); ok {
-		value = v.Value
+		value, err = v.Eval(nil)
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -181,8 +187,11 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 			op = expr.FuncName.L
 		}
 	} else {
-		value = expr.GetArgs()[1].(*expression.Constant).Value
+		value, err = expr.GetArgs()[1].(*expression.Constant).Eval(nil)
 		op = expr.FuncName.L
+	}
+	if err != nil {
+		return nil
 	}
 	if value.IsNull() {
 		return nil
@@ -268,8 +277,13 @@ func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
 			return fullRange
 		}
-		startPoint := point{value: types.NewDatum(v.Value.GetValue()), start: true}
-		endPoint := point{value: types.NewDatum(v.Value.GetValue())}
+		dt, err := v.Eval(nil)
+		if err != nil {
+			r.err = ErrUnsupportedType.Gen("expr:%v is not evaluated", e)
+			return fullRange
+		}
+		startPoint := point{value: types.NewDatum(dt.GetValue()), start: true}
+		endPoint := point{value: types.NewDatum(dt.GetValue())}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, sc: r.sc}
@@ -305,7 +319,12 @@ func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
-	pattern, err := expr.GetArgs()[1].(*expression.Constant).Value.ToString()
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(nil)
+	if err != nil {
+		r.err = errors.Trace(err)
+		return fullRange
+	}
+	pattern, err := pdt.ToString()
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -316,7 +335,12 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return []point{startPoint, endPoint}
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	escape := byte(expr.GetArgs()[2].(*expression.Constant).Value.GetInt64())
+	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(nil)
+	if err != nil {
+		r.err = errors.Trace(err)
+		return fullRange
+	}
+	escape := byte(edt.GetInt64())
 	var exclude bool
 	isExactMatch := true
 	for i := 0; i < len(pattern); i++ {

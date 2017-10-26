@@ -31,7 +31,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
 		// Invalid arguments, cancel this job.
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -62,7 +62,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			}
 		}
 		// Finish this job.
-		job.State = model.JobDone
+		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tbInfo)
 		d.asyncNotifyEvent(&Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
@@ -79,7 +79,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobCancelled
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
@@ -89,7 +89,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	// Check the table.
 	if tblInfo == nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
@@ -115,11 +115,11 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTable(job.SchemaID, job.TableID, true); err != nil {
+		if err = t.DropTable(job.SchemaID, tblInfo, true); err != nil {
 			break
 		}
 		// Finish this job.
-		job.State = model.JobDone
+		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		job.Args = append(job.Args, startKey)
@@ -167,14 +167,14 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobCancelled
+			job.State = model.JobStateCancelled
 			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
 		}
 		return nil, errors.Trace(err)
 	} else if tblInfo == nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
@@ -182,7 +182,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	}
 
 	if tblInfo.State != model.StatePublic {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return nil, ErrInvalidTableState.Gen("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
 	}
 
@@ -198,7 +198,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 	var newTableID int64
 	err := job.DecodeArgs(&newTableID)
 	if err != nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	tblInfo, err := getTableInfo(t, job, schemaID)
@@ -206,15 +206,15 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTable(schemaID, tableID, true)
+	err = t.DropTable(schemaID, tblInfo, true)
 	if err != nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	tblInfo.ID = newTableID
 	err = t.CreateTable(schemaID, tblInfo)
 	if err != nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -222,7 +222,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.State = model.JobDone
+	job.State = model.JobStateDone
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []interface{}{startKey}
@@ -234,7 +234,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var tableName model.CIStr
 	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
 		// Invalid arguments, cancel this job.
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -253,15 +253,15 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID, false)
+	err = t.DropTable(oldSchemaID, tblInfo, false)
 	if err != nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	tblInfo.Name = tableName
 	err = t.CreateTable(newSchemaID, tblInfo)
 	if err != nil {
-		job.State = model.JobCancelled
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -269,7 +269,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.State = model.JobDone
+	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	return ver, nil
@@ -280,7 +280,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	tables, err := t.ListTables(schemaID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobCancelled
+			job.State = model.JobStateCancelled
 			return infoschema.ErrDatabaseNotExists.GenByArgs("")
 		}
 		return errors.Trace(err)
@@ -290,7 +290,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	for _, tbl := range tables {
 		if tbl.Name.L == tableName {
 			// This table already exists and can't be created, we should cancel this job now.
-			job.State = model.JobCancelled
+			job.State = model.JobStateCancelled
 			return infoschema.ErrTableExists.GenByArgs(tbl.Name)
 		}
 	}

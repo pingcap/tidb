@@ -46,7 +46,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(fc, NotNil)
 	f, err = fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err = evalBuiltinFunc(f, types.MakeDatums())
+	d, err = evalBuiltinFunc(f, types.DatumRow(types.MakeDatums()))
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }

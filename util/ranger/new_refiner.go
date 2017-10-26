@@ -16,6 +16,7 @@ package ranger
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -132,9 +133,74 @@ func getEQColOffset(expr expression.Expression, cols []*expression.Column) int {
 	return -1
 }
 
+// detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
+// Please make sure that the top level is CNF form.
+func detachColumnCNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
+	var accessConditions, filterConditions []expression.Expression
+	for _, cond := range conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			dnfItems := expression.FlattenDNFConditions(sf)
+			colulmnDNFItems, hasResidual := detachColumnDNFConditions(dnfItems, checker)
+			// If this CNF has expression that cannot be resolved as access condition, then the total DNF expression
+			// should be also appended into filter condition.
+			if hasResidual {
+				filterConditions = append(filterConditions, cond)
+			}
+			if len(colulmnDNFItems) == 0 {
+				continue
+			}
+			rebuildDNF := expression.ComposeDNFCondition(nil, colulmnDNFItems...)
+			accessConditions = append(accessConditions, rebuildDNF)
+			continue
+		}
+		if !checker.check(cond) {
+			filterConditions = append(filterConditions, cond)
+			continue
+		}
+		accessConditions = append(accessConditions, cond)
+		if checker.shouldReserve {
+			filterConditions = append(filterConditions, cond)
+			checker.shouldReserve = false
+		}
+	}
+	return accessConditions, filterConditions
+}
+
+// detachColumnDNFConditions detaches the condition for calculating range from the other conditions.
+// Please make sure that the top level is DNF form.
+func detachColumnDNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
+	var (
+		hasResidualConditions bool
+		accessConditions      []expression.Expression
+	)
+	for _, cond := range conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+			cnfItems := expression.FlattenCNFConditions(sf)
+			columnCNFItems, others := detachColumnCNFConditions(cnfItems, checker)
+			if len(others) > 0 {
+				hasResidualConditions = true
+			}
+			if len(columnCNFItems) == 0 {
+				continue
+			}
+			rebuildCNF := expression.ComposeCNFCondition(nil, columnCNFItems...)
+			accessConditions = append(accessConditions, rebuildCNF)
+		} else if checker.check(cond) {
+			accessConditions = append(accessConditions, cond)
+			if checker.shouldReserve {
+				hasResidualConditions = true
+				checker.shouldReserve = false
+			}
+		} else {
+			return nil, true
+		}
+	}
+	return accessConditions, hasResidualConditions
+}
+
 // DetachIndexConditions will detach the index filters from table filters.
-func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column, lengths []int) (accessConds []expression.Expression,
-	filterConds []expression.Expression) {
+func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
+	lengths []int) (accessConds []expression.Expression, filterConds []expression.Expression) {
 	accessConds = make([]expression.Expression, len(cols))
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, cond := range conditions {
@@ -220,6 +286,19 @@ func DetachCondsForSelectivity(conds []expression.Expression, rangeType int, col
 		return DetachIndexConditions(conds, cols, lengths)
 	}
 	return nil, conds
+}
+
+// DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for
+// calculating the table range.
+func DetachCondsForTableRange(ctx context.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
+	checker := &conditionChecker{
+		colName: col.ColName,
+		length:  types.UnspecifiedLength,
+	}
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(cond, false, ctx)
+	}
+	return detachColumnCNFConditions(conds, checker)
 }
 
 // BuildRange is a method which can calculate IntColumnRange, ColumnRange, IndexRange.

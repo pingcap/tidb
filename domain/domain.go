@@ -575,6 +575,8 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	defer loadTicker.Stop()
 	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
 	defer deltaUpdateTicker.Stop()
+	loadHistogramTicker := time.NewTicker(lease)
+	defer loadHistogramTicker.Stop()
 	statsHandle := do.StatsHandle()
 	for {
 		select {
@@ -601,6 +603,11 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 			}
 		case <-deltaUpdateTicker.C:
 			statsHandle.DumpStatsDeltaToKV()
+		case <-loadHistogramTicker.C:
+			err := statsHandle.LoadNeededHistograms()
+			if err != nil {
+				log.Error("[stats] load histograms fail: ", errors.ErrorStack(err))
+			}
 		}
 	}
 }

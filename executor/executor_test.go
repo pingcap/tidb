@@ -24,12 +24,10 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -41,6 +39,8 @@ import (
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -119,14 +119,24 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
-	r, err := tk.Exec("admin show ddl")
-	c.Assert(err, IsNil)
+
+	// cancel DDL jobs test
+	r, err := tk.Exec("admin cancel ddl jobs 1")
+	c.Assert(err, IsNil, Commentf("err %v", err))
 	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 2)
+	c.Assert(row.Data[0].GetInt64(), Equals, int64(1))
+	c.Assert(row.Data[1].GetString(), Equals, "error: Can't find this job")
+
+	r, err = tk.Exec("admin show ddl")
+	c.Assert(err, IsNil)
+	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, HasLen, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	ddlInfo, err := inspectkv.GetDDLInfo(txn)
+	ddlInfo, err := admin.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[0].GetInt64(), Equals, ddlInfo.SchemaVer)
 	// TODO: Pass this test.
@@ -140,7 +150,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
-	// show ddl jobs test
+	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
 	row, err = r.Next()
@@ -148,7 +158,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.Data, HasLen, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	historyJobs, err := inspectkv.GetHistoryDDLJobs(txn)
+	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
 	c.Assert(len(row.Data[0].GetString()), Greater, 0)
 	c.Assert(err, IsNil)
@@ -1556,10 +1566,10 @@ func (s *testSuite) TestPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plan.Preprocess(stmtNode, infoSchema, ctx)
+		err = plan.ResolveName(stmtNode, infoSchema, ctx)
 		c.Check(err, IsNil)
-		// Validate should be after NameResolve.
-		err = plan.Validate(stmtNode, false)
+		// Preprocess should be after NameResolve.
+		err = plan.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
 		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
@@ -2257,4 +2267,30 @@ func (s *testSuite) TestSubqueryInValues(c *C) {
 	tk.MustExec("insert into t1 (gid) value (1)")
 	tk.MustExec("insert into t (id, name) value ((select gid from t1) ,'asd')")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
+}
+
+func (s *testSuite) TestEnhancedRangeAccess(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values(1, 2), (2, 1)")
+	tk.MustQuery("select * from t where (a = 1 and b = 2) or (a = 2 and b = 1)").Check(testkit.Rows("1 2", "2 1"))
+	tk.MustQuery("select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)").Check(nil)
+}
+
+// Issue #4810
+func (s *testSuite) TestMaxInt64Handle(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id bigint, PRIMARY KEY (id))")
+	tk.MustExec("insert into t values(9223372036854775807)")
+	tk.MustExec("select * from t where id = 9223372036854775807")
+	tk.MustQuery("select * from t where id = 9223372036854775807;").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("9223372036854775807"))
+	_, err := tk.Exec("insert into t values(9223372036854775807)")
+	c.Assert(err, NotNil)
+	tk.MustExec("delete from t where id = 9223372036854775807")
+	tk.MustQuery("select * from t").Check(nil)
 }

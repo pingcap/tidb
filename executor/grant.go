@@ -238,6 +238,9 @@ func (e *GrantExec) grantPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
 
 // grantGlobalPriv manipulates mysql.user table.
 func (e *GrantExec) grantGlobalPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
+	if priv.Priv == 0 {
+		return nil
+	}
 	asgns, err := composeGlobalPrivUpdate(priv.Priv, "Y")
 	if err != nil {
 		return errors.Trace(err)
@@ -284,6 +287,7 @@ func (e *GrantExec) grantColumnPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	for _, c := range priv.Cols {
 		col := table.FindCol(tbl.Cols(), c.Name.L)
 		if col == nil {
