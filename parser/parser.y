@@ -5474,6 +5474,10 @@ FieldOpt:
 	{
 		$$ = &ast.TypeOpt{IsUnsigned: true}
 	}
+|	"SIGNED"
+	{
+		$$ = &ast.TypeOpt{IsUnsigned: false}
+	}
 |	"ZEROFILL"
 	{
 		$$ = &ast.TypeOpt{IsZerofill: true, IsUnsigned: true}
