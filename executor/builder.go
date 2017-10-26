@@ -497,18 +497,18 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 // buildMergeJoin builds SortMergeJoin executor.
 // TODO: Refactor against different join strategies by extracting common code base
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
-	joinBuilder := newJoinBuilder(
-		b.ctx,
-		b.build(v.Children()[0]),
-		b.build(v.Children()[1]),
-		v.JoinType,
-		v.EqualConditions,
-		v.LeftConditions,
-		v.RightConditions,
-		v.OtherConditions,
-		v.Schema(),
-		v.DefaultValues,
-	)
+	joinBuilder := &joinBuilder{
+		context:       b.ctx,
+		leftChild:     b.build(v.Children()[0]),
+		rightChild:    b.build(v.Children()[1]),
+		eqConditions:  v.EqualConditions,
+		leftFilter:    v.LeftConditions,
+		rightFilter:   v.RightConditions,
+		otherFilter:   v.OtherConditions,
+		schema:        v.Schema(),
+		joinType:      v.JoinType,
+		defaultValues: v.DefaultValues,
+	}
 	exec, err := joinBuilder.BuildMergeJoin(v.Desc)
 	if err != nil {
 		b.err = err

@@ -35,24 +35,6 @@ type joinBuilder struct {
 	defaultValues []types.Datum
 }
 
-func newJoinBuilder(ctx context.Context, lhs, rhs Executor, joinType plan.JoinType,
-	equalConds []*expression.ScalarFunction,
-	lhsFilter, rhsFilter, otherFilter []expression.Expression,
-	schema *expression.Schema, defaultValues []types.Datum) *joinBuilder {
-	return &joinBuilder{
-		context:       ctx,
-		leftChild:     lhs,
-		rightChild:    rhs,
-		eqConditions:  equalConds,
-		leftFilter:    lhsFilter,
-		rightFilter:   rhsFilter,
-		otherFilter:   otherFilter,
-		schema:        schema,
-		joinType:      joinType,
-		defaultValues: defaultValues,
-	}
-}
-
 func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, error) {
 	var leftJoinKeys, rightJoinKeys []*expression.Column
 	for _, eqCond := range b.eqConditions {
