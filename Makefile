@@ -39,7 +39,7 @@ buildsucc:
 
 all: dev server benchkv
 
-dev: checklist parserlib build benchkv test check
+dev: checklist parserlib test check
 
 build:
 	$(GOBUILD)
