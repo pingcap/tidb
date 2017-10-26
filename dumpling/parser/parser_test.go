@@ -194,6 +194,34 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// src = "select 0b'';"
 	// _, err = parser.ParseOneStmt(src, "", "")
 	// c.Assert(err, NotNil)
+
+	// for #4909, support numericType `signed` filedOpt.
+	src = "CREATE TABLE t(_sms smallint signed, _smu smallint unsigned);"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = `CREATE TABLE t(a tinyint signed,
+		b smallint signed,
+		c mediumint signed,
+		d int signed,
+		e int1 signed,
+		f int2 signed,
+		g int3 signed,
+		h int4 signed,
+		i int8 signed,
+		j integer signed,
+		k bigint signed,
+		l bool signed,
+		m boolean signed
+		);`
+
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	ct, ok := st.(*ast.CreateTableStmt)
+	c.Assert(ok, IsTrue)
+	for _, col := range ct.Cols {
+		c.Assert(col.Tp.Flag&mysql.UnsignedFlag, Equals, uint(0))
+	}
 }
 
 type testCase struct {
