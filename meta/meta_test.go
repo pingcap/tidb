@@ -144,7 +144,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.DropTable(1, 2, true)
+	err = t.DropTable(1, tbInfo2, true)
 	c.Assert(err, IsNil)
 	// Make sure auto id key-value entry is gone.
 	n, err = t.GetAutoTableID(1, 2)
@@ -168,16 +168,32 @@ func (s *testSuite) TestMeta(c *C) {
 	n, err = t.GenAutoTableID(1, tid, 10)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
+	// Fail to update auto id.
+	nonExistentID := int64(1234)
+	_, err = t.GenAutoTableID(1, nonExistentID, 10)
+	c.Assert(err, NotNil)
 	n, err = t.GetAutoTableID(1, tid)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 	// Drop table without touch auto id key-value entry.
-	err = t.DropTable(1, 100, false)
+	err = t.DropTable(1, tbInfo100, false)
 	c.Assert(err, IsNil)
 	// Make sure that auto id key-value entry is still there.
 	n, err = t.GetAutoTableID(1, tid)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
+	// Drop table with old schema ID.
+	err = t.CreateTable(1, tbInfo100)
+	c.Assert(err, IsNil)
+	n, err = t.GenAutoTableID(1, tid, 10)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
+	tbInfo100.OldSchemaID = 1
+	err = t.DropTable(1, tbInfo100, true)
+	c.Assert(err, IsNil)
+	n, err = t.GetAutoTableID(1, tid)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(0))
 
 	err = t.DropDatabase(1)
 	c.Assert(err, IsNil)
