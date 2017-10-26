@@ -168,7 +168,7 @@ func (c *valuesFunctionClass) getFunction(ctx context.Context, args []Expression
 	case types.ETReal:
 		sig = &builtinValuesRealSig{bf, c.offset}
 	case types.ETDecimal:
-		sig = &builtinValuesRealSig{bf, c.offset}
+		sig = &builtinValuesDecimalSig{bf, c.offset}
 	case types.ETString:
 		sig = &builtinValuesStringSig{bf, c.offset}
 	case types.ETDatetime, types.ETTimestamp:
