@@ -309,8 +309,16 @@ func (v *validator) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 		}
 	}
 
-	selectstmt := stmt.Select.(*ast.SelectStmt)
-	Fields := selectstmt.Fields.Fields
+	if stmt.Select == nil {
+		v.err = ddl.ErrViewInvalid.GenByArgs(vName)
+		return
+	}
+
+	var Fields []*ast.SelectField
+	selectstmt, ok := stmt.Select.(*ast.SelectStmt)
+	if ok {
+		Fields = selectstmt.Fields.Fields
+	}
 	for _, field := range Fields {
 		ok := checkExistVariableExpr(field.Expr)
 		if ok {
@@ -318,7 +326,7 @@ func (v *validator) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 			return
 		}
 	}
-	ok := checkExistVariableExpr(selectstmt.Where)
+	ok = checkExistVariableExpr(selectstmt.Where)
 	if ok {
 		v.err = ddl.ErrViewSelectVariable.GenByArgs("")
 	}

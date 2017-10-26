@@ -143,6 +143,8 @@ var (
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 	// ErrViewSelectVariable returns for view's select contains a variable or parameter
 	ErrViewSelectVariable = terror.ClassDDL.New(codeViewSelectVariable, mysql.MySQLErrName[mysql.ErrViewSelectVariable])
+	// ErrViewInvalid returns for invalid view
+	ErrViewInvalid = terror.ClassDDL.New(codeViewInvalid, mysql.MySQLErrName[mysql.ErrViewInvalid])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -580,6 +582,7 @@ const (
 	codeInvalidOnUpdate       = 1294
 	codeViewSelectVariable    = 1351
 	codeViewWrongList         = 1353
+	codeViewInvalid           = 1356
 
 	codeUnsupportedOnGeneratedColumn = 3106
 	codeGeneratedColumnNonPrior      = 3107
@@ -619,6 +622,7 @@ func init() {
 		codeErrTooLongIndexComment:       mysql.ErrTooLongIndexComment,
 		codeViewWrongList:                mysql.ErrViewWrongList,
 		codeViewSelectVariable:           mysql.ErrViewSelectVariable,
+		codeViewInvalid:                  mysql.ErrViewInvalid,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
