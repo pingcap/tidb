@@ -440,15 +440,15 @@ func (it *copIterator) Next() ([]byte, error) {
 	if resp.err != nil {
 		return nil, errors.Trace(resp.err)
 	}
-	if resp.Data == nil {
-		return []byte{}, nil
-	}
 
 	err := it.store.CheckVisibility(it.req.StartTs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	if resp.Data == nil {
+		return []byte{}, nil
+	}
 	return resp.Data, nil
 }
 
