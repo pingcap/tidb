@@ -15,19 +15,17 @@ package tidbctl
 
 import (
 	"fmt"
-
 	"io/ioutil"
 	"net/http"
 	"net/url"
 
 	"github.com/juju/errors"
-
 	"github.com/pingcap/tidb/tidbctl/command"
 	"github.com/spf13/cobra"
 )
 
 var (
-	errInvalidAddr = errors.New("Invalid TiDB address, Cannot get connect to it")
+	errInvalidAddr = errors.New("Invalid TiDB address, cannot get connect to it")
 	statusPrefix   = "status"
 )
 

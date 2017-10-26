@@ -23,10 +23,8 @@ import (
 	"syscall"
 
 	"github.com/chzyer/readline"
-
-	flag "github.com/spf13/pflag"
-
 	"github.com/pingcap/tidb/tidbctl"
+	flag "github.com/spf13/pflag"
 )
 
 var (
