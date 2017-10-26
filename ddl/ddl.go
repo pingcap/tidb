@@ -93,7 +93,7 @@ var (
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 	errTooManyFields         = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
-	errViewWrongList         = terror.ClassDDL.New(codeViewWrongList, "View's SELECT and view's field list have different column counts")
+	errViewWrongList         = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -142,7 +142,7 @@ var (
 	// ErrWrongNameForIndex returns for wrong index name.
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 	// ErrViewSelectVariable returns for view's select contains a variable or parameter
-	ErrViewSelectVariable = terror.ClassDDL.New(codeViewSelectVariable, "View's SELECT contains a variable or parameter")
+	ErrViewSelectVariable = terror.ClassDDL.New(codeViewSelectVariable, mysql.MySQLErrName[mysql.ErrViewSelectVariable])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
