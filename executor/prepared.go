@@ -262,7 +262,7 @@ func (e *ExecuteExec) Build() error {
 		}
 		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
 	}
-	p, err := e.getPhysicalPlan(e.Ctx, e.IS, e.ID, prepared.SchemaVersion, prepared.Stmt, prepared.UseCache)
+	p, err := e.getPhysicalPlan(prepared)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -288,22 +288,22 @@ func (e *ExecuteExec) Build() error {
 }
 
 // getPhysicalPlan allows us to reuse the compiled plan of a prepared statement in the same session.
-func (e *ExecuteExec) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema, pstmtID uint32, schemaVer int64, node ast.Node, useCache bool) (plan.Plan, error) {
+func (e *ExecuteExec) getPhysicalPlan(prepared *Prepared) (plan.Plan, error) {
 	var cacheKey kvcache.Key
-	sessionVars := ctx.GetSessionVars()
-	sessionVars.StmtCtx.UseCache = useCache
-	if useCache {
-		cacheKey = cache.NewPSTMTPlanCacheKey(sessionVars, pstmtID, schemaVer)
-		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
+	sessionVars := e.Ctx.GetSessionVars()
+	sessionVars.StmtCtx.UseCache = prepared.UseCache
+	if prepared.UseCache {
+		cacheKey = cache.NewPSTMTPlanCacheKey(sessionVars, e.ID, prepared.SchemaVersion)
+		if cacheValue, exists := e.Ctx.PreparedPlanCache().Get(cacheKey); exists {
 			return cacheValue.(*cache.PSTMTPlanCacheValue).Plan, nil
 		}
 	}
-	p, err := plan.Optimize(ctx, node, is)
+	p, err := plan.Optimize(e.Ctx, prepared.Stmt, e.IS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if useCache {
-		ctx.PreparedPlanCache().Put(cacheKey, cache.NewPSTMTPlanCacheValue(p))
+	if prepared.UseCache {
+		e.Ctx.PreparedPlanCache().Put(cacheKey, cache.NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
 }
