@@ -15,6 +15,7 @@ package statistics_test
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -40,7 +41,7 @@ type testStatsCacheSuite struct {
 func (s *testStatsCacheSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
-	s.store, s.do, err = newStoreWithBootstrap()
+	s.store, s.do, err = newStoreWithBootstrap(0)
 	c.Assert(err, IsNil)
 }
 
@@ -170,7 +171,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
 	sc := new(variable.StatementContext)
-	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0])
+	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 0.0)
 }
@@ -189,7 +190,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
 	sc := new(variable.StatementContext)
-	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
+	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(1))
 
@@ -203,7 +204,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
 	// At that time, we should get c2's stats instead of c1's.
-	count, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
+	count, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 0.0)
 }
@@ -337,13 +338,46 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	c.Assert(newStatsTbl2.Columns[int64(3)].LastUpdateVersion, Greater, newStatsTbl2.Columns[int64(1)].LastUpdateVersion)
 }
 
-func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+func (s *testStatsUpdateSuite) TestLoadHistogram(c *C) {
+	store, do, err := newStoreWithBootstrap(10 * time.Millisecond)
+	c.Assert(err, IsNil)
+	defer store.Close()
+	defer do.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	testKit.MustExec("analyze table t")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	time.Sleep(1 * time.Second)
+	stat := h.GetTableStats(tableInfo.ID)
+	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
+	c.Assert(len(hg.Buckets), Greater, 0)
+	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
+	c.Assert(len(hg.Buckets), Greater, 0)
+	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+	c.Assert(len(hg.Buckets), Equals, 0)
+	_, err = stat.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo.Columns[2].ID)
+	c.Assert(err, IsNil)
+	time.Sleep(1 * time.Second)
+	stat = h.GetTableStats(tableInfo.ID)
+	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+	c.Assert(len(hg.Buckets), Greater, 0)
+}
+
+func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
+	tidb.SetStatsLease(statsLease)
+	domain.RunAutoAnalyze = false
 	do, err := tidb.BootstrapSession(store)
 	return store, do, errors.Trace(err)
 }

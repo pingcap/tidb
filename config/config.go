@@ -14,9 +14,12 @@
 package config
 
 import (
+	"time"
+
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/logutil"
+	tracing "github.com/uber/jaeger-client-go/config"
 )
 
 // Config contains configuration options.
@@ -31,12 +34,14 @@ type Config struct {
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
 
-	Log         Log         `toml:"log" json:"log"`
-	Security    Security    `toml:"security" json:"security"`
-	Status      Status      `toml:"status" json:"status"`
-	Performance Performance `toml:"performance" json:"performance"`
-	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
-	PlanCache   PlanCache   `toml:"plan-cache" json:"plan-cache"`
+	Log               Log               `toml:"log" json:"log"`
+	Security          Security          `toml:"security" json:"security"`
+	Status            Status            `toml:"status" json:"status"`
+	Performance       Performance       `toml:"performance" json:"performance"`
+	XProtocol         XProtocol         `toml:"xprotocol" json:"xprotocol"`
+	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
+	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 }
 
 // Log is the log section of config.
@@ -96,6 +101,39 @@ type PlanCache struct {
 	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
 }
 
+// PreparedPlanCache is the PreparedPlanCache section of the config.
+type PreparedPlanCache struct {
+	Enabled  bool  `toml:"prepared-plan-cache-enabled" json:"prepared-plan-cache-enabled"`
+	Capacity int64 `toml:"prepared-plan-cache-capacity" json:"prepared-plan-cache-capacity"`
+}
+
+// OpenTracing is the opentracing section of the config.
+type OpenTracing struct {
+	Enable     bool                `toml:"enable" json:"enbale"`
+	Sampler    OpenTracingSampler  `toml:"sampler" json:"sampler"`
+	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
+	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
+}
+
+// OpenTracingSampler is the config for opentracing sampler.
+// See https://godoc.org/github.com/uber/jaeger-client-go/config#SamplerConfig
+type OpenTracingSampler struct {
+	Type                    string        `toml:"type" json:"type"`
+	Param                   float64       `toml:"param" json:"param"`
+	SamplingServerURL       string        `toml:"sampling-server-url" json:"sampling-server-url"`
+	MaxOperations           int           `toml:"max-operations" json:"max-operations"`
+	SamplingRefreshInterval time.Duration `toml:"sampling-refresh-interval" json:"sampling-refresh-interval"`
+}
+
+// OpenTracingReporter is the config for opentracing reporter.
+// See https://godoc.org/github.com/uber/jaeger-client-go/config#ReporterConfig
+type OpenTracingReporter struct {
+	QueueSize           int           `toml:"queue-size" json:"queue-size"`
+	BufferFlushInterval time.Duration `toml:"buffer-flush-interval" json:"buffer-flush-interval"`
+	LogSpans            bool          `toml:"log-spans" json:"log-spans"`
+	LocalAgentHostPort  string        `toml:"local-agent-host-port" json:"local-agent-host-port"`
+}
+
 var defaultConf = Config{
 	Host:   "0.0.0.0",
 	Port:   4000,
@@ -134,6 +172,18 @@ var defaultConf = Config{
 		Capacity: 2560,
 		Shards:   256,
 	},
+	PreparedPlanCache: PreparedPlanCache{
+		Enabled:  false,
+		Capacity: 100,
+	},
+	OpenTracing: OpenTracing{
+		Enable: false,
+		Sampler: OpenTracingSampler{
+			Type:  "const",
+			Param: 1.0,
+		},
+		Reporter: OpenTracingReporter{},
+	},
 }
 
 var globalConf = defaultConf
@@ -166,4 +216,25 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 		File:             l.File,
 		SlowQueryFile:    l.SlowQueryFile,
 	}
+}
+
+// ToTracingConfig converts *OpenTracing to *tracing.Configuration.
+func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
+	ret := &tracing.Configuration{
+		Disabled:   !t.Enable,
+		RPCMetrics: t.RPCMetrics,
+		Reporter:   &tracing.ReporterConfig{},
+		Sampler:    &tracing.SamplerConfig{},
+	}
+	ret.Reporter.QueueSize = t.Reporter.QueueSize
+	ret.Reporter.BufferFlushInterval = t.Reporter.BufferFlushInterval
+	ret.Reporter.LogSpans = t.Reporter.LogSpans
+	ret.Reporter.LocalAgentHostPort = t.Reporter.LocalAgentHostPort
+
+	ret.Sampler.Type = t.Sampler.Type
+	ret.Sampler.Param = t.Sampler.Param
+	ret.Sampler.SamplingServerURL = t.Sampler.SamplingServerURL
+	ret.Sampler.MaxOperations = t.Sampler.MaxOperations
+	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
+	return ret
 }

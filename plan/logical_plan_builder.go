@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"unicode"
 
@@ -402,7 +403,16 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		if expr == nil {
 			continue
 		}
-		expressions = append(expressions, expression.SplitCNFItems(expr)...)
+		cnfItems := expression.SplitCNFItems(expr)
+		for _, item := range cnfItems {
+			if con, ok := item.(*expression.Constant); ok {
+				ret, err := expression.EvalBool(expression.CNFExprs{con}, nil, b.ctx)
+				if ret || err != nil {
+					continue
+				}
+			}
+			expressions = append(expressions, item)
+		}
 	}
 	if len(expressions) == 0 {
 		return p
@@ -691,7 +701,9 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 			return nil
 		}
 	}
-
+	if count > math.MaxUint64-offset {
+		count = math.MaxUint64 - offset
+	}
 	li := Limit{
 		Offset: offset,
 		Count:  count,
@@ -1196,15 +1208,6 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
-	var statisticTable *statistics.Table
-	if handle == nil {
-		// When the first session is created, the handle hasn't been initialized.
-		statisticTable = statistics.PseudoTable(tn.TableInfo.ID)
-	} else {
-		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
-	}
-
 	schemaName := tn.Schema
 	if schemaName.L == "" {
 		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -1215,6 +1218,14 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	tableInfo := tbl.Meta()
+	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
+	var statisticTable *statistics.Table
+	if handle == nil {
+		// When the first session is created, the handle hasn't been initialized.
+		statisticTable = statistics.PseudoTable(tableInfo.ID)
+	} else {
+		statisticTable = handle.GetTableStats(tableInfo.ID)
+	}
 
 	p := DataSource{
 		indexHints:     tn.IndexHints,

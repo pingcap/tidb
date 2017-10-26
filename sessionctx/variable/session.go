@@ -113,6 +113,8 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
+	// params for prepared statements
+	PreparedParams []interface{}
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -230,6 +232,7 @@ func NewSessionVars() *SessionVars {
 		Systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
 		PreparedStmtNameToID:       make(map[string]uint32),
+		PreparedParams:             make([]interface{}, 10),
 		TxnCtx:                     &TransactionContext{},
 		RetryInfo:                  &RetryInfo{},
 		StrictSQLMode:              true,
@@ -338,13 +341,15 @@ type StatementContext struct {
 	TruncateAsWarning      bool
 	OverflowAsWarning      bool
 	InShowWarning          bool
+	UseCache               bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
-		affectedRows uint64
-		foundRows    uint64
-		warnings     []error
+		affectedRows      uint64
+		foundRows         uint64
+		warnings          []error
+		histogramsNotLoad bool
 	}
 
 	// Copied from SessionVars.TimeZone.
@@ -417,6 +422,21 @@ func (sc *StatementContext) AppendWarning(warn error) {
 		sc.mu.warnings = append(sc.mu.warnings, warn)
 	}
 	sc.mu.Unlock()
+}
+
+// SetHistogramsNotLoad sets histogramsNotLoad.
+func (sc *StatementContext) SetHistogramsNotLoad() {
+	sc.mu.Lock()
+	sc.mu.histogramsNotLoad = true
+	sc.mu.Unlock()
+}
+
+// HistogramsNotLoad gets histogramsNotLoad.
+func (sc *StatementContext) HistogramsNotLoad() bool {
+	sc.mu.Lock()
+	notLoad := sc.mu.histogramsNotLoad
+	sc.mu.Unlock()
+	return notLoad
 }
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.

@@ -59,6 +59,7 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
+	testleak.BeforeTest()
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
@@ -67,14 +68,12 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS table_string;")
 	tk.MustExec("CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);")
@@ -108,10 +107,7 @@ func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 
 func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk.MustExec(`USE test;`)
 	tk.MustExec(`DROP TABLE IF EXISTS t;`)
 	tk.MustExec(`CREATE TABLE t(a BINARY(10), b CHAR(10));`)
@@ -131,10 +127,7 @@ func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
 }
 
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -213,10 +206,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestConvertToBit(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -242,10 +232,7 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 }
 
 func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -531,10 +518,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -896,10 +880,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1022,7 +1003,6 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	defer func() {
 		s.ctx.GetSessionVars().StrictSQLMode = originSQLMode
 		s.cleanEnv(c)
-		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1706,10 +1686,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1749,10 +1726,7 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2120,10 +2094,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2232,10 +2203,7 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2294,10 +2262,7 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2467,10 +2432,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2630,10 +2592,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a decimal(7, 6))")
@@ -2643,10 +2602,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2691,14 +2647,20 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t (id,count)VALUES('abc',265.0) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count)")
 	result = tk.MustQuery("select count from t where id = 'abc'")
 	result.Check(testkit.Rows("265.00"))
+
+	// for values(issue #4884)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table test(id int not null, val text, primary key(id));")
+	tk.MustExec("insert into test values(1,'hello');")
+	result = tk.MustQuery("select * from test;")
+	result.Check(testkit.Rows("1 hello"))
+	tk.MustExec("insert into test values(1, NULL) on duplicate key update val = VALUES(val);")
+	result = tk.MustQuery("select * from test;")
+	result.Check(testkit.Rows("1 <nil>"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t;")
@@ -2785,11 +2747,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 
 	r := tk.MustQuery("select time '117:01:12';")
@@ -2833,11 +2791,7 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 }
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 
 	r := tk.MustQuery("select timestamp '2017-01-01 00:00:00';")
@@ -2866,11 +2820,7 @@ func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
 }
 
 func (s *testIntegrationSuite) TestLiterals(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	r := tk.MustQuery("SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;")
 	r.Check(testkit.Rows("0 0 1 -1 1"))
@@ -2878,10 +2828,7 @@ func (s *testIntegrationSuite) TestLiterals(c *C) {
 
 func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS table_json;")
 	tk.MustExec("CREATE TABLE table_json(a json, b VARCHAR(255));")
@@ -2923,10 +2870,7 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists tab0")
 	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
@@ -2940,10 +2884,7 @@ func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
 
 func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
+	defer s.cleanEnv(c)
 	_, err := tk.Exec("set sql_mode='adfasdfadsfdasd';")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("set @@sql_mode='adfasdfadsfdasd';")

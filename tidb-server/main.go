@@ -26,6 +26,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -39,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -125,6 +128,7 @@ func main() {
 	validateConfig()
 	setGlobalVars()
 	setupLog()
+	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
 	createStoreAndDomain()
@@ -162,9 +166,9 @@ func setupBinlogClient() {
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientCon, err := grpc.Dial(cfg.BinlogSocket, dialerOpt, grpc.WithInsecure())
+	clientConn, err := tidb.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
-	binloginfo.SetPumpClient(binlog.NewPumpClient(clientCon))
+	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s", cfg.BinlogSocket)
 }
 
@@ -322,7 +326,12 @@ func setGlobalVars() {
 	if cache.PlanCacheEnabled {
 		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
 		cache.PlanCacheShards = cfg.PlanCache.Shards
-		cache.GlobalPlanCache = cache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+		cache.GlobalPlanCache = kvcache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	}
+
+	cache.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
+	if cache.PreparedPlanCacheEnabled {
+		cache.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
 }
 
@@ -380,6 +389,15 @@ func setupMetrics() {
 	})
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
+}
+
+func setupTracing() {
+	tracingCfg := cfg.OpenTracing.ToTracingConfig()
+	tracer, _, err := tracingCfg.New("TiDB")
+	if err != nil {
+		log.Fatal("cannot initialize Jaeger Tracer", err)
+	}
+	opentracing.SetGlobalTracer(tracer)
 }
 
 func runServer() {
