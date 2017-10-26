@@ -24,7 +24,6 @@ func NewTableCommand() *cobra.Command {
 	m := &cobra.Command{
 		Use:   "table <sub_command> <db_name> <table_name>",
 		Short: "show the table information given the table name",
-		// Run:   showTableIDCommandFunc,
 	}
 
 	m.AddCommand(NewTableIDCommand())
