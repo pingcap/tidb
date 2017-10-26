@@ -107,7 +107,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan)
 	}
 	switch p.JoinType {
-	case LeftOuterJoin, LeftOuterSemiJoin:
+	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		rightCond = p.RightConditions
 		p.RightConditions = nil
 		leftCond = leftPushCond
@@ -119,7 +119,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		rightCond = rightPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
-	case SemiJoin:
+	case SemiJoin, AntiSemiJoin:
 		_, leftPushCond, rightPushCond, _ = extractOnCondition(predicates, leftPlan, rightPlan)
 		leftCond = append(p.LeftConditions, leftPushCond...)
 		rightCond = append(p.RightConditions, rightPushCond...)

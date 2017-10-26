@@ -184,7 +184,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(tb.Indices(), HasLen, 1)
 	_, err = tb.Indices()[0].Create(txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
@@ -222,7 +222,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
-		err1 = ctx.Txn().Commit()
+		err1 = ctx.Txn().Commit(goctx.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))

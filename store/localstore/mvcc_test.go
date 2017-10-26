@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testMvccSuite{})
@@ -82,7 +83,7 @@ func (t *testMvccSuite) SetUpTest(c *C) {
 		err := txn.Set(val, val)
 		c.Assert(err, IsNil)
 	}
-	txn.Commit()
+	txn.Commit(goctx.Background())
 }
 
 func (t *testMvccSuite) TearDownSuite(c *C) {
@@ -99,7 +100,7 @@ func (t *testMvccSuite) TestMvccGet(c *C) {
 	k = encodeInt(1024)
 	_, err = txn.Get(k)
 	c.Assert(err, NotNil)
-	txn.Commit()
+	txn.Commit(goctx.Background())
 }
 
 func (t *testMvccSuite) TestMvccPutAndDel(c *C) {
@@ -111,7 +112,7 @@ func (t *testMvccSuite) TestMvccPutAndDel(c *C) {
 		err = txn.Delete(val)
 		c.Assert(err, IsNil)
 	}
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	txn, _ = t.s.Begin()
 	_, err = txn.Get(encodeInt(0))
@@ -119,7 +120,7 @@ func (t *testMvccSuite) TestMvccPutAndDel(c *C) {
 	v, err := txn.Get(encodeInt(4))
 	c.Assert(err, IsNil)
 	c.Assert(len(v), Greater, 0)
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	cnt := 0
 	t.scanRawEngine(c, func(k, v []byte) {
@@ -129,7 +130,7 @@ func (t *testMvccSuite) TestMvccPutAndDel(c *C) {
 	txn.Set(encodeInt(0), []byte("v"))
 	_, err = txn.Get(encodeInt(0))
 	c.Assert(err, IsNil)
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	cnt1 := 0
 	t.scanRawEngine(c, func(k, v []byte) {
@@ -147,7 +148,7 @@ func (t *testMvccSuite) TestMvccNext(c *C) {
 		err = it.Next()
 		c.Assert(err, IsNil)
 	}
-	txn.Commit()
+	txn.Commit(goctx.Background())
 }
 
 func encodeTestDataKey(i int) []byte {
@@ -158,7 +159,7 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	tx, _ := t.s.Begin()
 	b, err := tx.Get(encodeInt(1))
 	c.Assert(err, IsNil)
-	tx.Commit()
+	tx.Commit(goctx.Background())
 
 	lastVer, err := globalVersionProvider.CurrentVersion()
 	c.Assert(err, IsNil)
@@ -166,7 +167,7 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	tx, _ = t.s.Begin()
 	err = tx.Set(encodeInt(1), []byte("new"))
 	c.Assert(err, IsNil)
-	err = tx.Commit()
+	err = tx.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	testKey := encodeTestDataKey(1)
 
@@ -222,7 +223,7 @@ func (t *testMvccSuite) TestMvccSeek(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set(encodeInt(3), encodeInt(1003))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	v1, err := globalVersionProvider.CurrentVersion()
 	c.Assert(err, IsNil)
@@ -231,7 +232,7 @@ func (t *testMvccSuite) TestMvccSeek(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Delete(encodeInt(2))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	v2, err := globalVersionProvider.CurrentVersion()
 	c.Assert(err, IsNil)
@@ -274,7 +275,7 @@ func (t *testMvccSuite) TestReverseMvccSeek(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set(encodeInt(3), encodeInt(1003))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	v1, err := globalVersionProvider.CurrentVersion()
 	c.Assert(err, IsNil)
@@ -283,7 +284,7 @@ func (t *testMvccSuite) TestReverseMvccSeek(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Delete(encodeInt(4))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	v2, err := globalVersionProvider.CurrentVersion()
 	c.Assert(err, IsNil)
@@ -313,7 +314,7 @@ func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
 		tx, _ := t.s.Begin()
 		err := tx.Set(encodeInt(5), encodeInt(100+i))
 		c.Assert(err, IsNil)
-		err = tx.Commit()
+		err = tx.Commit(goctx.Background())
 		c.Assert(err, IsNil)
 	}
 	// we can always read newest data
@@ -326,24 +327,24 @@ func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	c.Assert(string(it.Value()), Equals, string(encodeInt(100+9)))
-	tx.Commit()
+	tx.Commit(goctx.Background())
 
 	testKey := []byte("testKey")
 	txn0, _ := t.s.Begin()
 	txn0.Set(testKey, []byte("0"))
-	txn0.Commit()
+	txn0.Commit(goctx.Background())
 	txn1, _ := t.s.Begin()
 	{
 		// Commit another version
 		txn2, _ := t.s.Begin()
 		txn2.Set(testKey, []byte("2"))
-		txn2.Commit()
+		txn2.Commit(goctx.Background())
 	}
 	r, err := txn1.Get(testKey)
 	c.Assert(err, IsNil)
 	// Test isolation in transaction.
 	c.Assert(string(r), Equals, "0")
-	txn1.Commit()
+	txn1.Commit(goctx.Background())
 }
 
 func (t *testMvccSuite) TestBufferedIterator(c *C) {
@@ -355,7 +356,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	tx.Set([]byte{0x0, 0xee, 0xff}, []byte("4"))
 	tx.Set([]byte{0xff, 0xff, 0xee, 0xff}, []byte("5"))
 	tx.Set([]byte{0xff, 0xff, 0xff}, []byte("6"))
-	tx.Commit()
+	tx.Commit(goctx.Background())
 
 	tx, _ = s.Begin()
 	iter, err := tx.Seek([]byte{0})
@@ -366,7 +367,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 		c.Assert(err, IsNil)
 		cnt++
 	}
-	tx.Commit()
+	tx.Commit(goctx.Background())
 	c.Assert(cnt, Equals, 6)
 
 	tx, _ = s.Begin()
@@ -374,7 +375,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	c.Assert(string(it.Key()), Equals, "\xff\xff\xee\xff")
-	tx.Commit()
+	tx.Commit(goctx.Background())
 
 	// no such key
 	tx, _ = s.Begin()
@@ -386,7 +387,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	c.Assert(it.Value(), DeepEquals, []byte("2"))
-	tx.Commit()
+	tx.Commit(goctx.Background())
 
 	tx, _ = s.Begin()
 	iter, err = tx.SeekReverse(nil)
@@ -397,7 +398,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 		c.Assert(err, IsNil)
 		cnt++
 	}
-	tx.Commit()
+	tx.Commit(goctx.Background())
 	c.Assert(cnt, Equals, 6)
 
 	tx, _ = s.Begin()
@@ -405,7 +406,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	c.Assert(string(it.Key()), Equals, "\xff\xff\xee\xff")
-	tx.Commit()
+	tx.Commit(goctx.Background())
 
 	// no such key
 	tx, _ = s.Begin()
@@ -417,7 +418,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	c.Assert(it.Value(), DeepEquals, []byte("1"))
-	tx.Commit()
+	tx.Commit(goctx.Background())
 }
 
 func encodeInt(n int) []byte {

@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -115,7 +116,7 @@ func (txn *dbTxn) doCommit() error {
 	return txn.store.CommitTxn(txn)
 }
 
-func (txn *dbTxn) Commit() error {
+func (txn *dbTxn) Commit(goctx.Context) error {
 	if !txn.valid {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}

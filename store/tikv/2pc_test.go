@@ -74,7 +74,7 @@ func (s *testCommitterSuite) mustCommit(c *C, m map[string]string) {
 		err := txn.Set([]byte(k), []byte(v))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit()
+	err := txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	s.checkValues(c, m)
@@ -108,7 +108,7 @@ func (s *testCommitterSuite) TestCommitRollback(c *C) {
 		"c": "c2",
 	})
 
-	err := txn.Commit()
+	err := txn.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 
 	s.checkValues(c, map[string]string{
@@ -192,7 +192,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	// txn3 writes "c"
 	err = txn3.Set([]byte("c"), []byte("c3"))
 	c.Assert(err, IsNil)
-	err = txn3.Commit()
+	err = txn3.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	// txn2 writes "a"(PK), "b", "c" on different regions.
 	// "c" will return a retryable error.
@@ -203,7 +203,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Set([]byte("c"), []byte("c2"))
 	c.Assert(err, IsNil)
-	err = txn2.Commit()
+	err = txn2.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), txnRetryableMark), IsTrue)
 }
@@ -249,7 +249,7 @@ func (s *testCommitterSuite) TestPrewriteCancel(c *C) {
 	// txn2 writes "b"
 	err := txn2.Set([]byte("b"), []byte("b2"))
 	c.Assert(err, IsNil)
-	err = txn2.Commit()
+	err = txn2.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	// txn1 writes "a"(PK), "b", "c" on different regions.
 	// "b" will return an error and cancel commit.
@@ -259,7 +259,7 @@ func (s *testCommitterSuite) TestPrewriteCancel(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("c"), []byte("c1"))
 	c.Assert(err, IsNil)
-	err = txn1.Commit()
+	err = txn1.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 	// "c" should be cleaned up in reasonable time.
 	for i := 0; i < 50; i++ {
@@ -299,7 +299,7 @@ func (s *testCommitterSuite) TestIllegalTso(c *C) {
 	}
 	// make start ts bigger.
 	txn.startTS = uint64(math.MaxUint64)
-	err := txn.Commit()
+	err := txn.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 }
 
@@ -325,7 +325,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	txn1 := s.begin(c)
 	err := txn1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	err = txn1.Commit()
+	err = txn1.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	// check a
@@ -342,7 +342,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	err = txn2.Set([]byte("b"), []byte("b2"))
 	c.Assert(err, IsNil)
 	// prewrite:primary a failed, b success
-	err = txn2.Commit()
+	err = txn2.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 
 	// txn2 failed with a rollback for record a.
@@ -368,7 +368,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	// update data in a new txn, should be success.
 	err = txn.Set([]byte("a"), []byte("a3"))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	// check value
 	txn = s.begin(c)
@@ -404,7 +404,7 @@ func (s *testCommitterSuite) TestCommitPrimaryRpcErrors(c *C) {
 	t1 := s.begin(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	err = t1.Commit()
+	err = t1.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 	// TODO: refine errors of region cache and rpc, so that every the rpc error
 	// could be easily wrapped to ErrResultUndetermined, but RegionError would not.
@@ -431,7 +431,7 @@ func (s *testCommitterSuite) TestCommitPrimaryRegionError(c *C) {
 	t2 := s.begin(c)
 	err := t2.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	err = t2.Commit()
+	err = t2.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
@@ -454,7 +454,7 @@ func (s *testCommitterSuite) TestCommitPrimaryKeyError(c *C) {
 	t3 := s.begin(c)
 	err := t3.Set([]byte("c"), []byte("c1"))
 	c.Assert(err, IsNil)
-	err = t3.Commit()
+	err = t3.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
@@ -482,7 +482,7 @@ func (s *testCommitterSuite) TestCommitTimeout(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("c"), []byte("c1"))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, NotNil)
 
 	txn2 := s.begin(c)

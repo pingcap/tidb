@@ -213,11 +213,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+			best: "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.b = t3.a",
-			best: "LeftHashJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.b,t3.a)",
+			best: "LeftHashJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.b,t3.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
@@ -241,11 +241,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a order by t1.a",
-			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
 		{
 			sql:  "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+			best: "MergeRightOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
@@ -253,11 +253,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)(test.t.c,s.b)",
+			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
 		},
 		{
 			sql:  "select t.c in (select b from t s where s.a = t.a) from t",
-			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)(test.t.c,s.b)->Projection",
+			best: "MergeLeftOuterSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)->Projection",
 		},
 		// Test Single Merge Join.
 		// Merge Join will no longer enforce a sort. If a hint doesn't take effect, we will choose other types of join.
@@ -268,36 +268,36 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Single Merge Join + Sort.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
-			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
 		// Test Single Merge Join + Sort + desc.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
-			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
 		},
 		// Test Multi Merge Join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
+			best: "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
 		},
 		// Test Multi Merge Join with multi keys.
 		// TODO: More tests should be added.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d",
-			best: "MergeJoin{MergeJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
+			best: "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
 		},
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d order by t1.c",
-			best: "MergeJoin{MergeJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
+			best: "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
 		},
 		// Test Multi Merge Join + Outer Join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->TableReader(Table(t))}(t2.a,t3.a)",
+			best: "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->TableReader(Table(t))}(t2.a,t3.a)",
 		},
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t1.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+			best: "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
 		// Test Index Join + TableScan.
 		{
@@ -389,30 +389,30 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		//},
 		{
 			sql:  "select * from t where a in (select s.a from t s) order by t.a",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
+			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
 		},
 		// Test Nested sub query.
 		{
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			best: "SemiJoin{TableReader(Table(t))->Projection->SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(s.d,k.d)(s.c,k.c)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "SemiJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(s.d,k.d)(s.c,k.c)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		// Test Semi Join + Order by.
 		{
 			sql:  "select * from t where a in (select a from t) order by b",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort",
+			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort",
 		},
 		// Test Apply.
 		{
 			sql:  "select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "Apply{TableReader(Table(t))->MergeJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "Apply{TableReader(Table(t))->MergeJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
-			best: "Apply{TableReader(Table(t))->MergeJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -802,7 +802,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test merge join + stream agg
 		{
 			sql:  "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g group by a.g",
-			best: "MergeJoin{IndexReader(Index(t.g)[[<nil>,+inf]])->IndexReader(Index(t.g)[[<nil>,+inf]])}(a.g,b.g)->StreamAgg",
+			best: "MergeInnerJoin{IndexReader(Index(t.g)[[<nil>,+inf]])->IndexReader(Index(t.g)[[<nil>,+inf]])}(a.g,b.g)->StreamAgg",
 		},
 		// Test index join + stream agg
 		{
