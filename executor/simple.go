@@ -211,7 +211,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit()
+		err := e.ctx.Txn().Commit(e.ctx.GoCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -242,7 +242,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit()
+		err := e.ctx.Txn().Commit(e.ctx.GoCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}

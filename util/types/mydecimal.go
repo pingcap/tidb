@@ -159,6 +159,9 @@ func digitsToWords(digits int) int {
 	return (digits + digitsPerWord - 1) / digitsPerWord
 }
 
+// MyDecimalStructSize is the struct size of MyDecimal.
+const MyDecimalStructSize = 40
+
 // MyDecimal represents a decimal value.
 type MyDecimal struct {
 	digitsInt int8 // the number of *decimal* digits before the point.

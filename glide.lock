@@ -1,8 +1,12 @@
-hash: 0a3be77914458ae2d919542b787a96840d1bdfca14c47403c2392e15b61ea804
-updated: 2017-10-11T13:03:01.507559653+08:00
+hash: 8bcb81cb6a830a02f41b5bd6fd211dab6f1c0e2d35aa161d05e35a009cafbf48
+updated: 2017-10-24T10:19:59.3474946+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
+- name: github.com/apache/thrift
+  version: b2a4d4ae21c789b689dd162deb819665567f481c
+  subpackages:
+  - lib/go/thrift
 - name: github.com/beorn7/perks
   version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
   subpackages:
@@ -13,6 +17,8 @@ imports:
   version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - name: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
+- name: github.com/codahale/hdrhistogram
+  version: f8ad88b59a584afeee9d334eff879b104439117b
 - name: github.com/coreos/etcd
   version: 9d43462d174c664f5edf313dec0de31e1ef4ed47
   subpackages:
@@ -24,14 +30,8 @@ imports:
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
-- name: github.com/coreos/go-systemd
-  version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
-  subpackages:
-  - journal
-- name: github.com/coreos/pkg
-  version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
-  subpackages:
-  - capnslog
+- name: github.com/crossdock/crossdock-go
+  version: 049aabb0122b03bc9bd30cab8f3f91fb60166361
 - name: github.com/cznic/golex
   version: da5a7153a51074477ecac5c45a7e5182a0c72448
   subpackages:
@@ -76,6 +76,12 @@ imports:
   version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
+- name: github.com/grpc-ecosystem/go-grpc-middleware
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
+  subpackages:
+  - tags
+  - tracing/opentracing
+  - util/metautils
 - name: github.com/grpc-ecosystem/go-grpc-prometheus
   version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
 - name: github.com/grpc-ecosystem/grpc-gateway
@@ -96,6 +102,11 @@ imports:
   version: 6352e005618615ffaf1cb1c6622b8e91435751fe
 - name: github.com/ngaut/sync2
   version: 7a24ed77b2efb460c1468b7dc917821c66e80e55
+- name: github.com/opentracing/opentracing-go
+  version: 1949ddbfd147afd4d964a9f00b24eb291e0e7c38
+  subpackages:
+  - ext
+  - log
 - name: github.com/petar/GoLLRB
   version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
   subpackages:
@@ -105,7 +116,7 @@ imports:
 - name: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - name: github.com/pingcap/goleveldb
-  version: 1c7b975bc41078e959e38e2ecbfd28a9619fc77a
+  version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
   - leveldb
   - leveldb/cache
@@ -131,17 +142,14 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/mysqlx-driver
-  version: 2d8314d333881ae8b5947623d6ff49741707a31a
-- name: github.com/pingcap/mysqlx_driver
-  version: 2d8314d333881ae8b5947623d6ff49741707a31a
+  version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
   repo: git@github.com:pingcap/mysqlx-driver.git
 - name: github.com/pingcap/pd
   version: 91e4257196bb714005f80a6e075bc1e19a9687b1
   subpackages:
   - pd-client
-  - pkg/logutil
 - name: github.com/pingcap/tipb
-  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
+  version: eccd39c3992538c382a6351430a77233f42b1344
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -177,12 +185,39 @@ imports:
   version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/spaolacci/murmur3
   version: 0d12bf811670bf6a1a63828dfbd003eded177fce
-- name: github.com/syndtr/goleveldb
-  version: b89cc31ef7977104127d34c1bd31ebd1a9db2199
+- name: github.com/stretchr/testify
+  version: 69483b4bd14f5845b5a1e55bca19e954e827f1d0
   subpackages:
-  - leveldb/comparer
+  - assert
+  - require
+  - suite
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
+- name: github.com/uber/jaeger-client-go
+  version: d021e646f5187d77b55592c3efee1a2810e895d7
+  subpackages:
+  - config
+  - internal/spanlog
+  - log
+  - rpcmetrics
+  - thrift-gen/agent
+  - thrift-gen/jaeger
+  - thrift-gen/sampling
+  - thrift-gen/zipkincore
+  - utils
+- name: github.com/uber/jaeger-lib
+  version: 3b2a9ad2a045881ab7a0f81d465be54c8292ee4f
+  subpackages:
+  - metrics
+- name: github.com/uber/tchannel-go
+  version: a7ad9ecb640b5f10a0395b38d6319175172b3ab2
+  subpackages:
+  - atomic
+  - thrift
+  - thrift/gen-go/meta
+  - tnet
+  - trace/thrift/gen-go/tcollector
+  - typed
 - name: golang.org/x/net
   version: d1e1b351919c6738fdeb9893d5c998b161464f0c
   subpackages:

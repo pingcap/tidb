@@ -60,7 +60,7 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
 		is := executor.GetInfoSchema(tk.Se)
-		c.Assert(plan.Preprocess(stmtNode, is, tk.Se), IsNil)
+		c.Assert(plan.ResolveName(stmtNode, is, tk.Se), IsNil)
 		p, err := plan.Optimize(tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
 		c.Assert(executor.StatementLabel(stmtNode, p, &ignore), Equals, tt.label)

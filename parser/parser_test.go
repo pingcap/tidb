@@ -62,7 +62,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
-		"generated", "virtual", "stored",
+		"generated", "virtual", "stored", "usage",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -95,7 +95,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
-		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version",
+		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version", "replication", "slave", "client",
+		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -193,6 +194,34 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// src = "select 0b'';"
 	// _, err = parser.ParseOneStmt(src, "", "")
 	// c.Assert(err, NotNil)
+
+	// for #4909, support numericType `signed` filedOpt.
+	src = "CREATE TABLE t(_sms smallint signed, _smu smallint unsigned);"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = `CREATE TABLE t(a tinyint signed,
+		b smallint signed,
+		c mediumint signed,
+		d int signed,
+		e int1 signed,
+		f int2 signed,
+		g int3 signed,
+		h int4 signed,
+		i int8 signed,
+		j integer signed,
+		k bigint signed,
+		l bool signed,
+		m boolean signed
+		);`
+
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	ct, ok := st.(*ast.CreateTableStmt)
+	c.Assert(ok, IsTrue)
+	for _, col := range ct.Cols {
+		c.Assert(col.Tp.Flag&mysql.UnsignedFlag, Equals, uint(0))
+	}
 }
 
 type testCase struct {
@@ -362,10 +391,15 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 natural inner join t2", false},
 		{"select * from t1 natural cross join t2", false},
 
+		// for straight_join
+		{"select * from t1 straight_join t2 on t1.id = t2.id", true},
+
 		// for admin
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
+		{"admin cancel ddl jobs 1", true},
+		{"admin cancel ddl jobs 1, 2", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
@@ -1293,6 +1327,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
 		{"create table t (c int, `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '') PARTITION BY RANGE (UNIX_TIMESTAMP(create_time)) (PARTITION p201610 VALUES LESS THAN(1477929600), PARTITION p201611 VALUES LESS THAN(1480521600),PARTITION p201612 VALUES LESS THAN(1483200000),PARTITION p201701 VALUES LESS THAN(1485878400),PARTITION p201702 VALUES LESS THAN(1488297600),PARTITION p201703 VALUES LESS THAN(1490976000))", true},
 		{"CREATE TABLE `md_product_shop` (`shopCode` varchar(4) DEFAULT NULL COMMENT '地点') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 /*!50100 PARTITION BY KEY (shopCode) PARTITIONS 19 */;", true},
+		{"CREATE TABLE `payinfo1` (`id` bigint(20) NOT NULL AUTO_INCREMENT, `oderTime` datetime NOT NULL) ENGINE=InnoDB AUTO_INCREMENT=641533032 DEFAULT CHARSET=utf8 ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8 /*!50500 PARTITION BY RANGE COLUMNS(oderTime) (PARTITION P2011 VALUES LESS THAN ('2012-01-01 00:00:00') ENGINE = InnoDB, PARTITION P1201 VALUES LESS THAN ('2012-02-01 00:00:00') ENGINE = InnoDB, PARTITION PMAX VALUES LESS THAN (MAXVALUE) ENGINE = InnoDB)*/;", true},
 
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
@@ -1460,6 +1495,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ENGINE ''", true},
+		{"ALTER TABLE t ENGINE = ''", true},
+		{"ALTER TABLE t ENGINE = 'innodb'", true},
+		{"ALTER TABLE t ENGINE = innodb", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -1615,7 +1654,8 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
-		{"GRANT SELECT ON test.* to 'test'", true}, // For issue 2654.
+		{"GRANT SELECT ON test.* to 'test'", true},                                                                                                            // For issue 2654.
+		{"grant PROCESS,usage, REPLICATION SLAVE, REPLICATION CLIENT on *.* to 'xxxxxxxxxx'@'%' identified by password 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx'", true}, // For issue 4865
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},
@@ -1874,6 +1914,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb connection 23123", true},
 		{"kill tidb query 23123", true},
 		{"show processlist", true},
+		{"show full processlist", true},
 	}
 	s.RunTest(c, table)
 }

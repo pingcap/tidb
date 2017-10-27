@@ -187,10 +187,10 @@ func existsCartesianProduct(p LogicalPlan) bool {
 // The statement must be prepared before it can be passed to optimize function.
 // We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
 func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	if err := Preprocess(node, is, ctx); err != nil {
+	if err := ResolveName(node, is, ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if err := Validate(node, true); err != nil {
+	if err := Preprocess(ctx, node, is, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

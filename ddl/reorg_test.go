@@ -58,13 +58,13 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	ctx.Txn().Set([]byte("a"), []byte("b"))
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	rowCount := int64(10)
 	f := func() error {
 		d.setReorgRowCount(rowCount)
-		time.Sleep(4 * testLease)
+		time.Sleep(20 * testLease)
 		return nil
 	}
 	job := &model.Job{}
@@ -150,7 +150,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.Txn().Commit()
+	err := ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
