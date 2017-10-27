@@ -30,7 +30,7 @@ const resolvedCacheSize = 512
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
-	store *tikvStore
+	store TiKVStorage
 	mu    struct {
 		sync.RWMutex
 		// Cache resolved txns (FIFO, txn id -> txnStatus).
@@ -39,7 +39,7 @@ type LockResolver struct {
 	}
 }
 
-func newLockResolver(store *tikvStore) *LockResolver {
+func newLockResolver(store TiKVStorage) *LockResolver {
 	r := &LockResolver{
 		store: store,
 	}
@@ -153,7 +153,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 
 	var expiredLocks []*Lock
 	for _, l := range locks {
-		if lr.store.oracle.IsExpired(l.TxnID, l.TTL) {
+		if lr.store.GetOracle().IsExpired(l.TxnID, l.TTL) {
 			lockResolverCounter.WithLabelValues("expired").Inc()
 			expiredLocks = append(expiredLocks, l)
 		} else {
@@ -213,7 +213,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		},
 	}
 	for {
-		loc, err := lr.store.regionCache.LocateKey(bo, primary)
+		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
@@ -255,7 +255,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
 	lockResolverCounter.WithLabelValues("query_resolve_locks").Inc()
 	for {
-		loc, err := lr.store.regionCache.LocateKey(bo, l.Key)
+		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
 			return errors.Trace(err)
 		}

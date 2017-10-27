@@ -40,7 +40,7 @@ import (
 type GCWorker struct {
 	uuid        string
 	desc        string
-	store       *tikvStore
+	store       TiKVStorage
 	gcIsRunning bool
 	lastFinish  time.Time
 	cancel      goctx.CancelFunc
@@ -130,7 +130,7 @@ func (w *GCWorker) StartSafePointChecker() {
 		for {
 			select {
 			case spCachedTime := <-time.After(d):
-				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
+				cachedSafePoint, err := loadSafePoint(w.store.GetSafePointKV(), gcSavedSafePoint)
 				if err == nil {
 					gcWorkerCounter.WithLabelValues("check_safepoint_ok").Inc()
 					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
@@ -140,7 +140,7 @@ func (w *GCWorker) StartSafePointChecker() {
 					log.Errorf("[gc worker] fail to load safepoint: %v", err)
 					d = gcSafePointQuickRepeatInterval
 				}
-			case <-w.store.closed:
+			case <-w.store.Closed():
 				return
 			}
 		}
@@ -148,7 +148,7 @@ func (w *GCWorker) StartSafePointChecker() {
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
+func NewGCWorker(store TiKVStorage) (GCHandler, error) {
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -160,25 +160,26 @@ func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 	worker := &GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
-		store:       store.(*tikvStore),
+		store:       store,
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
+	return worker, nil
+}
 
-	worker.StartSafePointChecker()
+func (w *GCWorker) Start(enableGC bool) {
+	w.StartSafePointChecker()
 
 	var ctx goctx.Context
-	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
+	ctx, w.cancel = goctx.WithCancel(goctx.Background())
 	var wg sync.WaitGroup
 
 	if enableGC {
 		wg.Add(1)
-		go worker.start(ctx, &wg)
+		go w.start(ctx, &wg)
 		wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
 	}
-
-	return worker, nil
 }
 
 // Close stops background goroutines.
@@ -393,11 +394,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 }
 
 // RunGCJob sends GC command to KV. it is exported for testing purpose, do not use it with GCWorker at the same time.
-func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier string) error {
-	s, ok := store.(*tikvStore)
-	if !ok {
-		return errors.New("should use tikv driver")
-	}
+func RunGCJob(ctx goctx.Context, s TiKVStorage, safePoint uint64, identifier string) error {
 	err := resolveLocks(ctx, s, safePoint, identifier)
 	if err != nil {
 		return errors.Trace(err)
@@ -454,7 +451,7 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 			default:
 			}
 
-			loc, err := w.store.regionCache.LocateKey(bo, startKey)
+			loc, err := w.store.GetRegionCache().LocateKey(bo, startKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -512,7 +509,7 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 	return nil
 }
 
-func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {
+func resolveLocks(ctx goctx.Context, store TiKVStorage, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdScanLock,
@@ -534,7 +531,7 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 		default:
 		}
 
-		loc, err := store.regionCache.LocateKey(bo, key)
+		loc, err := store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -565,7 +562,7 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 		for i := range locksInfo {
 			locks[i] = newLock(locksInfo[i])
 		}
-		ok, err1 := store.lockResolver.ResolveLocks(bo, locks)
+		ok, err1 := store.GetLockResolver().ResolveLocks(bo, locks)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -588,10 +585,10 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 	return nil
 }
 
-func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {
+func doGC(ctx goctx.Context, store TiKVStorage, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
-	err := store.gcWorker.saveSafePoint(gcSavedSafePoint, safePoint)
+	err := saveSafePoint(store.GetSafePointKV(), gcSavedSafePoint, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -619,7 +616,7 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 		default:
 		}
 
-		loc, err := store.regionCache.LocateKey(bo, key)
+		loc, err := store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -727,9 +724,9 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	return false, nil
 }
 
-func (w *GCWorker) saveSafePoint(key string, t uint64) error {
+func saveSafePoint(kv SafePointKV, key string, t uint64) error {
 	s := strconv.FormatUint(t, 10)
-	err := w.store.kv.Put(gcSavedSafePoint, s)
+	err := kv.Put(gcSavedSafePoint, s)
 	if err != nil {
 		log.Error("save safepoint failed:", err)
 		return errors.Trace(err)
@@ -737,8 +734,8 @@ func (w *GCWorker) saveSafePoint(key string, t uint64) error {
 	return nil
 }
 
-func (w *GCWorker) loadSafePoint(key string) (uint64, error) {
-	str, err := w.store.kv.Get(gcSavedSafePoint)
+func loadSafePoint(kv SafePointKV, key string) (uint64, error) {
+	str, err := kv.Get(gcSavedSafePoint)
 
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -848,7 +845,7 @@ type MockGCWorker struct {
 }
 
 // NewMockGCWorker creates a MockGCWorker instance ONLY for test.
-func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
+func NewMockGCWorker(store TiKVStorage) (*MockGCWorker, error) {
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -860,7 +857,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 	worker := &GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
-		store:       store.(*tikvStore),
+		store:       store,
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),

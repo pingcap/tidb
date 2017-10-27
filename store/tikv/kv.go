@@ -128,7 +128,7 @@ type tikvStore struct {
 	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
-	gcWorker     *GCWorker
+	gcWorker     GCHandler
 	etcdAddrs    []string
 	mock         bool
 	enableGC     bool
@@ -194,10 +194,11 @@ func (s *tikvStore) EtcdAddrs() []string {
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
-	gcWorker, err := NewGCWorker(s, s.enableGC)
+	gcWorker, err := NewGCHandlerFunc(s)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	gcWorker.Start(s.enableGC)
 	s.gcWorker = gcWorker
 	return nil
 }
@@ -387,6 +388,22 @@ func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID Region
 
 func (s *tikvStore) GetRegionCache() *RegionCache {
 	return s.regionCache
+}
+
+func (s *tikvStore) GetLockResolver() *LockResolver {
+	return s.lockResolver
+}
+
+func (s *tikvStore) GetGCHandler() GCHandler {
+	return s.gcWorker
+}
+
+func (s *tikvStore) Closed() <-chan struct{} {
+	return s.closed
+}
+
+func (s *tikvStore) GetSafePointKV() SafePointKV {
+	return s.kv
 }
 
 // ParseEtcdAddr parses path to etcd address list

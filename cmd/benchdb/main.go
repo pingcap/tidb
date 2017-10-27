@@ -23,7 +23,6 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -88,7 +87,7 @@ func main() {
 }
 
 type benchDB struct {
-	store   kv.Storage
+	store   tikv.TiKVStorage
 	session tidb.Session
 }
 
@@ -104,7 +103,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 
 	return &benchDB{
-		store:   store,
+		store:   store.(tikv.TiKVStorage),
 		session: session,
 	}
 }
