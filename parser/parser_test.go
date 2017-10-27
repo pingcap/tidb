@@ -1499,6 +1499,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENGINE = ''", true},
 		{"ALTER TABLE t ENGINE = 'innodb'", true},
 		{"ALTER TABLE t ENGINE = innodb", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, ADD COLUMN a SMALLINT", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT, ENGINE = ''", true},
+		{"ALTER TABLE t ENGINE = '', COMMENT=''", true},
+		{"ALTER TABLE t ENGINE = '', ADD COLUMN a SMALLINT", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},

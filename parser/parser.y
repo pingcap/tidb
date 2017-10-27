@@ -795,8 +795,8 @@ import (
 %precedence '('
 %precedence quick
 %precedence escape
-%precedence lowerThanComma
 %precedence ','
+%precedence higherThanComma
 
 %start	Start
 
@@ -5030,7 +5030,7 @@ TableOptionListOpt:
 	{
 		$$ = []*ast.TableOption{}
 	}
-|	TableOptionList %prec lowerThanComma
+|	TableOptionList %prec higherThanComma
 
 TableOptionList:
 	TableOption
