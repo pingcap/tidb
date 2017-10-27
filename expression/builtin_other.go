@@ -108,10 +108,10 @@ type builtinInIntSig struct {
 func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
 	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
 	arg0, isNull0, err := args[0].EvalInt(row, sc)
-	isUnsigned0 := mysql.HasUnsignedFlag(args[0].GetType().Flag)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
 	}
+	isUnsigned0 := mysql.HasUnsignedFlag(args[0].GetType().Flag)
 	var hasNull bool
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalInt(row, sc)
@@ -131,7 +131,7 @@ func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
 			if evaledArg == arg0 {
 				return 1, false, nil
 			}
-		} else if !isUnsigned && isUnsigned {
+		} else if !isUnsigned0 && isUnsigned {
 			if arg0 >= 0 && uint64(evaledArg) == uint64(arg0) {
 				return 1, false, nil
 			}
@@ -157,12 +157,12 @@ func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
 	var hasNull bool
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalString(row, sc)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
 		if isNull {
 			hasNull = true
 			continue
-		}
-		if err != nil {
-			return 0, false, errors.Trace(err)
 		}
 		if arg0 == evaledArg {
 			return 1, false, nil
@@ -184,12 +184,12 @@ func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
 	var hasNull bool
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalReal(row, sc)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
 		if isNull {
 			hasNull = true
 			continue
-		}
-		if err != nil {
-			return 0, false, errors.Trace(err)
 		}
 		if arg0 == evaledArg {
 			return 1, false, nil
@@ -211,12 +211,12 @@ func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
 	var hasNull bool
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalDecimal(row, sc)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
 		if isNull {
 			hasNull = true
 			continue
-		}
-		if err != nil {
-			return 0, false, errors.Trace(err)
 		}
 		if arg0 == evaledArg {
 			return 1, false, nil
@@ -238,12 +238,12 @@ func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
 	var hasNull bool
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalTime(row, sc)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
 		if isNull {
 			hasNull = true
 			continue
-		}
-		if err != nil {
-			return 0, false, errors.Trace(err)
 		}
 		if arg0.Compare(evaledArg) == 0 {
 			return 1, false, nil
@@ -265,12 +265,12 @@ func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
 	var hasNull bool
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalDuration(row, sc)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
 		if isNull {
 			hasNull = true
 			continue
-		}
-		if err != nil {
-			return 0, false, errors.Trace(err)
 		}
 		if arg0.Compare(evaledArg) == 0 {
 			return 1, false, nil
@@ -292,12 +292,12 @@ func (b *builtinInJSONSig) evalInt(row types.Row) (int64, bool, error) {
 	var hasNull bool
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalJSON(row, sc)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
 		if isNull {
 			hasNull = true
 			continue
-		}
-		if err != nil {
-			return 0, false, errors.Trace(err)
 		}
 		result, err := json.CompareJSON(evaledArg, arg0)
 		if result == 0 {
