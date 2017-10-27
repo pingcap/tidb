@@ -2773,7 +2773,10 @@ SimpleExpr:
 	}
 |	WindowFuncCall
 	{
-		$$ = nil
+		// TODO: Remove this fake ast placeholder.
+		$$ = &ast.ParamMarkerExpr{
+			Offset: yyS[yypt].offset,
+		}
 	}
 |	Literal
 |	paramMarker
