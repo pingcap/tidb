@@ -89,7 +89,7 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 }
 
 func (s *testSelectivitySuite) TestSelectivity(c *C) {
-	store, dom, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap(0)
 	defer func() {
 		dom.Close()
 		store.Close()

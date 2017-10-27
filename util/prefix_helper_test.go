@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -116,7 +117,7 @@ func (c *MockContext) CommitTxn() error {
 	if c.txn == nil {
 		return nil
 	}
-	return c.txn.Commit()
+	return c.txn.Commit(goctx.Background())
 }
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
@@ -139,7 +140,7 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 		return true
 	})
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }
 

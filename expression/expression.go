@@ -145,6 +145,30 @@ func ComposeDNFCondition(ctx context.Context, conditions ...Expression) Expressi
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
 }
 
+func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Expression {
+	var ret []Expression
+	for _, arg := range conditions.GetArgs() {
+		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == funcName {
+			ret = append(ret, extractBinaryOpItems(sf, funcName)...)
+		} else {
+			ret = append(ret, arg)
+		}
+	}
+	return ret
+}
+
+// FlattenDNFConditions extracts DNF expression's leaf item.
+// e.g. or(or(a=1, a=2), or(a=3, a=4)), we'll get [a=1, a=2, a=3, a=4].
+func FlattenDNFConditions(DNFCondition *ScalarFunction) []Expression {
+	return extractBinaryOpItems(DNFCondition, ast.LogicOr)
+}
+
+// FlattenCNFConditions extracts CNF expression's leaf item.
+// e.g. and(and(a>1, a>2), and(a>3, a>4)), we'll get [a>1, a>2, a>3, a>4].
+func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
+	return extractBinaryOpItems(CNFCondition, ast.LogicAnd)
+}
+
 // Assignment represents a set assignment in Update, such as
 // Update t set c1 = hex(12), c2 = c3 where c2 = 1
 type Assignment struct {
@@ -213,9 +237,13 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		}
 		constant := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 		return constant, nil
-	default:
-		return x.Clone(), nil
+	case *Constant:
+		if x.DeferredExpr != nil {
+			newConst := FoldConstant(x)
+			return newConst, nil
+		}
 	}
+	return expr.Clone(), nil
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.

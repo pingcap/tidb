@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
+	goctx "golang.org/x/net/context"
 )
 
 type testSafePointSuite struct {
@@ -85,7 +86,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit()
+	err := txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	// for txn get
