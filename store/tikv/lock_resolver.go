@@ -98,7 +98,8 @@ type Lock struct {
 	TTL     uint64
 }
 
-func newLock(l *kvrpcpb.LockInfo) *Lock {
+// NewLock creates a new *Lock.
+func NewLock(l *kvrpcpb.LockInfo) *Lock {
 	ttl := l.GetLockTtl()
 	if ttl == 0 {
 		ttl = defaultLockTTL
@@ -226,7 +227,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return status, errors.Trace(err)
 			}
@@ -234,7 +235,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		}
 		cmdResp := resp.Cleanup
 		if cmdResp == nil {
-			return status, errors.Trace(errBodyMissing)
+			return status, errors.Trace(ErrBodyMissing)
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
@@ -280,7 +281,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -288,7 +289,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		cmdResp := resp.ResolveLock
 		if cmdResp == nil {
-			return errors.Trace(errBodyMissing)
+			return errors.Trace(ErrBodyMissing)
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)

@@ -11,29 +11,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package gcworker
 
 import (
+	"flag"
 	"math"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/store/tikv"
+)
+
+var (
+	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
 type testGCWorkerSuite struct {
-	store    *tikvStore
-	oracle   *mockOracle
+	store    tikv.TiKVStorage
+	oracle   *tikv.MockOracle
 	gcWorker *GCWorker
 }
 
 var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
-	s.store = newTestStore(c)
-	s.oracle = &mockOracle{}
-	s.store.oracle = s.oracle
-	_, err := tidb.BootstrapSession(s.store)
+	tikv.NewGCHandlerFunc = NewGCWorker
+	var err error
+	s.store, err = tikv.NewTestTiKVStorage(*withTiKV, *pdAddrs)
+	c.Assert(err, IsNil)
+	s.oracle = &tikv.MockOracle{}
+	s.store.SetOracle(s.oracle)
+	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store)
 	c.Assert(err, IsNil)
@@ -56,7 +66,7 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 	c.Assert(err, IsNil)
 	s.timeEqual(c, time.Now(), t1, time.Millisecond*10)
 
-	s.oracle.addOffset(time.Second * 10)
+	s.oracle.AddOffset(time.Second * 10)
 	t2, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
 	s.timeEqual(c, t2, t1.Add(time.Second*10), time.Millisecond*10)
@@ -78,11 +88,11 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	// Change GC run interval.
 	err = s.gcWorker.saveDuration(gcRunIntervalKey, time.Minute*5)
 	c.Assert(err, IsNil)
-	s.oracle.addOffset(time.Minute * 4)
+	s.oracle.AddOffset(time.Minute * 4)
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsFalse)
-	s.oracle.addOffset(time.Minute * 2)
+	s.oracle.AddOffset(time.Minute * 2)
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
@@ -90,11 +100,11 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	// Change GC life time.
 	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
 	c.Assert(err, IsNil)
-	s.oracle.addOffset(time.Minute * 5)
+	s.oracle.AddOffset(time.Minute * 5)
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsFalse)
-	s.oracle.addOffset(time.Minute * 40)
+	s.oracle.AddOffset(time.Minute * 40)
 	now, err = s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
 	ok, _, err = s.gcWorker.prepare()

@@ -154,7 +154,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	s.spMutex.RUnlock()
 	diff := time.Since(cachedTime)
 
-	if diff > (gcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
+	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
 		return ErrPDServerTimeout.GenByArgs("start timestamp may fall behind safe point")
 	}
 
@@ -404,6 +404,10 @@ func (s *tikvStore) Closed() <-chan struct{} {
 
 func (s *tikvStore) GetSafePointKV() SafePointKV {
 	return s.kv
+}
+
+func (s *tikvStore) SetOracle(oracle oracle.Oracle) {
+	s.oracle = oracle
 }
 
 // ParseEtcdAddr parses path to etcd address list

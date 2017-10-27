@@ -31,17 +31,7 @@ var (
 )
 
 func newTestStore(c *C) *tikvStore {
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-
-	if *withTiKV {
-		var d Driver
-		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
-		c.Assert(err, IsNil)
-		return store.(*tikvStore)
-	}
-	store, err := NewMockTikvStore()
+	store, err := NewTestTiKVStorage(*withTiKV, *pdAddrs)
 	c.Assert(err, IsNil)
 	return store.(*tikvStore)
 }

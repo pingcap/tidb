@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -42,6 +43,9 @@ type TiKVStorage interface {
 	// GetGCHandler gets the GCHandler.
 	GetGCHandler() GCHandler
 
+	// SetOracle sets the Oracle.
+	SetOracle(oracle oracle.Oracle)
+
 	// Closed returns the closed channel.
 	Closed() <-chan struct{}
 }
@@ -56,4 +60,12 @@ type GCHandler interface {
 }
 
 // NewGCHandlerFunc creates a new GCHandler.
-var NewGCHandlerFunc func(TiKVStorage) (GCHandler, error) = NewGCWorker
+var NewGCHandlerFunc = func(storage TiKVStorage) (GCHandler, error) {
+	return new(mockGCHandler), nil
+}
+
+type mockGCHandler struct{}
+
+func (h *mockGCHandler) Start(enableGC bool) {}
+
+func (h *mockGCHandler) Close() {}

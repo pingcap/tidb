@@ -27,7 +27,7 @@ import (
 
 type testSafePointSuite struct {
 	store    *tikvStore
-	oracle   *mockOracle
+	oracle   *MockOracle
 	gcWorker GCHandler
 	prefix   string
 }
@@ -36,11 +36,11 @@ var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.store = newTestStore(c)
-	s.oracle = &mockOracle{}
+	s.oracle = &MockOracle{}
 	s.store.oracle = s.oracle
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store)
+	gcWorker, err := NewGCHandlerFunc(s.store)
 	gcWorker.Start(false)
 	c.Assert(err, IsNil)
 	s.gcWorker = gcWorker
@@ -69,9 +69,9 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 
 func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
 	for {
-		saveSafePoint(s.store.GetSafePointKV(), gcSavedSafePoint, t+10)
+		saveSafePoint(s.store.GetSafePointKV(), GcSavedSafePoint, t+10)
 		cachedTime := time.Now()
-		newSafePoint, err := loadSafePoint(s.store.GetSafePointKV(), gcSavedSafePoint)
+		newSafePoint, err := loadSafePoint(s.store.GetSafePointKV(), GcSavedSafePoint)
 		if err == nil {
 			s.store.UpdateSPCache(newSafePoint, cachedTime)
 			break
