@@ -251,7 +251,9 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 		return
 	}
 	nullsLen := ((len(columns) + 7 + 2) / 8)
-	nulls := make([]byte, nullsLen)
+	data = make([]byte, 1+nullsLen, 1+nullsLen+8*len(row))
+	data[0] = mysql.OKHeader
+	nulls := data[1 : 1+nullsLen]
 	for i, val := range row {
 		if val.IsNull() {
 			bytePos := (i + 2) / 8
@@ -259,9 +261,6 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 			nulls[bytePos] |= 1 << bitPos
 		}
 	}
-	data = make([]byte, 0, 1+nullsLen+8*len(row))
-	data = append(data, mysql.OKHeader)
-	data = append(data, nulls...)
 	for i, val := range row {
 		switch val.Kind() {
 		case types.KindInt64:
