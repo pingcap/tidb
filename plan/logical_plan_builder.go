@@ -1434,12 +1434,19 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			IsAggOrSubq: true,
 		})
 		joinPlan.SetSchema(newSchema)
-		joinPlan.JoinType = LeftOuterSemiJoin
+		if not {
+			joinPlan.JoinType = AntiLeftOuterSemiJoin
+		} else {
+			joinPlan.JoinType = LeftOuterSemiJoin
+		}
 	} else {
 		joinPlan.SetSchema(outerPlan.Schema().Clone())
-		joinPlan.JoinType = SemiJoin
+		if not {
+			joinPlan.JoinType = AntiSemiJoin
+		} else {
+			joinPlan.JoinType = SemiJoin
+		}
 	}
-	joinPlan.anti = not
 	return joinPlan
 }
 

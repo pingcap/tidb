@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -233,7 +234,7 @@ func (s *testSuite) TestMeta(c *C) {
 	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
 	c.Assert(readDiff, DeepEquals, schemaDiff)
 
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -249,7 +250,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	m.GenGlobalID()
 	n, _ := m.GetGlobalID()
 	c.Assert(n, Equals, int64(1))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	ver1, _ := store.CurrentVersion()
 	time.Sleep(time.Millisecond)
@@ -258,7 +259,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	m.GenGlobalID()
 	n, _ = m.GetGlobalID()
 	c.Assert(n, Equals, int64(2))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	snapshot, _ := store.GetSnapshot(ver1)
 	snapMeta := meta.NewSnapshotMeta(snapshot)
@@ -327,6 +328,6 @@ func (s *testSuite) TestDDL(c *C) {
 		lastID = job.ID
 	}
 
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }

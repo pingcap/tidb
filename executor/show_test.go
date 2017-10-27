@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -138,6 +139,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows())
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
@@ -305,6 +307,37 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
+}
+
+// mockSessionManager is a mocked session manager that wraps one session
+// it returns only this session's current proccess info as processlist for test.
+type mockSessionManager struct {
+	tidb.Session
+}
+
+// ShowProcessList implements the SessionManager.ShowProcessList interface.
+func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
+	return []util.ProcessInfo{msm.ShowProcess()}
+}
+
+// Kill implements the SessionManager.Kill interface.
+func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
+
+func (s *testSuite) TestShowFullProcessList(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("select 1") // for tk.Se init
+
+	se := tk.Se
+	se.SetSessionManager(&mockSessionManager{se})
+
+	fullSQL := "show                                                                                        full processlist"
+	simpSQL := "show                                                                                        processlist"
+
+	tk.MustQuery(fullSQL).Check(testutil.RowsWithSep("|", "218|   Query|0|2|"+fullSQL))
+	tk.MustQuery(simpSQL).Check(testutil.RowsWithSep("|", "218|   Query|0|2|"+simpSQL[:100]))
+
+	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }
 
 type stats struct {

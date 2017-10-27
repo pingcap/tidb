@@ -22,6 +22,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -541,7 +542,7 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 const maxTxnTimeUse = 590000
 
 // execute executes the two-phase commit protocol.
-func (c *twoPhaseCommitter) execute() error {
+func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
@@ -561,7 +562,20 @@ func (c *twoPhaseCommitter) execute() error {
 		}
 	}()
 
-	ctx := goctx.Background()
+	span := opentracing.SpanFromContext(ctx)
+	if span != nil {
+		span = opentracing.StartSpan("twoPhaseCommit.execute", opentracing.ChildOf(span.Context()))
+	} else {
+		// If we lost the trace information, make a new one for 2PC commit.
+		span = opentracing.StartSpan("twoPhaseCommit.execute")
+	}
+	defer span.Finish()
+
+	// I'm not sure is it safe to cancel 2pc commit process at any time,
+	// So use a new Background() context instead of inherit the ctx, this is by design,
+	// to avoid the cancel signal from parent context.
+	ctx = opentracing.ContextWithSpan(goctx.Background(), span)
+
 	binlogChan := c.prewriteBinlog()
 	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), c.keys)
 	if binlogChan != nil {
