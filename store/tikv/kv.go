@@ -410,6 +410,14 @@ func (s *tikvStore) SetOracle(oracle oracle.Oracle) {
 	s.oracle = oracle
 }
 
+func (s *tikvStore) SetTiKVClient(client Client) {
+	s.client = client
+}
+
+func (s *tikvStore) GetTiKVClient() (client Client) {
+	return s.client
+}
+
 // ParseEtcdAddr parses path to etcd address list
 func ParseEtcdAddr(path string) (etcdAddrs []string, err error) {
 	etcdAddrs, _, err = parsePath(path)

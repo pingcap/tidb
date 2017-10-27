@@ -30,7 +30,7 @@ const resolvedCacheSize = 512
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
-	store TiKVStorage
+	store Storage
 	mu    struct {
 		sync.RWMutex
 		// Cache resolved txns (FIFO, txn id -> txnStatus).
@@ -39,7 +39,7 @@ type LockResolver struct {
 	}
 }
 
-func newLockResolver(store TiKVStorage) *LockResolver {
+func newLockResolver(store Storage) *LockResolver {
 	r := &LockResolver{
 		store: store,
 	}

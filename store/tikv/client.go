@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc"
 )
 
+// Timeout durations.
 const (
 	maxConnectionNumber = 16
 	dialTimeout         = 5 * time.Second

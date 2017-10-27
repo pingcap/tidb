@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
-// TiKVStorage represent the kv.Storage runs on TiKV.
-type TiKVStorage interface {
+// Storage represent the kv.Storage runs on TiKV.
+type Storage interface {
 	kv.Storage
 
 	// GetRegionCache gets the RegionCache.
@@ -46,6 +46,12 @@ type TiKVStorage interface {
 	// SetOracle sets the Oracle.
 	SetOracle(oracle oracle.Oracle)
 
+	// SetTiKVClient sets the TiKV client.
+	SetTiKVClient(client Client)
+
+	// GetTiKVClient gets the TiKV client.
+	GetTiKVClient() Client
+
 	// Closed returns the closed channel.
 	Closed() <-chan struct{}
 }
@@ -60,7 +66,7 @@ type GCHandler interface {
 }
 
 // NewGCHandlerFunc creates a new GCHandler.
-var NewGCHandlerFunc = func(storage TiKVStorage) (GCHandler, error) {
+var NewGCHandlerFunc = func(storage Storage) (GCHandler, error) {
 	return new(mockGCHandler), nil
 }
 

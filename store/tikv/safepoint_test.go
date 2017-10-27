@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
@@ -38,8 +37,6 @@ func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.store = newTestStore(c)
 	s.oracle = &MockOracle{}
 	s.store.oracle = s.oracle
-	_, err := tidb.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
 	gcWorker, err := NewGCHandlerFunc(s.store)
 	gcWorker.Start(false)
 	c.Assert(err, IsNil)

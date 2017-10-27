@@ -71,6 +71,7 @@ func expo(base, cap, n int) int {
 
 type backoffType int
 
+// Back off types.
 const (
 	boTiKVRPC backoffType = iota
 	BoTxnLock

@@ -88,7 +88,7 @@ func main() {
 }
 
 type benchDB struct {
-	store   tikv.TiKVStorage
+	store   tikv.Storage
 	session tidb.Session
 }
 
@@ -104,7 +104,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 
 	return &benchDB{
-		store:   store.(tikv.TiKVStorage),
+		store:   store.(tikv.Storage),
 		session: session,
 	}
 }

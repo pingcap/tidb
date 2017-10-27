@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ import (
 type GCWorker struct {
 	uuid        string
 	desc        string
-	store       tikv.TiKVStorage
+	store       tikv.Storage
 	gcIsRunning bool
 	lastFinish  time.Time
 	cancel      goctx.CancelFunc
@@ -74,7 +74,7 @@ func (w *GCWorker) StartSafePointChecker() {
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store tikv.TiKVStorage) (tikv.GCHandler, error) {
+func NewGCWorker(store tikv.Storage) (tikv.GCHandler, error) {
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -94,6 +94,7 @@ func NewGCWorker(store tikv.TiKVStorage) (tikv.GCHandler, error) {
 	return worker, nil
 }
 
+// Start starts the worker.
 func (w *GCWorker) Start(enableGC bool) {
 	w.StartSafePointChecker()
 
@@ -318,7 +319,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 }
 
 // RunGCJob sends GC command to KV. it is exported for testing purpose, do not use it with GCWorker at the same time.
-func RunGCJob(ctx goctx.Context, s tikv.TiKVStorage, safePoint uint64, identifier string) error {
+func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier string) error {
 	err := resolveLocks(ctx, s, safePoint, identifier)
 	if err != nil {
 		return errors.Trace(err)
@@ -433,7 +434,7 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 	return nil
 }
 
-func resolveLocks(ctx goctx.Context, store tikv.TiKVStorage, safePoint uint64, identifier string) error {
+func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdScanLock,
@@ -509,7 +510,7 @@ func resolveLocks(ctx goctx.Context, store tikv.TiKVStorage, safePoint uint64, i
 	return nil
 }
 
-func doGC(ctx goctx.Context, store tikv.TiKVStorage, safePoint uint64, identifier string) error {
+func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	err := saveSafePoint(store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
@@ -769,7 +770,7 @@ type MockGCWorker struct {
 }
 
 // NewMockGCWorker creates a MockGCWorker instance ONLY for test.
-func NewMockGCWorker(store tikv.TiKVStorage) (*MockGCWorker, error) {
+func NewMockGCWorker(store tikv.Storage) (*MockGCWorker, error) {
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)

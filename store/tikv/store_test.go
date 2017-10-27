@@ -19,11 +19,9 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
@@ -89,7 +87,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 }
 
 func (s *testStoreSuite) TestBusyServerKV(c *C) {
-	client := newBusyClient(s.store.client)
+	client := NewBusyClient(s.store.client)
 	s.store.client = client
 
 	txn, err := s.store.Begin()
@@ -102,11 +100,11 @@ func (s *testStoreSuite) TestBusyServerKV(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	client.setBusy(true)
+	client.SetBusy(true)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		client.setBusy(false)
+		client.SetBusy(false)
 	}()
 
 	go func() {
@@ -119,73 +117,6 @@ func (s *testStoreSuite) TestBusyServerKV(c *C) {
 	}()
 
 	wg.Wait()
-}
-
-func (s *testStoreSuite) TestBusyServerCop(c *C) {
-	client := newBusyClient(s.store.client)
-	s.store.client = client
-	_, err := tidb.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-
-	session, err := tidb.CreateSession(s.store)
-	c.Assert(err, IsNil)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	client.setBusy(true)
-	go func() {
-		defer wg.Done()
-		time.Sleep(time.Millisecond * 100)
-		client.setBusy(false)
-	}()
-
-	go func() {
-		defer wg.Done()
-		rs, err := session.Execute(`SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
-		c.Assert(err, IsNil)
-		row, err := rs[0].Next()
-		c.Assert(err, IsNil)
-		c.Assert(row, NotNil)
-		c.Assert(row.Data[0].GetString(), Equals, "True")
-	}()
-
-	wg.Wait()
-}
-
-type busyClient struct {
-	client Client
-	mu     struct {
-		sync.RWMutex
-		isBusy bool
-	}
-}
-
-func newBusyClient(client Client) *busyClient {
-	return &busyClient{
-		client: client,
-	}
-}
-
-func (c *busyClient) setBusy(busy bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.mu.isBusy = busy
-}
-
-func (c *busyClient) Close() error {
-	return c.client.Close()
-}
-
-func (c *busyClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.mu.isBusy {
-		return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
-	}
-	return c.client.SendReq(ctx, addr, req)
 }
 
 type mockPDClient struct {
