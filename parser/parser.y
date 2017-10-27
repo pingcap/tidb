@@ -200,6 +200,7 @@ import (
 	smallIntType		"SMALLINT"
 	sqlCalcFoundRows	"SQL_CALC_FOUND_ROWS"
 	starting		"STARTING"
+	straightJoin		"STRAIGHT_JOIN"
 	tableKwd		"TABLE"
 	stored			"STORED"
 	terminated		"TERMINATED"
@@ -216,6 +217,7 @@ import (
 	unlock			"UNLOCK"
 	unsigned		"UNSIGNED"
 	update			"UPDATE"
+	usage			"USAGE"
 	use			"USE"
 	using			"USING"
 	utcDate 		"UTC_DATE"
@@ -252,6 +254,7 @@ import (
 	byteType	"BYTE"
 	charsetKwd	"CHARSET"
 	checksum	"CHECKSUM"
+	client		"CLIENT"
 	coalesce	"COALESCE"
 	collation	"COLLATION"
 	columns		"COLUMNS"
@@ -306,6 +309,10 @@ import (
 	modify		"MODIFY"
 	month		"MONTH"
 	maxRows		"MAX_ROWS"
+	maxConnectionsPerHour	"MAX_CONNECTIONS_PER_HOUR"
+	maxQueriesPerHour	"MAX_QUERIES_PER_HOUR"
+	maxUpdatesPerHour	"MAX_UPDATES_PER_HOUR"
+	maxUserConnections	"MAX_USER_CONNECTIONS"
 	minRows		"MIN_ROWS"
 	names		"NAMES"
 	national	"NATIONAL"
@@ -326,6 +333,7 @@ import (
 	quick		"QUICK"
 	redundant	"REDUNDANT"
 	repeatable	"REPEATABLE"
+	replication	"REPLICATION"
 	reverse		"REVERSE"
 	rollback	"ROLLBACK"
 	row 		"ROW"
@@ -337,6 +345,7 @@ import (
 	share		"SHARE"
 	shared		"SHARED"
 	signed		"SIGNED"
+	slave		"SLAVE"
 	snapshot	"SNAPSHOT"
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
@@ -761,7 +770,7 @@ import (
 %precedence lowerThanKey
 %precedence key
 
-%left   join inner cross left right full natural
+%left   join straightJoin inner cross left right full natural
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
 %precedence lowerThanOn
@@ -1609,6 +1618,8 @@ PartitionOpt:
 	{}
 |	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt  PartitionDefinitionListOpt
 	{}
+|	"PARTITION" "BY" "RANGE" "COLUMNS" '(' ColumnNameList ')' PartitionNumOpt PartitionDefinitionListOpt
+	{}
 
 PartitionNumOpt:
 	{}
@@ -1633,6 +1644,8 @@ PartitionDefinition:
 PartDefValuesOpt:
 	{}
 |	"VALUES" "LESS" "THAN" "MAXVALUE"
+	{}
+|	"VALUES" "LESS" "THAN" '(' "MAXVALUE" ')'
 	{}
 |	"VALUES" "LESS" "THAN" '(' ExpressionList ')'
 	{}
@@ -2290,7 +2303,8 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE"
 
 TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
@@ -3940,8 +3954,10 @@ OuterOpt:
 
 CrossOpt:
 	"JOIN"
+|	"STRAIGHT_JOIN"
 |	"CROSS" "JOIN"
 |	"INNER" "JOIN"
+
 
 LimitClause:
 	{
@@ -4934,13 +4950,13 @@ TableElementList:
 	}
 
 TableOption:
-	"ENGINE" Identifier
+	"ENGINE" StringName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2}
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2.(string)}
 	}
-|	"ENGINE" eq Identifier
+|	"ENGINE" eq StringName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3}
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3.(string)}
 	}
 |	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
@@ -5457,6 +5473,10 @@ FieldOpt:
 	{
 		$$ = &ast.TypeOpt{IsUnsigned: true}
 	}
+|	"SIGNED"
+	{
+		$$ = &ast.TypeOpt{IsUnsigned: false}
+	}
 |	"ZEROFILL"
 	{
 		$$ = &ast.TypeOpt{IsZerofill: true, IsUnsigned: true}
@@ -5716,6 +5736,22 @@ WithGrantOptionOpt:
 	{
 		$$ = true
 	}
+|	"WITH" "MAX_QUERIES_PER_HOUR" NUM
+	{
+		$$ = false
+	}
+|	"WITH" "MAX_UPDATES_PER_HOUR" NUM
+	{
+		$$ = false
+	}
+|	"WITH" "MAX_CONNECTIONS_PER_HOUR" NUM
+	{
+		$$ = false
+	}
+|	"WITH" "MAX_USER_CONNECTIONS" NUM
+	{
+		$$ = false
+	}
 
 PrivElem:
 	PrivType
@@ -5814,6 +5850,18 @@ PrivType:
 |	"REFERENCES"
 	{
 		$$ = mysql.ReferencesPriv
+	}
+|	"REPLICATION" "SLAVE"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"REPLICATION" "CLIENT"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"USAGE"
+	{
+		$$ = mysql.PrivilegeType(0)
 	}
 
 ObjectType:

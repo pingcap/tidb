@@ -156,3 +156,24 @@ func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 	}
 	h.statsCache.Store(newCache)
 }
+
+// LoadNeededHistograms will load histograms for those needed columns.
+func (h *Handle) LoadNeededHistograms() error {
+	cols := histogramNeededColumns.allCols()
+	for _, col := range cols {
+		tbl := h.GetTableStats(col.tableID).copy()
+		c, ok := tbl.Columns[col.columnID]
+		if !ok || len(c.Buckets) > 0 {
+			histogramNeededColumns.delete(col)
+			continue
+		}
+		hg, err := histogramFromStorage(h.ctx, col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, Count: int64(hg.totalRowCount())}
+		h.UpdateTableStats([]*Table{tbl}, nil)
+		histogramNeededColumns.delete(col)
+	}
+	return nil
+}

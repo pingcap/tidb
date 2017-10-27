@@ -24,12 +24,10 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -41,6 +39,8 @@ import (
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -136,7 +136,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.Data, HasLen, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	ddlInfo, err := inspectkv.GetDDLInfo(txn)
+	ddlInfo, err := admin.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[0].GetInt64(), Equals, ddlInfo.SchemaVer)
 	// TODO: Pass this test.
@@ -158,7 +158,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.Data, HasLen, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	historyJobs, err := inspectkv.GetHistoryDDLJobs(txn)
+	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
 	c.Assert(len(row.Data[0].GetString()), Greater, 0)
 	c.Assert(err, IsNil)
@@ -184,7 +184,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(tb.Indices(), HasLen, 1)
 	_, err = tb.Indices()[0].Create(txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
@@ -222,7 +222,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
-		err1 = ctx.Txn().Commit()
+		err1 = ctx.Txn().Commit(goctx.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
@@ -1567,10 +1567,10 @@ func (s *testSuite) TestPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plan.Preprocess(stmtNode, infoSchema, ctx)
+		err = plan.ResolveName(stmtNode, infoSchema, ctx)
 		c.Check(err, IsNil)
-		// Validate should be after NameResolve.
-		err = plan.Validate(stmtNode, false)
+		// Preprocess should be after NameResolve.
+		err = plan.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
 		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
@@ -2268,4 +2268,30 @@ func (s *testSuite) TestSubqueryInValues(c *C) {
 	tk.MustExec("insert into t1 (gid) value (1)")
 	tk.MustExec("insert into t (id, name) value ((select gid from t1) ,'asd')")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
+}
+
+func (s *testSuite) TestEnhancedRangeAccess(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values(1, 2), (2, 1)")
+	tk.MustQuery("select * from t where (a = 1 and b = 2) or (a = 2 and b = 1)").Check(testkit.Rows("1 2", "2 1"))
+	tk.MustQuery("select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)").Check(nil)
+}
+
+// Issue #4810
+func (s *testSuite) TestMaxInt64Handle(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id bigint, PRIMARY KEY (id))")
+	tk.MustExec("insert into t values(9223372036854775807)")
+	tk.MustExec("select * from t where id = 9223372036854775807")
+	tk.MustQuery("select * from t where id = 9223372036854775807;").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("9223372036854775807"))
+	_, err := tk.Exec("insert into t values(9223372036854775807)")
+	c.Assert(err, NotNil)
+	tk.MustExec("delete from t where id = 9223372036854775807")
+	tk.MustQuery("select * from t").Check(nil)
 }

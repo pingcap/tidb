@@ -97,7 +97,7 @@ func (s *testStoreSuite) TestBusyServerKV(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
@@ -362,7 +362,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	// Cover the basic Get request.

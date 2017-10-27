@@ -372,14 +372,14 @@ func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 		flag = 0
 		aggregatedEvalType = AggregateEvalType([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
 		switch fts[i].Tp {
-		case mysql.TypeDecimal, mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
+		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar, mysql.TypeJSON,
 			mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob, mysql.TypeMediumBlob,
 			mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeVarString,
 			mysql.TypeString, mysql.TypeGeometry:
 			c.Assert(aggregatedEvalType.IsStringKind(), IsTrue)
 			c.Assert(flag, Equals, uint(0))
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeNull, mysql.TypeBit,
+		case mysql.TypeDecimal, mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeNull, mysql.TypeBit,
 			mysql.TypeLonglong, mysql.TypeYear, mysql.TypeInt24:
 			c.Assert(aggregatedEvalType, Equals, ETInt)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))

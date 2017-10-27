@@ -273,7 +273,7 @@ func (e *selectionExec) SetSrcExec(exec executor) {
 }
 
 // evalBool evaluates expression to a boolean value.
-func evalBool(exprs []expression.Expression, row []types.Datum, ctx *variable.StatementContext) (bool, error) {
+func evalBool(exprs []expression.Expression, row types.DatumRow, ctx *variable.StatementContext) (bool, error) {
 	for _, expr := range exprs {
 		data, err := expr.Eval(row)
 		if err != nil {
@@ -326,7 +326,7 @@ type aggregateExec struct {
 	aggCtxsMap        aggCtxsMapper
 	groupByExprs      []expression.Expression
 	relatedColOffsets []int
-	row               []types.Datum
+	row               types.DatumRow
 	groups            map[string]struct{}
 	groupKeys         [][]byte
 	groupKeyRows      [][][]byte
@@ -467,7 +467,7 @@ type topNExec struct {
 	evalCtx           *evalContext
 	relatedColOffsets []int
 	orderByExprs      []expression.Expression
-	row               []types.Datum
+	row               types.DatumRow
 	cursor            int
 	executed          bool
 

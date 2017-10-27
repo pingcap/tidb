@@ -92,7 +92,6 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-
 	return er.ctxStack[0], er.p, nil
 }
 
@@ -685,8 +684,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		types.DefaultTypeForValue(v.GetValue(), tp)
+		types.DefaultParamTypeForValue(v.GetValue(), tp)
 		value := &expression.Constant{Value: v.Datum, RetType: tp}
+		if er.useCache() {
+			value.DeferredExpr = er.getParamExpression(v)
+		}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
@@ -736,8 +738,25 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	return originInNode, true
 }
 
+func (er *expressionRewriter) useCache() bool {
+	return er.ctx.GetSessionVars().StmtCtx.UseCache
+}
+
 func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
+}
+
+func (er *expressionRewriter) getParamExpression(v *ast.ParamMarkerExpr) expression.Expression {
+	f, err := expression.NewFunction(er.ctx,
+		ast.GetParam,
+		&v.Type,
+		datumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
+	if err != nil {
+		er.err = errors.Trace(err)
+		return nil
+	}
+	f.GetType().Tp = v.Type.Tp
+	return f
 }
 
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {

@@ -143,9 +143,9 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		switch joinTp {
 		case InnerJoin, LeftOuterJoin, RightOuterJoin:
 			p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
-		case SemiJoin:
+		case SemiJoin, AntiSemiJoin:
 			p.SetSchema(p.Children()[0].Schema().Clone())
-		case LeftOuterSemiJoin:
+		case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 			newSchema := p.Children()[0].Schema().Clone()
 			newSchema.Append(p.Schema().Columns[len(p.Schema().Columns)-1])
 			p.SetSchema(newSchema)
