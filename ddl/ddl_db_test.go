@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -343,7 +344,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 			checkErr = errors.Trace(errs[0])
 			return
 		}
-		err = hookCtx.Txn().Commit()
+		err = hookCtx.Txn().Commit(goctx.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
