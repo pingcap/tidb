@@ -42,7 +42,7 @@ type Config struct {
 	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
-  
+
 	ProxyProtocol ProxyProtocol `toml:"proxy-protocol" toml:"proxy-protocol"`
 }
 
@@ -134,6 +134,16 @@ type OpenTracingReporter struct {
 	BufferFlushInterval time.Duration `toml:"buffer-flush-interval" json:"buffer-flush-interval"`
 	LogSpans            bool          `toml:"log-spans" json:"log-spans"`
 	LocalAgentHostPort  string        `toml:"local-agent-host-port" json:"local-agent-host-port"`
+}
+
+// ProxyProtocol is the PROXY protocol section of the config.
+type ProxyProtocol struct {
+	// PROXY protocol acceptable client networks.
+	// Empty string means disable PROXY protocol,
+	// * means all networks.
+	Networks string `json:"networks" toml:"networks"`
+	// PROXY protocol header read timeout, Unit is second.
+	HeaderTimeout int `json:"header-timeout" toml:"header-timeout"`
 }
 
 var defaultConf = Config{
