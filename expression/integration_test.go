@@ -2634,6 +2634,32 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec("insert into test values(1, NULL) on duplicate key update val = VALUES(val);")
 	result = tk.MustQuery("select * from test;")
 	result.Check(testkit.Rows("1 <nil>"))
+
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec(`create table test(
+		id int not null,
+		a text,
+		b blob,
+		c varchar(20),
+		d int,
+		e float,
+		f DECIMAL(6,4),
+		g JSON,
+		primary key(id));`)
+
+	tk.MustExec(`insert into test values(1,'txt hello', 'blb hello', 'vc hello', 1, 1.1, 1.0, '{"key1": "value1", "key2": "value2"}');`)
+	tk.MustExec(`insert into test values(1, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+	on duplicate key update
+	a = values(a),
+	b = values(b),
+	c = values(c),
+	d = values(d),
+	e = values(e),
+	f = values(f),
+	g = values(g);`)
+
+	result = tk.MustQuery("select * from test;")
+	result.Check(testkit.Rows("1 <nil> <nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
