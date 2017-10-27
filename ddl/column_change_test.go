@@ -68,7 +68,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	row := types.MakeDatums(1, 2)
 	h, err := originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	var mu sync.Mutex
@@ -120,7 +120,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			}
 			mu.Unlock()
 		}
-		err = hookCtx.Txn().Commit()
+		err = hookCtx.Txn().Commit(goctx.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -172,7 +172,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 				checkErr = errors.Trace(err)
 			}
 		}
-		err = hookCtx.Txn().Commit()
+		err = hookCtx.Txn().Commit(ctx.GoCtx())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}

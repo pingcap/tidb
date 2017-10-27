@@ -13,7 +13,11 @@
 
 package kv
 
-import "sync"
+import (
+	"sync"
+
+	goctx "golang.org/x/net/context"
+)
 
 // InjectionConfig is used for fault injections for KV components.
 type InjectionConfig struct {
@@ -95,13 +99,13 @@ func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
 }
 
 // Commit returns an error if cfg.commitError is set.
-func (t *InjectedTransaction) Commit() error {
+func (t *InjectedTransaction) Commit(ctx goctx.Context) error {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.commitError != nil {
 		return t.cfg.commitError
 	}
-	return t.Transaction.Commit()
+	return t.Transaction.Commit(ctx)
 }
 
 // InjectedSnapshot wraps a Snapshot with injections.

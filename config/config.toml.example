@@ -126,3 +126,54 @@ plan-cache-shards = 256
 [prepared-plan-cache]
 prepared-plan-cache-enabled = false
 prepared-plan-cache-capacity = 100
+
+[opentracing]
+# Enable opentracing.
+enable = false
+
+# Whether to enable the rpc metrics.
+rpc-metrics = false
+
+[opentracing.sampler]
+# Type specifies the type of the sampler: const, probabilistic, rateLimiting, or remote
+type = "const"
+
+# Param is a value passed to the sampler.
+# Valid values for Param field are:
+# - for "const" sampler, 0 or 1 for always false/true respectively
+# - for "probabilistic" sampler, a probability between 0 and 1
+# - for "rateLimiting" sampler, the number of spans per second
+# - for "remote" sampler, param is the same as for "probabilistic"
+# and indicates the initial sampling rate before the actual one
+# is received from the mothership
+param = 1.0
+
+# SamplingServerURL is the address of jaeger-agent's HTTP sampling server
+sampling-server-url = ""
+
+# MaxOperations is the maximum number of operations that the sampler
+# will keep track of. If an operation is not tracked, a default probabilistic
+# sampler will be used rather than the per operation specific sampler.
+max-operations = 0
+
+# SamplingRefreshInterval controls how often the remotely controlled sampler will poll
+# jaeger-agent for the appropriate sampling strategy.
+sampling-refresh-interval = 0
+
+[opentracing.reporter]
+# QueueSize controls how many spans the reporter can keep in memory before it starts dropping
+# new spans. The queue is continuously drained by a background go-routine, as fast as spans
+# can be sent out of process.
+queue-size = 0
+
+# BufferFlushInterval controls how often the buffer is force-flushed, even if it's not full.
+# It is generally not useful, as it only matters for very low traffic services.
+buffer-flush-interval = 0
+
+# LogSpans, when true, enables LoggingReporter that runs in parallel with the main reporter
+# and logs all submitted spans. Main Configuration.Logger must be initialized in the code
+# for this option to have any effect.
+log-spans = false
+
+#  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
+local-agent-host-port = ""

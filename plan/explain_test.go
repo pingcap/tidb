@@ -237,12 +237,12 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_18   cop table:t1, range:(-inf,+inf), keep order:true 8000",
-				"TableReader_19 HashSemiJoin_16  root data:TableScan_18 8000",
-				"TableScan_14   cop table:t2, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_15 HashSemiJoin_16  root data:TableScan_14 8000",
-				"HashSemiJoin_16 StreamAgg_9 TableReader_19,TableReader_15 root right:TableReader_15, aux, equal:[eq(test.t1.c1, test.t2.c1)] 8000",
-				"StreamAgg_9  HashSemiJoin_16 root type:stream, funcs:sum(5_aux_0) 1",
+				"TableScan_13   cop table:t1, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_14 MergeJoin_27  root data:TableScan_13 8000",
+				"IndexScan_21   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 8000",
+				"IndexReader_22 MergeJoin_27  root index:IndexScan_21 8000",
+				"MergeJoin_27 StreamAgg_9 TableReader_14,IndexReader_22 root left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)], asc, left key:test.t1.c1, right key:test.t2.c1 8000",
+				"StreamAgg_9  MergeJoin_27 root type:stream, funcs:sum(5_aux_0) 1",
 			},
 		},
 		{
@@ -288,24 +288,24 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"root\"\n" +
-				"\"StreamAgg_9\" -> \"HashSemiJoin_16\"\n" +
-				"\"HashSemiJoin_16\" -> \"TableReader_19\"\n" +
-				"\"HashSemiJoin_16\" -> \"TableReader_15\"\n" +
+				"\"StreamAgg_9\" -> \"MergeJoin_27\"\n" +
+				"\"MergeJoin_27\" -> \"TableReader_14\"\n" +
+				"\"MergeJoin_27\" -> \"IndexReader_22\"\n" +
 				"}\n" +
-				"subgraph cluster18{\n" +
+				"subgraph cluster13{\n" +
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"cop\"\n" +
-				"\"TableScan_18\"\n" +
+				"\"TableScan_13\"\n" +
 				"}\n" +
-				"subgraph cluster14{\n" +
+				"subgraph cluster21{\n" +
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"cop\"\n" +
-				"\"TableScan_14\"\n" +
+				"\"IndexScan_21\"\n" +
 				"}\n" +
-				"\"TableReader_19\" -> \"TableScan_18\"\n" +
-				"\"TableReader_15\" -> \"TableScan_14\"\n" +
+				"\"TableReader_14\" -> \"TableScan_13\"\n" +
+				"\"IndexReader_22\" -> \"IndexScan_21\"\n" +
 				"}\n",
 		},
 		{
