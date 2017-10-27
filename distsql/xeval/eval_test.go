@@ -501,16 +501,10 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 	}
 }
 
-func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
-	targetDatum := types.NewDatum(target)
-	var listDatums []types.Datum
+func inExpr(list ...interface{}) *tipb.Expr {
+	listExpr := make([]*tipb.Expr, 0, len(list))
 	for _, v := range list {
-		listDatums = append(listDatums, types.NewDatum(v))
+		listExpr = append(listExpr, datumExpr(types.NewDatum(v)))
 	}
-	sc := new(variable.StatementContext)
-	types.SortDatums(sc, listDatums)
-	targetExpr := datumExpr(targetDatum)
-	val, _ := codec.EncodeValue(nil, listDatums...)
-	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}
-	return &tipb.Expr{Tp: tipb.ExprType_In, Children: []*tipb.Expr{targetExpr, listExpr}}
+	return &tipb.Expr{Tp: tipb.ExprType_In, Children: listExpr}
 }
