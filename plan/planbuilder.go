@@ -913,6 +913,9 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 }
 
 func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
+	p := &DDL{Statement: node}
+	p.SetSchema(expression.NewSchema())
+
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
@@ -950,10 +953,11 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			db:        v.ViewName.Schema.L,
 			table:     v.ViewName.Name.L,
 		})
-		b.build(v.Select)
+		plan := b.build(v.Select)
 		if b.err != nil {
 			return nil
 		}
+		p.SetSchema(plan.Schema())
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.DropPriv,
@@ -992,8 +996,6 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 		})
 	}
 
-	p := &DDL{Statement: node}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 

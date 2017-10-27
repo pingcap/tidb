@@ -396,7 +396,7 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
-	return &DDLExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
+	return &DDLExec{Statement: v.Statement, ctx: b.ctx, is: b.is, plan: v}
 }
 
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {

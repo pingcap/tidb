@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
@@ -36,6 +37,7 @@ type DDLExec struct {
 	ctx       context.Context
 	is        infoschema.InfoSchema
 	done      bool
+	plan      plan.Plan
 }
 
 // Schema implements the Executor Schema interface.
@@ -160,12 +162,7 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	// SelectFields represents the field expression or field AsName in SelectStmt
 	// and saves it as a string to establish the mapping relationship of ColList
 	var selectFields []string
-	compiler := Compiler{}
-	stmt, err := compiler.Compile(e.ctx, s.Select)
-	if err != nil {
-		return err
-	}
-	p := stmt.Plan
+	p := e.plan
 	cols := p.Schema().Columns
 	for _, col := range cols {
 		selectFields = append(selectFields, col.ColName.O)
@@ -177,7 +174,7 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 		s.Cols = selectFields
 	}
 
-	err = sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFields, s.Select.Text())
+	err := sessionctx.GetDomain(e.ctx).DDL().CreateView(e.ctx, ident, s.Cols, selectFields, s.Select.Text())
 	if infoschema.ErrTableExists.Equal(err) {
 		return err
 	}
