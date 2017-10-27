@@ -124,19 +124,19 @@ func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
 		}
 		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().Flag)
 		if isUnsigned0 && isUnsigned {
-			if evaledArg == arg0 {
+			if types.CompareUint64(uint64(arg0), uint64(evaledArg)) == 0 {
 				return 1, false, nil
 			}
 		} else if !isUnsigned0 && !isUnsigned {
-			if evaledArg == arg0 {
+			if types.CompareInt64(arg0, evaledArg) == 0 {
 				return 1, false, nil
 			}
 		} else if !isUnsigned0 && isUnsigned {
-			if arg0 >= 0 && uint64(evaledArg) == uint64(arg0) {
+			if arg0 >= 0 && types.CompareUint64(uint64(arg0), uint64(evaledArg)) == 0 {
 				return 1, false, nil
 			}
 		} else {
-			if evaledArg >= 0 && uint64(evaledArg) == uint64(arg0) {
+			if evaledArg >= 0 && types.CompareUint64(uint64(arg0), uint64(evaledArg)) == 0 {
 				return 1, false, nil
 			}
 		}
@@ -164,7 +164,7 @@ func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		if arg0 == evaledArg {
+		if types.CompareString(arg0, evaledArg) == 0 {
 			return 1, false, nil
 		}
 	}
@@ -191,7 +191,7 @@ func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		if arg0 == evaledArg {
+		if types.CompareFloat64(arg0, evaledArg) == 0 {
 			return 1, false, nil
 		}
 	}
