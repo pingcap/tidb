@@ -844,7 +844,11 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			indexConds = is.filterCondition
 		}
 		if indexConds != nil {
-			indexSel := Selection{Conditions: indexConds}.init(is.allocator, is.ctx)
+			condsClone := make([]expression.Expression, 0, len(indexConds))
+			for _, cond := range indexConds {
+				condsClone = append(condsClone, cond.Clone())
+			}
+			indexSel := Selection{Conditions: condsClone}.init(is.allocator, is.ctx)
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
 			indexSel.profile = p.getStatsProfileByFilter(append(is.AccessCondition, indexConds...))
