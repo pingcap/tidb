@@ -218,7 +218,7 @@ func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		if arg0 == evaledArg {
+		if arg0.Compare(evaledArg) == 0 {
 			return 1, false, nil
 		}
 	}
