@@ -238,7 +238,10 @@ func (b *builtinValuesDecimalSig) evalDecimal(_ types.Row) (*types.MyDecimal, bo
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
-		return row[b.offset].GetMysqlDecimal(), row[b.offset].IsNull(), nil
+		if row[b.offset].IsNull() {
+			return nil, true, nil
+		}
+		return row[b.offset].GetMysqlDecimal(), false, nil
 	}
 	return nil, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
 }
@@ -278,7 +281,10 @@ func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
-		return row[b.offset].GetMysqlTime(), row[b.offset].IsNull(), nil
+		if row[b.offset].IsNull() {
+			return types.Time{}, true, nil
+		}
+		return row[b.offset].GetMysqlTime(), false, nil
 	}
 	return types.Time{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
 }
@@ -318,7 +324,10 @@ func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.JSON, bool, error) {
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
-		return row[b.offset].GetMysqlJSON(), row[b.offset].IsNull(), nil
+		if row[b.offset].IsNull() {
+			return json.JSON{}, true, nil
+		}
+		return row[b.offset].GetMysqlJSON(), false, nil
 	}
 	return json.JSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
 }
