@@ -63,6 +63,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
 		"generated", "virtual", "stored",
+		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
+		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -88,7 +90,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
+		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
@@ -96,6 +98,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
 		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version",
+		"following", "preceding", "unbounded", "respect", "nulls", "current", "last",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -712,7 +715,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select (1, 1,)", false},
 		{"select row(1, 1) > row(1, 1), row(1, 1, 1) > row(1, 1, 1)", true},
 		{"Select (1, 1) > (1, 1)", true},
-		{"create table t (row int)", true},
+		{"create table t (row int)", false},
+		{"create table t (`row` int)", true},
 
 		// for cast with charset
 		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
@@ -1202,8 +1206,10 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"use `select`", true},
 		{"use select", false},
 		{`select * from t as a`, true},
-		{"select 1 full, 1 row, 1 abs", true},
-		{"select * from t full, t1 row, t2 abs", true},
+		{"select 1 full, 1 row, 1 abs", false},
+		{"select 1 full, 1 `row`, 1 abs", true},
+		{"select * from t full, t1 row, t2 abs", false},
+		{"select * from t full, t1 `row`, t2 abs", true},
 		// for issue 1878, identifiers may begin with digit.
 		{"create database 123test", true},
 		{"create database 123", false},
@@ -1211,8 +1217,6 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"create table `123` (123a1 int)", true},
 		{"create table 123 (123a1 int)", false},
 		{fmt.Sprintf("select * from t%cble", 0), false},
-		{"select 1 full, 1 row, 1 abs", true},
-		{"select * from t full, t1 row, t2 abs", true},
 		// for issue 3954, should NOT be recognized as identifiers.
 		{`select .78+123`, true},
 		{`select .78+.21`, true},
