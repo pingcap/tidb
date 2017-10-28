@@ -460,7 +460,7 @@ func (b *builtinValuesIntSig) evalInt(_ types.Row) (int64, bool, error) {
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
-		return row[b.offset].GetInt64(), false, nil
+		return row[b.offset].GetInt64(), row[b.offset].IsNull(), nil
 	}
 	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
 }
@@ -480,7 +480,7 @@ func (b *builtinValuesRealSig) evalReal(_ types.Row) (float64, bool, error) {
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
-		return row[b.offset].GetFloat64(), false, nil
+		return row[b.offset].GetFloat64(), row[b.offset].IsNull(), nil
 	}
 	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
 }
@@ -500,6 +500,9 @@ func (b *builtinValuesDecimalSig) evalDecimal(_ types.Row) (*types.MyDecimal, bo
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
+		if row[b.offset].IsNull() {
+			return nil, true, nil
+		}
 		return row[b.offset].GetMysqlDecimal(), false, nil
 	}
 	return nil, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
@@ -520,10 +523,7 @@ func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
-		if row[b.offset].IsNull() {
-			return "", true, nil
-		}
-		return row[b.offset].GetString(), false, nil
+		return row[b.offset].GetString(), row[b.offset].IsNull(), nil
 	}
 	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
 }
@@ -543,6 +543,9 @@ func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
+		if row[b.offset].IsNull() {
+			return types.Time{}, true, nil
+		}
 		return row[b.offset].GetMysqlTime(), false, nil
 	}
 	return types.Time{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
@@ -563,7 +566,7 @@ func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bo
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
-		return row[b.offset].GetMysqlDuration(), false, nil
+		return row[b.offset].GetMysqlDuration(), row[b.offset].IsNull(), nil
 	}
 	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
 }
@@ -583,6 +586,9 @@ func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.JSON, bool, error) {
 	}
 	row := values.([]types.Datum)
 	if b.offset < len(row) {
+		if row[b.offset].IsNull() {
+			return json.JSON{}, true, nil
+		}
 		return row[b.offset].GetMysqlJSON(), false, nil
 	}
 	return json.JSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
