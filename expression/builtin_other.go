@@ -104,7 +104,7 @@ type builtinInIntSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
 	arg0, isNull0, err := args[0].EvalInt(row, sc)
 	if isNull0 || err != nil {
@@ -148,7 +148,7 @@ type builtinInStringSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInStringSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
 	arg0, isNull0, err := args[0].EvalString(row, sc)
 	if isNull0 || err != nil {
@@ -176,7 +176,7 @@ type builtinInRealSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInRealSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
 	arg0, isNull0, err := args[0].EvalReal(row, sc)
 	if isNull0 || err != nil {
@@ -204,7 +204,7 @@ type builtinInDecimalSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
 	arg0, isNull0, err := args[0].EvalDecimal(row, sc)
 	if isNull0 || err != nil {
@@ -232,7 +232,7 @@ type builtinInTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInTimeSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
 	arg0, isNull0, err := args[0].EvalTime(row, sc)
 	if isNull0 || err != nil {
@@ -260,7 +260,7 @@ type builtinInDurationSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInDurationSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
 	arg0, isNull0, err := args[0].EvalDuration(row, sc)
 	if isNull0 || err != nil {
@@ -288,7 +288,7 @@ type builtinInJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinInJSONSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInJSONSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
 	arg0, isNull0, err := args[0].EvalJSON(row, sc)
 	if isNull0 || err != nil {
