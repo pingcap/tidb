@@ -1148,13 +1148,50 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-		var aggIndexMap map[int]int
-		p, aggIndexMap = b.buildAggregation(p, aggFuncs, gbyCols)
-		for k, v := range totalMap {
-			totalMap[k] = aggIndexMap[v]
-		}
-		if b.err != nil {
-			return nil
+		// For `select max(c) from t;`, we could optimize it to `select c from t order by c limit 1;`.
+		if len(sel.Fields.Fields) == 1 && sel.GroupBy == nil {
+			// Make sure there is only one aggregation in the
+			f0 := sel.Fields.Fields[0]
+			if agg, ok := f0.Expr.(*ast.AggregateFuncExpr); ok {
+				if agg.F == ast.AggFuncMax || agg.F == ast.AggFuncMin {
+					// Check the inner is a column name expr.
+					if c, ok1 := agg.Args[0].(*ast.ColumnNameExpr); ok1 {
+						// Replace the select field.
+						f0.Expr = c
+						f0.AsName = model.NewCIStr("")
+
+						// Add order by and limit;
+						desc := false
+						if agg.F == ast.AggFuncMax {
+							desc = true
+						}
+						bi := &ast.ByItem{
+							Expr: c,
+							Desc: desc,
+						}
+						ob := &ast.OrderByClause{
+							Items: []*ast.ByItem{bi},
+						}
+						sel.OrderBy = ob
+
+						// Add Limit.
+						lmt := &ast.Limit{
+							Count: ast.NewValueExpr(1),
+						}
+						sel.Limit = lmt
+						fmt.Println("Hit Agg Optimize")
+					}
+				}
+			}
+		} else {
+			var aggIndexMap map[int]int
+			p, aggIndexMap = b.buildAggregation(p, aggFuncs, gbyCols)
+			for k, v := range totalMap {
+				totalMap[k] = aggIndexMap[v]
+			}
+			if b.err != nil {
+				return nil
+			}
 		}
 	}
 	var oldLen int
