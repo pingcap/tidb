@@ -101,6 +101,7 @@ func (c *inFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 	return sig, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseBuiltinFunc
 }
@@ -132,11 +133,11 @@ func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
 				return 1, false, nil
 			}
 		} else if !isUnsigned0 && isUnsigned {
-			if arg0 >= 0 && uint64(evaledArg) == uint64(arg0) {
+			if arg0 >= 0 && evaledArg == arg0 {
 				return 1, false, nil
 			}
 		} else {
-			if evaledArg >= 0 && uint64(evaledArg) == uint64(arg0) {
+			if evaledArg >= 0 && evaledArg == arg0 {
 				return 1, false, nil
 			}
 		}
@@ -144,6 +145,7 @@ func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
 	baseBuiltinFunc
 }
@@ -171,6 +173,7 @@ func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInRealSig struct {
 	baseBuiltinFunc
 }
@@ -198,6 +201,7 @@ func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDecimalSig struct {
 	baseBuiltinFunc
 }
@@ -225,6 +229,7 @@ func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInTimeSig struct {
 	baseBuiltinFunc
 }
@@ -252,6 +257,7 @@ func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDurationSig struct {
 	baseBuiltinFunc
 }
@@ -279,6 +285,7 @@ func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
 }
