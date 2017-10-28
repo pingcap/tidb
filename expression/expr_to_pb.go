@@ -209,7 +209,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return pc.logicalOpsToPBExpr(expr)
 	case ast.And, ast.Or, ast.BitNeg, ast.Xor:
 		return pc.bitwiseFuncToPBExpr(expr)
-	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull, ast.IsNull, ast.IsTruth, ast.IsFalsity:
+	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull, ast.IsNull, ast.IsTruth, ast.IsFalsity, ast.In:
 		return pc.builtinFuncToPBExpr(expr)
 	case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONValid,
 		ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -330,7 +330,7 @@ func (pc PbConverter) builtinFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	switch expr.FuncName.L {
 	case ast.Case, ast.If, ast.Ifnull, ast.Nullif:
 		return pc.controlFuncsToPBExpr(expr)
-	case ast.Coalesce, ast.IsNull:
+	case ast.Coalesce, ast.IsNull, ast.In:
 		return pc.otherFuncsToPBExpr(expr)
 	default:
 		return nil
@@ -344,6 +344,8 @@ func (pc PbConverter) otherFuncsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		tp = tipb.ExprType_Coalesce
 	case ast.IsNull:
 		tp = tipb.ExprType_IsNull
+	case ast.In:
+		tp = tipb.ExprType_In
 	}
 	return pc.convertToPBExpr(expr, tp)
 }
