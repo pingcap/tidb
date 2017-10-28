@@ -440,10 +440,6 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 			result: nil,
 		},
 		{
-			expr:   inExpr(2),
-			result: false,
-		},
-		{
 			expr:   inExpr("abc", "abc", "ab"),
 			result: true,
 		},
