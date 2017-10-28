@@ -61,17 +61,39 @@ type GCHandler interface {
 	// Start starts the GCHandler, if enableGC is false, it does not do GC job.
 	Start(enableGC bool)
 
-	// Close closes the GCHandler
+	// Close closes the GCHandler.
 	Close()
 }
 
-// NewGCHandlerFunc creates a new GCHandler.
+// NewGCHandlerFunc creates a new GCHandler, the default implementation only updates safe point cache time.
+// To enable real GC, we should assign the function to `gcworker.NewGCWorker`.
 var NewGCHandlerFunc = func(storage Storage) (GCHandler, error) {
-	return new(mockGCHandler), nil
+	return &noGCHandler{
+		store:   storage,
+		closeCh: make(chan bool),
+	}, nil
 }
 
-type mockGCHandler struct{}
+type noGCHandler struct {
+	store   Storage
+	closeCh chan bool
+}
 
-func (h *mockGCHandler) Start(enableGC bool) {}
+func (h *noGCHandler) Start(enableGC bool) {
+	/// Regularly update safe point cache time to avoid tiemstamp fall behind GC safe point error.
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		for {
+			select {
+			case <-ticker.C:
+				h.store.UpdateSPCache(0, time.Now())
+			case <-h.closeCh:
+				return
+			}
+		}
+	}()
+}
 
-func (h *mockGCHandler) Close() {}
+func (h *noGCHandler) Close() {
+	close(h.closeCh)
+}
