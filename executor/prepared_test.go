@@ -44,13 +44,13 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(executor.ErrPrepareMulti.Equal(err), IsTrue)
 		// The variable count does not match.
 		_, err = tk.Exec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?'; set @a = 1; execute stmt_test_4 using @a;`)
-		c.Assert(executor.ErrWrongParamCount.Equal(err), IsTrue)
+		c.Assert(plan.ErrWrongParamCount.Equal(err), IsTrue)
 		// Prepare and deallocate prepared statement immediately.
 		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?'; deallocate prepare stmt_test_5;`)
 
 		// Statement not found.
 		_, err = tk.Exec("deallocate prepare stmt_test_5")
-		c.Assert(executor.ErrStmtNotFound.Equal(err), IsTrue)
+		c.Assert(plan.ErrStmtNotFound.Equal(err), IsTrue)
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
 		_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
@@ -58,7 +58,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// The `stmt_test5` should not be found.
 		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
-		c.Assert(executor.ErrStmtNotFound.Equal(err), IsTrue)
+		c.Assert(plan.ErrStmtNotFound.Equal(err), IsTrue)
 
 		// Use parameter marker with argument will run prepared statement.
 		result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
@@ -72,7 +72,8 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
+		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
+		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
 
 		// Make schema change.
@@ -88,7 +89,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// There should be schema changed error.
 		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
-		c.Assert(executor.ErrSchemaChanged.Equal(err), IsTrue)
+		c.Assert(plan.ErrSchemaChanged.Equal(err), IsTrue)
 
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")
