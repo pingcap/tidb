@@ -63,6 +63,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
 		"generated", "virtual", "stored", "usage",
+		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
+		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -88,7 +90,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
+		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
@@ -97,6 +99,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
 		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version", "replication", "slave", "client",
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections",
+		"following", "preceding", "unbounded", "respect", "nulls", "current", "last",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -744,7 +747,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select (1, 1,)", false},
 		{"select row(1, 1) > row(1, 1), row(1, 1, 1) > row(1, 1, 1)", true},
 		{"Select (1, 1) > (1, 1)", true},
-		{"create table t (row int)", true},
+		{"create table t (row int)", false},
+		{"create table t (`row` int)", true},
 
 		// for cast with charset
 		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
@@ -1234,8 +1238,10 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"use `select`", true},
 		{"use select", false},
 		{`select * from t as a`, true},
-		{"select 1 full, 1 row, 1 abs", true},
-		{"select * from t full, t1 row, t2 abs", true},
+		{"select 1 full, 1 row, 1 abs", false},
+		{"select 1 full, 1 `row`, 1 abs", true},
+		{"select * from t full, t1 row, t2 abs", false},
+		{"select * from t full, t1 `row`, t2 abs", true},
 		// for issue 1878, identifiers may begin with digit.
 		{"create database 123test", true},
 		{"create database 123", false},
@@ -1243,8 +1249,6 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"create table `123` (123a1 int)", true},
 		{"create table 123 (123a1 int)", false},
 		{fmt.Sprintf("select * from t%cble", 0), false},
-		{"select 1 full, 1 row, 1 abs", true},
-		{"select * from t full, t1 row, t2 abs", true},
 		// for issue 3954, should NOT be recognized as identifiers.
 		{`select .78+123`, true},
 		{`select .78+.21`, true},
@@ -2041,4 +2045,68 @@ func (s *testParserSuite) TestSetTransaction(c *C) {
 		c.Assert(vars.IsSystem, Equals, true)
 		c.Assert(vars.Value.GetValue(), Equals, t.value)
 	}
+}
+
+func (s *testParserSuite) TestWindowFunctions(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		// For window function descriptions.
+		// See https://dev.mysql.com/doc/refman/8.0/en/window-function-descriptions.html
+		{`SELECT CUME_DIST() OVER w FROM t;`, true},
+		{`SELECT DENSE_RANK() OVER w FROM t;`, true},
+		{`SELECT FIRST_VALUE(val) OVER w FROM t;`, true},
+		{`SELECT FIRST_VALUE(val) RESPECT NULLS OVER w FROM t;`, true},
+		{`SELECT FIRST_VALUE(val) IGNORE NULLS OVER w FROM t;`, true},
+		{`SELECT LAG(val) OVER w FROM t;`, true},
+		{`SELECT LAG(val, 1) OVER w FROM t;`, true},
+		{`SELECT LAG(val, 1, def) OVER w FROM t;`, true},
+		{`SELECT LAST_VALUE(val) OVER w FROM t;`, true},
+		{`SELECT LEAD(val) OVER w FROM t;`, true},
+		{`SELECT LEAD(val, 1) OVER w FROM t;`, true},
+		{`SELECT LEAD(val, 1, def) OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val, 233) OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val, 233) FROM FIRST OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val, 233) FROM LAST OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val, 233) FROM LAST IGNORE NULLS OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val) OVER w FROM t;`, false},
+		{`SELECT NTILE(233) OVER w FROM t;`, true},
+		{`SELECT PERCENT_RANK() OVER w FROM t;`, true},
+		{`SELECT RANK() OVER w FROM t;`, true},
+		{`SELECT ROW_NUMBER() OVER w FROM t;`, true},
+		{`SELECT n, LAG(n, 1, 0) OVER w, LEAD(n, 1, 0) OVER w, n + LAG(n, 1, 0) OVER w FROM fib;`, true},
+
+		// For window function concepts and syntax.
+		// See https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html
+		{`SELECT SUM(profit) OVER(PARTITION BY country) AS country_profit FROM sales;`, true},
+		{`SELECT SUM(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT AVG(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT BIT_XOR(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT COUNT(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT COUNT(ALL profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT COUNT(*) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT MAX(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT MIN(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT SUM(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT ROW_NUMBER() OVER(PARTITION BY country) AS row_num1 FROM sales;`, true},
+		{`SELECT ROW_NUMBER() OVER(PARTITION BY country, d ORDER BY year, product) AS row_num2 FROM sales;`, true},
+
+		// For window function frame specification.
+		// See https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
+		{`SELECT SUM(val) OVER (PARTITION BY subject ORDER BY time ROWS UNBOUNDED PRECEDING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (PARTITION BY subject ORDER BY time ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (ROWS BETWEEN 1 PRECEDING AND UNBOUNDED FOLLOWING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (RANGE BETWEEN INTERVAL 5 DAY PRECEDING AND INTERVAL '2:30' MINUTE_SECOND FOLLOWING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (RANGE BETWEEN CURRENT ROW AND CURRENT ROW) FROM t;`, true},
+		{`SELECT AVG(val) OVER (RANGE CURRENT ROW) FROM t;`, true},
+
+		// For named windows.
+		// See https://dev.mysql.com/doc/refman/8.0/en/window-functions-named-windows.html
+		{`SELECT RANK() OVER w FROM t WINDOW w AS (ORDER BY val);`, true},
+		{`SELECT RANK() OVER w FROM t WINDOW w AS ();`, true},
+		{`SELECT FIRST_VALUE(year) OVER (w ORDER BY year ASC) AS first FROM sales WINDOW w AS (PARTITION BY country);`, true},
+		{`SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (), w3 AS (w1);`, true},
+		{`SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (w3), w3 AS (w1);`, true},
+	}
+	s.RunTest(c, table)
 }
