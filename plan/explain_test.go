@@ -166,7 +166,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
 				"TableScan_10 HashAgg_8  cop table:t1, range:(-inf,+inf), keep order:false 8000",
-				"HashAgg_8  TableScan_10 cop type:complete, funcs:sum(or(eq(test.t1.c1, 1), eq(test.t1.c1, 2))) 1",
+				"HashAgg_8  TableScan_10 cop type:complete, funcs:sum(in(test.t1.c1, 1, 2)) 1",
 				"TableReader_12 HashAgg_11  root data:HashAgg_8 1",
 				"HashAgg_11  TableReader_12 root type:final, funcs:sum(col_0) 1",
 			},
