@@ -363,6 +363,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sessVars.PrevLastInsertID = sessVars.LastInsertID
 		sessVars.LastInsertID = 0
 	}
+	sessVars.ResetPrevAffectedRows()
 	sessVars.InsertID = 0
 	sessVars.StmtCtx = sc
 }
