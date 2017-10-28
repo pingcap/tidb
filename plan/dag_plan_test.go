@@ -922,23 +922,21 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  "select a from t where c in (1) and d > 3",
 			best: "IndexReader(Index(t.c_d_e)[(1 3,1 +inf]])->Projection",
 		},
-		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
-		//{
-		//	sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
-		//	best: "Index(t.c_d_e)[(1 3 +inf,1 4 <nil>) (1 5 +inf,1 6 <nil>) (2 3 +inf,2 4 <nil>) (2 5 +inf,2 6 <nil>) (3 3 +inf,3 4 <nil>) (3 5 +inf,3 6 <nil>)]->Projection",
-		//},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+			best: "IndexReader(Index(t.c_d_e)[(1 3,1 4) (1 5,1 6) (2 3,2 4) (2 5,2 6) (3 3,3 4) (3 5,3 6)])->Projection",
+		},
 		{
 			sql:  "select a from t where c in (1, 2, 3)",
 			best: "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection",
 		},
-		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
-		//{
-		//	sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
-		//	best: "Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]]->Projection",
-		//},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+			best: "IndexReader(Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]])->Projection",
+		},
 		{
 			sql:  "select a from t where d in (1, 2, 3)",
-			best: "TableReader(Table(t)->Sel([or(or(eq(test.t.d, 1), eq(test.t.d, 2)), eq(test.t.d, 3))]))->Projection",
+			best: "TableReader(Table(t)->Sel([in(test.t.d, 1, 2, 3)]))->Projection",
 		},
 		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
 		//{
@@ -1016,10 +1014,6 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c like '1'`,
 			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
 		},
-		//{
-		//	sql:  `select a from t where c = 1.1 and d > 3`,
-		//	best: "Index(t.c_d_e)[]->Projection",
-		//},
 		//{
 		//	sql:  `select a from t where c = 1.9 and d > 3`,
 		//	best: "Index(t.c_d_e)[]->Projection",

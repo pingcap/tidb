@@ -2177,6 +2177,29 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	// for version
 	result = tk.MustQuery("select version()")
 	result.Check(testkit.Rows(mysql.ServerVersion))
+
+	// for row_count
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, PRIMARY KEY (a))")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("insert into t(a, b) values(1, 11), (2, 22), (3, 33)")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("3"))
+	tk.MustExec("select * from t")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("-1"))
+	tk.MustExec("update t set b=22 where a=1")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("update t set b=22 where a=1")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("delete from t where a=2")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("-1"))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
