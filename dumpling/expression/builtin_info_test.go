@@ -151,10 +151,20 @@ func (s *testEvaluatorSuite) TestCollation(c *C) {
 
 func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.RowCount]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums()))
-	c.Assert(f, IsNil)
-	c.Assert(err, ErrorMatches, "*FUNCTION ROW_COUNT does not exist")
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.PrevAffectedRows = 10
+
+	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
+	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	sig, ok := f.(*builtinRowCountSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(sig, NotNil)
+	intResult, isNull, err := sig.evalInt(nil)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(intResult, Equals, int64(10))
 }
 
 // Test case for tidb_server().
