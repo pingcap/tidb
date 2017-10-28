@@ -230,7 +230,7 @@ func containsAlphabet(s string) bool {
 }
 
 func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
-	if len(expr.Children) < 1 {
+	if len(expr.Children) < 2 {
 		return types.Datum{}, ErrInvalid.Gen("IN needs more than 1 operand, got %d", len(expr.Children))
 	}
 	target, err := e.Eval(expr.Children[0])

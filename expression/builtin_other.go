@@ -116,7 +116,7 @@ func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalInt(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 		if isNull {
 			hasNull = true
@@ -158,7 +158,7 @@ func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalString(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 		if isNull {
 			hasNull = true
@@ -185,7 +185,7 @@ func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalReal(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 		if isNull {
 			hasNull = true
@@ -212,7 +212,7 @@ func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalDecimal(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 		if isNull {
 			hasNull = true
@@ -239,7 +239,7 @@ func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalTime(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 		if isNull {
 			hasNull = true
@@ -266,7 +266,7 @@ func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalDuration(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 		if isNull {
 			hasNull = true
@@ -293,7 +293,7 @@ func (b *builtinInJSONSig) evalInt(row types.Row) (int64, bool, error) {
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalJSON(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 		if isNull {
 			hasNull = true
