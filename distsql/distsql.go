@@ -300,10 +300,11 @@ func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 	return pc
 }
 
+// TODO: update it when more collate is supported.
 func collationToProto(c string) int32 {
-	v, ok := mysql.CollationNames[c]
-	if ok {
-		return int32(v)
+	v := mysql.CollationNames[c]
+	if v == mysql.BinaryCollationID {
+		return int32(mysql.BinaryCollationID)
 	}
 	return int32(mysql.DefaultCollationID)
 }
