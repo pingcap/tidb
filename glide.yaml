@@ -51,7 +51,7 @@ import:
 - package: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - package: github.com/pingcap/goleveldb
-  version: 1c7b975bc41078e959e38e2ecbfd28a9619fc77a
+  version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
   - leveldb
   - leveldb/cache
@@ -141,7 +141,7 @@ import:
 - package: github.com/pingcap/pd
   version: 91e4257196bb714005f80a6e075bc1e19a9687b1
 - package: github.com/pingcap/tipb
-  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
+  version: eccd39c3992538c382a6351430a77233f42b1344
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -197,6 +197,54 @@ import:
   version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
 - package: github.com/spaolacci/murmur3
   version: v1.0
-- package: github.com/pingcap/mysqlx_driver
-  version: 2d8314d333881ae8b5947623d6ff49741707a31a
+- package: github.com/pingcap/mysqlx-driver
+  version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
   repo: git@github.com:pingcap/mysqlx-driver.git
+- package: github.com/apache/thrift
+  version: ">=0.9.3, <0.11.0"
+  subpackages:
+  - lib/go/thrift
+- package: github.com/opentracing/opentracing-go
+  version: ^1
+  subpackages:
+  - ext
+  - log
+- package: github.com/uber/tchannel-go
+  version: ^1.1.0
+  subpackages:
+  - atomic
+  - thrift
+  - thrift/gen-go/meta
+  - tnet
+  - trace/thrift/gen-go/tcollector
+  - typed
+- package: github.com/stretchr/testify
+  version: ^1.1.3
+  subpackages:
+  - assert
+  - require
+  - suite
+- package: github.com/crossdock/crossdock-go
+- package: github.com/uber/jaeger-lib
+  version: ^1.0.0
+  subpackages:
+  - metrics
+- package: github.com/uber/jaeger-client-go
+  version: d021e646f5187d77b55592c3efee1a2810e895d7
+  subpackages:
+  - config
+  - internal/spanlog
+  - log
+  - rpcmetrics
+  - thrift-gen/agent
+  - thrift-gen/jaeger
+  - thrift-gen/sampling
+  - thrift-gen/zipkincore
+  - utils
+- package: github.com/codahale/hdrhistogram
+  version: f8ad88b59a584afeee9d334eff879b104439117b
+- package: github.com/grpc-ecosystem/go-grpc-middleware
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
+  subpackages:
+  - tags
+  - tracing/opentracing

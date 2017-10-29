@@ -21,6 +21,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
+	goctx "golang.org/x/net/context"
 )
 
 // RunInNewTxn will run the f in a new transaction environment.
@@ -54,7 +55,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			return errors.Trace(err)
 		}
 
-		err = txn.Commit()
+		err = txn.Commit(goctx.Background())
 		if retryable && IsRetryableError(err) {
 			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
 			err1 := txn.Rollback()

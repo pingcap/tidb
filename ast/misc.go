@@ -168,6 +168,7 @@ type ExecuteStmt struct {
 
 	Name      string
 	UsingVars []ExprNode
+	ExecID    uint32
 }
 
 // Accept implements Node Accept interface.
@@ -568,6 +569,7 @@ const (
 	AdminShowDDL = iota + 1
 	AdminCheckTable
 	AdminShowDDLJobs
+	AdminCancelDDLJobs
 )
 
 // AdminStmt is the struct for Admin statement.
@@ -576,6 +578,7 @@ type AdminStmt struct {
 
 	Tp     AdminStmtType
 	Tables []*TableName
+	JobIDs []int64
 }
 
 // Accept implements Node Accpet interface.

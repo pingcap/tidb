@@ -268,33 +268,33 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 }
 
 func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
-	switch p.JoinType {
-	case SemiJoin, LeftOuterSemiJoin:
-		return []PhysicalPlan{p.getSemiJoin()}
-	default:
-		mj := p.getMergeJoin()
-		if p.preferMergeJoin && len(mj) > 0 {
-			return mj
-		}
-		joins := make([]PhysicalPlan, 0, 5)
-		if len(p.EqualConditions) == 1 {
-			joins = append(joins, mj...)
-		}
-		idxJoins, forced := p.tryToGetIndexJoin()
-		if forced {
-			return idxJoins
-		}
-		joins = append(joins, idxJoins...)
-		if p.JoinType != RightOuterJoin {
-			leftJoin := p.getHashJoin(1)
-			joins = append(joins, leftJoin)
-		}
-		if p.JoinType != LeftOuterJoin {
-			rightJoin := p.getHashJoin(0)
-			joins = append(joins, rightJoin)
-		}
-		return joins
+	mergeJoins := p.getMergeJoin()
+	if p.preferMergeJoin && len(mergeJoins) > 0 {
+		return mergeJoins
 	}
+	joins := make([]PhysicalPlan, 0, 5)
+	joins = append(joins, mergeJoins...)
+
+	if p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin && p.JoinType != LeftOuterSemiJoin && p.JoinType != AntiLeftOuterSemiJoin {
+		indexJoins, forced := p.tryToGetIndexJoin()
+		if forced {
+			return indexJoins
+		}
+		joins = append(joins, indexJoins...)
+	}
+
+	switch p.JoinType {
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		joins = append(joins, p.getHashSemiJoin())
+	case LeftOuterJoin:
+		joins = append(joins, p.getHashJoin(1))
+	case RightOuterJoin:
+		joins = append(joins, p.getHashJoin(0))
+	case InnerJoin:
+		joins = append(joins, p.getHashJoin(1))
+		joins = append(joins, p.getHashJoin(0))
+	}
+	return joins
 }
 
 func getPermutation(cols1, cols2 []*expression.Column) ([]int, []*expression.Column) {
@@ -382,15 +382,15 @@ func (p *LogicalJoin) getMergeJoin() []PhysicalPlan {
 	return joins
 }
 
-func (p *LogicalJoin) getSemiJoin() PhysicalPlan {
+func (p *LogicalJoin) getHashSemiJoin() PhysicalPlan {
 	semiJoin := PhysicalHashSemiJoin{
-		WithAux:         LeftOuterSemiJoin == p.JoinType,
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
-		Anti:            p.anti,
 		rightChOffset:   p.children[0].Schema().Len(),
+		WithAux:         p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
+		Anti:            p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
 	}.init(p.allocator, p.ctx)
 	semiJoin.SetSchema(p.schema)
 	semiJoin.profile = p.profile
@@ -844,7 +844,11 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			indexConds = is.filterCondition
 		}
 		if indexConds != nil {
-			indexSel := Selection{Conditions: indexConds}.init(is.allocator, is.ctx)
+			condsClone := make([]expression.Expression, 0, len(indexConds))
+			for _, cond := range indexConds {
+				condsClone = append(condsClone, cond.Clone())
+			}
+			indexSel := Selection{Conditions: condsClone}.init(is.allocator, is.ctx)
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
 			indexSel.profile = p.getStatsProfileByFilter(append(is.AccessCondition, indexConds...))
@@ -927,7 +931,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 		if pkCol != nil {
 			var ranges []types.Range
-			ts.AccessCondition, ts.filterCondition = ranger.DetachColumnConditions(conds, pkCol.ColName)
+			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, conds, pkCol)
 			ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 			ts.Ranges = ranger.Ranges2IntRanges(ranges)
 			if err != nil {
@@ -1009,8 +1013,9 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *s
 
 func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
 	var join PhysicalPlan
-	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin {
-		join = p.getSemiJoin()
+	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin ||
+		p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		join = p.getHashSemiJoin()
 	} else {
 		join = p.getHashJoin(1)
 	}
@@ -1040,6 +1045,7 @@ func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*req
 }
 
 func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
 		return nil
 	}

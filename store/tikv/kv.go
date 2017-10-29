@@ -26,7 +26,6 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -137,9 +136,8 @@ type tikvStore struct {
 	kv        SafePointKV
 	safePoint uint64
 	spTime    time.Time
-	spSession tidb.Session  // this is used to obtain safePoint from remote
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
-	spMsg     chan struct{} // this is used to nofity when the store is closed
+	closed    chan struct{} // this is used to nofity when the store is closed
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -157,11 +155,11 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (gcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return errMayFallBehind
+		return ErrPDServerTimeout.GenByArgs("start timestamp may fall behind safe point")
 	}
 
 	if startTime < cachedSafePoint {
-		return errFallBehind
+		return ErrGCTooEarly
 	}
 
 	return nil
@@ -182,7 +180,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		kv:          spkv,
 		safePoint:   0,
 		spTime:      time.Now(),
-		spMsg:       make(chan struct{}),
+		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -330,7 +328,7 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 
-	close(s.spMsg)
+	close(s.closed)
 
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)

@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"unicode"
 
@@ -134,8 +135,9 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		if v, ok := p.(*DataSource); ok {
 			v.TableAsName = &x.AsName
 		}
-		if x.AsName.L != "" {
-			for _, col := range p.Schema().Columns {
+		for _, col := range p.Schema().Columns {
+			col.OrigTblName = col.TblName
+			if x.AsName.L != "" {
 				col.TblName = x.AsName
 				col.DBName = model.NewCIStr("")
 			}
@@ -401,7 +403,16 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		if expr == nil {
 			continue
 		}
-		expressions = append(expressions, expression.SplitCNFItems(expr)...)
+		cnfItems := expression.SplitCNFItems(expr)
+		for _, item := range cnfItems {
+			if con, ok := item.(*expression.Constant); ok {
+				ret, err := expression.EvalBool(expression.CNFExprs{con}, nil, b.ctx)
+				if ret || err != nil {
+					continue
+				}
+			}
+			expressions = append(expressions, item)
+		}
 	}
 	if len(expressions) == 0 {
 		return p
@@ -412,12 +423,21 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
-// buildProjectionFieldNameFromColumns builds the field name and the table name when field expression is a column reference.
-func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (model.CIStr, model.CIStr) {
+// buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, tblName, origTblName, dbName model.CIStr) {
 	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
-		return astCol.Name.Name, astCol.Name.Table
+		colName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
 	}
-	return c.ColName, c.TblName
+	if field.AsName.L != "" {
+		colName = field.AsName
+	}
+	if tblName.L == "" {
+		tblName = c.TblName
+	}
+	if dbName.L == "" {
+		dbName = c.DBName
+	}
+	return colName, tblName, c.OrigTblName, c.DBName
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
@@ -463,23 +483,25 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
-	var tblName, colName model.CIStr
-	if field.AsName.L != "" {
+	var origTblName, tblName, colName, dbName model.CIStr
+	if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
+		// Field is a column reference.
+		colName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, c)
+	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
-	} else if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
-		// Field is a column reference.
-		colName, tblName = b.buildProjectionFieldNameFromColumns(field, c)
 	} else {
 		// Other: field is an expression.
 		colName = b.buildProjectionFieldNameFromExpressions(field)
 	}
 	return &expression.Column{
-		FromID:   id,
-		Position: position,
-		TblName:  tblName,
-		ColName:  colName,
-		RetType:  expr.GetType(),
+		FromID:      id,
+		Position:    position,
+		TblName:     tblName,
+		OrigTblName: origTblName,
+		ColName:     colName,
+		DBName:      dbName,
+		RetType:     expr.GetType(),
 	}
 }
 
@@ -679,7 +701,9 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 			return nil
 		}
 	}
-
+	if count > math.MaxUint64-offset {
+		count = math.MaxUint64 - offset
+	}
 	li := Limit{
 		Offset: offset,
 		Count:  count,
@@ -1184,15 +1208,6 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
-	var statisticTable *statistics.Table
-	if handle == nil {
-		// When the first session is created, the handle hasn't been initialized.
-		statisticTable = statistics.PseudoTable(tn.TableInfo.ID)
-	} else {
-		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
-	}
-
 	schemaName := tn.Schema
 	if schemaName.L == "" {
 		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -1203,6 +1218,14 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	tableInfo := tbl.Meta()
+	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
+	var statisticTable *statistics.Table
+	if handle == nil {
+		// When the first session is created, the handle hasn't been initialized.
+		statisticTable = statistics.PseudoTable(tableInfo.ID)
+	} else {
+		statisticTable = handle.GetTableStats(tableInfo.ID)
+	}
 
 	p := DataSource{
 		indexHints:     tn.IndexHints,
@@ -1411,12 +1434,19 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			IsAggOrSubq: true,
 		})
 		joinPlan.SetSchema(newSchema)
-		joinPlan.JoinType = LeftOuterSemiJoin
+		if not {
+			joinPlan.JoinType = AntiLeftOuterSemiJoin
+		} else {
+			joinPlan.JoinType = LeftOuterSemiJoin
+		}
 	} else {
 		joinPlan.SetSchema(outerPlan.Schema().Clone())
-		joinPlan.JoinType = SemiJoin
+		if not {
+			joinPlan.JoinType = AntiSemiJoin
+		} else {
+			joinPlan.JoinType = SemiJoin
+		}
 	}
-	joinPlan.anti = not
 	return joinPlan
 }
 
@@ -1541,8 +1571,8 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				return expr
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
-			newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		}
+		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil

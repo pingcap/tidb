@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
+	goctx "golang.org/x/net/context"
 )
 
 type testSafePointSuite struct {
@@ -85,7 +86,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit()
+	err := txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	// for txn get
@@ -97,8 +98,8 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	_, geterr2 := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
 	c.Assert(geterr2, NotNil)
-	isFallBehind := terror.ErrorEqual(errors.Cause(geterr2), errFallBehind)
-	isMayFallBehind := terror.ErrorEqual(errors.Cause(geterr2), errMayFallBehind)
+	isFallBehind := terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
+	isMayFallBehind := terror.ErrorEqual(errors.Cause(geterr2), ErrPDServerTimeout.GenByArgs("start timestamp may fall behind safe point"))
 	isBehind := isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 
@@ -109,8 +110,8 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	_, seekerr := txn3.Seek(encodeKey(s.prefix, ""))
 	c.Assert(seekerr, NotNil)
-	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), errFallBehind)
-	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), errMayFallBehind)
+	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
+	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrPDServerTimeout.GenByArgs("start timestamp may fall behind safe point"))
 	isBehind = isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 
@@ -123,8 +124,8 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()})
 	_, batchgeterr := snapshot.BatchGet(keys)
 	c.Assert(batchgeterr, NotNil)
-	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), errFallBehind)
-	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), errMayFallBehind)
+	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
+	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrPDServerTimeout.GenByArgs("start timestamp may fall behind safe point"))
 	isBehind = isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 }
