@@ -1148,42 +1148,53 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
+		buildAgg := true
 		// For `select max(c) from t;`, we could optimize it to `select c from t order by c limit 1;`.
-		if len(sel.Fields.Fields) == 1 && sel.GroupBy == nil {
-			// Make sure there is only one aggregation in the
+		if len(sel.Fields.Fields) == 1 && sel.GroupBy == nil && sel.OrderBy == nil && sel.Limit == nil {
+			// Make sure there is only one aggregation in the projection.
 			f0 := sel.Fields.Fields[0]
-			if agg, ok := f0.Expr.(*ast.AggregateFuncExpr); ok {
-				if agg.F == ast.AggFuncMax || agg.F == ast.AggFuncMin {
-					// Check the inner is a column name expr.
-					if c, ok1 := agg.Args[0].(*ast.ColumnNameExpr); ok1 {
-						// Replace the select field.
-						f0.Expr = c
-						f0.AsName = model.NewCIStr("")
-
-						// Add order by and limit;
-						desc := false
-						if agg.F == ast.AggFuncMax {
-							desc = true
+			agg, ok := f0.Expr.(*ast.AggregateFuncExpr)
+			if !(ok && agg.F == ast.AggFuncMax && agg.F == ast.AggFuncMin) {
+			} else if c, ok1 := agg.Args[0].(*ast.ColumnNameExpr); ok1 {
+				// Check the inner is a column name expr. Not `select max(c+d) from t;`.
+				// Make sure there is only one table in the FromClause.
+				singleTable := false
+				if sel.From != nil && sel.From.TableRefs.Right == nil {
+					if ts, ok2 := sel.From.TableRefs.Left.(*ast.TableSource); ok2 {
+						if _, ok3 := ts.Source.(*ast.TableName); ok3 {
+							singleTable = true
 						}
-						bi := &ast.ByItem{
-							Expr: c,
-							Desc: desc,
-						}
-						ob := &ast.OrderByClause{
-							Items: []*ast.ByItem{bi},
-						}
-						sel.OrderBy = ob
-
-						// Add Limit.
-						lmt := &ast.Limit{
-							Count: ast.NewValueExpr(1),
-						}
-						sel.Limit = lmt
-						fmt.Println("Hit Agg Optimize")
 					}
 				}
+				if singleTable {
+					// Replace the select field.
+					f0.Expr = c
+					f0.AsName = model.NewCIStr("")
+
+					// Add order by and limit;
+					desc := false
+					if agg.F == ast.AggFuncMax {
+						desc = true
+					}
+					bi := &ast.ByItem{
+						Expr: c,
+						Desc: desc,
+					}
+					ob := &ast.OrderByClause{
+						Items: []*ast.ByItem{bi},
+					}
+					sel.OrderBy = ob
+
+					// Add Limit.
+					lmt := &ast.Limit{
+						Count: ast.NewValueExpr(1),
+					}
+					sel.Limit = lmt
+					buildAgg = false
+				}
 			}
-		} else {
+		}
+		if buildAgg {
 			var aggIndexMap map[int]int
 			p, aggIndexMap = b.buildAggregation(p, aggFuncs, gbyCols)
 			for k, v := range totalMap {
