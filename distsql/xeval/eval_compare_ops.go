@@ -14,7 +14,6 @@
 package xeval
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -231,8 +230,8 @@ func containsAlphabet(s string) bool {
 }
 
 func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
-	if len(expr.Children) != 2 {
-		return types.Datum{}, ErrInvalid.Gen("IN need 2 operands, got %d", len(expr.Children))
+	if len(expr.Children) < 2 {
+		return types.Datum{}, ErrInvalid.Gen("IN needs more than 1 operand, got %d", len(expr.Children))
 	}
 	target, err := e.Eval(expr.Children[0])
 	if err != nil {
@@ -241,50 +240,28 @@ func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
 	if target.IsNull() {
 		return types.Datum{}, nil
 	}
-	valueListExpr := expr.Children[1]
-	if valueListExpr.GetTp() != tipb.ExprType_ValueList {
-		return types.Datum{}, ErrInvalid.Gen("the second child should be value list type")
+	var hasNull bool
+	for i := 1; i < len(expr.Children); i++ {
+		arg, err := e.Eval(expr.Children[i])
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		if arg.IsNull() {
+			hasNull = true
+			continue
+		}
+		cmp, err := target.CompareDatum(e.StatementCtx, &arg)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		if cmp == 0 {
+			return types.NewIntDatum(1), nil
+		}
 	}
-	decoded, err := e.decodeValueList(valueListExpr)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	in, err := e.checkIn(target, decoded.values)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if in {
-		return types.NewDatum(1), nil
-	}
-	if decoded.hasNull {
+	if hasNull {
 		return types.Datum{}, nil
 	}
-	return types.NewDatum(0), nil
-}
-
-// The value list is in sorted order so we can do a binary search.
-func (e *Evaluator) checkIn(target types.Datum, list []types.Datum) (bool, error) {
-	var outerErr error
-	n := sort.Search(len(list), func(i int) bool {
-		val := list[i]
-		cmp, err := val.CompareDatum(e.StatementCtx, &target)
-		if err != nil {
-			outerErr = errors.Trace(err)
-			return false
-		}
-		return cmp >= 0
-	})
-	if outerErr != nil {
-		return false, errors.Trace(outerErr)
-	}
-	if n < 0 || n >= len(list) {
-		return false, nil
-	}
-	cmp, err := list[n].CompareDatum(e.StatementCtx, &target)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return cmp == 0, nil
+	return types.NewIntDatum(0), nil
 }
 
 func (e *Evaluator) decodeValueList(valueListExpr *tipb.Expr) (*decodedValueList, error) {
