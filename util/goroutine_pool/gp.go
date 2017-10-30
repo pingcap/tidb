@@ -101,15 +101,15 @@ func (g *goroutine) put(pool *Pool) {
 }
 
 func (g *goroutine) workLoop(pool *Pool) {
-	timer := time.NewTimer(pool.idleTimeout)
+	timer := time.NewTimer(pool.idleTimeout)  // workLoop函数建议使用time.NewTicker，不必每次都reset，且reset每次都重建一个timer对象，浪费内存
 	for {
 		select {
-		case <-timer.C:
+		case <-timer.C:    
 			// Check to avoid a corner case that the goroutine is take out from pool,
 			// and get this signal at the same time.
 			succ := atomic.CompareAndSwapInt32(&g.status, statusIdle, statusDead)
 			if succ {
-				return
+				return   // 这里退出后，这个goroutine在pool的list中怎么删掉掉的？
 			}
 		case work := <-g.ch:
 			work()
