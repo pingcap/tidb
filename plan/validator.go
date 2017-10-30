@@ -85,7 +85,7 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.VariableExpr:
 		if v.inCreateView {
-			v.err = ddl.ErrViewSelectVariable.GenByArgs("")
+			v.err = ErrViewSelectVariable
 			return in, true
 		}
 	}
@@ -298,26 +298,16 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 }
 
 func (v *validator) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
-	if stmt.ViewName == nil {
-		v.err = ddl.ErrWrongTableName.GenByArgs("")
-		return
-	}
-
 	vName := stmt.ViewName.Name.String()
 	if isIncorrectName(vName) {
 		v.err = ddl.ErrWrongTableName.GenByArgs(vName)
 		return
 	}
-
 	for _, col := range stmt.Cols {
 		if isIncorrectName(col) {
 			v.err = ddl.ErrWrongColumnName.GenByArgs(col)
 			return
 		}
-	}
-
-	if stmt.Select == nil {
-		v.err = ddl.ErrViewInvalid.GenByArgs(vName)
 	}
 	return
 }

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
@@ -37,7 +36,7 @@ type DDLExec struct {
 	ctx       context.Context
 	is        infoschema.InfoSchema
 	done      bool
-	plan      plan.Plan
+	schema    *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
@@ -162,10 +161,9 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	// SelectFields represents the field expression or field AsName in SelectStmt
 	// and saves it as a string to establish the mapping relationship of ColList
 	var selectFields []string
-	p := e.plan
-	cols := p.Schema().Columns
+	cols := e.schema.Columns
 	for _, col := range cols {
-		selectFields = append(selectFields, col.ColName.O)
+		selectFields = append(selectFields, col.ColName.L)
 	}
 
 	// The column_list in Create View statement could be null, so if Cols is nil,
