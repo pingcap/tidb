@@ -196,7 +196,7 @@ var defaultConf = Config{
 	Dashbase: Dashbase{
 		Enabled:    false,
 		KafkaHosts: []string{"localhost:9092"},
-		APIURL:     "https://staging.dashbase.io:9876",
+		APIURL:     "http://localhost:9876",
 		SchemaFile: "dashbase-schema.toml",
 	},
 }
