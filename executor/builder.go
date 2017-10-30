@@ -1173,7 +1173,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	innerExec := b.build(v.Children()[1]).(DataReader)
 
 	return &IndexLookUpJoin{
-		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec, innerExec),
+		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
 		innerExec:        innerExec,
 		outerKeys:        v.OuterJoinKeys,

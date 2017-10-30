@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -97,8 +98,8 @@ type IndexLookUpJoin struct {
 	resultBuffer    []Row
 	resultCursor    int
 
-	buffer4JoinKeys [][]types.Datum //make([][]types.Datum, 0, len(outerRows))
-	buffer4JoinKey  []types.Datum   //make([]types.Datum, 0, len(outerRows)*len(e.outerKeys))
+	buffer4JoinKeys [][]types.Datum
+	buffer4JoinKey  []types.Datum
 
 	batchSize int
 	exhausted bool // exhausted means whether all data has been extracted
@@ -206,7 +207,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 
 func (e *IndexLookUpJoin) constructRequestRows(outerRows []Row) ([][]types.Datum, error) {
 	requestRows := e.buffer4JoinKeys[:0]
-	requestRow := e.buffer4JoinKey[0:]
+	requestRow := e.buffer4JoinKey[:0]
 	for _, outerRow := range outerRows {
 		for i, outerKey := range e.outerKeys {
 			outerDatum, err := outerKey.Eval(outerRow)
@@ -250,9 +251,11 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
-	if err := e.innerExec.doRequestForDatums(requestRows, e.ctx.GoCtx()); err != nil {
+	if err := e.innerExec.doRequestForDatums(e.ctx.GoCtx(), requestRows); err != nil {
 		return errors.Trace(err)
 	}
+
+	defer terror.Call(e.innerExec.Close)
 
 	for {
 		innerRow, err := e.innerExec.Next()
