@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -60,6 +61,8 @@ var (
 	mBootstrapKey     = []byte("BootstrapKey")
 	mTableStatsPrefix = "TStats"
 	mSchemaDiffPrefix = "Diff"
+	// mFirstInitTableID is the frist table ID that needs to check auto key.
+	mFirstInitTableID = []byte("FirstInitTableID")
 )
 
 var (
@@ -108,6 +111,18 @@ func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
 }
 
+// SetFirstInitTableID sets the first initial table ID.
+func (m *Meta) SetFirstInitTableID(tableID int64) error {
+	id := []byte(strconv.FormatInt(tableID, 10))
+	return m.txn.Set(mFirstInitTableID, id)
+}
+
+// GetFirstInitTableID gets the first initial table ID.
+func (m *Meta) GetFirstInitTableID() (int64, error) {
+	id, err := m.txn.GetInt64(mFirstInitTableID)
+	return id, errors.Trace(err)
+}
+
 func (m *Meta) dbKey(dbID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
 }
@@ -149,7 +164,14 @@ func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, err
 	}
 	isNotExisting := len(id) == 0
 	if isNotExisting {
-		return 0, kv.ErrNotExist
+		firstInitTableID, err := m.GetFirstInitTableID()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if tableID >= firstInitTableID {
+			return 0, kv.ErrNotExist
+		}
+		log.Infof("[meta] table ID %d doesn't exist auto ID key, start table ID %v", tableID, firstInitTableID)
 	}
 
 	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
