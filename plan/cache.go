@@ -11,16 +11,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cache
+package plan
 
 import (
 	"time"
 
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+)
+
+var (
+	// PlanCacheEnabled stores the global config "plan-cache-enabled".
+	PlanCacheEnabled bool
+	// PlanCacheShards stores the global config "plan-cache-shards".
+	PlanCacheShards int64
+	// PlanCacheCapacity stores the global config "plan-cache-capacity".
+	PlanCacheCapacity int64
+	// GlobalPlanCache stores the global plan cache for every session in a tidb-server.
+	GlobalPlanCache *kvcache.ShardedLRUCache
+
+	// PreparedPlanCacheEnabled stores the global config "prepared-plan-cache-enabled".
+	PreparedPlanCacheEnabled bool
+	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
+	PreparedPlanCacheCapacity int64
 )
 
 type sqlCacheKey struct {
@@ -135,5 +152,33 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		schemaVersion:  schemaVersion,
 		sqlMode:        sessionVars.SQLMode,
 		timezoneOffset: timezoneOffset,
+	}
+}
+
+// SQLCacheValue stores the cached Statement and StmtNode.
+type SQLCacheValue struct {
+	StmtNode  ast.StmtNode
+	Plan      Plan
+	Expensive bool
+}
+
+// NewSQLCacheValue creates a SQLCacheValue.
+func NewSQLCacheValue(ast ast.StmtNode, plan Plan, expensive bool) *SQLCacheValue {
+	return &SQLCacheValue{
+		StmtNode:  ast,
+		Plan:      plan,
+		Expensive: expensive,
+	}
+}
+
+// PSTMTPlanCacheValue stores the cached Statement and StmtNode.
+type PSTMTPlanCacheValue struct {
+	Plan Plan
+}
+
+// NewPSTMTPlanCacheValue creates a SQLCacheValue.
+func NewPSTMTPlanCacheValue(plan Plan) *PSTMTPlanCacheValue {
+	return &PSTMTPlanCacheValue{
+		Plan: plan,
 	}
 }
