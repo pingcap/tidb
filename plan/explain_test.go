@@ -237,12 +237,12 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_13   cop table:t1, range:(-inf,+inf), keep order:true 8000",
-				"TableReader_14 MergeJoin_27  root data:TableScan_13 8000",
-				"IndexScan_21   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 8000",
-				"IndexReader_22 MergeJoin_27  root index:IndexScan_21 8000",
-				"MergeJoin_27 StreamAgg_9 TableReader_14,IndexReader_22 root left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)], asc, left key:test.t1.c1, right key:test.t2.c1 8000",
-				"StreamAgg_9  MergeJoin_27 root type:stream, funcs:sum(5_aux_0) 1",
+				"TableScan_16   cop table:t1, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_17 MergeJoin_30  root data:TableScan_16 8000",
+				"IndexScan_24   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 8000",
+				"IndexReader_25 MergeJoin_30  root index:IndexScan_24 8000",
+				"MergeJoin_30 StreamAgg_9 TableReader_17,IndexReader_25 root left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)], asc, left key:test.t1.c1, right key:test.t2.c1 8000",
+				"StreamAgg_9  MergeJoin_30 root type:stream, funcs:sum(5_aux_0) 1",
 			},
 		},
 		{
@@ -288,24 +288,24 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"root\"\n" +
-				"\"StreamAgg_9\" -> \"MergeJoin_27\"\n" +
-				"\"MergeJoin_27\" -> \"TableReader_14\"\n" +
-				"\"MergeJoin_27\" -> \"IndexReader_22\"\n" +
+				"\"StreamAgg_9\" -> \"MergeJoin_30\"\n" +
+				"\"MergeJoin_30\" -> \"TableReader_17\"\n" +
+				"\"MergeJoin_30\" -> \"IndexReader_25\"\n" +
 				"}\n" +
-				"subgraph cluster13{\n" +
+				"subgraph cluster16{\n" +
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"cop\"\n" +
-				"\"TableScan_13\"\n" +
+				"\"TableScan_16\"\n" +
 				"}\n" +
-				"subgraph cluster21{\n" +
+				"subgraph cluster24{\n" +
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"cop\"\n" +
-				"\"IndexScan_21\"\n" +
+				"\"IndexScan_24\"\n" +
 				"}\n" +
-				"\"TableReader_14\" -> \"TableScan_13\"\n" +
-				"\"IndexReader_22\" -> \"IndexScan_21\"\n" +
+				"\"TableReader_17\" -> \"TableScan_16\"\n" +
+				"\"IndexReader_25\" -> \"IndexScan_24\"\n" +
 				"}\n",
 		},
 		{

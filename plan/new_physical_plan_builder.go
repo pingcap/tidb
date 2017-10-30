@@ -108,19 +108,23 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 
 func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
 	var rightConds, leftConds expression.CNFExprs
+	joinType := p.JoinType
 	if outerIdx == 0 {
 		rightConds = p.RightConditions.Clone()
 		leftConds = p.LeftConditions.Clone()
 	} else {
 		rightConds = p.LeftConditions.Clone()
 		leftConds = p.RightConditions.Clone()
+		if p.JoinType == RightOuterJoin {
+			joinType = LeftOuterJoin
+		}
 	}
 	join := PhysicalIndexJoin{
 		outerIndex:      outerIdx,
 		LeftConditions:  leftConds,
 		RightConditions: rightConds,
 		OtherConditions: p.OtherConditions,
-		Outer:           p.JoinType != InnerJoin,
+		JoinType:        joinType,
 		OuterJoinKeys:   outerJoinKeys,
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
@@ -252,14 +256,23 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 		return plans, true
 	}
 	// We try to choose join without considering hints.
-	if p.JoinType != RightOuterJoin {
+	switch p.JoinType {
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join...)
 		}
-	}
-	if p.JoinType != LeftOuterJoin {
+	case RightOuterJoin:
 		join := p.getIndexJoinByOuterIdx(1)
+		if join != nil {
+			plans = append(plans, join...)
+		}
+	case InnerJoin:
+		join := p.getIndexJoinByOuterIdx(0)
+		if join != nil {
+			plans = append(plans, join...)
+		}
+		join = p.getIndexJoinByOuterIdx(1)
 		if join != nil {
 			plans = append(plans, join...)
 		}
@@ -275,13 +288,11 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
 
-	if p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin && p.JoinType != LeftOuterSemiJoin && p.JoinType != AntiLeftOuterSemiJoin {
-		indexJoins, forced := p.tryToGetIndexJoin()
-		if forced {
-			return indexJoins
-		}
-		joins = append(joins, indexJoins...)
+	indexJoins, forced := p.tryToGetIndexJoin()
+	if forced {
+		return indexJoins
 	}
+	joins = append(joins, indexJoins...)
 
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
