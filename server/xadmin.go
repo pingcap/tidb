@@ -350,7 +350,7 @@ func (xsql *xSQL) isCollection(schema string, collection string) (bool, error) {
 	} else {
 		sql += util.QuoteString(schema)
 	}
-	rs, err := (*xsql.ctx).Execute(sql)
+	rs, err := xsql.ctx.Execute(sql)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

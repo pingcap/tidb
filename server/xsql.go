@@ -30,14 +30,14 @@ import (
 
 type xSQL struct {
 	xcc *mysqlXClientConn
-	ctx *QueryCtx
+	ctx QueryCtx
 	pkt *xpacketio.XPacketIO
 }
 
 func createXSQL(xcc *mysqlXClientConn) *xSQL {
 	return &xSQL{
 		xcc: xcc,
-		ctx: &xcc.ctx,
+		ctx: xcc.ctx,
 		pkt: xcc.pkt,
 	}
 }
@@ -62,18 +62,18 @@ func (xsql *xSQL) dealSQLStmtExecute(payload []byte) error {
 	default:
 		return util.ErrXInvalidNamespace.GenByArgs(msg.GetNamespace())
 	}
-	return SendExecOk(xsql.pkt, (*xsql.ctx).LastInsertID())
+	return SendExecOk(xsql.pkt, xsql.ctx.LastInsertID())
 }
 
 func (xsql *xSQL) executeStmtNoResult(sql string) error {
-	if _, err := (*xsql.ctx).Execute(sql); err != nil {
+	if _, err := xsql.ctx.Execute(sql); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 func (xsql *xSQL) executeStmt(sql string) error {
-	rs, err := (*xsql.ctx).Execute(sql)
+	rs, err := xsql.ctx.Execute(sql)
 	if err != nil {
 		return err
 	}
