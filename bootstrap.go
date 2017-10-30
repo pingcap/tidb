@@ -557,7 +557,8 @@ func upgradeToVer16(s Session) {
 		if originalID > 0 {
 			return nil
 		}
-		err1 = m.SetFirstInitTableID(tableID)
+		err1 = m.SetFirstInitTableID(tableID + 1)
+		log.Infof("upgrade version 16 table ID %d, err1 %v", tableID+1, err1)
 		return errors.Trace(err1)
 	})
 	if err != nil && !strings.Contains(err.Error(), "write confilict") {
