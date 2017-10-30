@@ -248,6 +248,13 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 			d.SetValue(v)
 		}
 	case jsonFlag:
+		var size int
+		size, err = json.PeekBytesAsJSON(b)
+		if err != nil {
+			return b, d, err
+		}
+		b = b[size:]
+
 		var j json.JSON
 		j, err = json.Deserialize(b)
 		if err == nil {
