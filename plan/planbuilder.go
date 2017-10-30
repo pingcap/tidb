@@ -189,7 +189,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 		}
 		vars = append(vars, newExpr)
 	}
-	exe := &Execute{Name: v.Name, UsingVars: vars}
+	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
 	exe.SetSchema(expression.NewSchema())
 	return exe
 }
@@ -222,6 +222,10 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 			IsSystem: vars.IsSystem,
 		}
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
+			if cn, ok2 := vars.Value.(*ast.ColumnNameExpr); ok2 && cn.Name.Table.L == "" {
+				// Convert column name expression to string value expression.
+				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
+			}
 			mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
@@ -546,7 +550,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		User:   show.User,
 	}.init(b.allocator, b.ctx)
 	resultPlan = p
-	switch show.Tp {
+	switch showTp := show.Tp; showTp {
 	case ast.ShowProcedureStatus:
 		p.SetSchema(buildShowProcedureSchema())
 	case ast.ShowTriggers:
@@ -556,6 +560,13 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	case ast.ShowWarnings:
 		p.SetSchema(buildShowWarningsSchema())
 	default:
+		switch showTp {
+		case ast.ShowTables, ast.ShowTableStatus:
+			if p.DBName == "" {
+				b.err = ErrNoDB
+				return nil
+			}
+		}
 		p.SetSchema(buildShowSchema(show))
 	}
 	for i, col := range p.schema.Columns {
@@ -563,6 +574,9 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	var conditions []expression.Expression
 	if show.Pattern != nil {
+		show.Pattern.Expr = &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
+		}
 		expr, _, err := b.rewrite(show.Pattern, p, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -1198,8 +1212,8 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		}
 		// User varchar as the default return column type.
 		tp := mysql.TypeVarchar
-		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
-			tp = ftypes[0]
+		if len(ftypes) != 0 && ftypes[i] != mysql.TypeUnspecified {
+			tp = ftypes[i]
 		}
 		fieldType := types.NewFieldType(tp)
 		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)

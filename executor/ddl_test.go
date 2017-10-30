@@ -219,7 +219,6 @@ func (s *testSuite) TestRenameTable(c *C) {
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
-
 	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
 	tk.MustExec("insert rename1.t values ()")
 	tk.MustExec("rename table rename1.t to rename2.t")
@@ -227,10 +226,34 @@ func (s *testSuite) TestRenameTable(c *C) {
 	tk.MustExec("rename table rename2.t to rename3.t")
 	tk.MustExec("insert rename3.t values ()")
 	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "2", "3"))
-
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("rename table rename1.t to rename2.t1")
+	tk.MustExec("insert rename2.t1 values ()")
+	result := tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("drop database rename1")
+	tk.MustExec("drop database rename2")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t1")
+	// Make sure the value is greater than autoid.step.
+	tk.MustExec("insert rename2.t1 values (100000)")
+	tk.MustExec("insert rename2.t1 values ()")
+	result = tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1", "100000", "100001"))
+	_, err := tk.Exec("insert rename1.t values ()")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop database rename1")
+	tk.MustExec("drop database rename2")
 }
 
 func (s *testSuite) TestUnsupportedCharset(c *C) {

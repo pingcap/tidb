@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/grpc-ecosystem/go-grpc-middleware"
+	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -69,14 +71,22 @@ func newConnArray(maxSize uint32, addr string) (*connArray, error) {
 
 func (a *connArray) Init(addr string) error {
 	for i := range a.v {
+		unaryInterceptor := grpc_middleware.ChainUnaryClient(
+			grpc_prometheus.UnaryClientInterceptor,
+			grpc_opentracing.UnaryClientInterceptor(),
+		)
+		streamInterceptor := grpc_middleware.ChainStreamClient(
+			grpc_prometheus.StreamClientInterceptor,
+			grpc_opentracing.StreamClientInterceptor(),
+		)
 		conn, err := grpc.Dial(
 			addr,
 			grpc.WithInsecure(),
 			grpc.WithTimeout(dialTimeout),
 			grpc.WithInitialWindowSize(grpcInitialWindowSize),
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
-			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
+			grpc.WithUnaryInterceptor(unaryInterceptor),
+			grpc.WithStreamInterceptor(streamInterceptor))
 		if err != nil {
 			// Cleanup if the initialization fails.
 			a.Close()

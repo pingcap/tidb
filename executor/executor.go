@@ -57,10 +57,6 @@ var (
 var (
 	ErrUnknownPlan          = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti         = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrStmtNotFound         = terror.ClassExecutor.New(codeStmtNotFound, "Prepared statement not found")
-	ErrSchemaChanged        = terror.ClassExecutor.New(codeSchemaChanged, "Schema has changed")
-	ErrWrongParamCount      = terror.ClassExecutor.New(codeWrongParamCount, "Wrong parameter count")
-	ErrRowKeyCount          = terror.ClassExecutor.New(codeRowKeyCount, "Wrong row key entry count")
 	ErrPrepareDDL           = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
 	ErrPasswordNoMatch      = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
 	ErrResultIsEmpty        = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
@@ -73,10 +69,6 @@ var (
 const (
 	codeUnknownPlan          terror.ErrCode = 1
 	codePrepareMulti         terror.ErrCode = 2
-	codeStmtNotFound         terror.ErrCode = 3
-	codeSchemaChanged        terror.ErrCode = 4
-	codeWrongParamCount      terror.ErrCode = 5
-	codeRowKeyCount          terror.ErrCode = 6
 	codePrepareDDL           terror.ErrCode = 7
 	codeResultIsEmpty        terror.ErrCode = 8
 	codeErrBuildExec         terror.ErrCode = 9
