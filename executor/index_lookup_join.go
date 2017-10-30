@@ -179,6 +179,10 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 			}
 		}
 
+		if len(e.outerOrderedRows.rows) == 0 {
+			continue
+		}
+
 		var err error
 		e.outerOrderedRows.requestRows, err = e.constructRequestRows(e.outerOrderedRows.rows)
 		if err != nil {
