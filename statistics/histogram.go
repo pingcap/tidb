@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"sort"
@@ -568,7 +569,7 @@ func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*type
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if string(lb) == string(rb) {
+		if bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
 				rowCount, err := idx.equalRowCount(sc, types.NewBytesDatum(lb))
 				if err != nil {
