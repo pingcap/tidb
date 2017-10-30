@@ -131,7 +131,15 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		outerSchema:     p.children[outerIdx].Schema(),
 		innerPlan:       innerPlan,
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
-	join.SetSchema(expression.MergeSchema(p.children[outerIdx].Schema(), p.children[1-outerIdx].Schema()))
+	switch p.JoinType {
+	case SemiJoin, AntiSemiJoin:
+		join.SetSchema(p.children[0].Schema().Clone())
+	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		join.SetSchema(p.children[0].Schema().Clone())
+		join.schema.Append(p.schema.Columns[p.Schema().Len()-1])
+	case LeftOuterJoin, RightOuterJoin, InnerJoin:
+		join.SetSchema(expression.MergeSchema(p.children[outerIdx].Schema(), p.children[1-outerIdx].Schema()))
+	}
 	join.profile = p.profile
 	orderJoin := join.Copy().(*PhysicalIndexJoin)
 	orderJoin.KeepOrder = true
@@ -239,14 +247,14 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	}
 	plans := make([]PhysicalPlan, 0, 2)
 	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
-	if leftOuter && p.JoinType != RightOuterJoin {
+	if leftOuter && (p.JoinType == LeftOuterJoin || p.JoinType == InnerJoin) {
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join...)
 		}
 	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
-	if rightOuter && p.JoinType != LeftOuterJoin {
+	if rightOuter && (p.JoinType == RightOuterJoin || p.JoinType == InnerJoin) {
 		join := p.getIndexJoinByOuterIdx(1)
 		if join != nil {
 			plans = append(plans, join...)

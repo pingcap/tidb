@@ -1183,7 +1183,7 @@ func buildSchema(p PhysicalPlan) {
 			x.SetSchema(x.children[0].Schema().Clone())
 			x.schema.Append(auxCol)
 		} else {
-			p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
+			p.SetSchema(expression.MergeSchema(p.Children()[x.outerIndex].Schema(), p.Children()[1-x.outerIndex].Schema()))
 		}
 	case *PhysicalMergeJoin:
 		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
