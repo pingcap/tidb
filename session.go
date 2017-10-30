@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan/cache"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -686,20 +686,20 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 		connID        = s.sessionVars.ConnectionID
 	)
 
-	if cache.PlanCacheEnabled {
+	if plan.PlanCacheEnabled {
 		schemaVersion := sessionctx.GetDomain(s).InfoSchema().SchemaMetaVersion()
 		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
 
-		cacheKey = cache.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
-		cacheValue, useCachedPlan = cache.GlobalPlanCache.Get(cacheKey)
+		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
+		cacheValue, useCachedPlan = plan.GlobalPlanCache.Get(cacheKey)
 	}
 
 	if useCachedPlan {
-		stmtNode := cacheValue.(*cache.SQLCacheValue).StmtNode
+		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
 		stmt := &executor.ExecStmt{
 			InfoSchema: executor.GetInfoSchema(s),
-			Plan:       cacheValue.(*cache.SQLCacheValue).Plan,
-			Expensive:  cacheValue.(*cache.SQLCacheValue).Expensive,
+			Plan:       cacheValue.(*plan.SQLCacheValue).Plan,
+			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
 			Text:       stmtNode.Text(),
 		}
 
@@ -737,8 +737,8 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			// Step3: Cache the physical plan if possible.
-			if cache.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
-				cache.GlobalPlanCache.Put(cacheKey, cache.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
+			if plan.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
+				plan.GlobalPlanCache.Put(cacheKey, plan.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
 			}
 
 			// Step4: Execute the physical plan.
@@ -823,8 +823,10 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 		return nil, errors.Trace(err)
 	}
 	s.PrepareTxnCtx()
-	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
-
+	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
 }
@@ -832,7 +834,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 func (s *session) DropPreparedStmt(stmtID uint32) error {
 	vars := s.sessionVars
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
-		return executor.ErrStmtNotFound
+		return plan.ErrStmtNotFound
 	}
 	vars.RetryInfo.DroppedPreparedStmtIDs = append(vars.RetryInfo.DroppedPreparedStmtIDs, stmtID)
 	return nil
@@ -1051,8 +1053,8 @@ func createSession(store kv.Storage) (*session, error) {
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
-	if cache.PreparedPlanCacheEnabled {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(cache.PreparedPlanCacheCapacity)
+	if plan.PreparedPlanCacheEnabled {
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
@@ -1072,8 +1074,8 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
-	if cache.PreparedPlanCacheEnabled {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(cache.PreparedPlanCacheCapacity)
+	if plan.PreparedPlanCacheEnabled {
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, dom)
