@@ -63,7 +63,7 @@ type goroutine struct {
 }
 
 // New returns a new *Pool object.
-func NewGoroutinePool(idleTimeout time.Duration) *Pool {
+func New(idleTimeout time.Duration) *Pool {
 	pool := &Pool{
 		idleTimeout: idleTimeout,
 		state:       PoolInit,
