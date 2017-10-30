@@ -565,7 +565,7 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 		for i := range locksInfo {
 			locks[i] = newLock(locksInfo[i])
 		}
-		ok, err1 := store.lockResolver.ResolveLocks(bo, locks)
+		ok, err1 := store.lockResolver.BatchResolveLocks(bo, locks, loc.Region)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
