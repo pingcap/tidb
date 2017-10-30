@@ -56,8 +56,12 @@ const (
 	RightOuterJoin
 	// SemiJoin means if row a in table A matches some rows in B, just output a.
 	SemiJoin
+	// AntiSemiJoin means if row a in table A does not match any row in B, then output a.
+	AntiSemiJoin
 	// LeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
 	LeftOuterSemiJoin
+	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
+	AntiLeftOuterSemiJoin
 )
 
 func (tp JoinType) String() string {
@@ -70,8 +74,12 @@ func (tp JoinType) String() string {
 		return "right outer join"
 	case SemiJoin:
 		return "semi join"
+	case AntiSemiJoin:
+		return "anti semi join"
 	case LeftOuterSemiJoin:
 		return "left outer semi join"
+	case AntiLeftOuterSemiJoin:
+		return "anti left outer semi join"
 	}
 	return "unsupported join type"
 }
@@ -87,7 +95,6 @@ type LogicalJoin struct {
 	baseLogicalPlan
 
 	JoinType        JoinType
-	anti            bool
 	reordered       bool
 	cartesianJoin   bool
 	preferINLJ      int

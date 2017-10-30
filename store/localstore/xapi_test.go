@@ -86,7 +86,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 		c.Assert([]byte(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length]), BytesEquals, expectedEncoded)
 		dataOffset += rowMeta.Length
 	}
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	// Select Index request.
 	txn, err = store.Begin()
@@ -109,7 +109,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	for i, h := range handles {
 		c.Assert(h, Equals, i+1)
 	}
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	store.Close()
 }
@@ -187,7 +187,7 @@ func prepareTableData(store kv.Storage, tbl *simpleTableInfo, count int64, gen g
 	for i := int64(1); i <= count; i++ {
 		setRow(txn, i, tbl, gen)
 	}
-	return txn.Commit()
+	return txn.Commit(goctx.Background())
 }
 
 func setRow(txn kv.Transaction, handle int64, tbl *simpleTableInfo, gen genValueFunc) error {

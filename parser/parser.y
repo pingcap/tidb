@@ -4524,10 +4524,11 @@ ShowStmt:
 			User:	$4.(*auth.UserIdentity),
 		}
 	}
-|	"SHOW" "PROCESSLIST"
+|	"SHOW" OptFull "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowProcessList,
+			Full:	$2.(bool),
 		}
 	}
 |	"SHOW" "STATS_META" ShowLikeOrWhereOpt
@@ -4950,13 +4951,13 @@ TableElementList:
 	}
 
 TableOption:
-	"ENGINE" Identifier
+	"ENGINE" StringName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2}
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $2.(string)}
 	}
-|	"ENGINE" eq Identifier
+|	"ENGINE" eq StringName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3}
+		$$ = &ast.TableOption{Tp: ast.TableOptionEngine, StrValue: $3.(string)}
 	}
 |	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
@@ -5472,6 +5473,10 @@ FieldOpt:
 	"UNSIGNED"
 	{
 		$$ = &ast.TypeOpt{IsUnsigned: true}
+	}
+|	"SIGNED"
+	{
+		$$ = &ast.TypeOpt{IsUnsigned: false}
 	}
 |	"ZEROFILL"
 	{

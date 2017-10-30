@@ -409,19 +409,19 @@ func (p *LogicalJoin) convert2PhysicalPlanSemi(prop *requiredProperty) (*physica
 		}
 	}
 	join := PhysicalHashSemiJoin{
-		WithAux:         LeftOuterSemiJoin == p.JoinType,
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
-		Anti:            p.anti,
+		WithAux:         p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
+		Anti:            p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
 	}.init(p.allocator, p.ctx)
 	join.SetSchema(p.schema)
 	lProp := prop
 	if !allLeft {
 		lProp = &requiredProperty{}
 	}
-	if p.JoinType == SemiJoin {
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		lProp = removeLimit(lProp)
 	}
 	lInfo, err := lChild.convert2PhysicalPlan(lProp)
@@ -433,14 +433,14 @@ func (p *LogicalJoin) convert2PhysicalPlanSemi(prop *requiredProperty) (*physica
 		return nil, errors.Trace(err)
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
-	if p.JoinType == SemiJoin {
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		resultInfo.count = lInfo.count * selectionFactor
 	} else {
 		resultInfo.count = lInfo.count
 	}
 	if !allLeft {
 		resultInfo = enforceProperty(prop, resultInfo)
-	} else if p.JoinType == SemiJoin {
+	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 	}
 	return resultInfo, nil
@@ -951,7 +951,7 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 		return info, nil
 	}
 	switch p.JoinType {
-	case SemiJoin, LeftOuterSemiJoin:
+	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
 		info, err = p.convert2PhysicalPlanSemi(prop)
 		if err != nil {
 			return nil, errors.Trace(err)

@@ -834,8 +834,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
 	// for convert
-	result = tk.MustQuery(`select convert("中文" using "utf8"), convert(cast("中文" as binary) using "utf8");`)
-	result.Check(testkit.Rows("中文 中文"))
+	result = tk.MustQuery(`select convert("123" using "866"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert(cast("中文" as binary) using "utf8");`)
+	result.Check(testkit.Rows("123 123 中文 中文 中文"))
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
@@ -2177,6 +2177,29 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	// for version
 	result = tk.MustQuery("select version()")
 	result.Check(testkit.Rows(mysql.ServerVersion))
+
+	// for row_count
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, PRIMARY KEY (a))")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("insert into t(a, b) values(1, 11), (2, 22), (3, 33)")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("3"))
+	tk.MustExec("select * from t")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("-1"))
+	tk.MustExec("update t set b=22 where a=1")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("update t set b=22 where a=1")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("delete from t where a=2")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("-1"))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
@@ -2634,6 +2657,32 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec("insert into test values(1, NULL) on duplicate key update val = VALUES(val);")
 	result = tk.MustQuery("select * from test;")
 	result.Check(testkit.Rows("1 <nil>"))
+
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec(`create table test(
+		id int not null,
+		a text,
+		b blob,
+		c varchar(20),
+		d int,
+		e float,
+		f DECIMAL(6,4),
+		g JSON,
+		primary key(id));`)
+
+	tk.MustExec(`insert into test values(1,'txt hello', 'blb hello', 'vc hello', 1, 1.1, 1.0, '{"key1": "value1", "key2": "value2"}');`)
+	tk.MustExec(`insert into test values(1, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+	on duplicate key update
+	a = values(a),
+	b = values(b),
+	c = values(c),
+	d = values(d),
+	e = values(e),
+	f = values(f),
+	g = values(g);`)
+
+	result = tk.MustQuery("select * from test;")
+	result.Check(testkit.Rows("1 <nil> <nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {

@@ -123,7 +123,7 @@ func (p *LogicalJoin) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow && p.children[1].Schema().MaxOneRow
 	switch p.JoinType {
-	case SemiJoin, LeftOuterSemiJoin:
+	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
 		p.schema.Keys = p.children[0].Schema().Clone().Keys
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
 		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.

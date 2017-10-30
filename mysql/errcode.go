@@ -896,7 +896,7 @@ const (
 	ErrTiKVServerTimeout  = 9002
 	ErrTiKVServerBusy     = 9003
 	ErrResolveLockTimeout = 9004
-	ErrRegionUnavaiable   = 9005
+	ErrRegionUnavailable  = 9005
 	ErrGCTooEarly         = 9006
 
 	ErrTxnTooLarge = 9500
