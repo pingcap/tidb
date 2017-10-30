@@ -132,6 +132,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatsBuckets()
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
+	case ast.ShowProfiles:
+		// empty result
 	}
 	return nil
 }
@@ -175,6 +177,14 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if len(pi.Info) != 0 {
 			t = uint64(time.Since(pi.Time) / time.Second)
 		}
+
+		var info string
+		if e.Full {
+			info = pi.Info
+		} else {
+			info = fmt.Sprintf("%.100v", pi.Info)
+		}
+
 		row := []types.Datum{
 			types.NewUintDatum(pi.ID),
 			types.NewStringDatum(pi.User),
@@ -183,10 +193,11 @@ func (e *ShowExec) fetchShowProcessList() error {
 			types.NewStringDatum(pi.Command),
 			types.NewUintDatum(t),
 			types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
-			types.NewStringDatum(pi.Info),
+			types.NewStringDatum(info),
 		}
 		e.rows = append(e.rows, row)
 	}
+
 	return nil
 }
 
@@ -413,6 +424,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
 	var pkCol *table.Column
 	for i, col := range tb.Cols() {
+		if col.State != model.StatePublic {
+			continue
+		}
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if col.IsGenerated() {
 			// It's a generated column.
@@ -477,6 +491,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	for i, idx := range tb.Indices() {
 		idxInfo := idx.Meta()
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {

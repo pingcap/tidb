@@ -1465,8 +1465,11 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
-		is, err := MockResolve(stmt)
+		is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+		ctx := mockContext()
+		err = Preprocess(ctx, stmt, is, false)
+		c.Assert(err, IsNil, comment)
+		is, err = MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{

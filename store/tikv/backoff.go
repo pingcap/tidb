@@ -123,9 +123,9 @@ func (t backoffType) TError() *terror.Error {
 	case boTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case boPDRPC:
-		return ErrPDServerTimeout
+		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
 	case boRegionMiss:
-		return ErrRegionUnavaiable
+		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
 	}

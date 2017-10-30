@@ -48,4 +48,5 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.Values:    {},
 	ast.SetVar:    {},
 	ast.GetVar:    {},
+	ast.GetParam:  {},
 }

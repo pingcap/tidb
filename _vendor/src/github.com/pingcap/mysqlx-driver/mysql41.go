@@ -14,7 +14,9 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
-	"log"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 )
 
 // MySQL41 manages the MySQL41 authentication protocol
@@ -30,14 +32,12 @@ func NewMySQL41(dbname, username, password string) *MySQL41 {
 	if username == "" {
 		return nil
 	}
-
 	m := MySQL41{
 		name:     "MYSQL41",
 		username: username,
 		password: password,
 		dbname:   dbname,
 	}
-
 	return &m
 }
 
@@ -74,8 +74,12 @@ func (p *MySQL41) scramble(scramble []byte) []byte {
 	buf2 := mysha1(buf1)
 
 	s := sha1.New()
-	io.WriteString(s, string(scramble))
-	io.WriteString(s, string(buf2))
+	if _, err := io.WriteString(s, string(scramble)); err != nil {
+		panic(err)
+	}
+	if _, err := io.WriteString(s, string(buf2)); err != nil {
+		panic(err)
+	}
 	tmpBuffer := s.Sum(nil)
 
 	return xor(buf1, tmpBuffer)
@@ -84,7 +88,7 @@ func (p *MySQL41) scramble(scramble []byte) []byte {
 // GetNextAuthData returns data db + name + encrypted hash
 func (p *MySQL41) GetNextAuthData(serverData []byte) ([]byte, error) {
 	if len(serverData) != 20 {
-		return nil, fmt.Errorf("Scramble buffer had invalid length - expected 20 bytes, got %d", len(serverData))
+		return nil, errors.Errorf("Scramble buffer had invalid length - expected 20 bytes, got %d", len(serverData))
 	}
 
 	// docs are not clear but this is where you prepend the dbname

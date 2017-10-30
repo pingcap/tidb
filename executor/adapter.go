@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type processinfoSetter interface {
@@ -42,7 +43,7 @@ type recordSet struct {
 	executor    Executor
 	stmt        *ExecStmt
 	processinfo processinfoSetter
-	err         error
+	lastErr     error
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
@@ -71,6 +72,7 @@ func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 func (a *recordSet) Next() (*ast.Row, error) {
 	row, err := a.executor.Next()
 	if err != nil {
+		a.lastErr = err
 		return nil, errors.Trace(err)
 	}
 	if row == nil {
@@ -88,7 +90,7 @@ func (a *recordSet) Next() (*ast.Row, error) {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.logSlowQuery()
+	a.stmt.logSlowQuery(a.lastErr == nil)
 	if a.processinfo != nil {
 		a.processinfo.SetProcessInfo("")
 	}
@@ -193,15 +195,17 @@ func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi pro
 		}
 	}
 
+	var err error
 	defer func() {
 		if pi != nil {
 			pi.SetProcessInfo("")
 		}
 		terror.Log(errors.Trace(e.Close()))
-		a.logSlowQuery()
+		a.logSlowQuery(err == nil)
 	}()
 	for {
-		row, err := e.Next()
+		var row Row
+		row, err = e.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -269,23 +273,24 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 	return e, nil
 }
 
-func (a *ExecStmt) logSlowQuery() {
+func (a *ExecStmt) logSlowQuery(succ bool) {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
-		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
-	logEntry := log.WithFields(log.Fields{
+	logEntry := log.NewEntry(logutil.SlowQueryLogger)
+	logEntry.Data = log.Fields{
 		"connectionId": connID,
 		"costTime":     costTime,
 		"sql":          sql,
-	})
+	}
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
-		logEntry.WithField("type", "query").Debugf("query")
+		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
 	} else {
-		logEntry.WithField("type", "slow-query").Warnf("slow-query")
+		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")
 	}
 }
 

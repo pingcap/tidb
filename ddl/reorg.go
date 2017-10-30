@@ -63,7 +63,7 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	// we will wait 2 * lease outer and try checking again,
 	// so we use a very little timeout here.
 	if d.lease > 0 {
-		waitTimeout = 1 * time.Millisecond
+		waitTimeout = 50 * time.Millisecond
 	}
 
 	// wait reorganization job done or timeout
@@ -91,8 +91,15 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 
 func (d *ddl) isReorgRunnable() error {
 	if d.isClosed() {
-		// worker is closed, can't run reorganization.
+		// Worker is closed. So it can't do the reorganizational job.
 		return errInvalidWorker.Gen("worker is closed")
+	}
+
+	select {
+	case <-d.notifyCancelReorgJob:
+		// Job is cancelled. So it can't be done.
+		return errCancelledDDLJob
+	default:
 	}
 
 	if !d.isOwner() {

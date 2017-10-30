@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -56,10 +57,6 @@ var (
 var (
 	ErrUnknownPlan          = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti         = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrStmtNotFound         = terror.ClassExecutor.New(codeStmtNotFound, "Prepared statement not found")
-	ErrSchemaChanged        = terror.ClassExecutor.New(codeSchemaChanged, "Schema has changed")
-	ErrWrongParamCount      = terror.ClassExecutor.New(codeWrongParamCount, "Wrong parameter count")
-	ErrRowKeyCount          = terror.ClassExecutor.New(codeRowKeyCount, "Wrong row key entry count")
 	ErrPrepareDDL           = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
 	ErrPasswordNoMatch      = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
 	ErrResultIsEmpty        = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
@@ -72,10 +69,6 @@ var (
 const (
 	codeUnknownPlan          terror.ErrCode = 1
 	codePrepareMulti         terror.ErrCode = 2
-	codeStmtNotFound         terror.ErrCode = 3
-	codeSchemaChanged        terror.ErrCode = 4
-	codeWrongParamCount      terror.ErrCode = 5
-	codeRowKeyCount          terror.ErrCode = 6
 	codePrepareDDL           terror.ErrCode = 7
 	codeResultIsEmpty        terror.ErrCode = 8
 	codeErrBuildExec         terror.ErrCode = 9
@@ -94,7 +87,7 @@ const (
 // If there is sort need in the double read, then the table scan of the double read must store the handle.
 // If there is a select for update. then we need to store the handle until the lock plan. But if there is aggregation, the handle info can be removed.
 // Otherwise the executor's returned rows don't need to store the handle information.
-type Row []types.Datum
+type Row = types.DatumRow
 
 type baseExecutor struct {
 	children []Executor
@@ -148,13 +141,37 @@ type Executor interface {
 	Schema() *expression.Schema
 }
 
+// CancelDDLJobsExec represents a cancel DDL jobs executor.
+type CancelDDLJobsExec struct {
+	baseExecutor
+
+	cursor int
+	JobIDs []int64
+	errs   []error
+}
+
+// Next implements the Executor Next interface.
+func (e *CancelDDLJobsExec) Next() (Row, error) {
+	var row Row
+	if e.cursor < len(e.JobIDs) {
+		ret := "successful"
+		if e.errs[e.cursor] != nil {
+			ret = fmt.Sprintf("error: %v", e.errs[e.cursor])
+		}
+		row = types.MakeDatums(e.JobIDs[e.cursor], ret)
+		e.cursor++
+	}
+
+	return row, nil
+}
+
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
 	baseExecutor
 
 	ddlOwnerID string
 	selfID     string
-	ddlInfo    *inspectkv.DDLInfo
+	ddlInfo    *admin.DDLInfo
 	done       bool
 }
 
@@ -228,7 +245,7 @@ func (e *CheckTableExec) Next() (Row, error) {
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
-			err = inspectkv.CompareIndexData(txn, tb, idx)
+			err = admin.CompareIndexData(txn, tb, idx)
 			if err != nil {
 				return nil, errors.Errorf("%v err:%v", t.Name, err)
 			}
