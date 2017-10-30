@@ -168,6 +168,7 @@ type ExecuteStmt struct {
 
 	Name      string
 	UsingVars []ExprNode
+	ExecID    uint32
 }
 
 // Accept implements Node Accept interface.
