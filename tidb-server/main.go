@@ -62,7 +62,6 @@ const (
 	nmRunDDL          = "run-ddl"
 	nmLogLevel        = "L"
 	nmLogFile         = "log-file"
-	nmLogSlowQuery    = "log-slow-query"
 	nmReportStatus    = "report-status"
 	nmStatusPort      = "status"
 	nmMetricsAddr     = "metrics-addr"
@@ -85,9 +84,8 @@ var (
 	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
 
 	// Log
-	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
-	logFile      = flag.String(nmLogFile, "", "log file path")
-	logSlowQuery = flag.String(nmLogSlowQuery, "", "slow query file path")
+	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
+	logFile  = flag.String(nmLogFile, "", "log file path")
 
 	// Status
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
@@ -282,9 +280,6 @@ func overrideConfig() {
 	}
 	if actualFlags[nmLogFile] {
 		cfg.Log.File.Filename = *logFile
-	}
-	if actualFlags[nmLogSlowQuery] {
-		cfg.Log.SlowQueryFile = *logSlowQuery
 	}
 
 	// Status
