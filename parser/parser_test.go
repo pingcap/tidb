@@ -1500,6 +1500,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENGINE = ''", true},
 		{"ALTER TABLE t ENGINE = 'innodb'", true},
 		{"ALTER TABLE t ENGINE = innodb", true},
+		{"ALTER TABLE `db`.`t` ENGINE = ``", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, ADD COLUMN a SMALLINT", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT, ENGINE = '', default COLLATE = utf8_general_ci", true},
 		{"ALTER TABLE t ENGINE = '', COMMENT='', default COLLATE = utf8_general_ci", true},
