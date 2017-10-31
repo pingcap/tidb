@@ -791,18 +791,18 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 				var truncateLen int
 				for i := range s {
 					if runeCount == flen {
-						// We don't break here because we need to iterate to the end to get runeCount.
 						truncateLen = i
+						break
 					}
 					runeCount++
 				}
-				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
+				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, len([]rune(s)))
 				s = truncateStr(s, truncateLen)
 			}
 		} else if len(s) > flen {
 			err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, len(s))
 			s = truncateStr(s, flen)
-		} else if tp.Tp == mysql.TypeString && len(s) < flen {
+		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen {
 			padding := make([]byte, flen-len(s))
 			s = string(append([]byte(s), padding...))
 		}
