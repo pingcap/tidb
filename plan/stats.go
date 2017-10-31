@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"fmt"
 	"math"
 
 	log "github.com/Sirupsen/logrus"
@@ -24,6 +25,10 @@ import (
 type statsProfile struct {
 	count       float64
 	cardinality []float64
+}
+
+func (s *statsProfile) String() string {
+	return fmt.Sprintf("count %v, cardinality %v", s.count, s.cardinality)
 }
 
 // collapse receives a selectivity and multiple it with count and cardinality.
@@ -43,10 +48,11 @@ func (p *basePhysicalPlan) statsProfile() *statsProfile {
 	expectedCnt := p.basePlan.expectedCnt
 	if expectedCnt > 0 && expectedCnt < profile.count {
 		factor := expectedCnt / profile.count
-		profile.count = expectedCnt
-		for i := range profile.cardinality {
-			profile.cardinality[i] = profile.cardinality[i] * factor
+		result := &statsProfile{count: expectedCnt}
+		for _, card := range profile.cardinality {
+			result.cardinality = append(result.cardinality, card*factor)
 		}
+		return result
 	}
 	return profile
 }
