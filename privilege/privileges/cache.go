@@ -172,26 +172,11 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx context.Context) error {
 
 func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 	decodeTableRow func(*ast.Row, []*ast.ResultField) error) error {
-	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	rows, fs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rs := tmp[0]
-	defer terror.Call(rs.Close)
-
-	fs, err := rs.Fields()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for {
-		row, err := rs.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-
+	for _, row := range rows {
 		err = decodeTableRow(row, fs)
 		if err != nil {
 			return errors.Trace(err)

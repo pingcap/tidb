@@ -29,6 +29,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/dashbase"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -130,6 +131,7 @@ func main() {
 	validateConfig()
 	setGlobalVars()
 	setupLog()
+	setupDashbase()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -316,6 +318,7 @@ func validateConfig() {
 }
 
 func setGlobalVars() {
+	domain.Config = cfg
 	ddlLeaseDuration := parseLease(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
@@ -338,6 +341,18 @@ func setGlobalVars() {
 	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
 	if plan.PreparedPlanCacheEnabled {
 		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+	}
+}
+
+func setupDashbase() {
+	if !cfg.Dashbase.Enabled {
+		return
+	}
+	if err := dashbase.LoadSchemaFromFile(cfg.Dashbase.SchemaFile); err != nil {
+		log.Fatalf("Unable to load Dashbase schema definition: %s", err.Error())
+	}
+	if err := dashbase.OpenKafka(cfg.Dashbase.KafkaHosts); err != nil {
+		log.Fatalf("Unable to connect to Kafka: %s", err.Error())
 	}
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/dashbase"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -61,6 +62,7 @@ import (
 // Session context
 type Session interface {
 	context.Context
+	IsSystemSession() bool
 	Status() uint16                              // Flag of current status, such as autocommit.
 	LastInsertID() uint64                        // LastInsertID is the last inserted auto_increment ID.
 	AffectedRows() uint64                        // Affected rows by latest executed stmt.
@@ -123,6 +125,8 @@ type session struct {
 	// goCtx is used for cancelling the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
+
+	isSystem bool
 
 	mu struct {
 		sync.RWMutex
@@ -219,6 +223,14 @@ func (s *session) SetSessionManager(sm util.SessionManager) {
 
 func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
+}
+
+func (s *session) SetSystemSession() {
+	s.isSystem = true
+}
+
+func (s *session) IsSystemSession() bool {
+	return s.isSystem
 }
 
 type schemaLeaseChecker struct {
@@ -535,7 +547,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 	return rows, fields, nil
 }
 
-func createSessionFunc(store kv.Storage) pools.Factory {
+func createSessionFunc(store kv.Storage, isSystem bool) pools.Factory {
 	return func() (pools.Resource, error) {
 		se, err := createSession(store)
 		if err != nil {
@@ -547,11 +559,14 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		if isSystem {
+			se.SetSystemSession()
+		}
 		return se, nil
 	}
 }
 
-func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+func createSessionWithDomainFunc(store kv.Storage, isSystem bool) func(*domain.Domain) (pools.Resource, error) {
 	return func(dom *domain.Domain) (pools.Resource, error) {
 		se, err := createSessionWithDomain(store, dom)
 		if err != nil {
@@ -563,6 +578,9 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
+		if isSystem {
+			se.SetSystemSession()
+		}
 		return se, nil
 	}
 }
@@ -722,12 +740,30 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 
 		compiler := executor.Compiler{}
 		for _, stmtNode := range stmtNodes {
+			// Special logic for dashbase related SQL.
+			if !s.IsSystemSession() && domain.Config != nil && domain.Config.Dashbase.Enabled {
+				caught, r, err := dashbase.Execute(stmtNode)
+
+				if caught {
+					if err != nil {
+						log.Warnf("[%d] dashbase session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+						return nil, errors.Trace(err)
+					}
+					if r != nil {
+						recordSets = append(recordSets, r)
+					}
+					s.SetValue(context.QueryString, stmtNode.Text())
+					continue
+				}
+			}
+
 			s.PrepareTxnCtx()
 
 			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 			startTS = time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
 			executor.ResetStmtCtx(s, stmtNode)
+
 			stmt, err := compiler.Compile(s, stmtNode)
 			if err != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)

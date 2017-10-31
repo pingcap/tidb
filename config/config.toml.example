@@ -177,3 +177,16 @@ log-spans = false
 
 #  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
 local-agent-host-port = ""
+
+[dashbase]
+# Whether TiDB is acted as a Dashbase proxy.
+enabled = false
+
+# The Kafka hosts for inserting data.
+kafka-hosts = ["localhost:9092"]
+
+# The API host for querying data.
+api-host = "localhost:9876"
+
+# The path to the file describes table schemas in TOML.
+schema-file = "dashbase-schema.toml"

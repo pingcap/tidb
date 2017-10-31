@@ -42,6 +42,7 @@ type Config struct {
 	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
+	Dashbase          Dashbase          `tomk:"dashbase" json:"dashbase"`
 }
 
 // Log is the log section of config.
@@ -134,6 +135,14 @@ type OpenTracingReporter struct {
 	LocalAgentHostPort  string        `toml:"local-agent-host-port" json:"local-agent-host-port"`
 }
 
+// Dashbase is the dashbase section of the config.
+type Dashbase struct {
+	Enabled    bool     `toml:"enabled" json:"enabled"`
+	KafkaHosts []string `toml:"kafka-hosts" json:"kafka-hosts"`
+	APIURL     string   `toml:"api-url" json:"api-url"`
+	SchemaFile string   `toml:"schema-file" json:"schema-file"`
+}
+
 var defaultConf = Config{
 	Host:   "0.0.0.0",
 	Port:   4000,
@@ -183,6 +192,12 @@ var defaultConf = Config{
 			Param: 1.0,
 		},
 		Reporter: OpenTracingReporter{},
+	},
+	Dashbase: Dashbase{
+		Enabled:    false,
+		KafkaHosts: []string{"localhost:9092"},
+		APIURL:     "http://localhost:9876",
+		SchemaFile: "dashbase-schema.toml",
 	},
 }
 
