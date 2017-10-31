@@ -810,6 +810,8 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		return errors.Trace(err)
 	}
 
+	numBytes4Null := ((len(columns) + 7 + 2) / 8)
+	buffer := make([]byte, 1+numBytes4Null, 1+numBytes4Null+8*(len(columns)))
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -819,12 +821,12 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		}
 		data = data[0:4]
 		if binary {
-			var rowData []byte
-			rowData, err = dumpRowValuesBinary(cc.alloc, columns, row)
+			buffer = buffer[:1+numBytes4Null]
+			buffer, err = dumpRowValuesBinary(cc.alloc, columns, row, buffer)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			data = append(data, rowData...)
+			data = append(data, buffer...)
 		} else {
 			for i, value := range row {
 				if value.IsNull() {

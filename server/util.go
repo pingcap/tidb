@@ -245,15 +245,12 @@ func uniformValue(value interface{}) interface{} {
 	}
 }
 
-func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []types.Datum) (data []byte, err error) {
+func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []types.Datum, buffer []byte) ([]byte, error) {
 	if len(columns) != len(row) {
-		err = mysql.ErrMalformPacket
-		return
+		return nil, mysql.ErrMalformPacket
 	}
-	nullsLen := ((len(columns) + 7 + 2) / 8)
-	data = make([]byte, 1+nullsLen, 1+nullsLen+8*len(row))
-	data[0] = mysql.OKHeader
-	nulls := data[1 : 1+nullsLen]
+	buffer[0] = mysql.OKHeader
+	nulls := buffer[1:]
 	for i, val := range row {
 		if val.IsNull() {
 			bytePos := (i + 2) / 8
@@ -267,53 +264,53 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 			v := val.GetInt64()
 			switch columns[i].Type {
 			case mysql.TypeTiny:
-				data = append(data, byte(v))
+				buffer = append(buffer, byte(v))
 			case mysql.TypeShort, mysql.TypeYear:
-				data = append(data, dumpUint16(uint16(v))...)
+				buffer = append(buffer, dumpUint16(uint16(v))...)
 			case mysql.TypeInt24, mysql.TypeLong:
-				data = append(data, dumpUint32(uint32(v))...)
+				buffer = append(buffer, dumpUint32(uint32(v))...)
 			case mysql.TypeLonglong:
-				data = append(data, dumpUint64(uint64(v))...)
+				buffer = append(buffer, dumpUint64(uint64(v))...)
 			}
 		case types.KindUint64:
 			v := val.GetUint64()
 			switch columns[i].Type {
 			case mysql.TypeTiny:
-				data = append(data, byte(v))
+				buffer = append(buffer, byte(v))
 			case mysql.TypeShort, mysql.TypeYear:
-				data = append(data, dumpUint16(uint16(v))...)
+				buffer = append(buffer, dumpUint16(uint16(v))...)
 			case mysql.TypeInt24, mysql.TypeLong:
-				data = append(data, dumpUint32(uint32(v))...)
+				buffer = append(buffer, dumpUint32(uint32(v))...)
 			case mysql.TypeLonglong:
-				data = append(data, dumpUint64(v)...)
+				buffer = append(buffer, dumpUint64(v)...)
 			}
 		case types.KindFloat32:
 			floatBits := math.Float32bits(val.GetFloat32())
-			data = append(data, dumpUint32(floatBits)...)
+			buffer = append(buffer, dumpUint32(floatBits)...)
 		case types.KindFloat64:
 			floatBits := math.Float64bits(val.GetFloat64())
-			data = append(data, dumpUint64(floatBits)...)
+			buffer = append(buffer, dumpUint64(floatBits)...)
 		case types.KindString, types.KindBytes:
-			data = append(data, dumpLengthEncodedString(val.GetBytes(), alloc)...)
+			buffer = append(buffer, dumpLengthEncodedString(val.GetBytes(), alloc)...)
 		case types.KindMysqlDecimal:
-			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlDecimal().String()), alloc)...)
+			buffer = append(buffer, dumpLengthEncodedString(hack.Slice(val.GetMysqlDecimal().String()), alloc)...)
 		case types.KindMysqlTime:
 			tmp, err := dumpBinaryDateTime(val.GetMysqlTime(), nil)
 			if err != nil {
-				return data, errors.Trace(err)
+				return buffer, errors.Trace(err)
 			}
-			data = append(data, tmp...)
+			buffer = append(buffer, tmp...)
 		case types.KindMysqlDuration:
-			data = append(data, dumpBinaryTime(val.GetMysqlDuration().Duration)...)
+			buffer = append(buffer, dumpBinaryTime(val.GetMysqlDuration().Duration)...)
 		case types.KindMysqlSet:
-			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlSet().String()), alloc)...)
+			buffer = append(buffer, dumpLengthEncodedString(hack.Slice(val.GetMysqlSet().String()), alloc)...)
 		case types.KindMysqlEnum:
-			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlEnum().String()), alloc)...)
+			buffer = append(buffer, dumpLengthEncodedString(hack.Slice(val.GetMysqlEnum().String()), alloc)...)
 		case types.KindBinaryLiteral, types.KindMysqlBit:
-			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetBinaryLiteral().ToString()), alloc)...)
+			buffer = append(buffer, dumpLengthEncodedString(hack.Slice(val.GetBinaryLiteral().ToString()), alloc)...)
 		}
 	}
-	return
+	return buffer, nil
 }
 
 func dumpTextValue(colInfo *ColumnInfo, value types.Datum) ([]byte, error) {
