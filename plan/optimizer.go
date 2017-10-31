@@ -80,6 +80,10 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	if logic, ok := p.(LogicalPlan); ok {
 		return doOptimize(builder.optFlag, logic, ctx, allocator)
 	}
+	if execPlan, ok := p.(*Execute); ok {
+		err := execPlan.optimizePreparedPlan(ctx, is)
+		return p, errors.Trace(err)
+	}
 	return p, nil
 }
 
@@ -203,6 +207,9 @@ const (
 	CodeUnsupported         terror.ErrCode = 4
 	CodeInvalidGroupFuncUse terror.ErrCode = 5
 	CodeIllegalReference    terror.ErrCode = 6
+	CodeStmtNotFound        terror.ErrCode = 7
+	CodeWrongParamCount     terror.ErrCode = 8
+	CodeSchemaChanged       terror.ErrCode = 9
 
 	// MySQL error code.
 	CodeNoDB                 terror.ErrCode = mysql.ErrNoDB
@@ -218,6 +225,9 @@ var (
 	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
 	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
 	ErrUnknownExplainFormat        = terror.ClassOptimizer.New(CodeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
+	ErrStmtNotFound                = terror.ClassOptimizer.New(CodeStmtNotFound, "Prepared statement not found")
+	ErrWrongParamCount             = terror.ClassOptimizer.New(CodeWrongParamCount, "Wrong parameter count")
+	ErrSchemaChanged               = terror.ClassOptimizer.New(CodeSchemaChanged, "Schema has changed")
 )
 
 func init() {

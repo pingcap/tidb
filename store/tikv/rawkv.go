@@ -81,7 +81,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	}
 	cmdResp := resp.RawGet
 	if cmdResp == nil {
-		return nil, errors.Trace(errBodyMissing)
+		return nil, errors.Trace(ErrBodyMissing)
 	}
 	if cmdResp.GetError() != "" {
 		return nil, errors.New(cmdResp.GetError())
@@ -116,7 +116,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	}
 	cmdResp := resp.RawPut
 	if cmdResp == nil {
-		return errors.Trace(errBodyMissing)
+		return errors.Trace(ErrBodyMissing)
 	}
 	if cmdResp.GetError() != "" {
 		return errors.New(cmdResp.GetError())
@@ -141,7 +141,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 	}
 	cmdResp := resp.RawDelete
 	if cmdResp == nil {
-		return errors.Trace(errBodyMissing)
+		return errors.Trace(ErrBodyMissing)
 	}
 	if cmdResp.GetError() != "" {
 		return errors.New(cmdResp.GetError())
@@ -173,7 +173,7 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 		}
 		cmdResp := resp.RawScan
 		if cmdResp == nil {
-			return nil, nil, errors.Trace(errBodyMissing)
+			return nil, nil, errors.Trace(ErrBodyMissing)
 		}
 		for _, pair := range cmdResp.Kvs {
 			keys = append(keys, pair.Key)
@@ -204,7 +204,7 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err := bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

@@ -13,5 +13,11 @@ username=$(echo $1 | cut -d':' -f1)
 branch=$(echo $1 | cut -d':' -f2)
 local_branch=$username/$branch
 fork="https://github.com/$username/tidb"
-git fetch $fork $branch:$local_branch
-git checkout $local_branch
+
+exists=`git show-ref refs/heads/$local_branch`
+if [ -n "$exists" ]; then
+	git pull $fork $branch:$local_branch
+else
+	git fetch $fork $branch:$local_branch
+	git checkout $local_branch
+fi
