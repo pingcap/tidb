@@ -60,6 +60,16 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 	for _, v := range pcs {
 		c.Assert(v.GetFlag(), Equals, int32(10))
 	}
+
+	// Make sure we only convert to supported collate.
+	tp = types.NewFieldType(mysql.TypeVarchar)
+	tp.Flag = 10
+	tp.Collate = "latin1_swedish_ci"
+	col = &model.ColumnInfo{
+		FieldType: *tp,
+	}
+	pc = columnToProto(col)
+	c.Assert(pc.Collation, Equals, int32(mysql.DefaultCollationID))
 }
 
 func (s *testDistsqlSuite) TestIndexToProto(c *C) {
