@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -245,7 +246,7 @@ func checkBootstrapped(s Session) (bool, error) {
 	isBootstrapped := d.GetString() == bootstrappedVarTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
-		if err = s.CommitTxn(); err != nil {
+		if err = s.CommitTxn(goctx.Background()); err != nil {
 			return false, errors.Trace(err)
 		}
 	}
