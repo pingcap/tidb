@@ -68,9 +68,9 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select * from t1 order by c2",
 			[]string{
-				"IndexScan_10   cop table:t1, index:c2, range:[<nil>,+inf], out of order:false 8000",
-				"TableScan_11   cop table:t1, keep order:false 8000",
-				"IndexLookUp_12   root index:IndexScan_10, table:TableScan_11 8000",
+				"IndexScan_7   cop table:t1, index:c2, range:[<nil>,+inf], out of order:false 8000",
+				"TableScan_8   cop table:t1, keep order:false 8000",
+				"IndexLookUp_9   root index:IndexScan_7, table:TableScan_8 8000",
 			},
 		},
 		{
@@ -98,11 +98,11 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			[]string{
-				"TableScan_25   cop table:t1, range:[2,+inf), keep order:false 3333.333333333333",
-				"TableReader_26 HashLeftJoin_11  root data:TableScan_25 3333.333333333333",
-				"TableScan_31   cop table:t2, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_32 HashLeftJoin_11  root data:TableScan_31 8000",
-				"HashLeftJoin_11  TableReader_26,TableReader_32 root left outer join, small:TableReader_32, equal:[eq(test.t1.c2, test.t2.c1)] 4166.666666666666",
+				"TableScan_21   cop table:t1, range:[2,+inf), keep order:false 3333.333333333333",
+				"TableReader_22 HashLeftJoin_11  root data:TableScan_21 3333.333333333333",
+				"TableScan_27   cop table:t2, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_28 HashLeftJoin_11  root data:TableScan_27 8000",
+				"HashLeftJoin_11  TableReader_22,TableReader_28 root left outer join, small:TableReader_28, equal:[eq(test.t1.c2, test.t2.c1)] 4166.666666666666",
 			},
 		},
 		{
@@ -183,9 +183,9 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_13   cop table:t1, range:(-inf,+inf), keep order:false 8000",
 				"TableReader_14 Apply_12  root data:TableScan_13 8000",
-				"TableScan_20   cop table:s, range:(-inf,+inf), keep order:true 8000",
-				"TableReader_21 Selection_4  root data:TableScan_20 8000",
-				"Selection_4 StreamAgg_16 TableReader_21 root eq(s.c1, test.t1.c1) 6400",
+				"TableScan_19   cop table:s, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_20 Selection_4  root data:TableScan_19 8000",
+				"Selection_4 StreamAgg_16 TableReader_20 root eq(s.c1, test.t1.c1) 6400",
 				"StreamAgg_16 Selection_10 Selection_4 root type:stream, funcs:count(1) 1",
 				"Selection_10 Apply_12 StreamAgg_16 root ne(k, 0) 0.8",
 				"Apply_12 Projection_2 TableReader_14,Selection_10 root left outer join, small:Selection_10, right:Selection_10 8000",
@@ -203,10 +203,10 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_14   cop table:t1, range:(-inf,+inf), keep order:false 8000",
 				"TableReader_15 Apply_13  root data:TableScan_14 8000",
-				"IndexScan_23   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 1.25",
-				"TableScan_24   cop table:t2, keep order:false 1.25",
-				"IndexLookUp_25 Selection_4  root index:IndexScan_23, table:TableScan_24 1.25",
-				"Selection_4 Limit_16 IndexLookUp_25 root eq(test.t1.c1, test.t2.c1) 1",
+				"IndexScan_20   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 1.25",
+				"TableScan_21   cop table:t2, keep order:false 1.25",
+				"IndexLookUp_22 Selection_4  root index:IndexScan_20, table:TableScan_21 1.25",
+				"Selection_4 Limit_16 IndexLookUp_22 root eq(test.t1.c1, test.t2.c1) 1",
 				"Limit_16 MaxOneRow_9 Selection_4 root offset:0, count:1 1",
 				"MaxOneRow_9 Apply_13 Limit_16 root  1",
 				"Apply_13 Projection_2 TableReader_15,MaxOneRow_9 root left outer join, small:MaxOneRow_9, right:MaxOneRow_9 8000",
@@ -237,12 +237,12 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_13   cop table:t1, range:(-inf,+inf), keep order:true 8000",
-				"TableReader_14 MergeJoin_27  root data:TableScan_13 8000",
-				"IndexScan_21   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 8000",
-				"IndexReader_22 MergeJoin_27  root index:IndexScan_21 8000",
-				"MergeJoin_27 StreamAgg_9 TableReader_14,IndexReader_22 root left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)], asc, left key:test.t1.c1, right key:test.t2.c1 8000",
-				"StreamAgg_9  MergeJoin_27 root type:stream, funcs:sum(5_aux_0) 1",
+				"TableScan_12   cop table:t1, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_13 MergeJoin_22  root data:TableScan_12 8000",
+				"IndexScan_16   cop table:t2, index:c1, range:[<nil>,+inf], out of order:false 8000",
+				"IndexReader_17 MergeJoin_22  root index:IndexScan_16 8000",
+				"MergeJoin_22 StreamAgg_9 TableReader_13,IndexReader_17 root left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)], asc, left key:test.t1.c1, right key:test.t2.c1 8000",
+				"StreamAgg_9  MergeJoin_22 root type:stream, funcs:sum(5_aux_0) 1",
 			},
 		},
 		{
@@ -260,12 +260,12 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(6 in (select c2 from t2)) from t1",
 			[]string{
-				"TableScan_22   cop table:t1, range:(-inf,+inf), keep order:true 8000",
-				"TableReader_23 HashSemiJoin_20  root data:TableScan_22 8000",
+				"TableScan_21   cop table:t1, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_22 HashSemiJoin_20  root data:TableScan_21 8000",
 				"TableScan_13 Selection_14  cop table:t2, range:(-inf,+inf), keep order:false 10",
 				"Selection_14  TableScan_13 cop eq(6, test.t2.c2) 10",
 				"TableReader_15 HashSemiJoin_20  root data:Selection_14 10",
-				"HashSemiJoin_20 StreamAgg_9 TableReader_23,TableReader_15 root right:TableReader_15, aux 8000",
+				"HashSemiJoin_20 StreamAgg_9 TableReader_22,TableReader_15 root right:TableReader_15, aux 8000",
 				"StreamAgg_9  HashSemiJoin_20 root type:stream, funcs:sum(5_aux_0) 1",
 			},
 		},
@@ -288,24 +288,24 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"root\"\n" +
-				"\"StreamAgg_9\" -> \"MergeJoin_27\"\n" +
-				"\"MergeJoin_27\" -> \"TableReader_14\"\n" +
-				"\"MergeJoin_27\" -> \"IndexReader_22\"\n" +
+				"\"StreamAgg_9\" -> \"MergeJoin_22\"\n" +
+				"\"MergeJoin_22\" -> \"TableReader_13\"\n" +
+				"\"MergeJoin_22\" -> \"IndexReader_17\"\n" +
 				"}\n" +
-				"subgraph cluster13{\n" +
+				"subgraph cluster12{\n" +
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"cop\"\n" +
-				"\"TableScan_13\"\n" +
+				"\"TableScan_12\"\n" +
 				"}\n" +
-				"subgraph cluster21{\n" +
+				"subgraph cluster16{\n" +
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"cop\"\n" +
-				"\"IndexScan_21\"\n" +
+				"\"IndexScan_16\"\n" +
 				"}\n" +
-				"\"TableReader_14\" -> \"TableScan_13\"\n" +
-				"\"IndexReader_22\" -> \"IndexScan_21\"\n" +
+				"\"TableReader_13\" -> \"TableScan_12\"\n" +
+				"\"IndexReader_17\" -> \"IndexScan_16\"\n" +
 				"}\n",
 		},
 		{
