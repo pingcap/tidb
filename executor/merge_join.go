@@ -192,7 +192,7 @@ func (e *MergeJoinExec) doJoin() (err error) {
 		if e.outerFilter != nil {
 			matched, err1 := expression.EvalBool(e.outerFilter, outer, e.ctx)
 			if err1 != nil {
-				return errors.Trace(err)
+				return errors.Trace(err1)
 			}
 			if !matched {
 				e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)

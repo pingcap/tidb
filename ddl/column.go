@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -158,7 +159,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
+		d.asyncNotifyEvent(&util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
 	}
@@ -228,7 +229,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
+		d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
