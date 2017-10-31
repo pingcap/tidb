@@ -19,7 +19,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
@@ -31,26 +30,9 @@ var (
 )
 
 func newTestStore(c *C) *tikvStore {
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-
-	if *withTiKV {
-		var d Driver
-		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
-		c.Assert(err, IsNil)
-		return store.(*tikvStore)
-	}
-	store, err := NewMockTikvStore()
+	store, err := NewTestTiKVStorage(*withTiKV, *pdAddrs)
 	c.Assert(err, IsNil)
 	return store.(*tikvStore)
-}
-
-func newTestStoreWithBootstrap(c *C) *tikvStore {
-	store := newTestStore(c)
-	_, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	return store
 }
 
 type testTiclientSuite struct {
