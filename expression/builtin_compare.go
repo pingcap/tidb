@@ -333,7 +333,7 @@ func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 		if !isStr {
 			isAllStr = false
 		}
-		cmpEvalType = getCmpType(cmpEvalType, tp, lft, rft)
+		cmpEvalType = getBaseCmpType(cmpEvalType, tp, lft, rft)
 		lft = rft
 	}
 	argTp = cmpEvalType
@@ -824,8 +824,8 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
-// getCmpType gets the ClassType that the two args will be treated as when comparing.
-func getCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
+// getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
+func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
 	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
 		if lft.Tp == rft.Tp {
 			return types.ETString
@@ -845,6 +845,64 @@ func getCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalTy
 		return types.ETDecimal
 	}
 	return types.ETReal
+}
+
+// getAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
+// getBaseCmpType does.
+func getAccurateCmpType(lhs, rhs Expression) types.EvalType {
+	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
+	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
+	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
+	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
+		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
+		cmpType = types.ETJson
+	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
+		// date[time] <cmp> date[time]
+		// string <cmp> date[time]
+		// compare as time
+		if lhsFieldType.Tp == rhsFieldType.Tp {
+			cmpType = lhsFieldType.EvalType()
+		} else {
+			cmpType = types.ETDatetime
+		}
+	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
+		// duration <cmp> duration
+		// compare as duration
+		cmpType = types.ETDuration
+	} else if cmpType == types.ETReal || cmpType == types.ETString {
+		_, isLHSConst := lhs.(*Constant)
+		_, isRHSConst := rhs.(*Constant)
+		if (lhsEvalType == types.ETDecimal && !isLHSConst && rhsEvalType.IsStringKind() && isRHSConst) ||
+			(rhsEvalType == types.ETDecimal && !isRHSConst && lhsEvalType.IsStringKind() && isLHSConst) {
+			/*
+				<non-const decimal expression> <cmp> <const string expression>
+				or
+				<const string expression> <cmp> <non-const decimal expression>
+
+				Do comparison as decimal rather than float, in order not to lose precision.
+			)*/
+			cmpType = types.ETDecimal
+		} else if isTemporalColumn(lhs) && isRHSConst ||
+			isTemporalColumn(rhs) && isLHSConst {
+			/*
+				<temporal column> <cmp> <non-temporal constant>
+				or
+				<non-temporal constant> <cmp> <temporal column>
+
+				Convert the constant to temporal type.
+			*/
+			col, isLHSColumn := lhs.(*Column)
+			if !isLHSColumn {
+				col = rhs.(*Column)
+			}
+			if col.GetType().Tp == mysql.TypeDuration {
+				cmpType = types.ETDuration
+			} else {
+				cmpType = types.ETDatetime
+			}
+		}
+	}
+	return cmpType
 }
 
 // isTemporalColumn checks if a expression is a temporal column,
@@ -946,77 +1004,9 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 		return nil, errors.Trace(err)
 	}
 	args := c.refineArgs(ctx, rawArgs)
-	lhsFieldType, rhsFieldType := args[0].GetType(), args[1].GetType()
-	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
-	cmpType := getCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
-	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
-		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
-		sig, err = c.generateCmpSigs(ctx, args, types.ETJson)
-	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
-		// date[time] <cmp> date[time]
-		// string <cmp> date[time]
-		// compare as time
-		if lhsFieldType.Tp == rhsFieldType.Tp {
-			sig, err = c.generateCmpSigs(ctx, args, lhsFieldType.EvalType())
-		} else {
-			sig, err = c.generateCmpSigs(ctx, args, types.ETDatetime)
-		}
-	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
-		// duration <cmp> duration
-		// compare as duration
-		sig, err = c.generateCmpSigs(ctx, args, types.ETDuration)
-	} else if cmpType == types.ETReal || cmpType == types.ETString {
-		_, isLHSConst := args[0].(*Constant)
-		_, isRHSConst := args[1].(*Constant)
-		if (lhsEvalType == types.ETDecimal && !isLHSConst && rhsEvalType.IsStringKind() && isRHSConst) ||
-			(rhsEvalType == types.ETDecimal && !isRHSConst && lhsEvalType.IsStringKind() && isLHSConst) {
-			/*
-				<non-const decimal expression> <cmp> <const string expression>
-				or
-				<const string expression> <cmp> <non-const decimal expression>
-
-				Do comparison as decimal rather than float, in order not to lose precision.
-			)*/
-			cmpType = types.ETDecimal
-		} else if isTemporalColumn(args[0]) && isRHSConst ||
-			isTemporalColumn(args[1]) && isLHSConst {
-			/*
-				<temporal column> <cmp> <non-temporal constant>
-				or
-				<non-temporal constant> <cmp> <temporal column>
-
-				Convert the constant to temporal type.
-			*/
-			col, isLHSColumn := args[0].(*Column)
-			if !isLHSColumn {
-				col = args[1].(*Column)
-			}
-			if col.GetType().Tp == mysql.TypeDuration {
-				sig, err = c.generateCmpSigs(ctx, args, types.ETDuration)
-			} else {
-				sig, err = c.generateCmpSigs(ctx, args, types.ETDatetime)
-			}
-		}
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if sig == nil {
-		switch cmpType {
-		case types.ETString:
-			sig, err = c.generateCmpSigs(ctx, args, types.ETString)
-		case types.ETInt:
-			sig, err = c.generateCmpSigs(ctx, args, types.ETInt)
-		case types.ETDecimal:
-			sig, err = c.generateCmpSigs(ctx, args, types.ETDecimal)
-		case types.ETReal:
-			sig, err = c.generateCmpSigs(ctx, args, types.ETReal)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return sig, nil
+	cmpType := getAccurateCmpType(args[0], args[1])
+	sig, err = c.generateCmpSigs(ctx, args, cmpType)
+	return sig, errors.Trace(err)
 }
 
 // genCmpSigs generates compare function signatures.

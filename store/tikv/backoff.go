@@ -71,12 +71,13 @@ func expo(base, cap, n int) int {
 
 type backoffType int
 
+// Back off types.
 const (
 	boTiKVRPC backoffType = iota
-	boTxnLock
+	BoTxnLock
 	boTxnLockFast
 	boPDRPC
-	boRegionMiss
+	BoRegionMiss
 	boServerBusy
 )
 
@@ -84,13 +85,13 @@ func (t backoffType) createFn() func() int {
 	switch t {
 	case boTiKVRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
-	case boTxnLock:
+	case BoTxnLock:
 		return NewBackoffFn(200, 3000, EqualJitter)
 	case boTxnLockFast:
 		return NewBackoffFn(100, 3000, EqualJitter)
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
-	case boRegionMiss:
+	case BoRegionMiss:
 		return NewBackoffFn(100, 500, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
@@ -102,13 +103,13 @@ func (t backoffType) String() string {
 	switch t {
 	case boTiKVRPC:
 		return "tikvRPC"
-	case boTxnLock:
+	case BoTxnLock:
 		return "txnLock"
 	case boTxnLockFast:
 		return "txnLockFast"
 	case boPDRPC:
 		return "pdRPC"
-	case boRegionMiss:
+	case BoRegionMiss:
 		return "regionMiss"
 	case boServerBusy:
 		return "serverBusy"
@@ -120,12 +121,12 @@ func (t backoffType) TError() *terror.Error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout
-	case boTxnLock, boTxnLockFast:
+	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case boPDRPC:
 		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
-	case boRegionMiss:
-		return ErrRegionUnavaiable
+	case BoRegionMiss:
+		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
 	}
@@ -142,9 +143,9 @@ const (
 	getMaxBackoff           = 20000
 	prewriteMaxBackoff      = 20000
 	cleanupMaxBackoff       = 20000
-	gcMaxBackoff            = 100000
-	gcResolveLockMaxBackoff = 100000
-	gcDeleteRangeMaxBackoff = 100000
+	GcMaxBackoff            = 100000
+	GcResolveLockMaxBackoff = 100000
+	GcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
 	splitRegionBackoff      = 20000
 )
