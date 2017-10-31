@@ -70,7 +70,6 @@ func (s *Schema) Clone() *Schema {
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
-	schema.TblID2Handle = make(map[int64][]*Column)
 	for id, cols := range s.TblID2Handle {
 		schema.TblID2Handle[id] = make([]*Column, 0, len(cols))
 		for _, col := range cols {
