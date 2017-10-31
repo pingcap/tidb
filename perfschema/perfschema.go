@@ -24,10 +24,10 @@ type perfSchema struct {
 	mTables map[string]table.Table // Memory tables for perfSchema
 }
 
-var handle = newPerfHandle()
+var handle = NewPerfHandle()
 
 // NewPerfHandle creates a new perfSchema on store.
-func newPerfHandle() *perfSchema {
+func NewPerfHandle() *perfSchema {
 	schema := &perfSchema{}
 	schema.initialize()
 	return schema

@@ -357,3 +357,8 @@ func (ps *perfSchema) GetTable(name string) (table.Table, bool) {
 	tbl, ok := ps.mTables[name]
 	return tbl, ok
 }
+
+func (ps *perfSchema) GetTableMeta(name string) (*model.TableInfo, bool) {
+	tbl, ok := ps.tables[name]
+	return tbl, ok
+}

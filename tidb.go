@@ -41,11 +41,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-// Engine prefix name
-const (
-	EngineGoLevelDBMemory = "memory://"
-)
-
 type domainMap struct {
 	domains map[string]*domain.Domain
 	mu      sync.Mutex
