@@ -39,7 +39,6 @@ func (s *testExplainSuite) TestExplain(c *C) {
 	tk.MustExec("create table t2 (c1 int unique, c2 int)")
 	tk.MustExec("insert into t2 values(1, 0), (2, 1)")
 	tk.MustExec("create table t3 (a bigint, b bigint, c bigint, d bigint)")
-	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 
 	tests := []struct {
 		sql    string
