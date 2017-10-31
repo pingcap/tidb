@@ -14,7 +14,6 @@
 package tidb
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"runtime"
