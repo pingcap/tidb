@@ -525,15 +525,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	}
 	// Else we suppose it only has one child.
 	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
-		// We consider to add enforcer firstly.
-		t, err = p.getBestTask(t, prop, pp, true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if prop.isEmpty() {
-			continue
-		}
-		t, err = p.getBestTask(t, prop, pp, false)
+		t, err = p.getBestTask(t, prop, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -542,13 +534,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	return t, nil
 }
 
-func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
-	var newProps [][]*requiredProp
-	if enforced {
-		newProps = pp.getChildrenPossibleProps(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
-	} else {
-		newProps = pp.getChildrenPossibleProps(prop)
-	}
+func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan) (task, error) {
+	newProps := pp.getChildrenPossibleProps(prop)
 	for _, newProp := range newProps {
 		tasks := make([]task, 0, len(p.basePlan.children))
 		for i, child := range p.basePlan.children {
@@ -559,9 +546,6 @@ func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp Phys
 			tasks = append(tasks, childTask)
 		}
 		resultTask := pp.attach2Task(tasks...)
-		if enforced {
-			resultTask = prop.enforceProperty(resultTask, p.basePlan.ctx, p.basePlan.allocator)
-		}
 		if resultTask.cost() < bestTask.cost() {
 			bestTask = resultTask
 		}
@@ -814,12 +798,13 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
 			expectedCnt = prop.expectedCnt
+		} else {
+			return invalidTask, nil
 		}
 		is.addPushedDownSelection(cop, p, expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(cop, p)
 		}
-		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
@@ -998,12 +983,13 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
 			expectedCnt = prop.expectedCnt
+		} else {
+			return invalidTask, nil
 		}
 		ts.addPushedDownSelection(copTask, p.profile, expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(copTask, p)
 		}
-		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
