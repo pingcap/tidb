@@ -300,7 +300,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(variable.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
-    sc.SQLMode = sessVars.SQLMode
+	sc.SQLMode = sessVars.SQLMode
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:

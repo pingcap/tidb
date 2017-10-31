@@ -37,8 +37,7 @@ var (
 	ErrInvalidYear            = errors.New("invalid year")
 	ErrZeroDate               = errors.New("datetime zero in date")
 	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
-    ErrWarnDataOutOfRange     = terror.ClassTypes.New(mysql.ErrWarnDataOutOfRange, "Out of range value for column")
-
+	ErrWarnDataOutOfRange     = terror.ClassTypes.New(mysql.ErrWarnDataOutOfRange, "Out of range value for column")
 )
 
 // Time format without fractional seconds precision.
@@ -486,7 +485,7 @@ func (t *Time) check(sc *variable.StatementContext) error {
 	case mysql.TypeTimestamp:
 		err = checkTimestampType(t.Time)
 	case mysql.TypeDatetime:
-        if !isModify {
+		if !isModify {
 			err = checkDatetimeType(t.Time, allowZeroInDate)
 		} else {
 			err = checkDatetimeTypeInModify(t.Time, sc)
@@ -1350,29 +1349,24 @@ func checkDateType(t TimeInternal, allowZeroInDate bool) error {
 
 func checkDateTypeInModify(t TimeInternal, sc *variable.StatementContext) error {
 	year, month, day := t.Year(), t.Month(), t.Day()
-    strict, noZeroDate, noZeroInDate, ignoreErr:= true, true, true, false
+	strict, noZeroDate, noZeroInDate, ignoreErr := true, true, true, false
 	if sc != nil && (sc.InInsertStmt || sc.InUpdateOrDeleteStmt) {
 		m := sc.SQLMode
 		strict, noZeroDate, noZeroInDate, ignoreErr = m.HasStrictMode(), m.HasNoZeroDateMode(), m.HasNoZeroInDateMode(), sc.IgnoreErr
 	}
 	if year == 0 && month == 0 && day == 0 {
 		if !noZeroDate {
-	    	return nil
-	     } else {
-		 	if !strict || ignoreErr {
-				sc.AppendWarning(ErrWarnDataOutOfRange)
-			}
 			return nil
-		 }
-		 return ErrIncorrectDatetimeValue.GenByArgs(fmt.Sprintf("%04d-%02d-%02d", year, month, day))
-    } else if month == 0 || day == 0 {
+		} else if !strict || ignoreErr {
+			sc.AppendWarning(ErrWarnDataOutOfRange)
+		}
+		return nil
+	} else if month == 0 || day == 0 {
 		if !noZeroInDate {
 			return nil
-		} else {
-			if !strict || ignoreErr {
-				sc.AppendWarning(ErrWarnDataOutOfRange)
-				return nil
-			}
+		} else if !strict || ignoreErr {
+			sc.AppendWarning(ErrWarnDataOutOfRange)
+			return nil
 		}
 		return ErrIncorrectDatetimeValue.GenByArgs(fmt.Sprintf("%04d-%02d-%02d", year, month, day))
 	}

@@ -354,8 +354,8 @@ type StatementContext struct {
 	OverflowAsWarning      bool
 	InShowWarning          bool
 	UseCache               bool
-	IgnoreErr				bool
-    SQLMode				mysql.SQLMode
+	IgnoreErr              bool
+	SQLMode                mysql.SQLMode
 
 	// mu struct holds variables that change during execution.
 	mu struct {
