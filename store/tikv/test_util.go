@@ -16,13 +16,14 @@ package tikv
 import (
 	"flag"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
-	"sync"
-	"time"
 )
 
 var errStopped = errors.New("stopped")
