@@ -824,7 +824,7 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
-// getBaseCmpType gets the ClassType that the two args will be treated as when comparing.
+// getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
 	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
 		if lft.Tp == rft.Tp {
@@ -847,7 +847,9 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	return types.ETReal
 }
 
-func getCmpType(lhs, rhs Expression, moreAccure bool) types.EvalType {
+// getAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
+// getBaseCmpType does.
+func getAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
@@ -1002,15 +1004,9 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 		return nil, errors.Trace(err)
 	}
 	args := c.refineArgs(ctx, rawArgs)
-	cmpType := getCmpType(args[0], args[1], true)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	cmpType := getAccurateCmpType(args[0], args[1])
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return sig, nil
+	return sig, errors.Trace(err)
 }
 
 // genCmpSigs generates compare function signatures.
