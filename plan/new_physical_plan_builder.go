@@ -132,11 +132,8 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		innerPlan:       innerPlan,
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
 	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin:
-		join.SetSchema(p.children[0].Schema().Clone())
-	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		join.SetSchema(p.children[0].Schema().Clone())
-		join.schema.Append(p.schema.Columns[p.Schema().Len()-1])
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		join.SetSchema(p.Schema().Clone())
 	case LeftOuterJoin, RightOuterJoin, InnerJoin:
 		join.SetSchema(expression.MergeSchema(p.children[outerIdx].Schema(), p.children[1-outerIdx].Schema()))
 	}
