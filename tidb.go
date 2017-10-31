@@ -162,6 +162,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	var rs ast.RecordSet
 	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
+	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
@@ -170,7 +171,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 			err1 := se.RollbackTxn(ctx1)
 			terror.Log(errors.Trace(err1))
 		} else {
-			err = se.CommitTxn(ctx.GoCtx())
+			err = se.CommitTxn(ctx1)
 		}
 	}
 	return rs, errors.Trace(err)
