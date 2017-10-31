@@ -20,8 +20,8 @@ import (
 )
 
 var (
-	// errBodyMissing response body is missing error
-	errBodyMissing = errors.New("response body is missing")
+	// ErrBodyMissing response body is missing error
+	ErrBodyMissing = errors.New("response body is missing")
 )
 
 // TiDB decides whether to retry transaction by checking if error message contains

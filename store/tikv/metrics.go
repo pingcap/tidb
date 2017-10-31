@@ -104,32 +104,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		})
 
-	gcWorkerCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "gc_worker_actions_total",
-			Help:      "Counter of gc worker actions.",
-		}, []string{"type"})
-
-	gcHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "gc_seconds",
-			Help:      "Bucketed histogram of gc duration.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 13),
-		}, []string{"stage"})
-
-	gcConfigGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "gc_config",
-			Help:      "Gauge of GC configs.",
-		}, []string{"type"},
-	)
-
 	lockResolverCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -223,9 +197,6 @@ func init() {
 	prometheus.MustRegister(connPoolHistogram)
 	prometheus.MustRegister(coprocessorCounter)
 	prometheus.MustRegister(coprocessorHistogram)
-	prometheus.MustRegister(gcWorkerCounter)
-	prometheus.MustRegister(gcConfigGauge)
-	prometheus.MustRegister(gcHistogram)
 	prometheus.MustRegister(lockResolverCounter)
 	prometheus.MustRegister(regionErrorCounter)
 	prometheus.MustRegister(txnWriteKVCountHistogram)

@@ -23,8 +23,8 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"golang.org/x/net/context"
@@ -88,7 +88,7 @@ func main() {
 }
 
 type benchDB struct {
-	store   kv.Storage
+	store   tikv.Storage
 	session tidb.Session
 }
 
@@ -104,7 +104,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 
 	return &benchDB{
-		store:   store,
+		store:   store.(tikv.Storage),
 		session: session,
 	}
 }
@@ -280,7 +280,7 @@ func (ut *benchDB) manualGC(done chan bool) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = tikv.RunGCJob(context.Background(), ut.store, ver.Ver, "benchDB")
+	err = gcworker.RunGCJob(context.Background(), ut.store, ver.Ver, "benchDB")
 	if err != nil {
 		log.Fatal(err)
 	}
