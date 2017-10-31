@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,7 +22,6 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	goctx "golang.org/x/net/context"
-	"strconv"
 )
 
 // Safe point constants.
