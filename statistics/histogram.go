@@ -551,12 +551,22 @@ func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*type
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if indexRange.LowExclude {
-			lb = append(lb, 0)
-		}
 		rb, err := codec.EncodeKey(nil, indexRange.HighVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
+		}
+		if string(lb) == string(rb) {
+			if !indexRange.LowExclude && !indexRange.HighExclude {
+				rowCount, err := idx.equalRowCount(sc, types.NewBytesDatum(lb))
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				totalCount += rowCount
+			}
+			continue
+		}
+		if indexRange.LowExclude {
+			lb = append(lb, 0)
 		}
 		if !indexRange.HighExclude {
 			rb = append(rb, 0)
