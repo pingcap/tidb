@@ -102,7 +102,7 @@ type IndexLookUpJoin struct {
 	buffer4JoinKey  []types.Datum
 
 	batchSize int
-	exhausted bool // exhausted means whether all data has been extracted
+	exhausted bool // exhausted means whether all data has been extracted.
 }
 
 // Open implements the Executor Open interface.
@@ -143,13 +143,13 @@ func (e *IndexLookUpJoin) Close() error {
 }
 
 // Next implements the Executor Next interface.
-// step1: fetch a batch of "outer rows".
-// step2: construct a batch of "request rows" based on the outer rows.
-// step3: construct "join keys" based on the request rows.
-// step4: sort "outer rows", "request rows" based on "join keys".
-// step5: deduplicate "request rows" based on the join keys.
-// step6: fetch a batch of sorted "inner rows" based on the request rows.
-// step7: do merge join on the **sorted** outer and inner rows.
+// Step1: fetch a batch of "outer rows".
+// Step2: construct a batch of "request rows" based on the outer rows.
+// Step3: construct "join keys" based on the request rows.
+// Step4: sort "outer rows", "request rows" based on "join keys".
+// Step5: deduplicate "request rows" based on the join keys.
+// Step6: fetch a batch of sorted "inner rows" based on the request rows.
+// Step7: do merge join on the **sorted** outer and inner rows.
 func (e *IndexLookUpJoin) Next() (Row, error) {
 	for ; e.resultCursor == len(e.resultBuffer); e.resultCursor = 0 {
 		if e.exhausted {
@@ -242,7 +242,9 @@ func (e *IndexLookUpJoin) constructJoinKeys(joinKeys [][]types.Datum) ([][]byte,
 	return keys, nil
 }
 
-// requestKeys must be ordered.
+// deDuplicateRequestRows removes the duplicated rows in requestRows.
+// NOTE: Every request row have a corresponding request key, "requestRows" must be ordered by "requestKeys".
+// NOTE: The caller should guarantee that "len(requestRows) > 0".
 func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, requestKeys [][]byte) [][]types.Datum {
 	noDuplicateRequestRows := requestRows[:1:len(requestRows)]
 	for i, length := 1, len(requestRows); i < length; i++ {
