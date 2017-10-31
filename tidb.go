@@ -169,7 +169,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 			err1 := se.RollbackTxn(ctx1)
 			terror.Log(errors.Trace(err1))
 		} else {
-			err = se.CommitTxn(ctx.GoCtx())
+			err = se.CommitTxn(ctx1)
 		}
 	}
 	return rs, errors.Trace(err)
