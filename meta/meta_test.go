@@ -20,8 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
 )
@@ -38,8 +37,7 @@ type testSuite struct {
 
 func (s *testSuite) TestMeta(c *C) {
 	defer testleak.AfterTest(c)()
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -240,8 +238,7 @@ func (s *testSuite) TestMeta(c *C) {
 
 func (s *testSuite) TestSnapshot(c *C) {
 	defer testleak.AfterTest(c)()
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -271,8 +268,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 
 func (s *testSuite) TestDDL(c *C) {
 	defer testleak.AfterTest(c)()
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 

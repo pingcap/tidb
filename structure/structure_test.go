@@ -11,15 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package structure
+package structure_test
 
 import (
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
 )
@@ -36,11 +36,7 @@ type testTxStructureSuite struct {
 }
 
 func (s *testTxStructureSuite) SetUpSuite(c *C) {
-	path := "memory:"
-	d := localstore.Driver{
-		Driver: goleveldb.MemoryDriver{},
-	}
-	store, err := d.Open(path)
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
 }
@@ -56,7 +52,7 @@ func (s *testTxStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
-	tx := NewStructure(txn, txn, []byte{0x00})
+	tx := structure.NewStructure(txn, txn, []byte{0x00})
 
 	key := []byte("a")
 	value := []byte("1")
@@ -96,7 +92,7 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
-	tx := NewStructure(txn, txn, []byte{0x00})
+	tx := structure.NewStructure(txn, txn, []byte{0x00})
 
 	key := []byte("a")
 	err = tx.LPush(key, []byte("3"), []byte("2"), []byte("1"))
@@ -179,7 +175,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
-	tx := NewStructure(txn, txn, []byte{0x00})
+	tx := structure.NewStructure(txn, txn, []byte{0x00})
 
 	key := []byte("a")
 
@@ -207,7 +203,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 
 	res, err := tx.HGetAll(key)
 	c.Assert(err, IsNil)
-	c.Assert(res, DeepEquals, []HashPair{
+	c.Assert(res, DeepEquals, []structure.HashPair{
 		{[]byte("1"), []byte("1")},
 		{[]byte("2"), []byte("2")}})
 
@@ -333,7 +329,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 
 	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-		t := NewStructure(txn, txn, []byte{0x00})
+		t := structure.NewStructure(txn, txn, []byte{0x00})
 		err = t.Set(key, []byte("abc"))
 		c.Assert(err, IsNil)
 
