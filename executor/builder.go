@@ -1295,8 +1295,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	e := &IndexLookUpExecutor{
-		ctx:               b.ctx,
-		schema:            v.Schema(),
+		baseExecutor:      newBaseExecutor(v.Schema(), b.ctx),
 		dagPB:             indexReq,
 		tableID:           is.Table.ID,
 		table:             table,
