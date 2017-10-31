@@ -170,8 +170,8 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		YearWeek   interface{}
 	}{
 		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
-		{"0000-00-00 00:00:00", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
-		{"0000-00-00", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00 00:00:00", nil, nil, nil, 0, nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00", nil, nil, nil, 0, nil, nil, nil, nil, nil, nil, nil},
 	}
 
 	dtblNil := tblToDtbl(tblNil)
@@ -377,7 +377,7 @@ func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 		getErr   bool
 	}{
 		{"2017-12-01", 1, false, false},
-		{"0000-00-00", 1, true, false},
+		{"0000-00-00", 0, false, false},
 		{"2018-00-00", 0, false, false},
 		{"2017-00-00 12:12:12", 0, false, false},
 		{"0000-00-00 12:12:12", 0, false, false},

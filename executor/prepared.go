@@ -300,6 +300,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(variable.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
+    sc.SQLMode = sessVars.SQLMode
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
@@ -309,6 +310,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreErr = stmt.IgnoreErr
 	case *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
@@ -316,12 +318,14 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreErr = stmt.IgnoreErr
 	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreErr = stmt.IgnoreErr
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false

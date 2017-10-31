@@ -1385,7 +1385,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select dayOfYear(null), dayOfYear("2017-08-12"), dayOfYear("0000-00-00"), dayOfYear("2017-00-00"), dayOfYear("0000-00-00 12:12:12"), dayOfYear("2017-00-00 12:12:12")`)
 	result.Check(testkit.Rows("<nil> 224 <nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select dayOfMonth(null), dayOfMonth("2017-08-12"), dayOfMonth("0000-00-00"), dayOfMonth("2017-00-00"), dayOfMonth("0000-00-00 12:12:12"), dayOfMonth("2017-00-00 12:12:12")`)
-	result.Check(testkit.Rows("<nil> 12 <nil> 0 0 0"))
+	result.Check(testkit.Rows("<nil> 12 0 0 0 0"))
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a bigint)`)
@@ -1400,12 +1400,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
-	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
-	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	c.Assert(err, IsNil)
 	tk.MustExec("insert into t value(0)")
 	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
-	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	c.Assert(err, IsNil)
 	_, err = tk.Exec(`delete from t where a = dayOfMonth(123)`)
 	c.Assert(err, IsNil)
 

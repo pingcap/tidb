@@ -37,6 +37,8 @@ var (
 	ErrInvalidYear            = errors.New("invalid year")
 	ErrZeroDate               = errors.New("datetime zero in date")
 	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
+    ErrWarnDataOutOfRange     = terror.ClassTypes.New(mysql.ErrWarnDataOutOfRange, "Out of range value for column")
+
 )
 
 // Time format without fractional seconds precision.
@@ -474,7 +476,7 @@ func (t *Time) FromPackedUint(packed uint64) error {
 // If allowZeroInDate is false, it returns ErrZeroDate when month or day is zero.
 // FIXME: See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_no_zero_in_date
 func (t *Time) check(sc *variable.StatementContext) error {
-	allowZeroInDate := false
+	allowZeroInDate, isModify := false, sc != nil && (sc.InUpdateOrDeleteStmt || sc.InInsertStmt)
 	// We should avoid passing sc as nil here as far as possible.
 	if sc != nil {
 		allowZeroInDate = sc.IgnoreZeroInDate
@@ -484,9 +486,17 @@ func (t *Time) check(sc *variable.StatementContext) error {
 	case mysql.TypeTimestamp:
 		err = checkTimestampType(t.Time)
 	case mysql.TypeDatetime:
-		err = checkDatetimeType(t.Time, allowZeroInDate)
+        if !isModify {
+			err = checkDatetimeType(t.Time, allowZeroInDate)
+		} else {
+			err = checkDatetimeTypeInModify(t.Time, sc)
+		}
 	case mysql.TypeDate:
-		err = checkDateType(t.Time, allowZeroInDate)
+		if !isModify {
+			err = checkDateType(t.Time, allowZeroInDate)
+		} else {
+			err = checkDateTypeInModify(t.Time, sc)
+		}
 	}
 	return errors.Trace(err)
 }
@@ -1338,6 +1348,46 @@ func checkDateType(t TimeInternal, allowZeroInDate bool) error {
 	return nil
 }
 
+func checkDateTypeInModify(t TimeInternal, sc *variable.StatementContext) error {
+	year, month, day := t.Year(), t.Month(), t.Day()
+    strict, noZeroDate, noZeroInDate, ignoreErr:= true, true, true, false
+	if sc != nil && (sc.InInsertStmt || sc.InUpdateOrDeleteStmt) {
+		m := sc.SQLMode
+		strict, noZeroDate, noZeroInDate, ignoreErr = m.HasStrictMode(), m.HasNoZeroDateMode(), m.HasNoZeroInDateMode(), sc.IgnoreErr
+	}
+	if year == 0 && month == 0 && day == 0 {
+		if !noZeroDate {
+	    	return nil
+	     } else {
+		 	if !strict || ignoreErr {
+				sc.AppendWarning(ErrWarnDataOutOfRange)
+			}
+			return nil
+		 }
+		 return ErrIncorrectDatetimeValue.GenByArgs(fmt.Sprintf("%04d-%02d-%02d", year, month, day))
+    } else if month == 0 || day == 0 {
+		if !noZeroInDate {
+			return nil
+		} else {
+			if !strict || ignoreErr {
+				sc.AppendWarning(ErrWarnDataOutOfRange)
+				return nil
+			}
+		}
+		return ErrIncorrectDatetimeValue.GenByArgs(fmt.Sprintf("%04d-%02d-%02d", year, month, day))
+	}
+
+	if err := checkDateRange(t); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkMonthDay(year, month, day); err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 func checkDateRange(t TimeInternal) error {
 	// Oddly enough, MySQL document says date range should larger than '1000-01-01',
 	// but we can insert '0001-01-01' actually.
@@ -1387,6 +1437,25 @@ func checkTimestampType(t TimeInternal) error {
 
 func checkDatetimeType(t TimeInternal, allowZeroInDate bool) error {
 	if err := checkDateType(t, allowZeroInDate); err != nil {
+		return errors.Trace(err)
+	}
+
+	hour, minute, second := t.Hour(), t.Minute(), t.Second()
+	if hour < 0 || hour >= 24 {
+		return errors.Trace(ErrInvalidTimeFormat)
+	}
+	if minute < 0 || minute >= 60 {
+		return errors.Trace(ErrInvalidTimeFormat)
+	}
+	if second < 0 || second >= 60 {
+		return errors.Trace(ErrInvalidTimeFormat)
+	}
+
+	return nil
+}
+
+func checkDatetimeTypeInModify(t TimeInternal, sc *variable.StatementContext) error {
+	if err := checkDateTypeInModify(t, sc); err != nil {
 		return errors.Trace(err)
 	}
 

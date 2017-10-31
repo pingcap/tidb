@@ -975,13 +975,13 @@ type builtinDayOfMonthSig struct {
 // evalInt evals a builtinDayOfMonthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofmonth
 func (b *builtinDayOfMonthSig) evalInt(row types.Row) (int64, bool, error) {
+	oldMode := b.ctx.GetSessionVars().SQLMode
+	b.ctx.GetSessionVars().SQLMode = oldMode & (^mysql.ModeNoZeroInDate)
 	arg, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	if arg.IsZero() {
-		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(arg.String())))
-	}
+	b.ctx.GetSessionVars().SQLMode = oldMode
 	return int64(arg.Time.Day()), false, nil
 }
 
