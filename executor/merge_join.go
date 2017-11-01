@@ -190,9 +190,9 @@ func compareKeys(stmtCtx *variable.StatementContext,
 func (e *MergeJoinExec) doJoin() (err error) {
 	for _, outer := range e.outerRows {
 		if e.outerFilter != nil {
-			matched, err := expression.EvalBool(e.outerFilter, outer, e.ctx)
-			if err != nil {
-				return errors.Trace(err)
+			matched, err1 := expression.EvalBool(e.outerFilter, outer, e.ctx)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 			if !matched {
 				e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)

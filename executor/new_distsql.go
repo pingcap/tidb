@@ -146,7 +146,7 @@ func (e *TableReaderExecutor) Open() error {
 	return nil
 }
 
-// startSpanFollowContext is similar to opentracing.StartSpanFromContext, but use a follows option.
+// startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.
 func startSpanFollowsContext(ctx goctx.Context, operationName string) (opentracing.Span, goctx.Context) {
 	span := opentracing.SpanFromContext(ctx)
 	if span != nil {
