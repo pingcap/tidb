@@ -124,7 +124,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
-	span, ctx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader")
+	span, ctx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
@@ -260,7 +260,7 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open() error {
-	span, ctx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader")
+	span, ctx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader.Open")
 	defer span.Finish()
 
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
@@ -424,9 +424,9 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx goctx.Context, workCh <-chan 
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	worker.wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
-		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
+		ctx1, cancel := goctx.WithCancel(ctx)
 		go func() {
-			worker.pickAndExecTask(e, workCh, ctx, finished)
+			worker.pickAndExecTask(e, workCh, ctx1, finished)
 			cancel()
 			worker.wg.Done()
 		}()
@@ -465,7 +465,7 @@ func (e *IndexLookUpExecutor) Open() error {
 }
 
 func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
-	span, ctx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexLookUp")
+	span, ctx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexLookUp.Open")
 	defer span.Finish()
 
 	e.finished = make(chan struct{})
