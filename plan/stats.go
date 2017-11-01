@@ -207,6 +207,7 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
+// prepareStatsProfile prepares stats profile.
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
 // If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose cardinality should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
