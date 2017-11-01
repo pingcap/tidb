@@ -483,6 +483,11 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	_, err = tk.Exec("select c from t group by c order by d")
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	// test ambiguous column
+	_, err = tk.Exec("select c from t,x group by t.c")
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrNonUniq))
 }
 
 func (s *testSuite) TestHaving(c *C) {

@@ -20,7 +20,6 @@ import (
 	"strings"
 	"unicode"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -1120,8 +1119,7 @@ func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.Ta
 				Name:   iColInfo.Name,
 			}
 			iCol, err := p.Schema().FindColumn(cn)
-			if err != nil {
-				log.Errorf("Can't find column %s.%s.%s from schema %s.", cn.Schema.L, cn.Table.L, cn.Name.L, p.Schema())
+			if err != nil || iCol == nil {
 				funcDepend = false
 				break
 			}
@@ -1207,8 +1205,7 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 	for _, byItem := range gby.Items {
 		if colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr); ok {
 			col, err := schema.FindColumn(colExpr.Name)
-			if err != nil {
-				log.Errorf("Can't find column %s from schema %s.", colExpr.Name, p.Schema())
+			if err != nil || col == nil {
 				continue
 			}
 			gbyCols[col] = struct{}{}
