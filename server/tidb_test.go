@@ -46,7 +46,6 @@ var _ = Suite(suite)
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	store, err := tikv.NewMockTikvStore()
 	tidb.SetStatsLease(0)
-	tidb.SetSchemaLease(0)
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)

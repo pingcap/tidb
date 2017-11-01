@@ -349,7 +349,7 @@ func (ps *PerfSchema) initialize() {
 	ps.buildTables()
 }
 
-// GetDBMeta returns the db info.
+// GetDBMeta returns the DB info.
 func (ps *PerfSchema) GetDBMeta() *model.DBInfo {
 	return ps.dbInfo
 }
