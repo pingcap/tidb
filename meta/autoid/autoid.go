@@ -72,7 +72,7 @@ func (alloc *allocator) Base() int64 {
 
 // End implements autoid.Allocator End interface.
 func (alloc *allocator) End() int64 {
-	return alloc.base
+	return alloc.end
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -180,7 +180,7 @@ func (alloc *memoryAllocator) Base() int64 {
 
 // End implements autoid.Allocator End interface.
 func (alloc *memoryAllocator) End() int64 {
-	return alloc.base
+	return alloc.end
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
