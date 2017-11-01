@@ -96,15 +96,15 @@ type XProtocol struct {
 
 // PlanCache is the PlanCache section of the config.
 type PlanCache struct {
-	Enabled  bool  `toml:"plan-cache-enabled" json:"plan-cache-enabled"`
-	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`
-	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
+	Enabled  bool  `toml:"enabled" json:"enabled"`
+	Capacity int64 `toml:"capacity" json:"capacity"`
+	Shards   int64 `toml:"shards" json:"shards"`
 }
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
-	Enabled  bool  `toml:"prepared-plan-cache-enabled" json:"prepared-plan-cache-enabled"`
-	Capacity int64 `toml:"prepared-plan-cache-capacity" json:"prepared-plan-cache-capacity"`
+	Enabled  bool  `toml:"enabled" json:"enabled"`
+	Capacity int64 `toml:"capacity" json:"capacity"`
 }
 
 // OpenTracing is the opentracing section of the config.
