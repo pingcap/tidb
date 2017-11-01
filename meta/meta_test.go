@@ -51,19 +51,26 @@ func (s *testSuite) TestMeta(c *C) {
 	n, err := t.GenGlobalID()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
-
 	n, err = t.GetGlobalID()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
+	firstID, err := t.GetFirstInitTableID()
+	c.Assert(err, IsNil)
+	c.Assert(firstID, Equals, int64(0))
+	newFirstID := int64(10)
+	err = t.SetFirstInitTableID(newFirstID)
+	c.Assert(err, IsNil)
+	firstID, err = t.GetFirstInitTableID()
+	c.Assert(err, IsNil)
+	c.Assert(firstID, Equals, newFirstID)
+
 	n, err = t.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(0))
-
 	n, err = t.GenSchemaVersion()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
-
 	n, err = t.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))

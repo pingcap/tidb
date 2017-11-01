@@ -29,6 +29,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -227,6 +229,7 @@ const (
 	version13 = 13
 	version14 = 14
 	version15 = 15
+	version16 = 16
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -337,6 +340,10 @@ func upgrade(s Session) {
 
 	if ver < version15 {
 		upgradeToVer15(s)
+	}
+
+	if ver < version16 {
+		upgradeToVer16(s)
 	}
 
 	updateBootstrapVer(s)
@@ -533,6 +540,29 @@ func upgradeToVer15(s Session) {
 	var err error
 	_, err = s.Execute(CreateGCDeleteRangeTable)
 	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func upgradeToVer16(s Session) {
+	err := kv.RunInNewTxn(s.GetStore(), true, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		tableID, err1 := m.GetGlobalID()
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		originalID, err1 := m.GetFirstInitTableID()
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		if originalID > 0 {
+			return nil
+		}
+		err1 = m.SetFirstInitTableID(tableID + 1)
+		log.Infof("upgrade version 16 table ID %d, err1 %v", tableID+1, err1)
+		return errors.Trace(err1)
+	})
+	if err != nil && !strings.Contains(err.Error(), "write confilict") {
 		log.Fatal(err)
 	}
 }
