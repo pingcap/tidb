@@ -1256,12 +1256,10 @@ type colResolver struct {
 
 func (c *colResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch inNode.(type) {
-	case *ast.BinaryOperationExpr, *ast.BetweenExpr, *ast.CaseExpr, *ast.CompareSubqueryExpr,
-		*ast.IsNullExpr, *ast.IsTruthExpr, *ast.ParenthesesExpr, *ast.PatternInExpr, *ast.PatternLikeExpr,
-		*ast.PatternRegexpExpr, *ast.UnaryOperationExpr, *ast.SelectField, *ast.WhenClause, *ast.ByItem:
-		return inNode, false
+	case *ast.ColumnNameExpr, *ast.SubqueryExpr:
+		return inNode, true
 	}
-	return inNode, true
+	return inNode, false
 }
 
 func (c *colResolver) Leave(inNode ast.Node) (ast.Node, bool) {
