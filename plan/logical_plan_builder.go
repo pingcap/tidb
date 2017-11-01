@@ -1180,7 +1180,27 @@ func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.Ta
 	return primaryFuncDepend && hasPrimaryField
 }
 
-func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectField, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
+func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, gbyCols map[*expression.Column]struct{}, gbyExprs []ast.ExprNode, fieldID int, notInGbyCols map[*expression.Column]int) {
+	if _, ok := expr.(*ast.AggregateFuncExpr); ok {
+		return
+	}
+	if _, ok := expr.(*ast.ColumnNameExpr); !ok {
+		for _, gbyExpr := range gbyExprs {
+			if reflect.DeepEqual(gbyExpr, expr) {
+				return
+			}
+		}
+	}
+	colMap := make(map[*expression.Column]struct{}, len(p.Schema().Columns))
+	allColFromExprNode(p, expr, colMap)
+	for col := range colMap {
+		if _, ok := gbyCols[col]; !ok {
+			notInGbyCols[col] = fieldID
+		}
+	}
+}
+
+func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectField, orderBy *ast.OrderByClause, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
 	gbyCols := make(map[*expression.Column]struct{}, len(fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(fields))
 	schema := p.Schema()
@@ -1202,28 +1222,11 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 		if field.Auxiliary {
 			continue
 		}
-		if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
-			continue
-		}
-		if _, ok := field.Expr.(*ast.ColumnNameExpr); !ok {
-			foundInGby := false
-			for _, expr := range gbyExprs {
-				if reflect.DeepEqual(expr, field.Expr) {
-					foundInGby = true
-					break
-				}
-			}
-			if foundInGby {
-				continue
-			}
-		}
-		colMap := make(map[*expression.Column]struct{}, len(schema.Columns))
-		allColFromExprNode(p, field, colMap)
-		for col := range colMap {
-			if _, ok := gbyCols[col]; ok {
-				continue
-			}
-			notInGbyCols[col] = fieldID
+		checkExprInGroupBy(p, field.Expr, gbyCols, gbyExprs, fieldID, notInGbyCols)
+	}
+	if orderBy != nil {
+		for itemID, item := range orderBy.Items {
+			checkExprInGroupBy(p, item.Expr, gbyCols, gbyExprs, itemID, notInGbyCols)
 		}
 	}
 	if len(notInGbyCols) == 0 {
@@ -1411,7 +1414,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 			return nil
 		}
 		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.GroupBy, sel.From.TableRefs, sel.Where)
+			b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.OrderBy, sel.GroupBy, sel.From.TableRefs, sel.Where)
 		}
 	}
 	// We must resolve having and order by clause before build projection,

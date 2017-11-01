@@ -478,6 +478,11 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	// test order by
+	tk.MustExec("select c from t group by c,d order by d")
+	_, err = tk.Exec("select c from t group by c order by d")
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
 }
 
 func (s *testSuite) TestHaving(c *C) {
