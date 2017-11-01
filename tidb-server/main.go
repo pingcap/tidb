@@ -71,6 +71,7 @@ const (
 	nmMetricsAddr     = "metrics-addr"
 	nmMetricsInterval = "metrics-interval"
 	nmDdlLease        = "lease"
+	nmTokenLimit      = "token-limit"
 )
 
 var (
@@ -86,6 +87,7 @@ var (
 	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
+	tokenLimit   = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -280,6 +282,9 @@ func overrideConfig() {
 	if actualFlags[nmDdlLease] {
 		cfg.Lease = *ddlLease
 	}
+	if actualFlags[nmTokenLimit] {
+		cfg.TokenLimit = *tokenLimit
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -362,8 +367,9 @@ func createServer() {
 	terror.MustNil(err)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
-			Addr:   fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
-			Socket: cfg.XProtocol.XSocket,
+			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
+			Socket:     cfg.XProtocol.XSocket,
+			TokenLimit: cfg.TokenLimit,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
 		terror.MustNil(err)

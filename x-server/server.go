@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 )
 
-const tokenLimit = 1000
-
 var (
 	baseConnID uint32
 )
@@ -49,7 +47,7 @@ type Server struct {
 func NewServer(cfg *Config) (s *Server, err error) {
 	s = &Server{
 		cfg:               cfg,
-		concurrentLimiter: server.NewTokenLimiter(tokenLimit),
+		concurrentLimiter: server.NewTokenLimiter(cfg.TokenLimit),
 		rwlock:            &sync.RWMutex{},
 		stopListenerCh:    make(chan struct{}, 1),
 	}

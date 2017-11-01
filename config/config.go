@@ -33,6 +33,7 @@ type Config struct {
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
+	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -141,6 +142,7 @@ var defaultConf = Config{
 	Path:   "/tmp/tidb",
 	RunDDL: true,
 	Lease:  "10s",
+	TokenLimit: 1000,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
