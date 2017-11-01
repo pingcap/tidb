@@ -19,7 +19,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -27,7 +27,7 @@ import (
 )
 
 // HandleDDLEvent begins to process a ddl task.
-func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
+func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	switch t.Tp {
 	case model.ActionCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
@@ -46,7 +46,7 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 }
 
 // DDLEventCh returns ddl events channel in handle.
-func (h *Handle) DDLEventCh() chan *ddl.Event {
+func (h *Handle) DDLEventCh() chan *util.Event {
 	return h.ddlEventCh
 }
 

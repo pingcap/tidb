@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -145,6 +146,7 @@ func registerStores() {
 	terror.MustNil(err)
 	err = tidb.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
+	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = tidb.RegisterStore("mocktikv", tikv.MockDriver{})
 	terror.MustNil(err)
 }
