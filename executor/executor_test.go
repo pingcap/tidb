@@ -2294,3 +2294,87 @@ func (s *testSuite) TestMaxInt64Handle(c *C) {
 	tk.MustExec("delete from t where id = 9223372036854775807")
 	tk.MustQuery("select * from t").Check(nil)
 }
+
+func (s *testSuite) TestReadCommitted(c *C) {
+	tk0 := testkit.NewTestKitWithInit(c, s.store)
+	tk0.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	defer tk0.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk1.MustQuery("select @@tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t (pk varchar(10) primary key, val int)")
+	defer tk1.MustExec("drop table t")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk2.MustQuery("select @@tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	testNonRepetableRead(tk1, tk2, c)
+	testLostUpdate(tk1, tk2, c)
+	testReadSkew(tk1, tk2, c)
+	testPhantomRead(tk1, tk2, c)
+}
+
+func testNonRepetableRead(tk1, tk2 *testkit.TestKit, c *C) {
+	tk1.MustExec("truncate table t")
+	tk1.MustExec("insert into t values ('x', 1)")
+
+	tk1.MustExec("begin")
+	tk1.MustQuery("select val from t where pk = 'x'").Check(testkit.Rows("1"))
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set val = 2 where pk = 'x'")
+	tk2.MustExec("commit")
+
+	tk1.MustQuery("select val from t where pk = 'x'").Check(testkit.Rows("2"))
+	tk1.MustExec("commit")
+}
+
+func testLostUpdate(tk1, tk2 *testkit.TestKit, c *C) {
+	tk1.MustExec("truncate table t")
+	tk1.MustExec("insert into t values ('x', 1)")
+
+	tk1.MustExec("begin")
+	tk1.MustQuery("select val from t where pk = 'x'").Check(testkit.Rows("1"))
+
+	tk2.MustExec("begin")
+	tk2.MustQuery("select val from t where pk = 'x'").Check(testkit.Rows("1"))
+	tk2.MustExec("update t set val = 2 where pk = 'x'")
+	tk2.MustExec("commit")
+
+	tk2.MustExec("update t set val = 3 where pk = 'x'")
+	tk2.MustExec("commit")
+}
+
+func testReadSkew(tk1, tk2 *testkit.TestKit, c *C) {
+	tk1.MustExec("truncate table t")
+	tk1.MustExec("insert into t values ('x', 1)")
+	tk1.MustExec("insert into t values ('y', 1)")
+
+	tk1.MustExec("begin")
+	tk1.MustQuery("select val from t where pk = 'x'").Check(testkit.Rows("1"))
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set val = 2 where pk = 'x'")
+	tk2.MustExec("update t set val = 3 where pk = 'y'")
+	tk2.MustExec("commit")
+
+	tk1.MustQuery("select val from t where pk = 'y'").Check(testkit.Rows("3"))
+	tk1.MustExec("commit")
+}
+
+func testPhantomRead(tk1, tk2 *testkit.TestKit, c *C) {
+	tk1.MustExec("truncate table t")
+	tk1.MustExec("insert into t values ('x', 1)")
+
+	tk1.MustExec("begin")
+	tk1.MustQuery("select pk from t where val = 1").Check(testkit.Rows("x"))
+
+	tk2.MustExec("insert into t values ('y', 1)")
+
+	tk1.MustExec("update t set val = 2 where val = 1")
+	tk1.MustQuery("select pk from t where val = 2").Check(testkit.Rows("x", "y"))
+	tk1.MustExec("commit")
+}
