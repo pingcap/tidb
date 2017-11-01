@@ -58,7 +58,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	alloc := NewAllocator(store, 1)
+	alloc := NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 
 	id, err := alloc.Alloc(1)
@@ -92,13 +92,13 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
-	alloc = NewAllocator(store, 1)
+	alloc = NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(GetStep()+1))
 
-	alloc = NewAllocator(store, 1)
+	alloc = NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
@@ -106,11 +106,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
-	alloc = NewAllocator(store, 1)
+	alloc = NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3210), false)
 	c.Assert(err, IsNil)
-	alloc = NewAllocator(store, 1)
+	alloc = NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
@@ -155,7 +155,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	errCh := make(chan error, count)
 
 	allocIDs := func() {
-		alloc := NewAllocator(store, dbID)
+		alloc := NewAllocator(store, 0, dbID)
 		for j := 0; j < int(step)+5; j++ {
 			id, err1 := alloc.Alloc(tblID)
 			if err1 != nil {
