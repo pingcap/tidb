@@ -25,6 +25,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -153,6 +154,9 @@ func Compile(ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) 
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
+	span, ctx1 := opentracing.StartSpanFromContext(ctx.GoCtx(), "runStmt")
+	defer span.Finish()
+
 	var err error
 	var rs ast.RecordSet
 	se := ctx.(*session)
@@ -162,10 +166,10 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			err1 := se.RollbackTxn()
+			err1 := se.RollbackTxn(ctx1)
 			terror.Log(errors.Trace(err1))
 		} else {
-			err = se.CommitTxn()
+			err = se.CommitTxn(ctx1)
 		}
 	}
 	return rs, errors.Trace(err)
