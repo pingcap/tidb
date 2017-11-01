@@ -187,6 +187,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 	return nil
 }
 
+// getChildrenPossibleProps gets children possible props.:
 // For index join, we shouldn't require a root task which may let CBO framework select a sort operator in fact.
 // We are not sure which way of index scanning we should choose, so we try both single read and double read and finally
 // it will result in a best one.

@@ -2989,6 +2989,20 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
 }
 
+func (s *testIntegrationSuite) TestIssue4954(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a CHAR(5) CHARACTER SET latin1);")
+	tk.MustExec("INSERT INTO t VALUES ('oe');")
+	tk.MustExec("INSERT INTO t VALUES (0xf6);")
+	r := tk.MustQuery(`SELECT * FROM t WHERE a= 'oe';`)
+	r.Check(testkit.Rows("oe"))
+	r = tk.MustQuery(`SELECT HEX(a) FROM t WHERE a= 0xf6;`)
+	r.Check(testkit.Rows("F6"))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {

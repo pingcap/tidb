@@ -99,7 +99,7 @@ var (
 	_ builtinFunc = &builtinNullEQDurationSig{}
 )
 
-// Coalesce returns the first non-NULL value in the list,
+// coalesceFunctionClass returns the first non-NULL value in the list,
 // or NULL if there are no non-NULL values.
 type coalesceFunctionClass struct {
 	baseFunctionClass
@@ -201,6 +201,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	return sig, nil
 }
 
+// builtinCoalesceIntSig is buitin function coalesce signature which return type int
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
 	baseBuiltinFunc
@@ -217,6 +218,7 @@ func (b *builtinCoalesceIntSig) evalInt(row []types.Datum) (res int64, isNull bo
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceRealSig is buitin function coalesce signature which return type real
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
 	baseBuiltinFunc
@@ -233,6 +235,7 @@ func (b *builtinCoalesceRealSig) evalReal(row []types.Datum) (res float64, isNul
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceDecimalSig is buitin function coalesce signature which return type Decimal
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseBuiltinFunc
@@ -249,6 +252,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row []types.Datum) (res *types.M
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceStringSig is buitin function coalesce signature which return type string
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
 	baseBuiltinFunc
@@ -265,6 +269,7 @@ func (b *builtinCoalesceStringSig) evalString(row []types.Datum) (res string, is
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceTimeSig is buitin function coalesce signature which return type time
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
 	baseBuiltinFunc
@@ -281,6 +286,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row []types.Datum) (res types.Time, is
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceDurationSig is buitin function coalesce signature which return type duration
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
 	baseBuiltinFunc
@@ -312,7 +318,7 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
-// getCmp4MinMax gets compare type for GREATEST and LEAST.
+// getCmpTp4MinMax gets compare type for GREATEST and LEAST.
 func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
 	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
@@ -741,6 +747,7 @@ func (b *builtinIntervalIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 	return int64(idx), err != nil, errors.Trace(err)
 }
 
+// binSearch is a binary search method.
 // All arguments are treated as integers.
 // It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
 // This is because a binary search is used (very fast).
@@ -996,7 +1003,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 	return sig, nil
 }
 
-// genCmpSigs generates compare function signatures.
+// generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
 	bf.tp.Flen = 1
