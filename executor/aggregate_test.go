@@ -14,12 +14,10 @@
 package executor_test
 
 import (
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
@@ -364,59 +362,32 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustExec("select max(a) from t group by d")
 	// test incompatible with sql_mode = ONLY_FULL_GROUP_BY
 	var err error
-	var terr *terror.Error
 	_, err = tk.Exec("select * from t group by d")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select b-c from t group by b+c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select (b-c)*(b+c), min(a) from t group by b+c, b-c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select b between c and d from t group by b,c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select case b when 1 then c when 2 then d else d end from t group by b,c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select c > (select b from t) from t group by b")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select c is null from t group by b")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select c is true from t group by b")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select (c+b)*d from t group by c,d")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select b in (c,d) from t group by b,c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select b like '%a' from t group by c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select c REGEXP '1.*' from t group by b")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select -b from t group by c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustExec("select a from t group by a,b,c")
 	tk.MustExec("select b from t group by b")
@@ -442,9 +413,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustExec("select * from t group by b,d")
 	// test functional depend on a unique null column
 	_, err = tk.Exec("select * from t group by b,c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	// test functional dependency derived from keys in where condition
 	tk.MustExec("select * from t where c = d group by b, c")
 	tk.MustExec("select t.*, x.* from t, x where t.a = x.a group by t.a")
@@ -452,9 +421,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustExec("select t.*, x.* from t, x where t.b = x.a group by t.b, t.d")
 	tk.MustExec("select t.b, x.* from t, x where t.b = x.a group by t.b")
 	_, err = tk.Exec("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	// test functional dependency derived from keys in join
 	tk.MustExec("select t.*, x.* from t inner join x on t.a = x.a group by t.a")
 	tk.MustExec("select t.*, x.* from t inner join x  on (t.b = x.b and t.d = x.d) group by t.b, x.d")
@@ -464,30 +431,21 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustExec("select x.b, t.* from t right join x on x.b = t.b group by x.b, t.d")
 	tk.MustExec("select x.b, t.* from t right join x on t.b = x.b group by x.b, t.d")
 	_, err = tk.Exec("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	// test functional dependency of derived table
 	tk.MustExec("select * from (select * from t) as e group by a")
 	tk.MustExec("select * from (select * from t) as e group by b,d")
 	_, err = tk.Exec("select * from (select * from t) as e group by b,c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	// test order by
 	tk.MustExec("select c from t group by c,d order by d")
 	_, err = tk.Exec("select c from t group by c order by d")
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrFieldNotInGroupBy))
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	// test ambiguous column
 	_, err = tk.Exec("select c from t,x group by t.c")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrNonUniq))
+	c.Assert(terror.ErrorEqual(err, plan.ErrAmbiguous), IsTrue)
 }
 
 func (s *testSuite) TestHaving(c *C) {
