@@ -516,3 +516,65 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
 }
+
+func (s *testStatisticsSuite) TestIndexRanges(c *C) {
+	bucketCount := int64(256)
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+
+	s.rc.(*recordSet).cursor = 0
+	rowCount, hg, err := BuildIndex(ctx, bucketCount, 0, s.rc)
+	calculateScalar(hg)
+	c.Check(err, IsNil)
+	c.Check(rowCount, Equals, int64(100000))
+	idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
+	idx := &Index{Histogram: *hg, Info: idxInfo}
+	tbl := &Table{
+		Count:   int64(idx.totalRowCount()),
+		Indices: make(map[int64]*Index),
+	}
+	ran := []*types.IndexRange{{
+		LowVal:  []types.Datum{types.MinNotNullDatum()},
+		HighVal: []types.Datum{types.MaxValueDatum()},
+	}}
+	count, err := tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 99900)
+	ran[0].LowVal[0] = types.NewIntDatum(1000)
+	ran[0].HighVal[0] = types.NewIntDatum(2000)
+	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 2500)
+	ran[0].LowVal[0] = types.NewIntDatum(1001)
+	ran[0].HighVal[0] = types.NewIntDatum(1999)
+	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 2500)
+	ran[0].LowVal[0] = types.NewIntDatum(1000)
+	ran[0].HighVal[0] = types.NewIntDatum(1000)
+	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 100)
+
+	tbl.Indices[0] = idx
+	ran[0].LowVal[0] = types.MinNotNullDatum()
+	ran[0].HighVal[0] = types.MaxValueDatum()
+	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 100000)
+	ran[0].LowVal[0] = types.NewIntDatum(1000)
+	ran[0].HighVal[0] = types.NewIntDatum(2000)
+	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 999)
+	ran[0].LowVal[0] = types.NewIntDatum(1001)
+	ran[0].HighVal[0] = types.NewIntDatum(1990)
+	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 988)
+	ran[0].LowVal[0] = types.NewIntDatum(1000)
+	ran[0].HighVal[0] = types.NewIntDatum(1000)
+	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 1)
+}

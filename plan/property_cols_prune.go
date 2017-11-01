@@ -51,6 +51,11 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 	// TODO: We should consider properties propagation.
 	p.leftProperties = leftProperties
 	p.rightProperties = rightProperties
+	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin {
+		rightProperties = nil
+	} else if p.JoinType == RightOuterJoin {
+		leftProperties = nil
+	}
 	resultProperties := make([][]*expression.Column, len(leftProperties), len(leftProperties)+len(rightProperties))
 	copy(resultProperties, leftProperties)
 	resultProperties = append(resultProperties, rightProperties...)
