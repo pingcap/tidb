@@ -780,7 +780,8 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-			if len([]rune(s)) > flen {
+			characterLen := len([]rune(s))
+			if characterLen > flen {
 				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
 				//    CREATE TABLE t (a char(0));
 				//    INSERT INTO t VALUES (``);
@@ -796,7 +797,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 					}
 					runeCount++
 				}
-				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, len([]rune(s)))
+				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, characterLen)
 				s = truncateStr(s, truncateLen)
 			}
 		} else if len(s) > flen {
