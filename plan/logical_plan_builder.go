@@ -1306,7 +1306,6 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		exprs = append(exprs, expr)
 		p = np
 	}
-
 	return p, exprs
 }
 
