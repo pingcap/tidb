@@ -505,49 +505,38 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
 	}
+
+	leftExec := b.build(v.Children()[0])
+	rightExec := b.build(v.Children()[1])
+
+	// for hash join, inner table is always the smaller one.
 	e := &HashJoinExec{
-		schema:        v.Schema(),
-		otherFilter:   v.OtherConditions,
-		prepared:      false,
-		ctx:           b.ctx,
-		concurrency:   v.Concurrency,
-		defaultValues: v.DefaultValues,
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.DefaultValues, v.OtherConditions),
+		concurrency:     v.Concurrency,
+		defaultInners:   v.DefaultValues,
 	}
-	if v.SmallTable == 1 {
-		e.smallFilter = v.RightConditions
-		e.bigFilter = v.LeftConditions
-		e.smallHashKey = rightHashKey
-		e.bigHashKey = leftHashKey
-		e.leftSmall = false
+
+	if generator, ok := e.resultGenerator.(*innerJoinResultGenerator); ok {
+		generator.outerIsRight = (v.SmallChildIdx == 0)
+	}
+
+	if v.SmallChildIdx == 0 {
+		e.innerlExec = leftExec
+		e.outerExec = rightExec
+		e.innerFilter = v.LeftConditions
+		e.outerFilter = v.RightConditions
+		e.innerKeys = leftHashKey
+		e.outerKeys = rightHashKey
 	} else {
-		e.leftSmall = true
-		e.smallFilter = v.LeftConditions
-		e.bigFilter = v.RightConditions
-		e.smallHashKey = leftHashKey
-		e.bigHashKey = rightHashKey
+		e.innerlExec = rightExec
+		e.outerExec = leftExec
+		e.innerFilter = v.RightConditions
+		e.outerFilter = v.LeftConditions
+		e.innerKeys = rightHashKey
+		e.outerKeys = leftHashKey
 	}
-	if v.JoinType == plan.LeftOuterJoin || v.JoinType == plan.RightOuterJoin {
-		e.outer = true
-	}
-	if e.leftSmall {
-		e.smallExec = b.build(v.Children()[0])
-		e.bigExec = b.build(v.Children()[1])
-	} else {
-		e.smallExec = b.build(v.Children()[1])
-		e.bigExec = b.build(v.Children()[0])
-	}
-	for i := 0; i < e.concurrency; i++ {
-		ctx := &hashJoinCtx{}
-		if e.bigFilter != nil {
-			ctx.bigFilter = e.bigFilter.Clone()
-		}
-		if e.otherFilter != nil {
-			ctx.otherFilter = e.otherFilter.Clone()
-		}
-		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
-		ctx.hashKeyBuffer = make([]byte, 0, 10000)
-		e.hashJoinContexts = append(e.hashJoinContexts, ctx)
-	}
+
 	return e
 }
 
@@ -671,7 +660,7 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		cond.GetArgs()[0].(*expression.Column).ResolveIndices(v.Schema())
 		cond.GetArgs()[1].(*expression.Column).ResolveIndices(v.Schema())
 	}
-	if v.SmallTable == 1 {
+	if v.SmallChildIdx == 1 {
 		return &NestedLoopJoinExec{
 			SmallExec:     b.build(v.Children()[1]),
 			BigExec:       b.build(v.Children()[0]),

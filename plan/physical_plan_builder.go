@@ -316,9 +316,7 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	joins = append(joins, indexJoins...)
 
 	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		joins = append(joins, p.getHashSemiJoin())
-	case LeftOuterJoin:
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		joins = append(joins, p.getHashJoin(1))
 	case RightOuterJoin:
 		joins = append(joins, p.getHashJoin(0))
@@ -438,7 +436,7 @@ func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
 		JoinType:        p.JoinType,
 		Concurrency:     JoinConcurrency,
 		DefaultValues:   p.DefaultValues,
-		SmallTable:      smallTable,
+		SmallChildIdx:   smallTable,
 	}.init(p.allocator, p.ctx)
 	hashJoin.SetSchema(p.schema)
 	hashJoin.profile = p.profile

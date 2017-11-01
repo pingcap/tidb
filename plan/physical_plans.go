@@ -274,7 +274,7 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
-	SmallTable      int
+	SmallChildIdx   int
 	Concurrency     int
 
 	DefaultValues []types.Datum
@@ -655,8 +655,6 @@ func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
 	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
-	case *PhysicalHashJoin:
-		p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
 	case *PhysicalIndexJoin:
 		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
 			x.SetSchema(x.children[0].Schema().Clone())
@@ -666,6 +664,16 @@ func buildSchema(p PhysicalPlan) {
 			x.schema.Append(auxCol)
 		} else {
 			p.SetSchema(expression.MergeSchema(p.Children()[x.outerIndex].Schema(), p.Children()[1-x.outerIndex].Schema()))
+		}
+	case *PhysicalHashJoin:
+		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
+			x.SetSchema(x.children[0].Schema().Clone())
+		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
+			auxCol := x.schema.Columns[x.Schema().Len()-1]
+			x.SetSchema(x.children[0].Schema().Clone())
+			x.schema.Append(auxCol)
+		} else {
+			p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
 		}
 	case *PhysicalMergeJoin:
 		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
