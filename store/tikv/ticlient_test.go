@@ -128,12 +128,12 @@ func (s *testTiclientSuite) TestNotExist(c *C) {
 }
 
 func (s *testTiclientSuite) TestLargeRequest(c *C) {
-	largeValue := make([]byte, 10*1024*1024) // 10M value.
+	largeValue := make([]byte, 9*1024*1024) // 9M value.
 	txn := s.beginTxn(c)
 	err := txn.Set([]byte("key"), largeValue)
-	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
 	c.Assert(err, NotNil)
+	err = txn.Commit(goctx.Background())
+	c.Assert(err, IsNil)
 	c.Assert(kv.IsRetryableError(err), IsFalse)
 }
 
