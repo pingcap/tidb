@@ -61,24 +61,20 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 		avgError   uint64
 	}{
 		{
-			zipfFactor: 1.001,
-			avgError:   5,
-		},
-		{
 			zipfFactor: 1.1,
-			avgError:   5,
+			avgError:   6,
 		},
 		{
 			zipfFactor: 2,
-			avgError:   30,
+			avgError:   33,
 		},
 		{
-			zipfFactor: 4,
-			avgError:   95,
+			zipfFactor: 3,
+			avgError:   70,
 		},
 	}
 	d, w := int32(8), int32(2048)
-	total, imax := uint64(1000000), uint64(1000000)
+	total, imax := uint64(1000000), uint64(10000000)
 	for _, t := range tests {
 		lSketch, lMap, err := buildCMSketchAndMap(d, w, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
