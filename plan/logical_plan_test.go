@@ -549,7 +549,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from (select a, sum(b) as s from t group by a having 1 = 0) k where a > 1",
-			best: "DataScan(t)->Selection->Aggr(sum(test.t.b),firstrow(test.t.a))->Selection->Projection->Projection",
+			best: "Dual->Selection->Projection",
 		},
 		{
 			sql:  "select a, count(a) cnt from t group by a having cnt < 1",
@@ -676,6 +676,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select substr(\"abc\", 1)",
+			plan: "Dual->Projection",
+		},
+		{
+			sql:  "select * from t t1, t t2 where 1 = 0",
 			plan: "Dual->Projection",
 		},
 	}
