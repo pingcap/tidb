@@ -772,84 +772,6 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	}
 }
 
-func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk *model.ColumnInfo, cols []*model.ColumnInfo) Executor {
-	startTS := uint64(math.MaxUint64)
-	table, _ := b.is.TableByID(tblInfo.ID)
-	keepOrder := false
-	if pk != nil {
-		keepOrder = true
-		cols = append([]*model.ColumnInfo{pk}, cols...)
-	}
-	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	ranges := []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
-	e := &TableReaderExecutor{
-		table:     table,
-		tableID:   tblInfo.ID,
-		ranges:    ranges,
-		keepOrder: keepOrder,
-		dagPB: &tipb.DAGRequest{
-			StartTs:        startTS,
-			TimeZoneOffset: timeZoneOffset(b.ctx),
-			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-		},
-		schema:  schema,
-		columns: cols,
-		ctx:     b.ctx,
-	}
-	for i := range schema.Columns {
-		e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
-	}
-	e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{
-		Tp: tipb.ExecType_TypeTableScan,
-		TblScan: &tipb.TableScan{
-			TableId: tblInfo.ID,
-			Columns: distsql.ColumnsToProto(cols, tblInfo.PKIsHandle),
-		},
-	})
-	b.err = setPBColumnsDefaultValue(b.ctx, e.dagPB.Executors[0].TblScan.Columns, cols)
-	return e
-}
-
-func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
-	startTS := uint64(math.MaxUint64)
-	table, _ := b.is.TableByID(tblInfo.ID)
-	cols := make([]*model.ColumnInfo, len(idxInfo.Columns))
-	for i, col := range idxInfo.Columns {
-		cols[i] = tblInfo.Columns[col.Offset]
-	}
-	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
-	e := &IndexReaderExecutor{
-		table:     table,
-		index:     idxInfo,
-		tableID:   tblInfo.ID,
-		ranges:    []*types.IndexRange{idxRange},
-		keepOrder: true,
-		dagPB: &tipb.DAGRequest{
-			StartTs:        startTS,
-			TimeZoneOffset: timeZoneOffset(b.ctx),
-			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-		},
-		schema:   schema,
-		columns:  cols,
-		ctx:      b.ctx,
-		priority: b.priority,
-	}
-	for i := range schema.Columns {
-		e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
-	}
-	e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{
-		Tp: tipb.ExecType_TypeIndexScan,
-		IdxScan: &tipb.IndexScan{
-			TableId: tblInfo.ID,
-			IndexId: idxInfo.ID,
-			Columns: distsql.ColumnsToProto(cols, tblInfo.PKIsHandle),
-		},
-	})
-	b.err = setPBColumnsDefaultValue(b.ctx, e.dagPB.Executors[0].IdxScan.Columns, cols)
-	return e
-}
-
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
@@ -909,35 +831,16 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
-		if task.PushDown {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType: colTask,
-				colExec:  b.buildAnalyzeColumnsPushdown(task),
-			})
-		} else {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType:  colTask,
-				src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
-				tableInfo: task.TableInfo,
-				Columns:   task.ColsInfo,
-				PKInfo:    task.PKInfo,
-			})
-		}
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType: colTask,
+			colExec:  b.buildAnalyzeColumnsPushdown(task),
+		})
 	}
 	for _, task := range v.IdxTasks {
-		if task.PushDown {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType: idxTask,
-				idxExec:  b.buildAnalyzeIndexPushdown(task),
-			})
-		} else {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType:  idxTask,
-				src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
-				indexInfo: task.IndexInfo,
-				tableInfo: task.TableInfo,
-			})
-		}
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType: idxTask,
+			idxExec:  b.buildAnalyzeIndexPushdown(task),
+		})
 	}
 	return e
 }
