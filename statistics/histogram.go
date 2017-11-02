@@ -571,9 +571,9 @@ func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*type
 		}
 		if bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
-				rowCount, err := idx.equalRowCount(sc, types.NewBytesDatum(lb))
-				if err != nil {
-					return 0, errors.Trace(err)
+				rowCount, err1 := idx.equalRowCount(sc, types.NewBytesDatum(lb))
+				if err1 != nil {
+					return 0, errors.Trace(err1)
 				}
 				totalCount += rowCount
 			}
