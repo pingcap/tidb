@@ -21,6 +21,7 @@ import (
 	"unicode"
 
 	"github.com/cznic/mathutil"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -42,6 +43,13 @@ const (
 	TiDBMergeJoin = "tidb_smj"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
+)
+
+const (
+	// ErrExprInSelect  is in select fields for the error of ErrFieldNotInGroupBy
+	ErrExprInSelect = "SELECT list"
+	// ErrExprInOrderBy  is in order by items for the error of ErrFieldNotInGroupBy
+	ErrExprInOrderBy = "ORDER BY"
 )
 
 type idAllocator struct {
@@ -1178,7 +1186,13 @@ func checkColFuncDepend(p LogicalPlan, col *expression.Column, tblInfo *model.Ta
 	return primaryFuncDepend && hasPrimaryField
 }
 
-func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, gbyCols map[*expression.Column]struct{}, gbyExprs []ast.ExprNode, fieldID int, notInGbyCols map[*expression.Column]int) {
+// ErrExprLoc is for generate the ErrFieldNotInGroupBy error info
+type ErrExprLoc struct {
+	Offset int
+	Loc    string
+}
+
+func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, offset int, loc string, gbyCols map[*expression.Column]struct{}, gbyExprs []ast.ExprNode, notInGbyCols map[*expression.Column]ErrExprLoc) {
 	if _, ok := expr.(*ast.AggregateFuncExpr); ok {
 		return
 	}
@@ -1193,7 +1207,7 @@ func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, gbyCols map[*expressio
 	allColFromExprNode(p, expr, colMap)
 	for col := range colMap {
 		if _, ok := gbyCols[col]; !ok {
-			notInGbyCols[col] = fieldID
+			notInGbyCols[col] = ErrExprLoc{Offset: offset, Loc: loc}
 		}
 	}
 }
@@ -1214,16 +1228,16 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 		}
 	}
 
-	notInGbyCols := make(map[*expression.Column]int, len(fields))
-	for fieldID, field := range fields {
+	notInGbyCols := make(map[*expression.Column]ErrExprLoc, len(fields))
+	for offset, field := range fields {
 		if field.Auxiliary {
 			continue
 		}
-		checkExprInGroupBy(p, field.Expr, gbyCols, gbyExprs, fieldID, notInGbyCols)
+		checkExprInGroupBy(p, field.Expr, offset, ErrExprInSelect, gbyCols, gbyExprs, notInGbyCols)
 	}
 	if orderBy != nil {
-		for itemID, item := range orderBy.Items {
-			checkExprInGroupBy(p, item.Expr, gbyCols, gbyExprs, itemID, notInGbyCols)
+		for offset, item := range orderBy.Items {
+			checkExprInGroupBy(p, item.Expr, offset, ErrExprInOrderBy, gbyCols, gbyExprs, notInGbyCols)
 		}
 	}
 	if len(notInGbyCols) == 0 {
@@ -1233,7 +1247,7 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 	whereDepends := buildWhereFuncDepend(p, where)
 	joinDepends := buildJoinFuncDepend(p, from)
 	tblMap := make(map[*model.TableInfo]struct{}, len(notInGbyCols))
-	for col, index := range notInGbyCols {
+	for col, errExprLoc := range notInGbyCols {
 		tblInfo := tblInfoFromCol(from, col)
 		if tblInfo == nil {
 			continue
@@ -1241,11 +1255,18 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 		if _, ok := tblMap[tblInfo]; ok {
 			continue
 		}
-		if !checkColFuncDepend(p, col, tblInfo, gbyCols, whereDepends, joinDepends) {
-			b.err = ErrFieldNotInGroupBy.GenByArgs(index+1, fields[index].Text())
-			return
+		if checkColFuncDepend(p, col, tblInfo, gbyCols, whereDepends, joinDepends) {
+			tblMap[tblInfo] = struct{}{}
+			continue
 		}
-		tblMap[tblInfo] = struct{}{}
+		switch errExprLoc.Loc {
+		case ErrExprInSelect:
+			b.err = ErrFieldNotInGroupBy.GenByArgs(errExprLoc.Offset+1, errExprLoc.Loc, fields[errExprLoc.Offset].Text())
+		case ErrExprInOrderBy:
+			spew.Dump(orderBy.Items[errExprLoc.Offset])
+			b.err = ErrFieldNotInGroupBy.GenByArgs(errExprLoc.Offset+1, errExprLoc.Loc, orderBy.Items[errExprLoc.Offset].Expr.Text())
+		}
+		return
 	}
 }
 
@@ -1256,7 +1277,7 @@ type colResolver struct {
 
 func (c *colResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch inNode.(type) {
-	case *ast.ColumnNameExpr, *ast.SubqueryExpr:
+	case *ast.ColumnNameExpr, *ast.SubqueryExpr, *ast.AggregateFuncExpr:
 		return inNode, true
 	}
 	return inNode, false
