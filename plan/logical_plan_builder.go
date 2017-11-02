@@ -409,6 +409,11 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 				ret, err := expression.EvalBool(expression.CNFExprs{con}, nil, b.ctx)
 				if ret || err != nil {
 					continue
+				} else {
+					// If there is condition which is always false, return dual plan directly.
+					dual := TableDual{}.init(b.allocator, b.ctx)
+					dual.SetSchema(p.Schema().Clone())
+					return dual
 				}
 			}
 			expressions = append(expressions, item)
