@@ -84,7 +84,7 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 
 		rSketch, rMap, err := buildCMSketchAndMap(d, w, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
-		avg, err = averageAbsoluteError(lSketch, lMap)
+		avg, err = averageAbsoluteError(rSketch, rMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, Less, t.avgError)
 

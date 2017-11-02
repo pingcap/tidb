@@ -24,6 +24,7 @@ import (
 )
 
 // CMSketch is used to estimate point queries.
+// Refer: https://en.wikipedia.org/wiki/Count-min_sketch
 type CMSketch struct {
 	depth int32
 	width int32
