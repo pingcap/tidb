@@ -174,8 +174,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 		str += ")"
-	case *Cache:
-		str = "Cache"
 	case *PhysicalTableReader:
 		str = fmt.Sprintf("TableReader(%s)", ToString(x.tablePlan))
 	case *PhysicalIndexReader:
