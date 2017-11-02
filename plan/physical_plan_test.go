@@ -418,7 +418,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select count(*) from t t1 having 1 = 0",
-			best: "Dual->HashAgg->Selection",
+			best: "Dual",
 		},
 		{
 			sql:  "select sum(a.b), sum(b.b) from t a join t b on a.c = b.c group by a.d order by a.d",
