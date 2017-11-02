@@ -21,7 +21,6 @@ import (
 	"unicode"
 
 	"github.com/cznic/mathutil"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -1263,7 +1262,6 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 		case ErrExprInSelect:
 			b.err = ErrFieldNotInGroupBy.GenByArgs(errExprLoc.Offset+1, errExprLoc.Loc, fields[errExprLoc.Offset].Text())
 		case ErrExprInOrderBy:
-			spew.Dump(orderBy.Items[errExprLoc.Offset])
 			b.err = ErrFieldNotInGroupBy.GenByArgs(errExprLoc.Offset+1, errExprLoc.Loc, orderBy.Items[errExprLoc.Offset].Expr.Text())
 		}
 		return
