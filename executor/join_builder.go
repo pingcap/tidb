@@ -75,7 +75,7 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		innerIter:       rightRowBlock,
 		schema:          b.schema,
 		desc:            assumeSortedDesc,
-		resultGenerator: newJoinResultGenerator(b.context, b.joinType, b.defaultValues, b.otherFilter),
+		resultGenerator: newJoinResultGenerator(b.context, b.joinType, false, b.defaultValues, b.otherFilter),
 	}
 
 	if b.joinType == plan.RightOuterJoin {

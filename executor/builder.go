@@ -512,13 +512,9 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	// for hash join, inner table is always the smaller one.
 	e := &HashJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.DefaultValues, v.OtherConditions),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, v.DefaultValues, v.OtherConditions),
 		concurrency:     v.Concurrency,
 		defaultInners:   v.DefaultValues,
-	}
-
-	if generator, ok := e.resultGenerator.(*innerJoinResultGenerator); ok {
-		generator.outerIsRight = (v.SmallChildIdx == 0)
 	}
 
 	if v.SmallChildIdx == 0 {
@@ -1005,7 +1001,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerFilter:      v.RightConditions,
 		outerOrderedRows: newKeyRowBlock(batchSize, true),
 		innerOrderedRows: newKeyRowBlock(batchSize, false),
-		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.DefaultValues, v.OtherConditions),
+		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, false, v.DefaultValues, v.OtherConditions),
 		batchSize:        batchSize,
 	}
 }

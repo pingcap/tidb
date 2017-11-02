@@ -91,6 +91,8 @@ func (e *HashJoinExec) Close() error {
 		<-e.closeCh
 	}
 
+	e.resultBuffer = nil
+
 	return nil
 }
 
