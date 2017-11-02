@@ -61,8 +61,6 @@ type Plan interface {
 
 	context() context.Context
 
-	extractCorrelatedCols() []*expression.CorrelatedColumn
-
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices()
 
@@ -197,6 +195,8 @@ type LogicalPlan interface {
 
 	// generatePhysicalPlans generates all possible plans.
 	generatePhysicalPlans() []PhysicalPlan
+
+	extractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -307,10 +307,10 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p.basePlan.self.(LogicalPlan), nil
 }
 
-func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	var corCols []*expression.CorrelatedColumn
-	for _, child := range p.children {
-		corCols = append(corCols, child.extractCorrelatedCols()...)
+	for _, child := range p.basePlan.children {
+		corCols = append(corCols, child.(LogicalPlan).extractCorrelatedCols()...)
 	}
 	return corCols
 }
