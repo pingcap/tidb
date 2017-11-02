@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
-// Cacheable checks whether the input ast is readOnly.
+// IsReadOnly checks whether the input ast is readOnly.
 func IsReadOnly(node ast.Node) bool {
 	switch st := node.(type) {
 	case *ast.SelectStmt:
@@ -38,11 +38,10 @@ func IsReadOnly(node ast.Node) bool {
 	}
 }
 
-// readOnlyChecker checks whether a query's plan can be cached, querys that:
-//	 1. have ExistsSubqueryExpr, or
-//	 2. have VariableExpr
-// will not be cached currently.
-// NOTE: we can add more rules in the future.
+// readOnlyChecker checks whether a query's ast is readonly, if it satisfied
+// 1. selectstmt;
+// 2. need not to set var;
+// it is readonly statement.
 type readOnlyChecker struct {
 	readOnly bool
 }
