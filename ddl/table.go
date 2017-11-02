@@ -144,18 +144,11 @@ func (d *ddl) splitTableRegion(tableID int64) error {
 	if err := store.SplitRegion(tableStartKey); err != nil {
 		return errors.Trace(err)
 	}
-	nextTableStartKey := tablecodec.GenTablePrefix(tableID + 1)
-	if err := store.SplitRegion(nextTableStartKey); err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 
 func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	if tblInfo.OldSchemaID != 0 {
-		schemaID = tblInfo.OldSchemaID
-	}
-	alloc := autoid.NewAllocator(d.store, schemaID)
+	alloc := autoid.NewAllocator(d.store, tblInfo.OldSchemaID, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }

@@ -54,11 +54,11 @@ func (cc *mysqlClientConn) handleStmtPrepare(sql string) error {
 	//status ok
 	data = append(data, 0)
 	//stmt id
-	data = append(data, dumpUint32(uint32(stmt.ID()))...)
+	data = dumpUint32(data, uint32(stmt.ID()))
 	//number columns
-	data = append(data, dumpUint16(uint16(len(columns)))...)
+	data = dumpUint16(data, uint16(len(columns)))
 	//number params
-	data = append(data, dumpUint16(uint16(len(params)))...)
+	data = dumpUint16(data, uint16(len(params)))
 	//filter [00]
 	data = append(data, 0)
 	//warning count
@@ -71,7 +71,7 @@ func (cc *mysqlClientConn) handleStmtPrepare(sql string) error {
 	if len(params) > 0 {
 		for i := 0; i < len(params); i++ {
 			data = data[0:4]
-			data = append(data, params[i].Dump(cc.alloc)...)
+			data = params[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
 				return errors.Trace(err)
@@ -86,7 +86,7 @@ func (cc *mysqlClientConn) handleStmtPrepare(sql string) error {
 	if len(columns) > 0 {
 		for i := 0; i < len(columns); i++ {
 			data = data[0:4]
-			data = append(data, columns[i].Dump(cc.alloc)...)
+			data = columns[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
 				return errors.Trace(err)

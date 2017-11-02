@@ -66,7 +66,7 @@ const (
 	MaxDatabaseNameLength int = 64
 	// MaxColumnNameLength is max length of column name identifier.
 	MaxColumnNameLength int = 64
-	// MaxColumnNameLength is max length of key parts.
+	// MaxKeyParts is max length of key parts.
 	MaxKeyParts int = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
 	MaxIndexIdentifierLen int = 64
