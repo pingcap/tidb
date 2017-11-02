@@ -20,7 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -200,7 +200,7 @@ func (e *selectResultSet) Close() error {
 
 func (e *selectResultSet) fetchAll() error {
 	client := ApiClient{
-		URL: domain.Config.Dashbase.APIURL,
+		URL: config.GetGlobalConfig().Dashbase.APIURL,
 	}
 
 	result, err := client.Query(e.sql)

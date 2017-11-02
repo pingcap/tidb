@@ -312,7 +312,6 @@ func validateConfig() {
 }
 
 func setGlobalVars() {
-	domain.Config = cfg
 	ddlLeaseDuration := parseLease(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)

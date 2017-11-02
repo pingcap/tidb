@@ -186,7 +186,7 @@ enabled = false
 kafka-hosts = ["localhost:9092"]
 
 # The API host for querying data.
-api-host = "localhost:9876"
+api-url = "http://localhost:9876"
 
 # The path to the file describes table schemas in TOML.
 schema-file = "dashbase-schema.toml"
