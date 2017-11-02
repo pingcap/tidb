@@ -309,6 +309,9 @@ func (e *selectResultSet) fetchAll() error {
 }
 
 func executeSelect(node *ast.SelectStmt) (bool, ast.RecordSet, error) {
+	if node.From == nil {
+		return false, nil, nil
+	}
 	ts, ok := node.From.TableRefs.Left.(*ast.TableSource)
 	if !ok {
 		return false, nil, nil
