@@ -1332,7 +1332,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
 
 	// Test generated column in subqueries.
-	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.a not in (SELECT t.a FROM test_gc_read t where t.c > 5)`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.a not in (SELECT t.a FROM test_gc_read t where t.c > 5) order by a`)
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`))
 
 	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.c in (SELECT t.c FROM test_gc_read t where t.c > 5) order by a`)
