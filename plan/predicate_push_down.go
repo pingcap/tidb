@@ -55,9 +55,7 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]exp
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if UseDAGPlanBuilder(p.ctx) {
-		_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
-	}
+	_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
 	return predicates, p, nil
 }
 
