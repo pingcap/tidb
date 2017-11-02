@@ -119,13 +119,13 @@ xport = 14000
 xsocket = ""
 
 [plan-cache]
-plan-cache-enabled = false
-plan-cache-capacity = 2560
-plan-cache-shards = 256
+enabled = false
+capacity = 2560
+shards = 256
 
 [prepared-plan-cache]
-prepared-plan-cache-enabled = false
-prepared-plan-cache-capacity = 100
+enabled = false
+capacity = 100
 
 [opentracing]
 # Enable opentracing.

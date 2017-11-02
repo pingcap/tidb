@@ -37,8 +37,8 @@ type task interface {
 	invalid() bool
 }
 
-// TODO: In future, we should split copTask to indexTask and tableTask.
 // copTask is a task that runs in a distributed kv store.
+// TODO: In future, we should split copTask to indexTask and tableTask.
 type copTask struct {
 	indexPlan PhysicalPlan
 	tablePlan PhysicalPlan

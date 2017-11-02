@@ -274,7 +274,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 
 func (s *testSuite) TestScan(c *C) {
 	defer testleak.AfterTest(c)()
-	alloc := autoid.NewAllocator(s.store, s.dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, s.tbInfo.OldSchemaID, s.dbInfo.ID)
 	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()

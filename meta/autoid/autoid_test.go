@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package autoid
+package autoid_test
 
 import (
 	"fmt"
@@ -23,9 +23,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 func TestT(t *testing.T) {
@@ -39,8 +39,7 @@ type testSuite struct {
 }
 
 func (*testSuite) TestT(c *C) {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -58,7 +57,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	alloc := NewAllocator(store, 1)
+	alloc := autoid.NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 
 	id, err := alloc.Alloc(1)
@@ -92,13 +91,13 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
-	alloc = NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(GetStep()+1))
+	c.Assert(id, Equals, int64(autoid.GetStep()+1))
 
-	alloc = NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
@@ -106,11 +105,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
-	alloc = NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3210), false)
 	c.Assert(err, IsNil)
-	alloc = NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 0, 1)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
@@ -127,13 +126,12 @@ func (*testSuite) TestT(c *C) {
 // TestConcurrentAlloc is used for the test that
 // multiple alloctors allocate ID with the same table ID concurrently.
 func (*testSuite) TestConcurrentAlloc(c *C) {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
-	step = 100
+	autoid.SetStep(100)
 	defer func() {
-		step = 5000
+		autoid.SetStep(5000)
 	}()
 
 	dbID := int64(2)
@@ -155,8 +153,8 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	errCh := make(chan error, count)
 
 	allocIDs := func() {
-		alloc := NewAllocator(store, dbID)
-		for j := 0; j < int(step)+5; j++ {
+		alloc := autoid.NewAllocator(store, 0, dbID)
+		for j := 0; j < int(autoid.GetStep())+5; j++ {
 			id, err1 := alloc.Alloc(tblID)
 			if err1 != nil {
 				errCh <- err1
@@ -191,8 +189,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
 func (*testSuite) TestRollbackAlloc(c *C) {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	dbID := int64(1)
@@ -210,17 +207,14 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	injectConf := new(kv.InjectionConfig)
 	injectConf.SetCommitError(errors.New("injected"))
 	injectedStore := kv.NewInjectedStore(store, injectConf)
-	alloc := &allocator{
-		store: injectedStore,
-		dbID:  1,
-	}
+	alloc := autoid.NewAllocator(injectedStore, 0, 1)
 	_, err = alloc.Alloc(2)
 	c.Assert(err, NotNil)
-	c.Assert(alloc.base, Equals, int64(0))
-	c.Assert(alloc.end, Equals, int64(0))
+	c.Assert(alloc.Base(), Equals, int64(0))
+	c.Assert(alloc.End(), Equals, int64(0))
 
 	err = alloc.Rebase(2, 100, true)
 	c.Assert(err, NotNil)
-	c.Assert(alloc.base, Equals, int64(0))
-	c.Assert(alloc.end, Equals, int64(0))
+	c.Assert(alloc.Base(), Equals, int64(0))
+	c.Assert(alloc.End(), Equals, int64(0))
 }
