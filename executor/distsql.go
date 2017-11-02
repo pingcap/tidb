@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -1082,13 +1081,24 @@ func timeZoneOffset(ctx context.Context) int64 {
 	return int64(offset)
 }
 
+// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
+const (
+	// FlagIgnoreTruncate indicates if truncate error should be ignored.
+	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
+	FlagIgnoreTruncate uint64 = 1
+	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
+	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
+	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
+	FlagTruncateAsWarning uint64 = 1 << 1
+)
+
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
 func statementContextToFlags(sc *variable.StatementContext) uint64 {
 	var flags uint64
 	if sc.IgnoreTruncate {
-		flags |= xeval.FlagIgnoreTruncate
+		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
-		flags |= xeval.FlagTruncateAsWarning
+		flags |= FlagTruncateAsWarning
 	}
 	return flags
 }
