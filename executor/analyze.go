@@ -144,10 +144,6 @@ const (
 
 type analyzeTask struct {
 	taskType  taskType
-	tableInfo *model.TableInfo
-	indexInfo *model.IndexInfo
-	Columns   []*model.ColumnInfo
-	PKInfo    *model.ColumnInfo
 	idxExec   *AnalyzeIndexExec
 	colExec   *AnalyzeColumnsExec
 }
