@@ -69,12 +69,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str = "SemiJoin{" + strings.Join(children, "->") + "}"
 		}
-		if UseDAGPlanBuilder(x.ctx) {
-			for _, eq := range x.EqualConditions {
-				l := eq.GetArgs()[0].String()
-				r := eq.GetArgs()[1].String()
-				str += fmt.Sprintf("(%s,%s)", l, r)
-			}
+		for _, eq := range x.EqualConditions {
+			l := eq.GetArgs()[0].String()
+			r := eq.GetArgs()[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *PhysicalMergeJoin:
 		last := len(idxs) - 1
@@ -153,10 +151,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
 		}
 	case *Selection:
-		str = "Selection"
-		if UseDAGPlanBuilder(x.ctx) {
-			str = fmt.Sprintf("Sel(%s)", x.Conditions)
-		}
+		str = fmt.Sprintf("Sel(%s)", x.Conditions)
 	case *Projection:
 		str = "Projection"
 	case *TopN:
