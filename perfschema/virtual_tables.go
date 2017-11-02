@@ -73,7 +73,8 @@ func (ds *statusDataSource) Cols() []*table.Column {
 	return ds.cols
 }
 
-func createVirtualDataSource(tableName string, meta *model.TableInfo) (tables.VirtualDataSource, error) {
+// CreateVirtualDataSource is only used for test.
+func CreateVirtualDataSource(tableName string, meta *model.TableInfo) (tables.VirtualDataSource, error) {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
@@ -91,7 +92,7 @@ func createVirtualDataSource(tableName string, meta *model.TableInfo) (tables.Vi
 }
 
 func createVirtualTable(meta *model.TableInfo, tableName string) table.Table {
-	dataSource, err := createVirtualDataSource(tableName, meta)
+	dataSource, err := CreateVirtualDataSource(tableName, meta)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
