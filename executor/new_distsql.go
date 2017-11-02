@@ -478,7 +478,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
-	span, ctx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
+	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
@@ -492,24 +492,24 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.NewSelectDAG(ctx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.NewSelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(ctx)
+	e.result.Fetch(goCtx)
 	return nil
 }
 
 // startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.
-func startSpanFollowsContext(ctx goctx.Context, operationName string) (opentracing.Span, goctx.Context) {
-	span := opentracing.SpanFromContext(ctx)
+func startSpanFollowsContext(goCtx goctx.Context, operationName string) (opentracing.Span, goctx.Context) {
+	span := opentracing.SpanFromContext(goCtx)
 	if span != nil {
 		span = opentracing.StartSpan(operationName, opentracing.FollowsFrom(span.Context()))
 	} else {
 		span = opentracing.StartSpan(operationName)
 	}
 
-	return span, opentracing.ContextWithSpan(ctx, span)
+	return span, opentracing.ContextWithSpan(goCtx, span)
 }
 
 // doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
