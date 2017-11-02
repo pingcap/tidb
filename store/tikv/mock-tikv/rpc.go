@@ -28,7 +28,7 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-const requestMaxSize = 4 * 1024 * 1024
+const requestMaxSize = 8 * 1024 * 1024
 
 func checkGoContext(ctx goctx.Context) error {
 	select {
