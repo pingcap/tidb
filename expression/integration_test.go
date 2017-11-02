@@ -2177,6 +2177,29 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	// for version
 	result = tk.MustQuery("select version()")
 	result.Check(testkit.Rows(mysql.ServerVersion))
+
+	// for row_count
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, PRIMARY KEY (a))")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("insert into t(a, b) values(1, 11), (2, 22), (3, 33)")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("3"))
+	tk.MustExec("select * from t")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("-1"))
+	tk.MustExec("update t set b=22 where a=1")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("update t set b=22 where a=1")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("delete from t where a=2")
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row_count();")
+	result.Check(testkit.Rows("-1"))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
@@ -2634,6 +2657,32 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec("insert into test values(1, NULL) on duplicate key update val = VALUES(val);")
 	result = tk.MustQuery("select * from test;")
 	result.Check(testkit.Rows("1 <nil>"))
+
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec(`create table test(
+		id int not null,
+		a text,
+		b blob,
+		c varchar(20),
+		d int,
+		e float,
+		f DECIMAL(6,4),
+		g JSON,
+		primary key(id));`)
+
+	tk.MustExec(`insert into test values(1,'txt hello', 'blb hello', 'vc hello', 1, 1.1, 1.0, '{"key1": "value1", "key2": "value2"}');`)
+	tk.MustExec(`insert into test values(1, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+	on duplicate key update
+	a = values(a),
+	b = values(b),
+	c = values(c),
+	d = values(d),
+	e = values(e),
+	f = values(f),
+	g = values(g);`)
+
+	result = tk.MustQuery("select * from test;")
+	result.Check(testkit.Rows("1 <nil> <nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
@@ -2892,6 +2941,20 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+}
+
+func (s *testIntegrationSuite) TestIssue4954(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a CHAR(5) CHARACTER SET latin1);")
+	tk.MustExec("INSERT INTO t VALUES ('oe');")
+	tk.MustExec("INSERT INTO t VALUES (0xf6);")
+	r := tk.MustQuery(`SELECT * FROM t WHERE a= 'oe';`)
+	r.Check(testkit.Rows("oe"))
+	r = tk.MustQuery(`SELECT HEX(a) FROM t WHERE a= 0xf6;`)
+	r.Check(testkit.Rows("F6"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

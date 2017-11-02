@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -914,35 +913,41 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			return
 		}
 	}
-	// a in (b, c, d)
 	leftArg := er.ctxStack[stkLen-lLen-1]
-	// function ==> a = b
-	function, err := er.constructBinaryOpFunction(leftArg, er.ctxStack[stkLen-lLen], ast.EQ)
-	if err != nil {
-		er.err = err
+	leftEt, leftIsNull := leftArg.GetType().EvalType(), leftArg.GetType().Tp == mysql.TypeNull
+	if leftIsNull {
+		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
+		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
 		return
 	}
-	// function ==> (a = b) or (a = c) or (a = d)
-	for i := stkLen - lLen + 1; i < stkLen; i++ {
-		var expr expression.Expression
-		expr, err = er.constructBinaryOpFunction(leftArg, er.ctxStack[i], ast.EQ)
-		if err != nil {
-			er.err = err
-			return
-		}
-		fieldTp := &types.FieldType{Tp: mysql.TypeLonglong, Flen: 1, Decimal: 0, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag}
-		function, err = expression.NewFunction(er.ctx, ast.LogicOr, fieldTp, function, expr)
-		if err != nil {
-			er.err = err
-			return
+	allSameType := true
+	for i := stkLen - lLen; i < stkLen; i++ {
+		if er.ctxStack[i].GetType().Tp != mysql.TypeNull && er.ctxStack[i].GetType().EvalType() != leftEt {
+			allSameType = false
+			break
 		}
 	}
-	if not {
-		tp := *function.GetType()
-		function, err = expression.NewFunction(er.ctx, ast.UnaryNot, &tp, function)
-		if err != nil {
-			er.err = err
-			return
+	var function expression.Expression
+	if allSameType && l == 1 {
+		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
+	} else {
+		eqFunctions := make([]expression.Expression, 0, lLen)
+		for i := stkLen - lLen; i < stkLen; i++ {
+			expr, err := er.constructBinaryOpFunction(leftArg, er.ctxStack[i], ast.EQ)
+			if err != nil {
+				er.err = err
+				return
+			}
+			eqFunctions = append(eqFunctions, expr)
+		}
+		function = expression.ComposeDNFCondition(er.ctx, eqFunctions...)
+		if not {
+			var err error
+			function, err = expression.NewFunction(er.ctx, ast.UnaryNot, tp, function)
+			if err != nil {
+				er.err = err
+				return
+			}
 		}
 	}
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
@@ -31,26 +30,9 @@ var (
 )
 
 func newTestStore(c *C) *tikvStore {
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-
-	if *withTiKV {
-		var d Driver
-		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
-		c.Assert(err, IsNil)
-		return store.(*tikvStore)
-	}
-	store, err := NewMockTikvStore()
+	store, err := NewTestTiKVStorage(*withTiKV, *pdAddrs)
 	c.Assert(err, IsNil)
 	return store.(*tikvStore)
-}
-
-func newTestStoreWithBootstrap(c *C) *tikvStore {
-	store := newTestStore(c)
-	_, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	return store
 }
 
 type testTiclientSuite struct {
@@ -146,12 +128,12 @@ func (s *testTiclientSuite) TestNotExist(c *C) {
 }
 
 func (s *testTiclientSuite) TestLargeRequest(c *C) {
-	largeValue := make([]byte, 5*1024*1024) // 5M value.
+	largeValue := make([]byte, 9*1024*1024) // 9M value.
 	txn := s.beginTxn(c)
 	err := txn.Set([]byte("key"), largeValue)
-	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
 	c.Assert(err, NotNil)
+	err = txn.Commit(goctx.Background())
+	c.Assert(err, IsNil)
 	c.Assert(kv.IsRetryableError(err), IsFalse)
 }
 

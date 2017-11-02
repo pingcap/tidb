@@ -26,30 +26,30 @@ func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, l
 	accessCondition []expression.Expression) ([]*types.IndexRange, error) {
 	rb := builder{sc: sc}
 	var (
-		ranges  []*types.IndexRange
-		eqCount int
+		ranges       []*types.IndexRange
+		eqAndInCount int
 	)
-	for eqCount = 0; eqCount < len(accessCondition) && eqCount < len(cols); eqCount++ {
-		if sf, ok := accessCondition[eqCount].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
+	for eqAndInCount = 0; eqAndInCount < len(accessCondition) && eqAndInCount < len(cols); eqAndInCount++ {
+		if sf, ok := accessCondition[eqAndInCount].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
 			break
 		}
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[eqCount])
-		if eqCount == 0 {
-			ranges = rb.buildIndexRanges(point, cols[eqCount].RetType)
+		point := rb.build(accessCondition[eqAndInCount])
+		if eqAndInCount == 0 {
+			ranges = rb.buildIndexRanges(point, cols[eqAndInCount].RetType)
 		} else {
-			ranges = rb.appendIndexRanges(ranges, point, cols[eqCount].RetType)
+			ranges = rb.appendIndexRanges(ranges, point, cols[eqAndInCount].RetType)
 		}
 	}
 	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
-	for i := eqCount; i < len(accessCondition); i++ {
+	for i := eqAndInCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
 	}
-	if eqCount == 0 {
+	if eqAndInCount == 0 {
 		ranges = rb.buildIndexRanges(rangePoints, cols[0].RetType)
-	} else if eqCount < len(accessCondition) {
-		ranges = rb.appendIndexRanges(ranges, rangePoints, cols[eqCount].RetType)
+	} else if eqAndInCount < len(accessCondition) {
+		ranges = rb.appendIndexRanges(ranges, rangePoints, cols[eqAndInCount].RetType)
 	}
 
 	// Take prefix index into consideration.

@@ -206,6 +206,7 @@ func (p *PhysicalApply) ExplainInfo() string {
 func (p *PhysicalIndexJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("outer:%s",
 		p.Children()[p.outerIndex].ExplainID()))
+	buffer.WriteString(fmt.Sprintf(", %s", p.JoinType))
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(fmt.Sprintf(", outer key:%s",
 			expression.ExplainColumnList(p.OuterJoinKeys)))

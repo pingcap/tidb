@@ -20,8 +20,8 @@ import (
 )
 
 var (
-	// errBodyMissing response body is missing error
-	errBodyMissing = errors.New("response body is missing")
+	// ErrBodyMissing response body is missing error
+	ErrBodyMissing = errors.New("response body is missing")
 )
 
 // TiDB decides whether to retry transaction by checking if error message contains
@@ -37,7 +37,7 @@ var (
 	ErrTiKVServerTimeout  = terror.ClassTiKV.New(mysql.ErrTiKVServerTimeout, mysql.MySQLErrName[mysql.ErrTiKVServerTimeout]+txnRetryableMark)
 	ErrResolveLockTimeout = terror.ClassTiKV.New(mysql.ErrResolveLockTimeout, mysql.MySQLErrName[mysql.ErrResolveLockTimeout]+txnRetryableMark)
 	ErrPDServerTimeout    = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout]+"%v")
-	ErrRegionUnavaiable   = terror.ClassTiKV.New(mysql.ErrRegionUnavaiable, mysql.MySQLErrName[mysql.ErrRegionUnavaiable]+txnRetryableMark)
+	ErrRegionUnavailable  = terror.ClassTiKV.New(mysql.ErrRegionUnavailable, mysql.MySQLErrName[mysql.ErrRegionUnavailable]+txnRetryableMark)
 	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy]+txnRetryableMark)
 	ErrGCTooEarly         = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
 )
@@ -47,7 +47,7 @@ func init() {
 		mysql.ErrTiKVServerTimeout:  mysql.ErrTiKVServerTimeout,
 		mysql.ErrResolveLockTimeout: mysql.ErrResolveLockTimeout,
 		mysql.ErrPDServerTimeout:    mysql.ErrPDServerTimeout,
-		mysql.ErrRegionUnavaiable:   mysql.ErrRegionUnavaiable,
+		mysql.ErrRegionUnavailable:  mysql.ErrRegionUnavailable,
 		mysql.ErrTiKVServerBusy:     mysql.ErrTiKVServerBusy,
 		mysql.ErrGCTooEarly:         mysql.ErrGCTooEarly,
 	}
