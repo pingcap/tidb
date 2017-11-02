@@ -52,7 +52,11 @@ type allocator struct {
 	base  int64
 	end   int64
 	store kv.Storage
-	dbID  int64
+	// originalDBID saves original schemaID to keep autoID unchanged
+	// while renaming a table from one database to another.
+	originalDBID int64
+	// dbID is current database's ID.
+	dbID int64
 }
 
 // GetStep is only used by tests
@@ -97,7 +101,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 	var newBase, newEnd int64
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
+		currentEnd, err1 := m.GetAutoTableID(alloc.originalDBID, tableID)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -117,7 +121,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 			newBase = requiredBase
 			newEnd = requiredBase
 		}
-		_, err1 = m.GenAutoTableID(alloc.dbID, tableID, newEnd-currentEnd)
+		_, err1 = m.GenAutoTableID(alloc.originalDBID, alloc.dbID, tableID, newEnd-currentEnd)
 		return errors.Trace(err1)
 	})
 	if err != nil {
@@ -139,11 +143,11 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
-			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
+			newBase, err1 = m.GetAutoTableID(alloc.originalDBID, tableID)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, step)
+			newEnd, err1 = m.GenAutoTableID(alloc.originalDBID, alloc.dbID, tableID, step)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -208,10 +212,15 @@ func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(store kv.Storage, dbID int64) Allocator {
+func NewAllocator(store kv.Storage, originalDBID, dbID int64) Allocator {
+	// If original DB ID is zero, it means that the orignial DB ID is equal to the current DB ID.
+	if originalDBID == 0 {
+		originalDBID = dbID
+	}
 	return &allocator{
-		store: store,
-		dbID:  dbID,
+		store:        store,
+		originalDBID: originalDBID,
+		dbID:         dbID,
 	}
 }
 
