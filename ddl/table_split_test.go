@@ -41,7 +41,6 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	t, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
 	c.Assert(err, IsNil)
 	regionStartKey := tablecodec.EncodeTablePrefix(t.Meta().ID)
-	regionEndKey := tablecodec.EncodeTablePrefix(t.Meta().ID + 1)
 
 	type kvStore interface {
 		GetRegionCache() *tikv.RegionCache
@@ -50,5 +49,4 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	loc, err := cache.LocateKey(tikv.NewBackoffer(5000, context.Background()), regionStartKey)
 	c.Assert(err, IsNil)
 	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
-	c.Assert(loc.EndKey, BytesEquals, []byte(regionEndKey))
 }
