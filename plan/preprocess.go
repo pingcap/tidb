@@ -45,11 +45,17 @@ type preprocessor struct {
 	inPrepare bool
 	// When visiting create/drop table statement.
 	inCreateOrDropTable bool
+	// When visiting multi-table delete stmt table list.
+	inDeleteTableList bool
 	/* For Select Statement. */
 	// table map to lookup and check table name conflict.
 	tableMap map[string]int
+	// table map to lookup and check derived-table(subselect) name conflict.
+	derivedTableMap map[string]int
 	// tables indicates tableSources collected in from clause.
 	tables []*ast.TableSource
+	// result fields collected in select field list.
+	fieldList []*ast.ResultField
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -73,8 +79,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.DeleteStmt:
-		return in, true
+	case *ast.SelectStmt, *ast.InsertStmt, *ast.UpdateStmt, *ast.UnionStmt, *ast.DeleteStmt:
+		p.tableMap = map[string]int{}
+		p.derivedTableMap = map[string]int{}
+		p.tables = make([]*ast.TableSource, 0)
+		p.fieldList = make([]*ast.ResultField, 0)
+	case *ast.DeleteTableList:
+		p.inDeleteTableList = true
 	}
 	return in, p.err != nil
 }
@@ -105,8 +116,21 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if !valid {
 			p.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
 		}
+	case *ast.SelectStmt:
+		x.SetResultFields(p.fieldList)
+		p.fieldList = nil
+		p.tableMap = map[string]int{}
+	case *ast.UnionSelectList:
+		p.handleUnionSelectList(x)
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		p.fieldList = nil
+		p.tableMap = map[string]int{}
 	case *ast.TableName:
 		p.handleTableName(x)
+	case *ast.TableSource:
+		p.handleTableSource(x)
+	case *ast.DeleteTableList:
+		p.inDeleteTableList = false
 	}
 
 	return in, p.err == nil
@@ -499,6 +523,19 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		// Skip resolving the table to avoid error.
 		return
 	}
+	if p.inDeleteTableList {
+		idx, ok := p.tableMap[p.tableUniqueName(tn.Schema, tn.Name)]
+		if !ok {
+			p.err = errors.Errorf("Unknown table %s", tn.Name.O)
+			return
+		}
+		ts := p.tables[idx]
+		tableName := ts.Source.(*ast.TableName)
+		tn.DBInfo = tableName.DBInfo
+		tn.TableInfo = tableName.TableInfo
+		tn.SetResultFields(tableName.GetResultFields())
+		return
+	}
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		p.err = errors.Trace(err)
@@ -560,4 +597,83 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			break
 		}
 	}
+}
+
+// handleTableSources checks name duplication
+// and puts the table source in current resolverContext.
+// Note:
+// "select * from t as a join (select 1) as a;" is not duplicate.
+// "select * from t as a join t as a;" is duplicate.
+// "select * from (select 1) as a join (select 1) as a;" is duplicate.
+func (p *preprocessor) handleTableSource(ts *ast.TableSource) {
+	for _, v := range ts.GetResultFields() {
+		v.TableAsName = ts.AsName
+	}
+	switch ts.Source.(type) {
+	case *ast.TableName:
+		var name string
+		if ts.AsName.L != "" {
+			name = ts.AsName.L
+		} else {
+			tableName := ts.Source.(*ast.TableName)
+			name = p.tableUniqueName(tableName.Schema, tableName.Name)
+		}
+		if _, ok := p.tableMap[name]; ok {
+			p.err = errors.Errorf("duplicated table/alias name %s", name)
+			return
+		}
+		p.tableMap[name] = len(p.tables)
+	case *ast.SelectStmt:
+		name := ts.AsName.L
+		if _, ok := p.derivedTableMap[name]; ok {
+			p.err = errors.Errorf("duplicated table/alias name %s", name)
+			return
+		}
+		p.derivedTableMap[name] = len(p.tables)
+	}
+	dupNames := make(map[string]struct{}, len(ts.GetResultFields()))
+	for _, f := range ts.GetResultFields() {
+		name := f.ColumnAsName.L
+		if name == "" {
+			name = f.Column.Name.L
+		}
+	}
+	for _, f := range ts.GetResultFields() {
+		// duplicate column name in one table is not allowed.
+		// "select * from (select 1, 1) as a;" is duplicate.
+		name := f.ColumnAsName.L
+		if name == "" {
+			name = f.Column.Name.L
+		}
+		if _, ok := dupNames[name]; ok {
+			p.err = errors.Errorf("Duplicate column name '%s'", name)
+			return
+		}
+		dupNames[name] = struct{}{}
+	}
+	p.tables = append(p.tables, ts)
+}
+
+func (p *preprocessor) handleUnionSelectList(u *ast.UnionSelectList) {
+	firstSelFields := u.Selects[0].GetResultFields()
+	unionFields := make([]*ast.ResultField, len(firstSelFields))
+	// Copy first result fields, because we may change the result field type.
+	for i, v := range firstSelFields {
+		rf := *v
+		col := *v.Column
+		rf.Column = &col
+		if rf.Column.Flen == 0 {
+			rf.Column.Flen = types.UnspecifiedLength
+		}
+		rf.Expr = &ast.ValueExpr{}
+		unionFields[i] = &rf
+	}
+	p.fieldList = unionFields
+}
+
+func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
+		return getInnerFromParentheses(pexpr.Expr)
+	}
+	return expr
 }

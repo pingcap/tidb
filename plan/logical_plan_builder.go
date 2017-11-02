@@ -1045,6 +1045,7 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 						Table:  col.TblName,
 						Name:   col.ColName,
 					}}
+				ast.SetFlag(colName)
 				colName.SetType(col.GetType())
 				field := &ast.SelectField{Expr: colName}
 				field.SetText(col.ColName.O)
@@ -1101,7 +1102,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		b.needColHandle++
 	}
 
-	hasAgg := b.detectSelectAgg(sel)
 	var (
 		p                             LogicalPlan
 		aggFuncs                      []*ast.AggregateFuncExpr
@@ -1140,6 +1140,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.LockTp != ast.SelectLockNone {
 		p = b.buildSelectLock(p, sel.LockTp)
 	}
+	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if b.err != nil {

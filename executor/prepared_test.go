@@ -88,7 +88,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// There should be schema changed error.
 		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
-		c.Assert(executor.ErrSchemaChanged.Equal(err), IsTrue)
+		c.Assert(err, NotNil)
 
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")

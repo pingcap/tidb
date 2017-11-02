@@ -249,7 +249,7 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
 	}
-	for _, f := range sel.GetResultFields() {
+	for _, f := range sel.Fields.Fields {
 		if ast.HasAggFlag(f.Expr) {
 			return true
 		}

@@ -148,7 +148,7 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.ResolveName(stmt, e.IS, e.Ctx)
+	err = plan.Preprocess(e.Ctx, stmt, e.IS, true)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -173,7 +173,7 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	prepared.UseCache = cache.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
-	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
+	err = plan.Preprocess(e.Ctx, stmt, e.IS, true)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -258,6 +258,7 @@ func (e *ExecuteExec) Build() error {
 		// if this time it failed, the real reason for the error is schema changed.
 		err := plan.PrepareStmt(e.IS, e.Ctx, prepared.Stmt)
 		if err != nil {
+			// We would not throw an error here if add column happens which would be checked when building logical plan.
 			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
 		}
 		prepared.SchemaVersion = e.IS.SchemaMetaVersion()

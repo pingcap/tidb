@@ -263,7 +263,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = errors.Trace(err)
 			return inNode, false
 		}
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, col.RetType, er.ctx))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(col.Index, col.RetType, er.ctx))
 		return inNode, true
 	default:
 		er.asScalar = true

@@ -17,6 +17,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -271,14 +272,10 @@ func MockTable() *model.TableInfo {
 	return table
 }
 
-func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
-	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+func MockPreprocess(node ast.Node, inPrepare bool) (infoschema.InfoSchema, error) {
 	ctx := mockContext()
-	err := MockResolveName(node, is, "test", ctx)
-	if err != nil {
-		return nil, err
-	}
-	return is, nil
+	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+	return is, errors.Trace(Preprocess(ctx, node, is, inPrepare))
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -565,8 +562,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
@@ -684,7 +680,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -739,7 +735,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -844,7 +840,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -983,8 +979,8 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil, comment)
+		is, err := MockPreprocess(stmt, false)
+		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -1147,7 +1143,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil, comment)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
@@ -1251,7 +1247,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1301,7 +1297,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1465,11 +1461,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
-		ctx := mockContext()
-		err = Preprocess(ctx, stmt, is, false)
-		c.Assert(err, IsNil, comment)
-		is, err = MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1641,7 +1633,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
