@@ -561,8 +561,8 @@ func (cc *clientConn) flush() error {
 func (cc *clientConn) writeOK() error {
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
-	data = append(data, dumpLengthEncodedInt(cc.ctx.AffectedRows())...)
-	data = append(data, dumpLengthEncodedInt(cc.ctx.LastInsertID())...)
+	data = dumpLengthEncodedInt(data, cc.ctx.AffectedRows())
+	data = dumpLengthEncodedInt(data, cc.ctx.LastInsertID())
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = dumpUint16(data, cc.ctx.Status())
 		data = dumpUint16(data, cc.ctx.WarningCount())
@@ -791,9 +791,8 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		return errors.Trace(err)
 	}
 
-	columnLen := dumpLengthEncodedInt(uint64(len(columns)))
 	data := cc.alloc.AllocWithLen(4, 1024)
-	data = append(data, columnLen...)
+	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err = cc.writePacket(data); err != nil {
 		return errors.Trace(err)
 	}
