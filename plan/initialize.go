@@ -31,8 +31,6 @@ const (
 	TypeStreamAgg = "StreamAgg"
 	// TypeHashAgg is the type of HashAgg.
 	TypeHashAgg = "HashAgg"
-	// TypeCache is the type of cache.
-	TypeCache = "Cache"
 	// TypeShow is the type of show.
 	TypeShow = "Show"
 	// TypeJoin is the type of Join.
@@ -261,12 +259,6 @@ func (p PhysicalAggregation) init(allocator *idAllocator, ctx context.Context) *
 
 func (p PhysicalApply) init(allocator *idAllocator, ctx context.Context) *PhysicalApply {
 	p.basePlan = newBasePlan(TypeApply, allocator, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
-}
-
-func (p Cache) init(allocator *idAllocator, ctx context.Context) *Cache {
-	p.basePlan = newBasePlan(TypeCache, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }

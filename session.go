@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -1054,9 +1053,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 // TODO: Using a bootstap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	saveLease := schemaLease
-	if !localstore.IsLocalStore(store) {
-		schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
-	}
+	schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
