@@ -109,7 +109,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.PhysicalHashSemiJoin:
 		return b.buildSemiJoin(v)
 	case *plan.PhysicalIndexJoin:
-		return b.buildIndexJoin(v)
+		return b.buildIndexLookUpJoin(v)
 	case *plan.Selection:
 		return b.buildSelection(v)
 	case *plan.PhysicalAggregation:
@@ -1162,22 +1162,28 @@ func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newR
 	return newRanges
 }
 
-func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
+func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
 	batchSize := 1
 	if !v.KeepOrder {
 		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
 	}
+
+	// for IndexLookUpJoin, left is always the outer side.
+	outerExec := b.build(v.Children()[0])
+	innerExec := b.build(v.Children()[1]).(DataReader)
+
 	return &IndexLookUpJoin{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		innerExec:       b.build(v.Children()[1]).(DataReader),
-		outerJoinKeys:   v.OuterJoinKeys,
-		innerJoinKeys:   v.InnerJoinKeys,
-		outer:           v.Outer,
-		leftConditions:  v.LeftConditions,
-		rightConditions: v.RightConditions,
-		otherConditions: v.OtherConditions,
-		defaultValues:   v.DefaultValues,
-		batchSize:       batchSize,
+		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
+		outerExec:        outerExec,
+		innerExec:        innerExec,
+		outerKeys:        v.OuterJoinKeys,
+		innerKeys:        v.InnerJoinKeys,
+		outerFilter:      v.LeftConditions,
+		innerFilter:      v.RightConditions,
+		outerOrderedRows: newKeyRowBlock(batchSize, true),
+		innerOrderedRows: newKeyRowBlock(batchSize, false),
+		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.DefaultValues, v.OtherConditions),
+		batchSize:        batchSize,
 	}
 }
 

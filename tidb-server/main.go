@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -149,10 +149,9 @@ func main() {
 }
 
 func registerStores() {
-	err := tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	err := tidb.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
-	err = tidb.RegisterStore("tikv", tikv.Driver{})
-	terror.MustNil(err)
+	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = tidb.RegisterStore("mocktikv", tikv.MockDriver{})
 	terror.MustNil(err)
 }

@@ -108,26 +108,35 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 
 func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
 	var rightConds, leftConds expression.CNFExprs
+	joinType := p.JoinType
 	if outerIdx == 0 {
 		rightConds = p.RightConditions.Clone()
 		leftConds = p.LeftConditions.Clone()
 	} else {
 		rightConds = p.LeftConditions.Clone()
 		leftConds = p.RightConditions.Clone()
+		if p.JoinType == RightOuterJoin {
+			joinType = LeftOuterJoin
+		}
 	}
 	join := PhysicalIndexJoin{
 		outerIndex:      outerIdx,
 		LeftConditions:  leftConds,
 		RightConditions: rightConds,
 		OtherConditions: p.OtherConditions,
-		Outer:           p.JoinType != InnerJoin,
+		JoinType:        joinType,
 		OuterJoinKeys:   outerJoinKeys,
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
 		outerSchema:     p.children[outerIdx].Schema(),
 		innerPlan:       innerPlan,
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
-	join.SetSchema(expression.MergeSchema(p.children[outerIdx].Schema(), p.children[1-outerIdx].Schema()))
+	switch p.JoinType {
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		join.SetSchema(p.Schema().Clone())
+	case LeftOuterJoin, RightOuterJoin, InnerJoin:
+		join.SetSchema(expression.MergeSchema(p.children[outerIdx].Schema(), p.children[1-outerIdx].Schema()))
+	}
 	join.profile = p.profile
 	orderJoin := join.Copy().(*PhysicalIndexJoin)
 	orderJoin.KeepOrder = true
@@ -187,6 +196,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 	return nil
 }
 
+// getChildrenPossibleProps gets children possible props.:
 // For index join, we shouldn't require a root task which may let CBO framework select a sort operator in fact.
 // We are not sure which way of index scanning we should choose, so we try both single read and double read and finally
 // it will result in a best one.
@@ -235,14 +245,14 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	}
 	plans := make([]PhysicalPlan, 0, 2)
 	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
-	if leftOuter && p.JoinType != RightOuterJoin {
+	if leftOuter && (p.JoinType == LeftOuterJoin || p.JoinType == InnerJoin) {
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join...)
 		}
 	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
-	if rightOuter && p.JoinType != LeftOuterJoin {
+	if rightOuter && (p.JoinType == RightOuterJoin || p.JoinType == InnerJoin) {
 		join := p.getIndexJoinByOuterIdx(1)
 		if join != nil {
 			plans = append(plans, join...)
@@ -252,14 +262,23 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 		return plans, true
 	}
 	// We try to choose join without considering hints.
-	if p.JoinType != RightOuterJoin {
+	switch p.JoinType {
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join...)
 		}
-	}
-	if p.JoinType != LeftOuterJoin {
+	case RightOuterJoin:
 		join := p.getIndexJoinByOuterIdx(1)
+		if join != nil {
+			plans = append(plans, join...)
+		}
+	case InnerJoin:
+		join := p.getIndexJoinByOuterIdx(0)
+		if join != nil {
+			plans = append(plans, join...)
+		}
+		join = p.getIndexJoinByOuterIdx(1)
 		if join != nil {
 			plans = append(plans, join...)
 		}
@@ -275,13 +294,11 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
 
-	if p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin && p.JoinType != LeftOuterSemiJoin && p.JoinType != AntiLeftOuterSemiJoin {
-		indexJoins, forced := p.tryToGetIndexJoin()
-		if forced {
-			return indexJoins
-		}
-		joins = append(joins, indexJoins...)
+	indexJoins, forced := p.tryToGetIndexJoin()
+	if forced {
+		return indexJoins
 	}
+	joins = append(joins, indexJoins...)
 
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
@@ -509,15 +526,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	}
 	// Else we suppose it only has one child.
 	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
-		// We consider to add enforcer firstly.
-		t, err = p.getBestTask(t, prop, pp, true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if prop.isEmpty() {
-			continue
-		}
-		t, err = p.getBestTask(t, prop, pp, false)
+		t, err = p.getBestTask(t, prop, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -526,13 +535,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	return t, nil
 }
 
-func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
-	var newProps [][]*requiredProp
-	if enforced {
-		newProps = pp.getChildrenPossibleProps(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
-	} else {
-		newProps = pp.getChildrenPossibleProps(prop)
-	}
+func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan) (task, error) {
+	newProps := pp.getChildrenPossibleProps(prop)
 	for _, newProp := range newProps {
 		tasks := make([]task, 0, len(p.basePlan.children))
 		for i, child := range p.basePlan.children {
@@ -543,9 +547,6 @@ func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp Phys
 			tasks = append(tasks, childTask)
 		}
 		resultTask := pp.attach2Task(tasks...)
-		if enforced {
-			resultTask = prop.enforceProperty(resultTask, p.basePlan.ctx, p.basePlan.allocator)
-		}
 		if resultTask.cost() < bestTask.cost() {
 			bestTask = resultTask
 		}
@@ -798,12 +799,13 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
 			expectedCnt = prop.expectedCnt
+		} else {
+			return invalidTask, nil
 		}
 		is.addPushedDownSelection(cop, p, expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(cop, p)
 		}
-		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
@@ -982,12 +984,13 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
 			expectedCnt = prop.expectedCnt
+		} else {
+			return invalidTask, nil
 		}
 		ts.addPushedDownSelection(copTask, p.profile, expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(copTask, p)
 		}
-		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)

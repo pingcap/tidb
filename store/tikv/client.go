@@ -30,12 +30,13 @@ import (
 	"google.golang.org/grpc"
 )
 
+// Timeout durations.
 const (
 	maxConnectionNumber = 16
 	dialTimeout         = 5 * time.Second
 	readTimeoutShort    = 20 * time.Second  // For requests that read/write several key-values.
-	readTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
-	readTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
+	ReadTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
+	ReadTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
@@ -112,6 +113,7 @@ func (a *connArray) Close() {
 	}
 }
 
+// rpcClient is RPC client struct.
 // TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
 // Since we use shared client connection to communicate to the same TiKV, it's possible
 // that there are too many concurrent requests which overload the service of TiKV.
