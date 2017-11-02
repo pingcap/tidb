@@ -15,10 +15,11 @@ package command
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+
+	"github.com/juju/errors"
 )
 
 type tableInfo struct {
