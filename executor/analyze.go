@@ -143,9 +143,9 @@ const (
 )
 
 type analyzeTask struct {
-	taskType  taskType
-	idxExec   *AnalyzeIndexExec
-	colExec   *AnalyzeColumnsExec
+	taskType taskType
+	idxExec  *AnalyzeIndexExec
+	colExec  *AnalyzeColumnsExec
 }
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
