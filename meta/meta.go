@@ -141,18 +141,20 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 }
 
 // GenAutoTableID adds step to the auto ID of the table and returns the sum.
-func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
+func (m *Meta) GenAutoTableID(originalDBID, dbID, tableID, step int64) (int64, error) {
+	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
-	id, err := m.txn.HGet(dbKey, m.autoTableIDKey(tableID))
-	if err != nil {
+	if err := m.checkDBExists(dbKey); err != nil {
 		return 0, errors.Trace(err)
 	}
-	isNotExisting := len(id) == 0
-	if isNotExisting {
-		return 0, kv.ErrNotExist
+	// Check if table exists.
+	tableKey := m.tableKey(tableID)
+	if err := m.checkTableExists(dbKey, tableKey); err != nil {
+		return 0, errors.Trace(err)
 	}
 
-	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
+	// Using original DB ID to generate auto ID.
+	return m.txn.HInc(m.dbKey(originalDBID), m.autoTableIDKey(tableID), step)
 }
 
 // GetAutoTableID gets current auto id with table id.
@@ -271,12 +273,6 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
-	// Initial the auto ID key.
-	base := []byte(strconv.FormatInt(0, 10))
-	err = m.txn.HSet(dbKey, m.autoTableIDKey(tableInfo.ID), base)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
