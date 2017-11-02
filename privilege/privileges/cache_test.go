@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 var _ = Suite(&testCacheSuite{})
@@ -30,7 +31,9 @@ type testCacheSuite struct {
 
 func (s *testCacheSuite) SetUpSuite(c *C) {
 	privileges.Enable = true
-	store, err := tidb.NewStore("memory://mysql")
+	store, err := tikv.NewMockTikvStore()
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -182,7 +185,9 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	privileges.Enable = true
-	store, err := tidb.NewStore("memory://sync_mysql_user")
+	store, err := tikv.NewMockTikvStore()
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	domain, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
