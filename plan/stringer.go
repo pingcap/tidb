@@ -198,7 +198,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Analyze{"
 		var children []string
 		for _, idx := range x.IdxTasks {
-			children = append(children, fmt.Sprintf("Index(%t, %s.%s)", idx.PushDown, idx.TableInfo.Name.O, idx.IndexInfo.Name.O))
+			children = append(children, fmt.Sprintf("Index(%s.%s)", idx.TableInfo.Name.O, idx.IndexInfo.Name.O))
 		}
 		for _, col := range x.ColTasks {
 			var colNames []string
@@ -208,7 +208,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, c.Name.O))
 			}
-			children = append(children, fmt.Sprintf("Table(%t, %s)", col.PushDown, strings.Join(colNames, ", ")))
+			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}
 		str = str + strings.Join(children, ",") + "}"
 	default:
