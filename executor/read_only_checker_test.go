@@ -16,8 +16,6 @@ package executor
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 )
 
 var _ = Suite(&testCacheableSuite{})

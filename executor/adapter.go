@@ -113,7 +113,7 @@ type ExecStmt struct {
 	ctx            context.Context
 	startTime      time.Time
 	isPreparedStmt bool
-	isReadOnly     bool
+	ReadOnly     bool
 }
 
 // OriginText implements ast.Statement interface.
@@ -127,7 +127,7 @@ func (a *ExecStmt) IsPrepared() bool {
 }
 
 func (a *ExecStmt) IsReadOnly() bool {
-	return a.isReadOnly
+	return a.ReadOnly
 }
 
 // Exec implements the ast.Statement Exec interface.

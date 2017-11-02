@@ -61,7 +61,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Expensive:  stmtCount(stmtNode, finalPlan, ctx.GetSessionVars().InRestrictedSQL),
 		Cacheable:  plan.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
-		isReadOnly: IsReadOnly(ReadOnlyCheckStmt),
+		ReadOnly:   IsReadOnly(ReadOnlyCheckStmt),
 	}, nil
 }
 
