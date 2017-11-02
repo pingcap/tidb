@@ -49,24 +49,12 @@ func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType, outerIs
 	case plan.AntiSemiJoin:
 		return &antiSemiJoinResultGenerator{baseGenerator}
 	case plan.LeftOuterSemiJoin:
-		//if outerIsRight {
-		//	panic("for LeftOuterSemiJoin, outer table should on the left")
-		//}
 		return &leftOuterSemiJoinResultGenerator{baseGenerator}
 	case plan.AntiLeftOuterSemiJoin:
-		//if outerIsRight {
-		//	panic("for AntiLeftOuterSemiJoin, outer table should on the left")
-		//}
 		return &antiLeftOuterSemiJoinResultGenerator{baseGenerator}
 	case plan.LeftOuterJoin:
-		//if outerIsRight {
-		//	panic("for LeftOuterJoin, outer table should on the left")
-		//}
 		return &leftOuterJoinResultGenerator{baseGenerator}
 	case plan.RightOuterJoin:
-		//if !outerIsRight {
-		//	panic("for LeftOuterJoin, outer table should on the right")
-		//}
 		return &rightOuterJoinResultGenerator{baseGenerator}
 	case plan.InnerJoin:
 		return &innerJoinResultGenerator{baseGenerator}
@@ -79,35 +67,6 @@ type baseJoinResultGenerator struct {
 	filter       []expression.Expression
 	defaultInner Row
 	outerIsRight bool
-}
-
-func (outputer *baseJoinResultGenerator) joinInners(outer Row, inners []Row) []Row {
-	joinedRows := make([]Row, 0, len(inners))
-	if outputer.outerIsRight {
-		for _, inner := range inners {
-			joinedRows = append(joinedRows, makeJoinRow(inner, outer))
-		}
-	} else {
-		for _, inner := range inners {
-			joinedRows = append(joinedRows, makeJoinRow(outer, inner))
-		}
-	}
-
-	return joinedRows
-}
-
-func (outputer *baseJoinResultGenerator) filterJoinedRows(joinedRows []Row) ([]Row, bool, error) {
-	resultBuffer := joinedRows[:0:len(joinedRows)]
-	for _, joinedRow := range joinedRows {
-		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
-		if err != nil {
-			return resultBuffer, false, errors.Trace(err)
-		}
-		if matched {
-			resultBuffer = append(resultBuffer, joinedRow)
-		}
-	}
-	return resultBuffer, len(resultBuffer) > 0, nil
 }
 
 type semiJoinResultGenerator struct {
