@@ -21,7 +21,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -1561,7 +1560,6 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		var np LogicalPlan
 		if i < len(list) {
 			newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
-			log.Warning(newExpr)
 		} else {
 			// rewrite with generation expression
 			rewritePreprocess := func(expr ast.Node) ast.Node {
