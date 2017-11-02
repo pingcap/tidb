@@ -100,7 +100,7 @@ func (cc *clientConn) handshake() error {
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
+		data = dumpUint16(data, mysql.ServerStatusAutocommit)
 		data = append(data, 0, 0)
 	}
 
@@ -151,7 +151,7 @@ func (cc *clientConn) writeInitialHandshake() error {
 	}
 	data = append(data, cc.collation)
 	// status
-	data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
+	data = dumpUint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
@@ -564,8 +564,8 @@ func (cc *clientConn) writeOK() error {
 	data = append(data, dumpLengthEncodedInt(cc.ctx.AffectedRows())...)
 	data = append(data, dumpLengthEncodedInt(cc.ctx.LastInsertID())...)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = append(data, dumpUint16(cc.ctx.Status())...)
-		data = append(data, dumpUint16(cc.ctx.WarningCount())...)
+		data = dumpUint16(data, cc.ctx.Status())
+		data = dumpUint16(data, cc.ctx.WarningCount())
 	}
 
 	err := cc.writePacket(data)
@@ -616,12 +616,12 @@ func (cc *clientConn) writeEOF(more bool) error {
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = append(data, dumpUint16(cc.ctx.WarningCount())...)
+		data = dumpUint16(data, cc.ctx.WarningCount())
 		status := cc.ctx.Status()
 		if more {
 			status |= mysql.ServerMoreResultsExists
 		}
-		data = append(data, dumpUint16(status)...)
+		data = dumpUint16(data, status)
 	}
 
 	err := cc.writePacket(data)
@@ -811,7 +811,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	}
 
 	numBytes4Null := ((len(columns) + 7 + 2) / 8)
-	buffer := make([]byte, 1+numBytes4Null, 1+numBytes4Null+8*(len(columns)))
+	rowBuffer := make([]byte, 1+numBytes4Null, 1+numBytes4Null+8*(len(columns)))
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -821,12 +821,12 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		}
 		data = data[0:4]
 		if binary {
-			buffer = buffer[:1+numBytes4Null]
-			buffer, err = dumpRowValuesBinary(cc.alloc, columns, row, buffer)
+			rowBuffer = rowBuffer[0 : 1+numBytes4Null : cap(rowBuffer)]
+			rowBuffer, err = dumpRowValuesBinary(rowBuffer, columns, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			data = append(data, buffer...)
+			data = append(data, rowBuffer...)
 		} else {
 			for i, value := range row {
 				if value.IsNull() {
@@ -838,7 +838,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 				if err != nil {
 					return errors.Trace(err)
 				}
-				data = append(data, dumpLengthEncodedString(valData, cc.alloc)...)
+				data = dumpLengthEncodedString(data, valData)
 			}
 		}
 

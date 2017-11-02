@@ -54,11 +54,11 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	//status ok
 	data = append(data, 0)
 	//stmt id
-	data = append(data, dumpUint32(uint32(stmt.ID()))...)
+	data = dumpUint32(data, uint32(stmt.ID()))
 	//number columns
-	data = append(data, dumpUint16(uint16(len(columns)))...)
+	data = dumpUint16(data, uint16(len(columns)))
 	//number params
-	data = append(data, dumpUint16(uint16(len(params)))...)
+	data = dumpUint16(data, uint16(len(params)))
 	//filter [00]
 	data = append(data, 0)
 	//warning count

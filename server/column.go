@@ -39,27 +39,24 @@ func (column *ColumnInfo) Dump(alloc arena.Allocator) []byte {
 
 	data := make([]byte, 0, l)
 
-	data = append(data, dumpLengthEncodedString([]byte("def"), alloc)...)
-
-	data = append(data, dumpLengthEncodedString([]byte(column.Schema), alloc)...)
-
-	data = append(data, dumpLengthEncodedString([]byte(column.Table), alloc)...)
-	data = append(data, dumpLengthEncodedString([]byte(column.OrgTable), alloc)...)
-
-	data = append(data, dumpLengthEncodedString([]byte(column.Name), alloc)...)
-	data = append(data, dumpLengthEncodedString([]byte(column.OrgName), alloc)...)
+	data = dumpLengthEncodedString(data, []byte("def"))
+	data = dumpLengthEncodedString(data, []byte(column.Schema))
+	data = dumpLengthEncodedString(data, []byte(column.Table))
+	data = dumpLengthEncodedString(data, []byte(column.OrgTable))
+	data = dumpLengthEncodedString(data, []byte(column.Name))
+	data = dumpLengthEncodedString(data, []byte(column.OrgName))
 
 	data = append(data, 0x0c)
 
-	data = append(data, dumpUint16(column.Charset)...)
-	data = append(data, dumpUint32(column.ColumnLength)...)
+	data = dumpUint16(data, column.Charset)
+	data = dumpUint32(data, column.ColumnLength)
 	data = append(data, column.Type)
-	data = append(data, dumpUint16(column.Flag)...)
+	data = dumpUint16(data, column.Flag)
 	data = append(data, column.Decimal)
 	data = append(data, 0, 0)
 
 	if column.DefaultValue != nil {
-		data = append(data, dumpUint64(uint64(len(column.DefaultValue)))...)
+		data = dumpUint64(data, uint64(len(column.DefaultValue)))
 		data = append(data, column.DefaultValue...)
 	}
 

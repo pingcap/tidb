@@ -43,7 +43,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -119,40 +118,36 @@ func parseLengthEncodedBytes(b []byte) ([]byte, bool, int, error) {
 	return nil, false, n, io.EOF
 }
 
-func dumpLengthEncodedString(b []byte, alloc arena.Allocator) []byte {
-	data := alloc.Alloc(len(b) + 9)
-	data = append(data, dumpLengthEncodedInt(uint64(len(b)))...)
-	data = append(data, b...)
-	return data
+func dumpLengthEncodedString(buffer []byte, bytes []byte) []byte {
+	buffer = append(buffer, dumpLengthEncodedInt(uint64(len(bytes)))...)
+	buffer = append(buffer, bytes...)
+	return buffer
 }
 
-func dumpUint16(n uint16) []byte {
-	return []byte{
-		byte(n),
-		byte(n >> 8),
-	}
+func dumpUint16(buffer []byte, n uint16) []byte {
+	buffer = append(buffer, byte(n))
+	buffer = append(buffer, byte(n>>8))
+	return buffer
 }
 
-func dumpUint32(n uint32) []byte {
-	return []byte{
-		byte(n),
-		byte(n >> 8),
-		byte(n >> 16),
-		byte(n >> 24),
-	}
+func dumpUint32(buffer []byte, n uint32) []byte {
+	buffer = append(buffer, byte(n))
+	buffer = append(buffer, byte(n>>8))
+	buffer = append(buffer, byte(n>>16))
+	buffer = append(buffer, byte(n>>24))
+	return buffer
 }
 
-func dumpUint64(n uint64) []byte {
-	return []byte{
-		byte(n),
-		byte(n >> 8),
-		byte(n >> 16),
-		byte(n >> 24),
-		byte(n >> 32),
-		byte(n >> 40),
-		byte(n >> 48),
-		byte(n >> 56),
-	}
+func dumpUint64(buffer []byte, n uint64) []byte {
+	buffer = append(buffer, byte(n))
+	buffer = append(buffer, byte(n>>8))
+	buffer = append(buffer, byte(n>>16))
+	buffer = append(buffer, byte(n>>24))
+	buffer = append(buffer, byte(n>>32))
+	buffer = append(buffer, byte(n>>40))
+	buffer = append(buffer, byte(n>>48))
+	buffer = append(buffer, byte(n>>56))
+	return buffer
 }
 
 var tinyIntCache [251][]byte
@@ -211,12 +206,12 @@ func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte, err erro
 	switch t.Type {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
 		data = append(data, 11)
-		data = append(data, dumpUint16(uint16(year))...)
+		data = dumpUint16(data, uint16(year))
 		data = append(data, byte(mon), byte(day), byte(t.Time.Hour()), byte(t.Time.Minute()), byte(t.Time.Second()))
-		data = append(data, dumpUint32(uint32(t.Time.Microsecond()))...)
+		data = dumpUint32(data, uint32(t.Time.Microsecond()))
 	case mysql.TypeDate, mysql.TypeNewDate:
 		data = append(data, 4)
-		data = append(data, dumpUint16(uint16(year))...) //year
+		data = dumpUint16(data, uint16(year)) //year
 		data = append(data, byte(mon), byte(day))
 	}
 	return
@@ -245,7 +240,7 @@ func uniformValue(value interface{}) interface{} {
 	}
 }
 
-func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []types.Datum, buffer []byte) ([]byte, error) {
+func dumpRowValuesBinary(buffer []byte, columns []*ColumnInfo, row []types.Datum) ([]byte, error) {
 	if len(columns) != len(row) {
 		return nil, mysql.ErrMalformPacket
 	}
@@ -266,11 +261,11 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 			case mysql.TypeTiny:
 				buffer = append(buffer, byte(v))
 			case mysql.TypeShort, mysql.TypeYear:
-				buffer = append(buffer, dumpUint16(uint16(v))...)
+				buffer = dumpUint16(buffer, uint16(v))
 			case mysql.TypeInt24, mysql.TypeLong:
-				buffer = append(buffer, dumpUint32(uint32(v))...)
+				buffer = dumpUint32(buffer, uint32(v))
 			case mysql.TypeLonglong:
-				buffer = append(buffer, dumpUint64(uint64(v))...)
+				buffer = dumpUint64(buffer, uint64(v))
 			}
 		case types.KindUint64:
 			v := val.GetUint64()
@@ -278,22 +273,22 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 			case mysql.TypeTiny:
 				buffer = append(buffer, byte(v))
 			case mysql.TypeShort, mysql.TypeYear:
-				buffer = append(buffer, dumpUint16(uint16(v))...)
+				buffer = dumpUint16(buffer, uint16(v))
 			case mysql.TypeInt24, mysql.TypeLong:
-				buffer = append(buffer, dumpUint32(uint32(v))...)
+				buffer = dumpUint32(buffer, uint32(v))
 			case mysql.TypeLonglong:
-				buffer = append(buffer, dumpUint64(v)...)
+				buffer = dumpUint64(buffer, v)
 			}
 		case types.KindFloat32:
 			floatBits := math.Float32bits(val.GetFloat32())
-			buffer = append(buffer, dumpUint32(floatBits)...)
+			buffer = dumpUint32(buffer, floatBits)
 		case types.KindFloat64:
 			floatBits := math.Float64bits(val.GetFloat64())
-			buffer = append(buffer, dumpUint64(floatBits)...)
+			buffer = dumpUint64(buffer, floatBits)
 		case types.KindString, types.KindBytes:
-			buffer = append(buffer, dumpLengthEncodedString(val.GetBytes(), alloc)...)
+			buffer = dumpLengthEncodedString(buffer, val.GetBytes())
 		case types.KindMysqlDecimal:
-			buffer = append(buffer, dumpLengthEncodedString(hack.Slice(val.GetMysqlDecimal().String()), alloc)...)
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(val.GetMysqlDecimal().String()))
 		case types.KindMysqlTime:
 			tmp, err := dumpBinaryDateTime(val.GetMysqlTime(), nil)
 			if err != nil {
@@ -303,11 +298,11 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 		case types.KindMysqlDuration:
 			buffer = append(buffer, dumpBinaryTime(val.GetMysqlDuration().Duration)...)
 		case types.KindMysqlSet:
-			buffer = append(buffer, dumpLengthEncodedString(hack.Slice(val.GetMysqlSet().String()), alloc)...)
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(val.GetMysqlSet().String()))
 		case types.KindMysqlEnum:
-			buffer = append(buffer, dumpLengthEncodedString(hack.Slice(val.GetMysqlEnum().String()), alloc)...)
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(val.GetMysqlEnum().String()))
 		case types.KindBinaryLiteral, types.KindMysqlBit:
-			buffer = append(buffer, dumpLengthEncodedString(hack.Slice(val.GetBinaryLiteral().ToString()), alloc)...)
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(val.GetBinaryLiteral().ToString()))
 		}
 	}
 	return buffer, nil
