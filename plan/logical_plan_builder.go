@@ -653,7 +653,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	for _, item := range byItems {
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
-			b.err = err
+			b.err = errors.Trace(err)
 			return nil
 		}
 		p = np
@@ -1104,7 +1104,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		b.needColHandle++
 	}
 
-	hasAgg := b.detectSelectAgg(sel)
 	var (
 		p                             LogicalPlan
 		aggFuncs                      []*ast.AggregateFuncExpr
@@ -1143,58 +1142,17 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.LockTp != ast.SelectLockNone {
 		p = b.buildSelectLock(p, sel.LockTp)
 	}
+
+	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if b.err != nil {
 			return nil
 		}
-		buildAgg := true
-		// For `select max(c) from t;`, we could optimize it to `select c from t order by c limit 1;`.
-		if len(sel.Fields.Fields) == 1 && sel.GroupBy == nil && sel.OrderBy == nil && sel.Limit == nil {
-			// Make sure there is only one aggregation in the projection.
-			f0 := sel.Fields.Fields[0]
-			agg, ok := f0.Expr.(*ast.AggregateFuncExpr)
-			if !(ok && agg.F == ast.AggFuncMax && agg.F == ast.AggFuncMin) {
-			} else if c, ok1 := agg.Args[0].(*ast.ColumnNameExpr); ok1 {
-				// Check the inner is a column name expr. Not `select max(c+d) from t;`.
-				// Make sure there is only one table in the FromClause.
-				singleTable := false
-				if sel.From != nil && sel.From.TableRefs.Right == nil {
-					if ts, ok2 := sel.From.TableRefs.Left.(*ast.TableSource); ok2 {
-						if _, ok3 := ts.Source.(*ast.TableName); ok3 {
-							singleTable = true
-						}
-					}
-				}
-				if singleTable {
-					// Replace the select field.
-					f0.Expr = c
-					f0.AsName = model.NewCIStr("")
-
-					// Add order by and limit;
-					desc := false
-					if agg.F == ast.AggFuncMax {
-						desc = true
-					}
-					bi := &ast.ByItem{
-						Expr: c,
-						Desc: desc,
-					}
-					ob := &ast.OrderByClause{
-						Items: []*ast.ByItem{bi},
-					}
-					sel.OrderBy = ob
-
-					// Add Limit.
-					lmt := &ast.Limit{
-						Count: ast.NewValueExpr(1),
-					}
-					sel.Limit = lmt
-					buildAgg = false
-				}
-			}
-		}
-		if buildAgg {
+		// For `select max(c) from t;`, we could convert it to `select c from t order by c desc limit 1;`.
+		// So the aggregation is elimiated. So as `select min(c) from t;`.
+		elimiateAgg := elimiateAggregation(sel)
+		if !elimiateAgg {
 			var aggIndexMap map[int]int
 			p, aggIndexMap = b.buildAggregation(p, aggFuncs, gbyCols)
 			for k, v := range totalMap {
@@ -1744,4 +1702,63 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 		table:     tbl,
 		column:    col,
 	})
+}
+
+// For `select max(c) from t;`, we could optimize it to `select c from t order by c limit 1;`.
+// So in this case we do not need to build the aggregation operator.
+func elimiateAggregation(sel *ast.SelectStmt) bool {
+
+	// Make sure there is only one aggregation in the projection and there is no groupby/orderby/limit clause.
+	if !(len(sel.Fields.Fields) == 1 && sel.GroupBy == nil && sel.OrderBy == nil && sel.Limit == nil) {
+		return false
+	}
+	f0 := sel.Fields.Fields[0]
+	agg, ok := f0.Expr.(*ast.AggregateFuncExpr)
+	// We only consider max and min.
+	if !(ok && agg.F == ast.AggFuncMax || agg.F == ast.AggFuncMin) {
+		return false
+	}
+	// Check if the inner expr is a column name expr. We do not consider SQLs like `select max(c+d) from t;`.
+	c, ok1 := agg.Args[0].(*ast.ColumnNameExpr)
+	if !ok1 {
+		return false
+	}
+	// Make sure there is only one table in the FromClause.
+	singleTable := false
+	if sel.From != nil && sel.From.TableRefs.Right == nil {
+		if ts, ok2 := sel.From.TableRefs.Left.(*ast.TableSource); ok2 {
+			if _, ok3 := ts.Source.(*ast.TableName); ok3 {
+				singleTable = true
+			}
+		}
+	}
+	if !singleTable {
+		return false
+	}
+
+	// We pass all the checks now. Let's eliminate the aggregation.
+
+	// Replace the select field.
+	name := f0.Text()
+	f0.Expr = c
+	f0.AsName = model.NewCIStr(name)
+	// Add order by.
+	desc := false
+	if agg.F == ast.AggFuncMax {
+		desc = true
+	}
+	bi := &ast.ByItem{
+		Expr: c,
+		Desc: desc,
+	}
+	ob := &ast.OrderByClause{
+		Items: []*ast.ByItem{bi},
+	}
+	sel.OrderBy = ob
+	// Add Limit.
+	lmt := &ast.Limit{
+		Count: ast.NewValueExpr(1),
+	}
+	sel.Limit = lmt
+	return true
 }
