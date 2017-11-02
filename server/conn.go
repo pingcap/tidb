@@ -762,7 +762,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	data := make([]byte, 4, 1024)
 	for _, v := range columns {
 		data = data[0:4]
-		data = append(data, v.Dump(cc.alloc)...)
+		data = v.Dump(data)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
@@ -800,7 +800,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 
 	for _, v := range columns {
 		data = data[0:4]
-		data = append(data, v.Dump(cc.alloc)...)
+		data = v.Dump(data)
 		if err = cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}

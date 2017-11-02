@@ -13,10 +13,6 @@
 
 package server
 
-import (
-	"github.com/pingcap/tidb/util/arena"
-)
-
 // ColumnInfo contains information of a column
 type ColumnInfo struct {
 	Schema             string
@@ -34,31 +30,27 @@ type ColumnInfo struct {
 }
 
 // Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(alloc arena.Allocator) []byte {
-	l := len(column.Schema) + len(column.Table) + len(column.OrgTable) + len(column.Name) + len(column.OrgName) + len(column.DefaultValue) + 48
+func (column *ColumnInfo) Dump(buffer []byte) []byte {
+	buffer = dumpLengthEncodedString(buffer, []byte("def"))
+	buffer = dumpLengthEncodedString(buffer, []byte(column.Schema))
+	buffer = dumpLengthEncodedString(buffer, []byte(column.Table))
+	buffer = dumpLengthEncodedString(buffer, []byte(column.OrgTable))
+	buffer = dumpLengthEncodedString(buffer, []byte(column.Name))
+	buffer = dumpLengthEncodedString(buffer, []byte(column.OrgName))
 
-	data := make([]byte, 0, l)
+	buffer = append(buffer, 0x0c)
 
-	data = dumpLengthEncodedString(data, []byte("def"))
-	data = dumpLengthEncodedString(data, []byte(column.Schema))
-	data = dumpLengthEncodedString(data, []byte(column.Table))
-	data = dumpLengthEncodedString(data, []byte(column.OrgTable))
-	data = dumpLengthEncodedString(data, []byte(column.Name))
-	data = dumpLengthEncodedString(data, []byte(column.OrgName))
-
-	data = append(data, 0x0c)
-
-	data = dumpUint16(data, column.Charset)
-	data = dumpUint32(data, column.ColumnLength)
-	data = append(data, column.Type)
-	data = dumpUint16(data, column.Flag)
-	data = append(data, column.Decimal)
-	data = append(data, 0, 0)
+	buffer = dumpUint16(buffer, column.Charset)
+	buffer = dumpUint32(buffer, column.ColumnLength)
+	buffer = append(buffer, column.Type)
+	buffer = dumpUint16(buffer, column.Flag)
+	buffer = append(buffer, column.Decimal)
+	buffer = append(buffer, 0, 0)
 
 	if column.DefaultValue != nil {
-		data = dumpUint64(data, uint64(len(column.DefaultValue)))
-		data = append(data, column.DefaultValue...)
+		buffer = dumpUint64(buffer, uint64(len(column.DefaultValue)))
+		buffer = append(buffer, column.DefaultValue...)
 	}
 
-	return data
+	return buffer
 }
