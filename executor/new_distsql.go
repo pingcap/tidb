@@ -37,13 +37,17 @@ var (
 	_ Executor = &TableReaderExecutor{}
 	_ Executor = &IndexReaderExecutor{}
 	_ Executor = &IndexLookUpExecutor{}
+
+	_ DataReader = &TableReaderExecutor{}
+	_ DataReader = &IndexReaderExecutor{}
+	_ DataReader = &IndexLookUpExecutor{}
 )
 
 // DataReader can send requests which ranges are constructed by datums.
 type DataReader interface {
 	Executor
 
-	doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error
+	doRequestForDatums(goCtx goctx.Context, datums [][]types.Datum) error
 }
 
 // handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
@@ -143,7 +147,7 @@ func (e *TableReaderExecutor) Open() error {
 }
 
 // doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
-func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
+func (e *TableReaderExecutor) doRequestForHandles(goCtx goctx.Context, handles []int64) error {
 	sort.Sort(int64Slice(handles))
 	var builder requestBuilder
 	kvReq, err := builder.SetTableHandles(e.tableID, handles).
@@ -166,12 +170,12 @@ func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.C
 
 // doRequestForDatums constructs kv ranges by Datums. It is used by index look up join.
 // Every lens for `datums` will always be one and must be type of int64.
-func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error {
+func (e *TableReaderExecutor) doRequestForDatums(goCtx goctx.Context, datums [][]types.Datum) error {
 	handles := make([]int64, 0, len(datums))
 	for _, datum := range datums {
 		handles = append(handles, datum[0].GetInt64())
 	}
-	return errors.Trace(e.doRequestForHandles(handles, goCtx))
+	return errors.Trace(e.doRequestForHandles(goCtx, handles))
 }
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
@@ -268,7 +272,7 @@ func (e *IndexReaderExecutor) Open() error {
 }
 
 // doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
-func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx goctx.Context) error {
+func (e *IndexReaderExecutor) doRequestForDatums(goCtx goctx.Context, values [][]types.Datum) error {
 	var builder requestBuilder
 	kvReq, err := builder.SetIndexValues(e.tableID, e.index.ID, values).
 		SetDAGRequest(e.dagPB).
@@ -471,7 +475,7 @@ func (e *IndexLookUpExecutor) indexRangesToKVRanges() ([]kv.KeyRange, error) {
 }
 
 // doRequestForDatums constructs kv ranges by datums. It is used by index look up join.
-func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx goctx.Context) error {
+func (e *IndexLookUpExecutor) doRequestForDatums(goCtx goctx.Context, values [][]types.Datum) error {
 	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
 	if err != nil {
 		return errors.Trace(err)
@@ -499,7 +503,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		schema:  schema,
 		ctx:     e.ctx,
 	}
-	err = tableReader.doRequestForHandles(task.handles, goCtx)
+	err = tableReader.doRequestForHandles(goCtx, task.handles)
 	if err != nil {
 		return
 	}

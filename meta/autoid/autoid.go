@@ -41,6 +41,10 @@ type Allocator interface {
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
 	Rebase(tableID, newBase int64, allocIDs bool) error
+	// Base is only used for test.
+	Base() int64
+	// End is only used for test.
+	End() int64
 }
 
 type allocator struct {
@@ -54,6 +58,21 @@ type allocator struct {
 // GetStep is only used by tests
 func GetStep() int64 {
 	return step
+}
+
+// SetStep is only used by tests
+func SetStep(s int64) {
+	step = s
+}
+
+// Base implements autoid.Allocator Base interface.
+func (alloc *allocator) Base() int64 {
+	return alloc.base
+}
+
+// End implements autoid.Allocator End interface.
+func (alloc *allocator) End() int64 {
+	return alloc.end
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -152,6 +171,16 @@ type memoryAllocator struct {
 	base int64
 	end  int64
 	dbID int64
+}
+
+// Base implements autoid.Allocator Base interface.
+func (alloc *memoryAllocator) Base() int64 {
+	return alloc.base
+}
+
+// End implements autoid.Allocator End interface.
+func (alloc *memoryAllocator) End() int64 {
+	return alloc.end
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
