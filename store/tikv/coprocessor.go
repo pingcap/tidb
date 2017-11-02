@@ -59,7 +59,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_ColumnRef:
+		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef:
 		return true
 	// logic operators.
 	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not:
