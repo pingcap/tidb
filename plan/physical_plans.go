@@ -50,7 +50,6 @@ var (
 	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
-	_ PhysicalPlan = &Cache{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -383,12 +382,6 @@ type PhysicalUnionScan struct {
 	Conditions    []expression.Expression
 }
 
-// Cache plan is a physical plan which stores the result of its child node.
-type Cache struct {
-	*basePlan
-	basePhysicalPlan
-}
-
 func (p *PhysicalHashJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
@@ -652,14 +645,6 @@ func (p *Show) Copy() PhysicalPlan {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalUnionScan) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Cache) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
