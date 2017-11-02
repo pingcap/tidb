@@ -42,6 +42,7 @@ import (
 	_ "net/http/pprof"
 
 	log "github.com/Sirupsen/logrus"
+	proxyprotocol "github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
@@ -74,20 +75,20 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 
 // Server is the MySQL protocol server
 type Server struct {
-	cfg               *config.Config
-	tlsConfig         *tls.Config
-	driver            IDriver
-	listener          net.Listener
-	rwlock            *sync.RWMutex
-	concurrentLimiter *TokenLimiter
-	clients           map[uint32]*clientConn
-	capability        uint32
+	cfg                 *config.Config
+	tlsConfig           *tls.Config
+	driver              IDriver
+	listener            net.Listener
+	rwlock              *sync.RWMutex
+	concurrentLimiter   *TokenLimiter
+	clients             map[uint32]*clientConn
+	capability          uint32
+	enableProxyProtocol bool
 
 	// When a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
-	stopListenerCh           chan struct{}
-	proxyProtocolConnBuilder *proxyProtocolConnBuilder
+	stopListenerCh chan struct{}
 }
 
 // ConnectionCount gets current connection count.
@@ -125,19 +126,8 @@ func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 		}
 	}
 
-	if s.proxyProtocolConnBuilder != nil {
-		// Proxy is configured. wrap net.Conn to proxyProtocolConn
-		wconn, err := s.proxyProtocolConnBuilder.wrapConn(conn)
-		if err != nil {
-			return cc, errors.Trace(fmt.Errorf("%s (%s)", err.Error(), conn.RemoteAddr().String()))
-		}
-		cc.setConn(wconn)
-		log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, wconn.RemoteAddr(), conn.RemoteAddr().String())
-	} else {
-		cc.setConn(conn)
-		log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
-	}
-
+	cc.setConn(conn)
+	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	cc.salt = util.RandomBuf(20)
 	return cc, nil
 }
@@ -151,21 +141,15 @@ const tokenLimit = 1000
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	var err error
-	var ppcb *proxyProtocolConnBuilder
-	if cfg.ProxyProtocol.Networks != "" {
-		ppcb, err = newProxyProtocolConnBuilder(cfg.ProxyProtocol.Networks, cfg.ProxyProtocol.HeaderTimeout)
-		if err != nil {
-			log.Error("ProxyProtocolNetworks parameter is not valid")
-		}
-	}
+
 	s := &Server{
-		cfg:                      cfg,
-		driver:                   driver,
-		concurrentLimiter:        NewTokenLimiter(tokenLimit),
-		rwlock:                   &sync.RWMutex{},
-		clients:                  make(map[uint32]*clientConn),
-		stopListenerCh:           make(chan struct{}, 1),
-		proxyProtocolConnBuilder: ppcb,
+		cfg:                 cfg,
+		driver:              driver,
+		concurrentLimiter:   NewTokenLimiter(tokenLimit),
+		rwlock:              &sync.RWMutex{},
+		clients:             make(map[uint32]*clientConn),
+		stopListenerCh:      make(chan struct{}, 1),
+		enableProxyProtocol: false,
 	}
 	s.loadTLSCertificates()
 
@@ -184,6 +168,17 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 		}
 	}
+
+	if cfg.ProxyProtocol.Networks != "" {
+		pplistener, err := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks, cfg.ProxyProtocol.HeaderTimeout)
+		if err != nil {
+			log.Error("ProxyProtocol Networks parameter invalid")
+		} else {
+			s.enableProxyProtocol = true
+			s.listener = pplistener
+		}
+	}
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -191,7 +186,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	if ppcb != nil {
+	if s.enableProxyProtocol {
 		log.Infof("Server run MySQL Protocol (through PROXY Protocol) Listen at [%s]", s.cfg.Host)
 	} else {
 		log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Host)
@@ -262,6 +257,14 @@ func (s *Server) Run() error {
 					return nil
 				}
 			}
+
+			if s.enableProxyProtocol {
+				if proxyprotocol.IsProxyProtocolError(err) {
+					log.Errorf("PROXY protocol error: %s", err.Error())
+					continue
+				}
+			}
+
 			log.Errorf("accept error %s", err.Error())
 			return errors.Trace(err)
 		}
