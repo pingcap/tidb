@@ -30,6 +30,21 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const (
+	netWorkFactor      = 1.5
+	netWorkStartFactor = 20.0
+	scanFactor         = 2.0
+	descScanFactor     = 5 * scanFactor
+	memoryFactor       = 5.0
+	hashAggMemFactor   = 2.0
+	selectionFactor    = 0.8
+	distinctFactor     = 0.8
+	cpuFactor          = 0.9
+)
+
+// JoinConcurrency means the number of goroutines that participate in joining.
+var JoinConcurrency = 5
+
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
 var wholeTaskTypes = [...]taskType{copSingleReadTaskType, copDoubleReadTaskType, rootTaskType}
@@ -666,6 +681,28 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	}
 	p.storeTask(prop, t)
 	return t, nil
+}
+
+func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
+	for _, colInfo := range columns {
+		if pkIsHandle && mysql.HasPriKeyFlag(colInfo.Flag) {
+			continue
+		}
+		if colInfo.ID == model.ExtraHandleID {
+			continue
+		}
+		isIndexColumn := false
+		for _, indexCol := range indexColumns {
+			if colInfo.Name.L == indexCol.Name.L && indexCol.Length == types.UnspecifiedLength {
+				isIndexColumn = true
+				break
+			}
+		}
+		if !isIndexColumn {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
