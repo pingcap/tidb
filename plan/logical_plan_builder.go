@@ -1129,6 +1129,13 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 			return nil
 		}
 	}
+	hasAgg := b.detectSelectAgg(sel)
+	eliminateAgg := false
+	if hasAgg {
+		// For `select max(c) from t;`, we could convert it to `select c from t order by c desc limit 1;`.
+		// So the aggregation is eliminated. So as `select min(c) from t;`.
+		eliminateAgg = eliminateAggregation(sel)
+	}
 	// We must resolve having and order by clause before build projection,
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
@@ -1143,24 +1150,18 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		p = b.buildSelectLock(p, sel.LockTp)
 	}
 
-	hasAgg := b.detectSelectAgg(sel)
-	if hasAgg {
+	if hasAgg && !eliminateAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if b.err != nil {
 			return nil
 		}
-		// For `select max(c) from t;`, we could convert it to `select c from t order by c desc limit 1;`.
-		// So the aggregation is elimiated. So as `select min(c) from t;`.
-		elimiateAgg := elimiateAggregation(sel)
-		if !elimiateAgg {
-			var aggIndexMap map[int]int
-			p, aggIndexMap = b.buildAggregation(p, aggFuncs, gbyCols)
-			for k, v := range totalMap {
-				totalMap[k] = aggIndexMap[v]
-			}
-			if b.err != nil {
-				return nil
-			}
+		var aggIndexMap map[int]int
+		p, aggIndexMap = b.buildAggregation(p, aggFuncs, gbyCols)
+		for k, v := range totalMap {
+			totalMap[k] = aggIndexMap[v]
+		}
+		if b.err != nil {
+			return nil
 		}
 	}
 	var oldLen int
@@ -1706,7 +1707,7 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 
 // For `select max(c) from t;`, we could optimize it to `select c from t order by c limit 1;`.
 // So in this case we do not need to build the aggregation operator.
-func elimiateAggregation(sel *ast.SelectStmt) bool {
+func eliminateAggregation(sel *ast.SelectStmt) bool {
 
 	// Make sure there is only one aggregation in the projection and there is no groupby/orderby/limit clause.
 	if !(len(sel.Fields.Fields) == 1 && sel.GroupBy == nil && sel.OrderBy == nil && sel.Limit == nil) {
@@ -1747,8 +1748,16 @@ func elimiateAggregation(sel *ast.SelectStmt) bool {
 	if agg.F == ast.AggFuncMax {
 		desc = true
 	}
+	// Copy the ColumnNameExpr for the resolveHavingAndOrderBy function will modify it.
+	newC := &ast.ColumnNameExpr{
+		Name: &ast.ColumnName{
+			Schema: c.Name.Schema,
+			Table:  c.Name.Table,
+			Name:   c.Name.Name,
+		},
+	}
 	bi := &ast.ByItem{
-		Expr: c,
+		Expr: newC,
 		Desc: desc,
 	}
 	ob := &ast.OrderByClause{
