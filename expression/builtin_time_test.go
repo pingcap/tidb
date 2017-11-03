@@ -370,20 +370,21 @@ func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	cases := []struct {
-		args     interface{}
+	cases := []interface{}{"2017-12-01", "0000-00-00", "20180-00-00", "2017-00-00", "0000-00-00 12:12:12"}
+	expects := []struct {
 		expected int64
 		isNil    bool
 		getErr   bool
 	}{
-		{"2017-12-01", 1, false, false},
-		{"0000-00-00", 0, false, false},
-		{"2018-00-00", 0, false, false},
-		{"2017-00-00 12:12:12", 0, false, false},
-		{"0000-00-00 12:12:12", 0, false, false},
+		{1, false, false},
+		{0, false, false},
+		{0, false, false},
+		{0, false, false},
+		{0, false, false},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.DayOfMonth, s.primitiveValsToConstants([]interface{}{t.args})...)
+	for i := 1; i < len(cases); i++ {
+		t := expects[i]
+		f, err := newFunctionForTest(s.ctx, ast.DayOfMonth, s.primitiveValsToConstants([]interface{}{cases[i]})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
 		if t.getErr {
@@ -400,6 +401,100 @@ func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 
 	_, err := funcs[ast.DayOfMonth].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
+
+	m := s.ctx.GetSessionVars().SQLMode
+
+	// test "NO_ZERO_DATE" mode
+	s.ctx.GetSessionVars().SQLMode, _ = mysql.GetSQLMode("NO_ZERO_DATE")
+	expects = []struct {
+		expected int64
+		isNil    bool
+		getErr   bool
+	}{
+		{1, false, false},
+		{0, true, false},
+		{0, false, false},
+		{0, false, false},
+		{0, false, false},
+	}
+	for i := 1; i < len(cases); i++ {
+		t := expects[i]
+		f, err := newFunctionForTest(s.ctx, ast.DayOfMonth, s.primitiveValsToConstants([]interface{}{cases[i]})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
+	}
+
+	// test "STRICT_TRANS_TABLES" mode
+	s.ctx.GetSessionVars().SQLMode, _ = mysql.GetSQLMode("STRICT_TRANS_TABLES")
+	expects = []struct {
+		expected int64
+		isNil    bool
+		getErr   bool
+	}{
+		{1, false, false},
+		{0, false, false},
+		{0, false, false},
+		{0, false, false},
+		{0, false, false},
+	}
+	for i := 1; i < len(cases); i++ {
+		t := expects[i]
+		f, err := newFunctionForTest(s.ctx, ast.DayOfMonth, s.primitiveValsToConstants([]interface{}{cases[i]})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
+	}
+
+	// test "STRICT_TRANS_TABLES,NO_ZERO_DATE" mode
+	s.ctx.GetSessionVars().SQLMode, _ = mysql.GetSQLMode("STRICT_TRANS_TABLES,NO_ZERO_DATE")
+	expects = []struct {
+		expected int64
+		isNil    bool
+		getErr   bool
+	}{
+		{1, false, false},
+		{0, true, false},
+		{0, false, false},
+		{0, false, false},
+		{0, false, false},
+	}
+	for i := 1; i < len(cases); i++ {
+		t := expects[i]
+		f, err := newFunctionForTest(s.ctx, ast.DayOfMonth, s.primitiveValsToConstants([]interface{}{cases[i]})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
+	}
+
+	s.ctx.GetSessionVars().SQLMode = m
 }
 
 func (s *testEvaluatorSuite) TestDayOfYear(c *C) {

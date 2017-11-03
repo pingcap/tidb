@@ -477,6 +477,7 @@ func (t *Time) FromPackedUint(packed uint64) error {
 func (t *Time) check(sc *variable.StatementContext) error {
 	allowZeroInDate, isModify := false, sc != nil && (sc.InUpdateOrDeleteStmt || sc.InInsertStmt)
 	// We should avoid passing sc as nil here as far as possible.
+
 	if sc != nil {
 		allowZeroInDate = sc.IgnoreZeroInDate
 	}

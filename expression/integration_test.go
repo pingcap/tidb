@@ -1163,7 +1163,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select timediff('-34 12:00:00', '2014-1-2 12:00:00');")
 	result.Check(testkit.Rows("<nil>"))
-	result = tk.MustQuery("select timediff('2014-1-2 12:00:00', '12:00:00');")
+
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select timediff('12:00:00', '2014-1-2 12:00:00');")
 	result.Check(testkit.Rows("<nil>"))
@@ -1414,6 +1414,25 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = dayOfYear("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE'")
+	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE'")
+	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE'")
+	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec("insert ignore into t value(dayOfMonth('0000-00-00'))")
 	c.Assert(err, IsNil)
 
 	tk.MustExec("set sql_mode = ''")
