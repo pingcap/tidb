@@ -119,12 +119,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	var physical PhysicalPlan
-	if UseDAGPlanBuilder(ctx) {
-		physical, err = dagPhysicalOptimize(logic)
-	} else {
-		physical, err = physicalOptimize(flag, logic, allocator)
-	}
+	physical, err := dagPhysicalOptimize(logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -159,19 +154,6 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	p := t.plan()
 	rebuildSchema(p)
 	p.ResolveIndices()
-	return p, nil
-}
-
-func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
-	logic.ResolveIndices()
-	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	p := info.p
-	if flag&(flagDecorrelate) > 0 {
-		addCachePlan(p, allocator)
-	}
 	return p, nil
 }
 

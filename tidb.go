@@ -32,18 +32,10 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/engine"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"google.golang.org/grpc"
-)
-
-// Engine prefix name
-const (
-	EngineGoLevelDBMemory = "memory://"
 )
 
 type domainMap struct {
@@ -62,10 +54,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(0)
 	statisticLease := time.Duration(0)
-	if !localstore.IsLocalStore(store) {
-		ddlLease = schemaLease
-		statisticLease = statsLease
-	}
+	ddlLease = schemaLease
+	statisticLease = statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
@@ -219,12 +209,6 @@ func RegisterStore(name string, driver kv.Driver) error {
 	return nil
 }
 
-// RegisterLocalStore registers a local kv storage with unique name and its associated engine Driver.
-func RegisterLocalStore(name string, driver engine.Driver) error {
-	d := localstore.Driver{Driver: driver}
-	return RegisterStore(name, d)
-}
-
 // NewStore creates a kv Storage with path.
 //
 // The path must be a URL format 'engine://path?params' like the one for
@@ -309,9 +293,4 @@ func IsQuery(sql string) bool {
 }
 
 func init() {
-	// Register default memory and goleveldb storage
-	err := RegisterLocalStore("memory", goleveldb.MemoryDriver{})
-	terror.Log(errors.Trace(err))
-	err = RegisterLocalStore("goleveldb", goleveldb.Driver{})
-	terror.Log(errors.Trace(err))
 }

@@ -407,8 +407,13 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok {
 				ret, err := expression.EvalBool(expression.CNFExprs{con}, nil, b.ctx)
-				if ret || err != nil {
+				if err != nil || ret {
 					continue
+				} else {
+					// If there is condition which is always false, return dual plan directly.
+					dual := TableDual{}.init(b.allocator, b.ctx)
+					dual.SetSchema(p.Schema().Clone())
+					return dual
 				}
 			}
 			expressions = append(expressions, item)
@@ -679,9 +684,7 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
-	if UseDAGPlanBuilder(b.ctx) {
-		b.optFlag = b.optFlag | flagPushDownTopN
-	}
+	b.optFlag = b.optFlag | flagPushDownTopN
 	var (
 		offset, count uint64
 		err           error
@@ -1572,11 +1575,11 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
 		}
-		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
+		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}
