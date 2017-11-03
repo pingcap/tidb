@@ -294,11 +294,6 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 		buffer.WriteString(fmt.Sprintf(", other cond:%s",
 			expression.ExplainExpressionList(p.OtherConditions)))
 	}
-	if p.Desc {
-		buffer.WriteString(", desc")
-	} else {
-		buffer.WriteString(", asc")
-	}
 	if len(p.leftKeys) > 0 {
 		buffer.WriteString(fmt.Sprintf(", left key:%s",
 			expression.ExplainColumnList(p.leftKeys)))

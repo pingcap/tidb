@@ -28,8 +28,10 @@ import (
 const (
 	GcSavedSafePoint = "/tidb/store/gcworker/saved_safe_point"
 
-	GcSafePointCacheInterval = time.Second * 100
-	gcCPUTimeInaccuracyBound = time.Second
+	GcSafePointCacheInterval       = time.Second * 100
+	gcCPUTimeInaccuracyBound       = time.Second
+	gcSafePointUpdateInterval      = time.Second * 10
+	gcSafePointQuickRepeatInterval = time.Second
 )
 
 // SafePointKV is used for a seamingless integration for mockTest and runtime.
