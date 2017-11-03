@@ -16,6 +16,7 @@ package executor
 import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,6 +29,13 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+	if ctx.GoCtx() != nil {
+		if span := opentracing.SpanFromContext(ctx.GoCtx()); span != nil {
+			span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
+			defer span1.Finish()
+		}
+	}
+
 	infoSchema := GetInfoSchema(ctx)
 	if err := plan.ResolveName(stmtNode, infoSchema, ctx); err != nil {
 		return nil, errors.Trace(err)

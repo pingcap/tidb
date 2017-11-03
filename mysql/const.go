@@ -23,16 +23,13 @@ func newInvalidModeErr(s string) error {
 }
 
 // Version information.
-const (
-	MinProtocolVersion byte = 10
-	MaxPayloadLen      int  = 1<<24 - 1
-	// The version number should be three digits.
-	// See https://dev.mysql.com/doc/refman/5.7/en/which-version.html
-	TiDBReleaseVersion string = "1.0.0"
-)
+var (
+	// TiDBReleaseVersion is initialized by (git describe --tags) in Makefile.
+	TiDBReleaseVersion = "None"
 
-// ServerVersion is the version information of this tidb-server in MySQL's format.
-var ServerVersion = fmt.Sprintf("5.7.1-TiDB-%s", TiDBReleaseVersion)
+	// ServerVersion is the version information of this tidb-server in MySQL's format.
+	ServerVersion = fmt.Sprintf("5.7.1-TiDB-%s", TiDBReleaseVersion)
+)
 
 // Header information.
 const (
@@ -61,13 +58,15 @@ const (
 // Identifier length limitations.
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 const (
+	// MaxPayloadLen is the max packet payload length.
+	MaxPayloadLen int = 1<<24 - 1
 	// MaxTableNameLength is max length of table name identifier.
 	MaxTableNameLength int = 64
 	// MaxDatabaseNameLength is max length of database name identifier.
 	MaxDatabaseNameLength int = 64
 	// MaxColumnNameLength is max length of column name identifier.
 	MaxColumnNameLength int = 64
-	// MaxColumnNameLength is max length of key parts.
+	// MaxKeyParts is max length of key parts.
 	MaxKeyParts int = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
 	MaxIndexIdentifierLen int = 64

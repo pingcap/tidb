@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"fmt"
 	"math"
 
 	log "github.com/Sirupsen/logrus"
@@ -24,6 +25,10 @@ import (
 type statsProfile struct {
 	count       float64
 	cardinality []float64
+}
+
+func (s *statsProfile) String() string {
+	return fmt.Sprintf("count %v, cardinality %v", s.count, s.cardinality)
 }
 
 // collapse receives a selectivity and multiple it with count and cardinality.
@@ -43,10 +48,11 @@ func (p *basePhysicalPlan) statsProfile() *statsProfile {
 	expectedCnt := p.basePlan.expectedCnt
 	if expectedCnt > 0 && expectedCnt < profile.count {
 		factor := expectedCnt / profile.count
-		profile.count = expectedCnt
-		for i := range profile.cardinality {
-			profile.cardinality[i] = profile.cardinality[i] * factor
+		result := &statsProfile{count: expectedCnt}
+		for _, card := range profile.cardinality {
+			result.cardinality = append(result.cardinality, card*factor)
 		}
+		return result
 	}
 	return profile
 }
@@ -201,6 +207,7 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
+// prepareStatsProfile prepares stats profile.
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
 // If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose cardinality should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
@@ -210,7 +217,7 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 	leftProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	rightProfile := p.children[1].(LogicalPlan).prepareStatsProfile()
-	if p.JoinType == SemiJoin {
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.profile = &statsProfile{
 			count:       leftProfile.count * selectionFactor,
 			cardinality: make([]float64, len(leftProfile.cardinality)),
@@ -220,7 +227,7 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 		}
 		return p.profile
 	}
-	if p.JoinType == LeftOuterSemiJoin {
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.profile = &statsProfile{
 			count:       leftProfile.count,
 			cardinality: make([]float64, p.schema.Len()),
@@ -270,7 +277,7 @@ func (p *LogicalApply) prepareStatsProfile() *statsProfile {
 		cardinality: make([]float64, p.schema.Len()),
 	}
 	copy(p.profile.cardinality, leftProfile.cardinality)
-	if p.JoinType == LeftOuterSemiJoin {
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.profile.cardinality[len(p.profile.cardinality)-1] = 2.0
 	} else {
 		for i := p.children[0].Schema().Len(); i < p.schema.Len(); i++ {

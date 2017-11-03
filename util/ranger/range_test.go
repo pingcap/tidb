@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -46,8 +48,17 @@ func (s *testRangerSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 }
 
-func newStoreWithBootstrap() (kv.Storage, error) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+func newStoreWithBootstrap(c *C) (kv.Storage, error) {
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.NewMvccStore()
+	store, err := tikv.NewMockTikvStore(
+		tikv.WithCluster(cluster),
+		tikv.WithMVCCStore(mvccStore),
+	)
+	c.Assert(err, IsNil)
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -57,7 +68,7 @@ func newStoreWithBootstrap() (kv.Storage, error) {
 
 func (s *testRangerSuite) TestTableRange(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap()
+	store, err := newStoreWithBootstrap(c)
 	defer store.Close()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
@@ -156,7 +167,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		//},
 		{
 			exprStr:     `a IN (8,8,81,45)`,
-			accessConds: "[or(or(eq(test.t.a, 8), eq(test.t.a, 8)), or(eq(test.t.a, 81), eq(test.t.a, 45)))]",
+			accessConds: "[in(test.t.a, 8, 8, 81, 45)]",
 			filterConds: "[]",
 			resultStr:   `[[8,8] [45,45] [81,81]]`,
 		},
@@ -289,7 +300,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 
 func (s *testRangerSuite) TestIndexRange(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap()
+	store, err := newStoreWithBootstrap(c)
 	defer store.Close()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
@@ -391,7 +402,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 
 func (s *testRangerSuite) TestColumnRange(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap()
+	store, err := newStoreWithBootstrap(c)
 	defer store.Close()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)

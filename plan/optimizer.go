@@ -80,6 +80,10 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	if logic, ok := p.(LogicalPlan); ok {
 		return doOptimize(builder.optFlag, logic, ctx, allocator)
 	}
+	if execPlan, ok := p.(*Execute); ok {
+		err := execPlan.optimizePreparedPlan(ctx, is)
+		return p, errors.Trace(err)
+	}
 	return p, nil
 }
 
@@ -115,12 +119,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	var physical PhysicalPlan
-	if UseDAGPlanBuilder(ctx) {
-		physical, err = dagPhysicalOptimize(logic)
-	} else {
-		physical, err = physicalOptimize(flag, logic, allocator)
-	}
+	physical, err := dagPhysicalOptimize(logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -158,19 +157,6 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	return p, nil
 }
 
-func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
-	logic.ResolveIndices()
-	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	p := info.p
-	if flag&(flagDecorrelate) > 0 {
-		addCachePlan(p, allocator)
-	}
-	return p, nil
-}
-
 func existsCartesianProduct(p LogicalPlan) bool {
 	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
@@ -203,6 +189,9 @@ const (
 	CodeUnsupported         terror.ErrCode = 4
 	CodeInvalidGroupFuncUse terror.ErrCode = 5
 	CodeIllegalReference    terror.ErrCode = 6
+	CodeStmtNotFound        terror.ErrCode = 7
+	CodeWrongParamCount     terror.ErrCode = 8
+	CodeSchemaChanged       terror.ErrCode = 9
 
 	// MySQL error code.
 	CodeNoDB                 terror.ErrCode = mysql.ErrNoDB
@@ -218,6 +207,9 @@ var (
 	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
 	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
 	ErrUnknownExplainFormat        = terror.ClassOptimizer.New(CodeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
+	ErrStmtNotFound                = terror.ClassOptimizer.New(CodeStmtNotFound, "Prepared statement not found")
+	ErrWrongParamCount             = terror.ClassOptimizer.New(CodeWrongParamCount, "Wrong parameter count")
+	ErrSchemaChanged               = terror.ClassOptimizer.New(CodeSchemaChanged, "Schema has changed")
 )
 
 func init() {

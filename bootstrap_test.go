@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testBootstrapSuite{})
@@ -43,7 +44,6 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
 	defer dom.Close()
-	defer store.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
@@ -89,7 +89,6 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 
 	// Try to do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
 	// For https://github.com/pingcap/tidb/issues/1096
-	store = newStore(c, s.dbName)
 	se, err = CreateSession(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)
@@ -195,7 +194,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(1))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,

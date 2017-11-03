@@ -403,7 +403,21 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		if expr == nil {
 			continue
 		}
-		expressions = append(expressions, expression.SplitCNFItems(expr)...)
+		cnfItems := expression.SplitCNFItems(expr)
+		for _, item := range cnfItems {
+			if con, ok := item.(*expression.Constant); ok {
+				ret, err := expression.EvalBool(expression.CNFExprs{con}, nil, b.ctx)
+				if err != nil || ret {
+					continue
+				} else {
+					// If there is condition which is always false, return dual plan directly.
+					dual := TableDual{}.init(b.allocator, b.ctx)
+					dual.SetSchema(p.Schema().Clone())
+					return dual
+				}
+			}
+			expressions = append(expressions, item)
+		}
 	}
 	if len(expressions) == 0 {
 		return p
@@ -670,9 +684,7 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
-	if UseDAGPlanBuilder(b.ctx) {
-		b.optFlag = b.optFlag | flagPushDownTopN
-	}
+	b.optFlag = b.optFlag | flagPushDownTopN
 	var (
 		offset, count uint64
 		err           error
@@ -1425,12 +1437,19 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			IsAggOrSubq: true,
 		})
 		joinPlan.SetSchema(newSchema)
-		joinPlan.JoinType = LeftOuterSemiJoin
+		if not {
+			joinPlan.JoinType = AntiLeftOuterSemiJoin
+		} else {
+			joinPlan.JoinType = LeftOuterSemiJoin
+		}
 	} else {
 		joinPlan.SetSchema(outerPlan.Schema().Clone())
-		joinPlan.JoinType = SemiJoin
+		if not {
+			joinPlan.JoinType = AntiSemiJoin
+		} else {
+			joinPlan.JoinType = SemiJoin
+		}
 	}
-	joinPlan.anti = not
 	return joinPlan
 }
 
@@ -1556,11 +1575,11 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
 		}
-		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
+		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}

@@ -104,32 +104,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		})
 
-	gcWorkerCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "gc_worker_actions_total",
-			Help:      "Counter of gc worker actions.",
-		}, []string{"type"})
-
-	gcHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "gc_seconds",
-			Help:      "Bucketed histogram of gc duration.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 13),
-		}, []string{"stage"})
-
-	gcConfigGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "gc_config",
-			Help:      "Gauge of GC configs.",
-		}, []string{"type"},
-	)
-
 	lockResolverCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -190,6 +164,14 @@ var (
 			Help:      "Number of regions in a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
 		}, []string{"type"})
+
+	loadSafepointCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "load_safepoint_total",
+			Help:      "Counter of load safepoint.",
+		}, []string{"type"})
 )
 
 func reportRegionError(e *errorpb.Error) {
@@ -223,9 +205,6 @@ func init() {
 	prometheus.MustRegister(connPoolHistogram)
 	prometheus.MustRegister(coprocessorCounter)
 	prometheus.MustRegister(coprocessorHistogram)
-	prometheus.MustRegister(gcWorkerCounter)
-	prometheus.MustRegister(gcConfigGauge)
-	prometheus.MustRegister(gcHistogram)
 	prometheus.MustRegister(lockResolverCounter)
 	prometheus.MustRegister(regionErrorCounter)
 	prometheus.MustRegister(txnWriteKVCountHistogram)
@@ -233,4 +212,5 @@ func init() {
 	prometheus.MustRegister(rawkvCmdHistogram)
 	prometheus.MustRegister(rawkvSizeHistogram)
 	prometheus.MustRegister(txnRegionsNumHistogram)
+	prometheus.MustRegister(loadSafepointCounter)
 }

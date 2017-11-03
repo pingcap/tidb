@@ -159,6 +159,9 @@ func digitsToWords(digits int) int {
 	return (digits + digitsPerWord - 1) / digitsPerWord
 }
 
+// MyDecimalStructSize is the struct size of MyDecimal.
+const MyDecimalStructSize = 40
+
 // MyDecimal represents a decimal value.
 type MyDecimal struct {
 	digitsInt int8 // the number of *decimal* digits before the point.
@@ -1963,7 +1966,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	start1 := 0
 	stop1 := len1
 	start2 := idx2
-	stop2 := digitsToWords(idx2+prec2) - 1
+	stop2 := idx2 + digitsToWords(prec2) - 1
 
 	/* removing end zeroes */
 	for from2.wordBuf[stop2] == 0 && stop2 >= start2 {

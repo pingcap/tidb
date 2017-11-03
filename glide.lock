@@ -1,5 +1,5 @@
-hash: 8d417eb10577464722137ba91ba0d045cccf47b81f9ea4f21d9e133410f3cf46
-updated: 2017-10-23T20:08:13.880281979+08:00
+hash: 8bcb81cb6a830a02f41b5bd6fd211dab6f1c0e2d35aa161d05e35a009cafbf48
+updated: 2017-10-24T10:19:59.3474946+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -30,14 +30,6 @@ imports:
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
-- name: github.com/coreos/go-systemd
-  version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
-  subpackages:
-  - journal
-- name: github.com/coreos/pkg
-  version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
-  subpackages:
-  - capnslog
 - name: github.com/crossdock/crossdock-go
   version: 049aabb0122b03bc9bd30cab8f3f91fb60166361
 - name: github.com/cznic/golex
@@ -85,7 +77,7 @@ imports:
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/go-grpc-middleware
-  version: 6d3547c644afb325c16df96e3c7177ea6e2fdebd
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
   subpackages:
   - tags
   - tracing/opentracing
@@ -156,7 +148,6 @@ imports:
   version: 91e4257196bb714005f80a6e075bc1e19a9687b1
   subpackages:
   - pd-client
-  - pkg/logutil
 - name: github.com/pingcap/tipb
   version: eccd39c3992538c382a6351430a77233f42b1344
   subpackages:
@@ -200,10 +191,6 @@ imports:
   - assert
   - require
   - suite
-- name: github.com/syndtr/goleveldb
-  version: b89cc31ef7977104127d34c1bd31ebd1a9db2199
-  subpackages:
-  - leveldb/comparer
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: github.com/uber/jaeger-client-go

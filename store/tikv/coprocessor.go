@@ -59,7 +59,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_ColumnRef:
+		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef:
 		return true
 	// logic operators.
 	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not:
@@ -476,12 +476,12 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 				NotFillCache:   it.req.NotFillCache,
 			},
 		}
-		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, task.region, ReadTimeoutMedium)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}
 		}
 		if regionErr := resp.Cop.GetRegionError(); regionErr != nil {
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return []copResponse{{err: errors.Trace(err)}}
 			}
@@ -489,7 +489,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		}
 		if e := resp.Cop.GetLocked(); e != nil {
 			log.Debugf("coprocessor encounters lock: %v", e)
-			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{newLock(e)})
+			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(e)})
 			if err1 != nil {
 				return []copResponse{{err: errors.Trace(err1)}}
 			}

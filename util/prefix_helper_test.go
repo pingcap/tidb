@@ -19,10 +19,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -43,17 +43,10 @@ type testPrefixSuite struct {
 }
 
 func (s *testPrefixSuite) SetUpSuite(c *C) {
-	path := "memory:"
-	d := localstore.Driver{
-		Driver: goleveldb.MemoryDriver{},
-	}
-	store, err := d.Open(path)
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
 
-	// must in cache
-	cacheS, _ := d.Open(path)
-	c.Assert(cacheS, Equals, store)
 }
 
 func (s *testPrefixSuite) TearDownSuite(c *C) {
@@ -116,7 +109,7 @@ func (c *MockContext) CommitTxn() error {
 	if c.txn == nil {
 		return nil
 	}
-	return c.txn.Commit()
+	return c.txn.Commit(goctx.Background())
 }
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
@@ -139,7 +132,7 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 		return true
 	})
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }
 
