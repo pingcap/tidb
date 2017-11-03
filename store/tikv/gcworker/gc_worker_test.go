@@ -47,7 +47,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store)
 	c.Assert(err, IsNil)
-	gcWorker.Start(true)
+	gcWorker.Start()
 	gcWorker.Close()
 	s.gcWorker = gcWorker.(*GCWorker)
 }

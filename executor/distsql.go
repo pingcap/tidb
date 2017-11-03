@@ -261,7 +261,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange
 	return nil
 }
 
-func extractHandlesFromNewIndexResult(idxResult distsql.NewSelectResult) (handles []int64, finish bool, err error) {
+func extractHandlesFromNewIndexResult(idxResult distsql.SelectResult) (handles []int64, finish bool, err error) {
 	subResult, e0 := idxResult.Next()
 	if e0 != nil {
 		err = errors.Trace(e0)
@@ -278,7 +278,7 @@ func extractHandlesFromNewIndexResult(idxResult distsql.NewSelectResult) (handle
 	return
 }
 
-func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]int64, error) {
+func extractHandlesFromNewIndexSubResult(subResult distsql.PartialResult) ([]int64, error) {
 	defer terror.Call(subResult.Close)
 	var (
 		handles     []int64
@@ -423,8 +423,8 @@ type TableReaderExecutor struct {
 	columns []*model.ColumnInfo
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.NewSelectResult
-	partialResult distsql.NewPartialResult
+	result        distsql.SelectResult
+	partialResult distsql.PartialResult
 	priority      int
 }
 
@@ -492,7 +492,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.NewSelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -526,7 +526,7 @@ func (e *TableReaderExecutor) doRequestForHandles(goCtx goctx.Context, handles [
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.NewSelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -557,8 +557,8 @@ type IndexReaderExecutor struct {
 	schema    *expression.Schema
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.NewSelectResult
-	partialResult distsql.NewPartialResult
+	result        distsql.SelectResult
+	partialResult distsql.PartialResult
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
@@ -632,7 +632,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.NewSelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -653,7 +653,7 @@ func (e *IndexReaderExecutor) doRequestForDatums(goCtx goctx.Context, values [][
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.NewSelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -711,7 +711,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.NewSelectDAG(goCtx, e.ctx.GetClient(), kvReq, 1)
+	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, 1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -735,7 +735,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.NewSelectResult, workCh chan<- *lookupTableTask, goCtx goctx.Context, finished <-chan struct{}) {
+func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, goCtx goctx.Context, finished <-chan struct{}) {
 	for {
 		handles, finish, err := extractHandlesFromNewIndexResult(result)
 		if err != nil {
