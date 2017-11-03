@@ -29,29 +29,11 @@ import (
 
 var (
 	_ joinExec = &NestedLoopJoinExec{}
-	_ joinExec = &HashSemiJoinExec{}
-
 	_ Executor = &HashJoinExec{}
+
+	_ joinExec = &HashSemiJoinExec{}
 	_ Executor = &ApplyJoinExec{}
 )
-
-// joinExec is the common interface of join algorithm except for hash join.
-type joinExec interface {
-	Executor
-
-	// fetchBigRow fetches a valid row from big Exec and returns a bool value that means if it is matched.
-	fetchBigRow() (Row, bool, error)
-	// prepare reads all records from small Exec and stores them.
-	prepare() error
-	// doJoin fetches a row from big exec and a bool value that means if it's matched with big filter,
-	// then get all the rows matches the on condition.
-	doJoin(Row, bool) ([]Row, error)
-}
-
-type hashJoinBuffer struct {
-	datums []types.Datum
-	bytes  []byte
-}
 
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
@@ -78,6 +60,11 @@ type HashJoinExec struct {
 	resultBufferCh  chan *execResult // Channels for output.
 	resultBuffer    []Row
 	resultCursor    int
+}
+
+type hashJoinBuffer struct {
+	datums []types.Datum
+	bytes  []byte
 }
 
 // Close implements the Executor Close interface.
@@ -411,6 +398,19 @@ func (e *HashJoinExec) Next() (Row, error) {
 	result := e.resultBuffer[e.resultCursor]
 	e.resultCursor++
 	return result, nil
+}
+
+// joinExec is the common interface of join algorithm except for hash join.
+type joinExec interface {
+	Executor
+
+	// fetchBigRow fetches a valid row from big Exec and returns a bool value that means if it is matched.
+	fetchBigRow() (Row, bool, error)
+	// prepare reads all records from small Exec and stores them.
+	prepare() error
+	// doJoin fetches a row from big exec and a bool value that means if it's matched with big filter,
+	// then get all the rows matches the on condition.
+	doJoin(Row, bool) ([]Row, error)
 }
 
 // NestedLoopJoinExec implements nested-loop algorithm for join.
