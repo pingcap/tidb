@@ -49,30 +49,6 @@ type GCWorker struct {
 	session tidb.Session
 }
 
-// StartSafePointChecker triggers SafePoint Checker on each tidb
-func (w *GCWorker) StartSafePointChecker() {
-	go func() {
-		d := gcSafePointUpdateInterval
-		for {
-			select {
-			case spCachedTime := <-time.After(d):
-				cachedSafePoint, err := loadSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint)
-				if err == nil {
-					gcWorkerCounter.WithLabelValues("check_safepoint_ok").Inc()
-					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
-					d = gcSafePointUpdateInterval
-				} else {
-					gcWorkerCounter.WithLabelValues("check_safepoint_fail").Inc()
-					log.Errorf("[gc worker] fail to load safepoint: %v", err)
-					d = gcSafePointQuickRepeatInterval
-				}
-			case <-w.store.Closed():
-				return
-			}
-		}
-	}()
-}
-
 // NewGCWorker creates a GCWorker instance.
 func NewGCWorker(store tikv.Storage) (tikv.GCHandler, error) {
 	ver, err := store.CurrentVersion()
@@ -95,18 +71,13 @@ func NewGCWorker(store tikv.Storage) (tikv.GCHandler, error) {
 }
 
 // Start starts the worker.
-func (w *GCWorker) Start(enableGC bool) {
-	w.StartSafePointChecker()
-
+func (w *GCWorker) Start() {
 	var ctx goctx.Context
 	ctx, w.cancel = goctx.WithCancel(goctx.Background())
 	var wg sync.WaitGroup
-
-	if enableGC {
-		wg.Add(1)
-		go w.start(ctx, &wg)
-		wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
-	}
+	wg.Add(1)
+	go w.start(ctx, &wg)
+	wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
 }
 
 // Close stops background goroutines.
@@ -127,12 +98,10 @@ const (
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 10
 
-	gcLifeTimeKey                  = "tikv_gc_life_time"
-	gcDefaultLifeTime              = time.Minute * 10
-	gcSafePointKey                 = "tikv_gc_safe_point"
-	gcSafePointCacheInterval       = tikv.GcSafePointCacheInterval
-	gcSafePointUpdateInterval      = time.Second * 10
-	gcSafePointQuickRepeatInterval = time.Second
+	gcLifeTimeKey            = "tikv_gc_life_time"
+	gcDefaultLifeTime        = time.Minute * 10
+	gcSafePointKey           = "tikv_gc_safe_point"
+	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
 )
 
 var gcVariableComments = map[string]string{
@@ -657,24 +626,6 @@ func saveSafePoint(kv tikv.SafePointKV, key string, t uint64) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-func loadSafePoint(kv tikv.SafePointKV, key string) (uint64, error) {
-	str, err := kv.Get(tikv.GcSavedSafePoint)
-
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	if str == "" {
-		return 0, nil
-	}
-
-	t, err := strconv.ParseUint(str, 10, 64)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return t, nil
 }
 
 func (w *GCWorker) saveTime(key string, t time.Time, s tidb.Session) error {

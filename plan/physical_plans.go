@@ -17,11 +17,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -175,31 +173,8 @@ type physicalTableSource struct {
 	*basePlan
 	basePhysicalPlan
 
-	client kv.Client
-
-	Aggregated bool
-	readOnly   bool
-	AggFuncsPB []*tipb.Expr
-	GbyItemsPB []*tipb.ByItem
-
-	// TableConditionPBExpr is the pb structure of conditions that used in the table scan.
-	TableConditionPBExpr *tipb.Expr
-	// IndexConditionPBExpr is the pb structure of conditions that used in the index scan.
-	IndexConditionPBExpr *tipb.Expr
-
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
-
-	LimitCount  *int64
-	SortItemsPB []*tipb.ByItem
-
-	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
-
-	aggFuncs              []aggregation.Aggregation
-	gbyItems              []expression.Expression
-	sortItems             []*ByItems
-	indexFilterConditions []expression.Expression
-	tableFilterConditions []expression.Expression
 
 	// filterCondition is only used by new planner.
 	filterCondition []expression.Expression
@@ -218,21 +193,6 @@ func needCount(af aggregation.Aggregation) bool {
 func needValue(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
-}
-
-func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan, s *expression.Schema) PhysicalPlan {
-	if p.readOnly {
-		return resultPlan
-	}
-	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
-	us := PhysicalUnionScan{
-		Conditions:    append(conditions, p.AccessCondition...),
-		NeedColHandle: p.NeedColHandle,
-	}.init(p.allocator, p.ctx)
-	us.SetChildren(resultPlan)
-	us.SetSchema(s)
-	p.NeedColHandle = true
-	return us
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -312,7 +272,6 @@ type PhysicalMergeJoin struct {
 	OtherConditions []expression.Expression
 
 	DefaultValues []types.Datum
-	Desc          bool
 
 	leftKeys  []*expression.Column
 	rightKeys []*expression.Column
@@ -380,64 +339,6 @@ type PhysicalUnionScan struct {
 
 	NeedColHandle bool
 	Conditions    []expression.Expression
-}
-
-func (p *PhysicalHashJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
-	for _, fun := range p.EqualConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
-	}
-	for _, fun := range p.LeftConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
-	}
-	for _, fun := range p.RightConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
-	}
-	for _, fun := range p.OtherConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
-	}
-	return corCols
-}
-
-func (p *PhysicalHashSemiJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
-	for _, fun := range p.EqualConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
-	}
-	for _, fun := range p.LeftConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
-	}
-	for _, fun := range p.RightConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
-	}
-	for _, fun := range p.OtherConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
-	}
-	return corCols
-}
-
-func (p *PhysicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
-	corCols = append(corCols, p.PhysicalJoin.extractCorrelatedCols()...)
-	for i := len(corCols) - 1; i >= 0; i-- {
-		if p.PhysicalJoin.Children()[0].Schema().Contains(&corCols[i].Column) {
-			corCols = append(corCols[:i], corCols[i+1:]...)
-		}
-	}
-	return corCols
-}
-
-func (p *PhysicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
-	for _, expr := range p.GroupByItems {
-		corCols = append(corCols, extractCorColumns(expr)...)
-	}
-	for _, fun := range p.AggFuncs {
-		for _, arg := range fun.GetArgs() {
-			corCols = append(corCols, extractCorColumns(arg)...)
-		}
-	}
-	return corCols
 }
 
 // Copy implements the PhysicalPlan Copy interface.
