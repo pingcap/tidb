@@ -472,7 +472,7 @@ func (d *MyDecimal) Shift(shift int) error {
 		if wordsFrac < lack {
 			return ErrOverflow
 		}
-		/* cat off fraction part to allow new number to fit in our buffer */
+		/* cut off fraction part to allow new number to fit in our buffer */
 		err = ErrTruncated
 		wordsFrac -= lack
 		diff := digitsFrac - wordsFrac*digitsPerWord
