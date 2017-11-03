@@ -44,7 +44,6 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
 	defer dom.Close()
-	defer store.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
@@ -90,7 +89,6 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 
 	// Try to do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
 	// For https://github.com/pingcap/tidb/issues/1096
-	store = newStore(c, s.dbName)
 	se, err = CreateSession(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)

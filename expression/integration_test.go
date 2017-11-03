@@ -2772,6 +2772,16 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("abcdefg")), IsTrue)
 }
 
+func (s *testIntegrationSuite) TestJSONBuiltin(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE `my_collection` (	`doc` json DEFAULT NULL, `_id` varchar(32) GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(doc,'$._id'))) STORED NOT NULL, PRIMARY KEY (`_id`))")
+	_, err := tk.Exec("UPDATE `test`.`my_collection` SET doc=JSON_SET(doc) WHERE (JSON_EXTRACT(doc,'$.name') = 'clare');")
+	c.Assert(err, NotNil)
+}
+
 func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -2941,6 +2951,20 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+}
+
+func (s *testIntegrationSuite) TestIssue4954(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a CHAR(5) CHARACTER SET latin1);")
+	tk.MustExec("INSERT INTO t VALUES ('oe');")
+	tk.MustExec("INSERT INTO t VALUES (0xf6);")
+	r := tk.MustQuery(`SELECT * FROM t WHERE a= 'oe';`)
+	r.Check(testkit.Rows("oe"))
+	r = tk.MustQuery(`SELECT HEX(a) FROM t WHERE a= 0xf6;`)
+	r.Check(testkit.Rows("F6"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

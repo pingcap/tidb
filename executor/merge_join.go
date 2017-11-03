@@ -33,7 +33,6 @@ type MergeJoinExec struct {
 	stmtCtx  *variable.StatementContext
 	schema   *expression.Schema
 	prepared bool
-	desc     bool
 
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
@@ -228,9 +227,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			compareResult, err = compareKeys(e.stmtCtx, e.outerRows[0], e.outerKeys, e.innerRows[0], e.innerKeys)
 			if err != nil {
 				return false, errors.Trace(err)
-			}
-			if e.desc {
-				compareResult = -compareResult
 			}
 		}
 

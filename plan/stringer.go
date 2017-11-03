@@ -69,12 +69,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str = "SemiJoin{" + strings.Join(children, "->") + "}"
 		}
-		if UseDAGPlanBuilder(x.ctx) {
-			for _, eq := range x.EqualConditions {
-				l := eq.GetArgs()[0].String()
-				r := eq.GetArgs()[1].String()
-				str += fmt.Sprintf("(%s,%s)", l, r)
-			}
+		for _, eq := range x.EqualConditions {
+			l := eq.GetArgs()[0].String()
+			r := eq.GetArgs()[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *PhysicalMergeJoin:
 		last := len(idxs) - 1
@@ -153,10 +151,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
 		}
 	case *Selection:
-		str = "Selection"
-		if UseDAGPlanBuilder(x.ctx) {
-			str = fmt.Sprintf("Sel(%s)", x.Conditions)
-		}
+		str = fmt.Sprintf("Sel(%s)", x.Conditions)
 	case *Projection:
 		str = "Projection"
 	case *TopN:
@@ -179,8 +174,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 		str += ")"
-	case *Cache:
-		str = "Cache"
 	case *PhysicalTableReader:
 		str = fmt.Sprintf("TableReader(%s)", ToString(x.tablePlan))
 	case *PhysicalIndexReader:
@@ -205,7 +198,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Analyze{"
 		var children []string
 		for _, idx := range x.IdxTasks {
-			children = append(children, fmt.Sprintf("Index(%t, %s.%s)", idx.PushDown, idx.TableInfo.Name.O, idx.IndexInfo.Name.O))
+			children = append(children, fmt.Sprintf("Index(%s.%s)", idx.TableInfo.Name.O, idx.IndexInfo.Name.O))
 		}
 		for _, col := range x.ColTasks {
 			var colNames []string
@@ -215,7 +208,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, c.Name.O))
 			}
-			children = append(children, fmt.Sprintf("Table(%t, %s)", col.PushDown, strings.Join(colNames, ", ")))
+			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}
 		str = str + strings.Join(children, ",") + "}"
 	default:
