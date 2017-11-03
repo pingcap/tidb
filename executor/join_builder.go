@@ -35,7 +35,7 @@ type joinBuilder struct {
 	defaultValues []types.Datum
 }
 
-func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, error) {
+func (b *joinBuilder) BuildMergeJoin() (*MergeJoinExec, error) {
 	var leftJoinKeys, rightJoinKeys []*expression.Column
 	for _, eqCond := range b.eqConditions {
 		if len(eqCond.GetArgs()) != 2 {
@@ -74,7 +74,6 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		outerIter:       leftRowBlock,
 		innerIter:       rightRowBlock,
 		schema:          b.schema,
-		desc:            assumeSortedDesc,
 		resultGenerator: newJoinResultGenerator(b.context, b.joinType, b.defaultValues, b.otherFilter),
 	}
 
