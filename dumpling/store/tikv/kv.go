@@ -185,6 +185,8 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
 
+	go store.runSafePointChecker()
+
 	return store, nil
 }
 
@@ -194,13 +196,38 @@ func (s *tikvStore) EtcdAddrs() []string {
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
+	if !s.enableGC || NewGCHandlerFunc == nil {
+		return nil
+	}
+
 	gcWorker, err := NewGCHandlerFunc(s)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	gcWorker.Start(s.enableGC)
+	gcWorker.Start()
 	s.gcWorker = gcWorker
 	return nil
+}
+
+func (s *tikvStore) runSafePointChecker() {
+	d := gcSafePointUpdateInterval
+	for {
+		select {
+		case spCachedTime := <-time.After(d):
+			cachedSafePoint, err := loadSafePoint(s.GetSafePointKV(), GcSavedSafePoint)
+			if err == nil {
+				loadSafepointCounter.WithLabelValues("ok").Inc()
+				s.UpdateSPCache(cachedSafePoint, spCachedTime)
+				d = gcSafePointUpdateInterval
+			} else {
+				loadSafepointCounter.WithLabelValues("fail").Inc()
+				log.Errorf("[tikv] fail to load safepoint: %v", err)
+				d = gcSafePointQuickRepeatInterval
+			}
+		case <-s.Closed():
+			return
+		}
+	}
 }
 
 type mockOptions struct {

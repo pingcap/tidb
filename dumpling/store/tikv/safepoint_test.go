@@ -25,10 +25,9 @@ import (
 )
 
 type testSafePointSuite struct {
-	store    *tikvStore
-	oracle   *MockOracle
-	gcWorker GCHandler
-	prefix   string
+	store  *tikvStore
+	oracle *MockOracle
+	prefix string
 }
 
 var _ = Suite(&testSafePointSuite{})
@@ -37,10 +36,6 @@ func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.store = newTestStore(c)
 	s.oracle = &MockOracle{}
 	s.store.oracle = s.oracle
-	gcWorker, err := NewGCHandlerFunc(s.store)
-	gcWorker.Start(false)
-	c.Assert(err, IsNil)
-	s.gcWorker = gcWorker
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
 
