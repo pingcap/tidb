@@ -2763,9 +2763,13 @@ SimpleExpr:
 	}
 |	WindowFuncCall
 	{
-		// TODO: Remove this fake ast placeholder.
-		$$ = &ast.ParamMarkerExpr{
-			Offset: yyS[yypt].offset,
+		if $1 != nil {
+			$$ = $1.(*ast.WindowFuncExpr)
+		} else {
+			// TODO: Remove this fake ast placeholder.
+			$$ = &ast.ParamMarkerExpr{
+				Offset: yyS[yypt].offset,
+			}
 		}
 	}
 |	Literal
@@ -3769,6 +3773,10 @@ SelectStmt:
 			st.Having = $8.(*ast.HavingClause)
 		}
 
+		if $9 != nil {
+			st.Window = $9.(*ast.WindowClause)
+		}
+
 		if $10 != nil {
 			st.OrderBy = $10.(*ast.OrderByClause)
 		}
@@ -3789,41 +3797,49 @@ WindowClauseOptional:
 	}
 |	"WINDOW" WindowDefinitionList
 	{
-		$$ = nil
+		$$ = &ast.WindowClause{Defs: $2.([]*ast.WindowDef)}
 	}
 
 WindowDefinitionList:
 	WindowDefinition
 	{
-		$$ = nil
+		$$ = []*ast.WindowDef{$1.(*ast.WindowDef)}
 	}
 |	WindowDefinitionList ',' WindowDefinition
 	{
-		$$ = nil
+		$$ = append($1.([]*ast.WindowDef), $3.(*ast.WindowDef))
 	}
 
 WindowDefinition:
 	WindowName "AS" WindowSpec
 	{
-		$$ = nil
+		$$ = &ast.WindowDef{Name: $1.(model.CIStr), Spec: $3.(*ast.WindowSpec)}
 	}
 
 WindowName:
 	Identifier
 	{
-		$$ = nil
+		$$ = model.NewCIStr($1)
 	}
 
 WindowSpec:
 	'(' WindowSpecDetails ')'
 	{
-		$$ = nil
+		$$ = $2
 	}
 
 WindowSpecDetails:
 	OptExistingWindowName OptPartitionClause OptWindowOrderByClause OptWindowFrameClause
 	{
-		$$ = nil
+		spec := &ast.WindowSpec{}
+		if $1 != nil {
+			spec.ExistingWindowName = $1.(model.CIStr)
+			spec.HasExistingWindowName = true
+		} else {
+			spec.HasExistingWindowName = false
+		}
+		// TODO: Support partition by clause, order by clause and frame clause.
+		$$ = spec
 	}
 
 OptExistingWindowName:
@@ -3832,7 +3848,7 @@ OptExistingWindowName:
 	}
 |	WindowName
 	{
-		$$ = nil
+		$$ = $1
 	}
 
 OptPartitionClause:
@@ -3948,27 +3964,30 @@ OptWindowingClause:
 WindowingClause:
 	"OVER" WindowNameOrSpec
 	{
-		$$ = nil
+		$$ = &ast.WindowingClause{Spec: $2.(*ast.WindowSpec)}
 	}
 
 WindowNameOrSpec:
 	WindowName
 	{
-		$$ = nil
+		$$ = &ast.WindowSpec{
+			ExistingWindowName:	$1.(model.CIStr),
+			HasExistingWindowName:	true,
+		}
 	}
 |	WindowSpec
 	{
-		$$ = nil
+		$$ = $1
 	}
 
 WindowFuncCall:
 	"ROW_NUMBER" '(' ')' WindowingClause
 	{
-		$$ = nil
+		$$ = &ast.WindowFuncExpr{F: $1, Window: $4.(*ast.WindowingClause)}
 	}
 |	"RANK" '(' ')' WindowingClause
 	{
-		$$ = nil
+		$$ = &ast.WindowFuncExpr{F: $1, Window: $4.(*ast.WindowingClause)}
 	}
 |	"DENSE_RANK" '(' ')' WindowingClause
 	{
