@@ -25,8 +25,6 @@ import (
 )
 
 var (
-	_ Executor = &HashAggExec{}
-	_ Executor = &StreamAggExec{}
 	_ Executor = &TopNExec{}
 )
 
