@@ -295,11 +295,6 @@ func TableInfo2SchemaWithDBName(dbName model.CIStr, tbl *model.TableInfo) *Schem
 	return schema
 }
 
-// ColumnInfos2Columns converts a slice of ColumnInfo to a slice of Column with empty DBName.
-func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
-	return ColumnInfos2ColumnsWithDBName(model.CIStr{}, tblName, colInfos)
-}
-
 // ColumnInfos2ColumnsWithDBName converts a slice of ColumnInfo to a slice of Column.
 func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
 	columns := make([]*Column, 0, len(colInfos))
