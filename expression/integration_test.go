@@ -2953,7 +2953,8 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
 }
 
-func (s *testIntegrationSuite) TestSimple(c *C) {
+func (s *testIntegrationSuite) TestIssues(c *C) {
+	// for issue #4954
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 	tk.MustExec("use test")
