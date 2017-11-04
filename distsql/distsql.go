@@ -244,11 +244,6 @@ func Analyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (SelectResu
 	return result, nil
 }
 
-type resultWithErr struct {
-	result []byte
-	err    error
-}
-
 // XAPI error codes.
 const (
 	codeInvalidResp = 1

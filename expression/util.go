@@ -147,31 +147,6 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 	return expr.Clone(), nil
 }
 
-// ConvertCol2CorCol will convert the column in the condition which can be found in outerSchema to a correlated column whose
-// Column is this column. And please make sure the outerSchema.Columns[i].Equal(corCols[i].Column)) holds when you call this.
-func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema *Schema) Expression {
-	switch x := cond.(type) {
-	case *ScalarFunction:
-		newArgs := make([]Expression, 0, len(x.GetArgs()))
-		for _, arg := range x.GetArgs() {
-			newArg := ConvertCol2CorCol(arg, corCols, outerSchema)
-			newArgs = append(newArgs, newArg)
-		}
-		var newSf Expression
-		if x.FuncName.L == ast.Cast {
-			newSf = BuildCastFunction(x.GetCtx(), newArgs[0], x.RetType)
-		} else {
-			newSf = NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
-		}
-		return newSf
-	case *Column:
-		if pos := outerSchema.ColumnIndex(x); pos >= 0 {
-			return corCols[pos]
-		}
-	}
-	return cond
-}
-
 // timeZone2Duration converts timezone whose format should satisfy the regular condition
 // `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to time.Duration.
 func timeZone2Duration(tz string) time.Duration {

@@ -489,13 +489,3 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
 }
-
-// MostRestrictStateContext gets a most restrict StatementContext.
-func MostRestrictStateContext() *StatementContext {
-	return &StatementContext{
-		IgnoreTruncate:    false,
-		OverflowAsWarning: false,
-		TruncateAsWarning: false,
-		TimeZone:          time.UTC,
-	}
-}

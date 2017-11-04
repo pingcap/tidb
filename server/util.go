@@ -217,29 +217,6 @@ func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte, err erro
 	return
 }
 
-func uniformValue(value interface{}) interface{} {
-	switch v := value.(type) {
-	case int8:
-		return int64(v)
-	case int16:
-		return int64(v)
-	case int32:
-		return int64(v)
-	case int64:
-		return v
-	case uint8:
-		return uint64(v)
-	case uint16:
-		return uint64(v)
-	case uint32:
-		return uint64(v)
-	case uint64:
-		return v
-	default:
-		return value
-	}
-}
-
 func dumpRowValuesBinary(buffer []byte, columns []*ColumnInfo, row []types.Datum) ([]byte, error) {
 	if len(columns) != len(row) {
 		return nil, mysql.ErrMalformPacket
