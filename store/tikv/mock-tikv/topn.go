@@ -18,7 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

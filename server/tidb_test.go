@@ -117,13 +117,13 @@ func (ts *TidbTestSuite) TestErrorCode(c *C) {
 func (ts *TidbTestSuite) TestAuth(c *C) {
 	c.Parallel()
 	runTestAuth(c)
+	runTestIssue3682(c)
 }
 
 func (ts *TidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	runTestIssue3662(c)
 	runTestIssue3680(c)
-	runTestIssue3682(c)
 }
 
 func (ts *TidbTestSuite) TestDBNameEscape(c *C) {

@@ -27,12 +27,11 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -392,32 +391,6 @@ func mockContext() context.Context {
 	do.CreateStatsHandle(ctx)
 	sessionctx.BindDomain(ctx, do)
 	return ctx
-}
-
-func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
-	statsTbl := &statistics.Table{
-		TableID: tbl.ID,
-		Count:   rowCount,
-		Columns: make(map[int64]*statistics.Column, len(tbl.Columns)),
-		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
-	}
-	return statsTbl
-}
-
-// mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
-func mockStatsHistogram(id int64, values []types.Datum, repeat int64) *statistics.Histogram {
-	ndv := len(values)
-	histogram := &statistics.Histogram{
-		ID:      id,
-		NDV:     int64(ndv),
-		Buckets: make([]statistics.Bucket, ndv),
-	}
-	for i := 0; i < ndv; i++ {
-		histogram.Buckets[i].Repeats = repeat
-		histogram.Buckets[i].Count = repeat * int64(i+1)
-		histogram.Buckets[i].UpperBound = values[i]
-	}
-	return histogram
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
