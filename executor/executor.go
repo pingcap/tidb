@@ -14,18 +14,12 @@
 package executor
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
-)
-
-var (
-	_ Executor = &TopNExec{}
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -38,6 +32,14 @@ var (
 // If there is a select for update. then we need to store the handle until the lock plan. But if there is aggregation, the handle info can be removed.
 // Otherwise the executor's returned rows don't need to store the handle information.
 type Row = types.DatumRow
+
+// Executor executes a query.
+type Executor interface {
+	Next() (Row, error)
+	Close() error
+	Open() error
+	Schema() *expression.Schema
+}
 
 type baseExecutor struct {
 	children []Executor
@@ -81,38 +83,6 @@ func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ..
 		ctx:      ctx,
 		schema:   schema,
 	}
-}
-
-// Executor executes a query.
-type Executor interface {
-	Next() (Row, error)
-	Close() error
-	Open() error
-	Schema() *expression.Schema
-}
-
-// CancelDDLJobsExec represents a cancel DDL jobs executor.
-type CancelDDLJobsExec struct {
-	baseExecutor
-
-	cursor int
-	JobIDs []int64
-	errs   []error
-}
-
-// Next implements the Executor Next interface.
-func (e *CancelDDLJobsExec) Next() (Row, error) {
-	var row Row
-	if e.cursor < len(e.JobIDs) {
-		ret := "successful"
-		if e.errs[e.cursor] != nil {
-			ret = fmt.Sprintf("error: %v", e.errs[e.cursor])
-		}
-		row = types.MakeDatums(e.JobIDs[e.cursor], ret)
-		e.cursor++
-	}
-
-	return row, nil
 }
 
 func init() {
