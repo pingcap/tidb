@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var _ Executor = &SortExec{}
+
 // orderByRow binds a row to its order values, so it can be sorted.
 type orderByRow struct {
 	key []*types.Datum
