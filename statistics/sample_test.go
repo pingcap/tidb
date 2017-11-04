@@ -17,8 +17,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testSampleSuite{})
