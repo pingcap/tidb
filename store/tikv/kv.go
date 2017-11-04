@@ -249,14 +249,6 @@ func WithHijackClient(wrap func(Client) Client) MockTiKVStoreOption {
 	}
 }
 
-// WithHijackPDClient hijacks PD client's behavior, makes it easy to simulate the network
-// problem between TiDB and PD, such as GetTS too slow, GetStore or GetRegion fail.
-func WithHijackPDClient(wrap func(pd.Client) pd.Client) MockTiKVStoreOption {
-	return func(c *mockOptions) {
-		c.pdClientHijack = wrap
-	}
-}
-
 // WithCluster provides the customized cluster.
 func WithCluster(cluster *mocktikv.Cluster) MockTiKVStoreOption {
 	return func(c *mockOptions) {
@@ -443,12 +435,6 @@ func (s *tikvStore) SetTiKVClient(client Client) {
 
 func (s *tikvStore) GetTiKVClient() (client Client) {
 	return s.client
-}
-
-// ParseEtcdAddr parses path to etcd address list
-func ParseEtcdAddr(path string) (etcdAddrs []string, err error) {
-	etcdAddrs, _, err = parsePath(path)
-	return
 }
 
 func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {

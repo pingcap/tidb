@@ -498,13 +498,6 @@ func (d *ddl) WorkerVars() *variable.SessionVars {
 	return d.workerVars
 }
 
-func filterError(err, exceptErr error) error {
-	if terror.ErrorEqual(err, exceptErr) {
-		return nil
-	}
-	return errors.Trace(err)
-}
-
 // DDL error codes.
 const (
 	codeInvalidWorker         terror.ErrCode = 1

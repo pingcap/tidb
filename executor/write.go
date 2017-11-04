@@ -1171,18 +1171,6 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 	return nil
 }
 
-func findColumnByName(t table.Table, tableName, colName string) (*table.Column, error) {
-	if len(tableName) > 0 && !strings.EqualFold(tableName, t.Meta().Name.O) {
-		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
-	}
-
-	c := table.FindCol(t.Cols(), colName)
-	if c == nil {
-		return nil, errors.Errorf("unknown field %s", colName)
-	}
-	return c, nil
-}
-
 // ReplaceExec represents a replace executor.
 type ReplaceExec struct {
 	*InsertValues

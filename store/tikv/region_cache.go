@@ -483,17 +483,6 @@ func (c *RegionCache) PDClient() pd.Client {
 	return c.pdClient
 }
 
-// moveLeaderToFirst moves the leader peer to the first and makes it easier to
-// try the next peer if the current peer does not respond.
-func moveLeaderToFirst(r *metapb.Region, leaderStoreID uint64) {
-	for i := range r.Peers {
-		if r.Peers[i].GetStoreId() == leaderStoreID {
-			r.Peers[0], r.Peers[i] = r.Peers[i], r.Peers[0]
-			return
-		}
-	}
-}
-
 // llrbItem is llrbTree's Item that uses []byte to compare.
 type llrbItem struct {
 	key    []byte
