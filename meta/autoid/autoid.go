@@ -37,10 +37,11 @@ type Allocator interface {
 	// Alloc allocs the next autoID for table with tableID.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	Alloc(tableID int64) (int64, error)
-	// Rebase rebases the autoID base for table with tableID and the new base value.
+	// Rebase rebases the autoID base for table with tableID and the new base value, return the rebased autoID it if
+	// there's no error
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	Rebase(tableID, newBase int64, allocIDs bool) error
+	Rebase(tableID, newBase int64, allocIDs bool) (int64, error)
 	// Base is only used for test.
 	Base() int64
 	// End is only used for test.
@@ -82,21 +83,21 @@ func (alloc *allocator) End() int64 {
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
-func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error {
+func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) (int64, error) {
 	if tableID == 0 {
-		return errInvalidTableID.Gen("Invalid tableID")
+		return 0, errInvalidTableID.Gen("Invalid tableID")
 	}
 
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if requiredBase <= alloc.base {
 		// Satisfied by alloc.base, nothing to do.
-		return nil
+		return alloc.base, nil
 	}
 	if requiredBase <= alloc.end {
 		// Satisfied by alloc.end, need to updata alloc.base.
 		alloc.base = requiredBase
-		return nil
+		return alloc.base, nil
 	}
 	var newBase, newEnd int64
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
@@ -125,10 +126,10 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 		return errors.Trace(err1)
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return alloc.base, errors.Trace(err)
 	}
 	alloc.base, alloc.end = newBase, newEnd
-	return nil
+	return alloc.base, nil
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
@@ -188,9 +189,9 @@ func (alloc *memoryAllocator) End() int64 {
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
-func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
+func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) (int64, error) {
 	// TODO: implement it.
-	return nil
+	return 0, nil
 }
 
 // Alloc implements autoid.Allocator Alloc interface.

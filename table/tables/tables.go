@@ -714,7 +714,11 @@ func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []ty
 
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *Table) AllocAutoID() (int64, error) {
-	return t.alloc.Alloc(t.ID)
+	id, err := t.alloc.Alloc(t.ID)
+	if err == nil {
+		t.Meta().AutoIncID = id + 1
+	}
+	return id, err
 }
 
 // Allocator implements table.Table Allocator interface.
@@ -724,7 +728,11 @@ func (t *Table) Allocator() autoid.Allocator {
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
-	return t.alloc.Rebase(t.ID, newBase, isSetStep)
+	id, err := t.alloc.Rebase(t.ID, newBase, isSetStep)
+	if err == nil {
+		t.Meta().AutoIncID = id + 1
+	}
+	return err
 }
 
 // Seek implements table.Table Seek interface.

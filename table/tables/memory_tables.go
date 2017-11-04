@@ -249,7 +249,11 @@ func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum
 
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *MemoryTable) AllocAutoID() (int64, error) {
-	return t.alloc.Alloc(t.ID)
+	id, err := t.alloc.Alloc(t.ID)
+	if err != nil {
+		t.Meta().AutoIncID = id + 1
+	}
+	return id, err
 }
 
 // Allocator implements table.Table Allocator interface.
@@ -259,7 +263,11 @@ func (t *MemoryTable) Allocator() autoid.Allocator {
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *MemoryTable) RebaseAutoID(newBase int64, isSetStep bool) error {
-	return t.alloc.Rebase(t.ID, newBase, isSetStep)
+	id, err := t.alloc.Rebase(t.ID, newBase, isSetStep)
+	if err != nil {
+		t.Meta().AutoIncID = id + 1
+	}
+	return err
 }
 
 // IterRecords implements table.Table IterRecords interface.

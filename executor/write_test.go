@@ -38,6 +38,10 @@ func (s *testSuite) TestInsert(c *C) {
 	testSQL = `insert insert_test (c1) values (1),(2),(NULL);`
 	tk.MustExec(testSQL)
 
+	r := tk.MustQuery("select AUTO_INCREMENT from INFORMATION_SCHEMA.TABLES where TABLE_SCHEMA='test' AND TABLE_NAME='insert_test';")
+	rowStr := fmt.Sprintf("%v", "4")
+	r.Check(testkit.Rows(rowStr))
+
 	errInsertSelectSQL := `insert insert_test (c1) values ();`
 	tk.MustExec("begin")
 	_, err := tk.Exec(errInsertSelectSQL)
@@ -95,8 +99,8 @@ func (s *testSuite) TestInsert(c *C) {
 
 	// Updating column is PK handle.
 	// Make sure the record is "1, 1, nil, 1".
-	r := tk.MustQuery("select * from insert_test where id = 1;")
-	rowStr := fmt.Sprintf("%v %v %v %v", "1", "1", nil, "1")
+	r = tk.MustQuery("select * from insert_test where id = 1;")
+	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", nil, "1")
 	r.Check(testkit.Rows(rowStr))
 	insertSQL := `insert into insert_test (id, c3) values (1, 2) on duplicate key update id=values(id), c2=10;`
 	tk.MustExec(insertSQL)
