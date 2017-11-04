@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/types/json"
 )
 
 // Kind constants.

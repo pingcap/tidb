@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 	goctx "golang.org/x/net/context"
 )
 

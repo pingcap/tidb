@@ -3,7 +3,7 @@ package aggregation
 import (
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var _ = check.Suite(&testUtilSuite{})

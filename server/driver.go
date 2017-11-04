@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // IDriver opens IContext.
