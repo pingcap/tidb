@@ -40,10 +40,6 @@ func isIdentFirstChar(ch rune) bool {
 	return isLetter(ch) || ch == '_'
 }
 
-func isASCII(ch rune) bool {
-	return ch >= 0 && ch <= 0177
-}
-
 type trieNode struct {
 	childs [256]*trieNode
 	token  int

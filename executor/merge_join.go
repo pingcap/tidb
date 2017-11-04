@@ -33,7 +33,6 @@ type MergeJoinExec struct {
 	stmtCtx  *variable.StatementContext
 	schema   *expression.Schema
 	prepared bool
-	desc     bool
 
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
@@ -190,9 +189,9 @@ func compareKeys(stmtCtx *variable.StatementContext,
 func (e *MergeJoinExec) doJoin() (err error) {
 	for _, outer := range e.outerRows {
 		if e.outerFilter != nil {
-			matched, err := expression.EvalBool(e.outerFilter, outer, e.ctx)
-			if err != nil {
-				return errors.Trace(err)
+			matched, err1 := expression.EvalBool(e.outerFilter, outer, e.ctx)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 			if !matched {
 				e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)
@@ -228,9 +227,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			compareResult, err = compareKeys(e.stmtCtx, e.outerRows[0], e.outerKeys, e.innerRows[0], e.innerKeys)
 			if err != nil {
 				return false, errors.Trace(err)
-			}
-			if e.desc {
-				compareResult = -compareResult
 			}
 		}
 

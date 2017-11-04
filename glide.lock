@@ -1,5 +1,5 @@
-hash: 8bcb81cb6a830a02f41b5bd6fd211dab6f1c0e2d35aa161d05e35a009cafbf48
-updated: 2017-10-24T10:19:59.3474946+08:00
+hash: d5b53dbf492fd8ed8ec327ee4f66837a6c6ee8263dbec54f77776ee3a68894ab
+updated: 2017-11-03T21:08:22.127776139+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -11,8 +11,6 @@ imports:
   version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
   subpackages:
   - quantile
-- name: github.com/boltdb/bolt
-  version: d97499360d1ecebc492ea66c7447ea948f417620
 - name: github.com/BurntSushi/toml
   version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - name: github.com/cloudfoundry-incubator/candiedyaml

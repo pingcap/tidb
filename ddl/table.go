@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -64,7 +65,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tbInfo)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+		d.asyncNotifyEvent(&util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
 		return ver, ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
@@ -123,7 +124,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		job.Args = append(job.Args, startKey)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
+		d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -143,18 +144,11 @@ func (d *ddl) splitTableRegion(tableID int64) error {
 	if err := store.SplitRegion(tableStartKey); err != nil {
 		return errors.Trace(err)
 	}
-	nextTableStartKey := tablecodec.GenTablePrefix(tableID + 1)
-	if err := store.SplitRegion(nextTableStartKey); err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 
 func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	if tblInfo.OldSchemaID != 0 {
-		schemaID = tblInfo.OldSchemaID
-	}
-	alloc := autoid.NewAllocator(d.store, schemaID)
+	alloc := autoid.NewAllocator(d.store, tblInfo.OldSchemaID, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }

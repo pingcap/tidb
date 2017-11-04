@@ -247,7 +247,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 	for _, info := range t.sqlInfos {
 		c := info.cases[idx]
 		se := c.session
-		se.PrepareTxnCtx()
+		se.PrepareTxnCtx(se.GoCtx())
 		ctx := se.(context.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
 
@@ -274,7 +274,7 @@ func (t *testExecInfo) execSQL(idx int) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = c.session.CommitTxn()
+		err = c.session.CommitTxn(c.session.GoCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -345,7 +345,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -354,7 +354,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		prewriteResp := resp.Prewrite
 		if prewriteResp == nil {
-			return errors.Trace(errBodyMissing)
+			return errors.Trace(ErrBodyMissing)
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
@@ -386,7 +386,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			return errors.Trace(err)
 		}
 		if !ok {
-			err = bo.Backoff(boTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
+			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -453,7 +453,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -463,7 +463,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	}
 	commitResp := resp.Commit
 	if commitResp == nil {
-		return errors.Trace(errBodyMissing)
+		return errors.Trace(ErrBodyMissing)
 	}
 	if keyErr := commitResp.GetError(); keyErr != nil {
 		c.mu.RLock()
@@ -509,7 +509,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}

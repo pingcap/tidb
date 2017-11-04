@@ -653,6 +653,7 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 		{"0.0123456789012345678912345", "9999999999", "0.000000000001234567890246913578148141", nil},
 		{"10.333000000", "12.34500", "0.837019036046982584042122316", nil},
 		{"10.000000000060", "2", "5.000000000030000000", nil},
+		{"51", "0.003430", "14868.804664723032069970", nil},
 	}
 	for _, tt := range tests {
 		var a, b, to MyDecimal
@@ -673,6 +674,7 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 		{"-234.567", "10.555", "-2.357", nil},
 		{"234.567", "-10.555", "2.357", nil},
 		{"99999999999999999999999999999999999999", "3", "0", nil},
+		{"51", "0.003430", "0.002760", nil},
 	}
 	for _, tt := range tests {
 		var a, b, to MyDecimal
@@ -692,6 +694,7 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 		{"1.00", "1", "1.000000", nil},
 		{"1", "1.000", "1.0000", nil},
 		{"2", "3", "0.6667", nil},
+		{"51", "0.003430", "14868.8047", nil},
 	}
 	for _, tt := range tests {
 		var a, b, to MyDecimal
@@ -709,6 +712,7 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 		{"1", "2.0", "1.0", nil},
 		{"1.0", "2", "1.0", nil},
 		{"2.23", "3", "2.23", nil},
+		{"51", "0.003430", "0.002760", nil},
 	}
 	for _, tt := range tests {
 		var a, b, to MyDecimal

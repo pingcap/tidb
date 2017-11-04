@@ -501,6 +501,7 @@ import (
 	UseStmt				"USE statement"
 
 %type   <item>
+	AlterTableOptionListOpt		"alter table option list opt"
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
 	AnyOrAll			"Any or All for subquery"
@@ -528,6 +529,7 @@ import (
 	ConstraintElem			"table constraint element"
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
 	CreateIndexStmtUnique		"CREATE INDEX optional UNIQUE clause"
+	CreateTableOptionListOpt	"create table option list opt"
 	DatabaseOption			"CREATE Database specification"
 	DatabaseOptionList		"CREATE Database specification list"
 	DatabaseOptionListOpt		"CREATE Database specification list opt"
@@ -647,7 +649,6 @@ import (
 	TableNameListOpt		"Table name list opt"
 	TableOption			"create table option"
 	TableOptionList			"create table option list"
-	TableOptionListOpt		"create table option list opt"
 	TableRef 			"table reference"
 	TableRefs 			"table references"
 	TableToTable 			"rename table to table"
@@ -797,6 +798,7 @@ import (
 %precedence escape
 %precedence lowerThanComma
 %precedence ','
+%precedence higherThanComma
 
 %start	Start
 
@@ -818,7 +820,7 @@ AlterTableStmt:
 	}
 
 AlterTableSpec:
-	TableOptionListOpt
+	AlterTableOptionListOpt
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:	ast.AlterTableOption,
@@ -831,6 +833,14 @@ AlterTableSpec:
 			Tp: 		ast.AlterTableAddColumn,
 			NewColumn:	$3.(*ast.ColumnDef),
 			Position:	$4.(*ast.ColumnPosition),
+		}
+	}
+|	"ADD" ColumnKeywordOpt '(' ColumnDef ColumnPosition ')'
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: 		ast.AlterTableAddColumn,
+			NewColumn:	$4.(*ast.ColumnDef),
+			Position:	$5.(*ast.ColumnPosition),
 		}
 	}
 |	"ADD" Constraint
@@ -1572,7 +1582,7 @@ DatabaseOptionList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' TableOptionListOpt PartitionOpt
+	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' CreateTableOptionListOpt PartitionOpt
 	{
 		tes := $6.([]interface {})
 		var columnDefs []*ast.ColumnDef
@@ -5026,7 +5036,13 @@ StatsPersistentVal:
 |	LengthNum
 	{}
 
-TableOptionListOpt:
+AlterTableOptionListOpt:
+	{
+		$$ = []*ast.TableOption{}
+	}
+|	TableOptionList %prec higherThanComma
+
+CreateTableOptionListOpt:
 	{
 		$$ = []*ast.TableOption{}
 	}
