@@ -43,8 +43,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
