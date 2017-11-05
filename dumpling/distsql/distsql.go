@@ -23,12 +23,14 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
 
 var (
 	errInvalidResp = terror.ClassXEval.New(codeInvalidResp, "invalid response")
+	selectResultGP = gp.New(time.Minute * 2)
 )
 
 var (
@@ -75,7 +77,9 @@ type newResultWithErr struct {
 }
 
 func (r *selectResult) Fetch(ctx goctx.Context) {
-	go r.fetch(ctx)
+	selectResultGP.Go(func() {
+		r.fetch(ctx)
+	})
 }
 
 func (r *selectResult) fetch(ctx goctx.Context) {
