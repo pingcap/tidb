@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // fullRange is (-∞, +∞).
@@ -39,85 +39,6 @@ func FullIntRange() []types.IntColumnRange {
 // FullIndexRange is (-∞, +∞) for IndexRange.
 func FullIndexRange() []*types.IndexRange {
 	return []*types.IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
-}
-
-// BuildIndexRange will build range of index for PhysicalIndexScan
-func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, index *model.IndexInfo,
-	accessInAndEqCount int, accessCondition []expression.Expression) ([]*types.IndexRange, error) {
-	rb := builder{sc: sc}
-	var ranges []*types.IndexRange
-	for i := 0; i < accessInAndEqCount; i++ {
-		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[i])
-		colOff := index.Columns[i].Offset
-		tp := &tblInfo.Columns[colOff].FieldType
-		if i == 0 {
-			ranges = rb.buildIndexRanges(point, tp)
-		} else {
-			ranges = rb.appendIndexRanges(ranges, point, tp)
-		}
-	}
-	rangePoints := fullRange
-	// Build rangePoints for non-equal access conditions.
-	for i := accessInAndEqCount; i < len(accessCondition); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
-	}
-	if accessInAndEqCount == 0 {
-		colOff := index.Columns[0].Offset
-		tp := &tblInfo.Columns[colOff].FieldType
-		ranges = rb.buildIndexRanges(rangePoints, tp)
-	} else if accessInAndEqCount < len(accessCondition) {
-		colOff := index.Columns[accessInAndEqCount].Offset
-		tp := &tblInfo.Columns[colOff].FieldType
-		ranges = rb.appendIndexRanges(ranges, rangePoints, tp)
-	}
-
-	// Take prefix index into consideration.
-	if index.HasPrefixIndex() {
-		for i := 0; i < len(ranges); i++ {
-			refineRange(ranges[i], index)
-		}
-	}
-
-	if len(ranges) > 0 && len(ranges[0].LowVal) < len(index.Columns) {
-		for _, ran := range ranges {
-			if ran.HighExclude || ran.LowExclude {
-				if ran.HighExclude {
-					ran.HighVal = append(ran.HighVal, types.NewDatum(nil))
-				} else {
-					ran.HighVal = append(ran.HighVal, types.MaxValueDatum())
-				}
-				if ran.LowExclude {
-					ran.LowVal = append(ran.LowVal, types.MaxValueDatum())
-				} else {
-					ran.LowVal = append(ran.LowVal, types.NewDatum(nil))
-				}
-			}
-		}
-	}
-	return ranges, errors.Trace(rb.err)
-}
-
-// refineRange changes the IndexRange taking prefix index length into consideration.
-func refineRange(v *types.IndexRange, idxInfo *model.IndexInfo) {
-	for i := 0; i < len(v.LowVal); i++ {
-		refineRangeDatum(&v.LowVal[i], idxInfo.Columns[i])
-		v.LowExclude = false
-	}
-
-	for i := 0; i < len(v.HighVal); i++ {
-		refineRangeDatum(&v.HighVal[i], idxInfo.Columns[i])
-		v.HighExclude = false
-	}
-}
-
-func refineRangeDatum(v *types.Datum, ic *model.IndexColumn) {
-	if ic.Length != types.UnspecifiedLength {
-		// if index prefix length is used, change scan range.
-		if ic.Length < len(v.GetBytes()) {
-			v.SetBytes(v.GetBytes()[:ic.Length])
-		}
-	}
 }
 
 // getEQFunctionOffset judge if the expression is a eq function like A = 1 where a is an index.
@@ -200,65 +121,6 @@ func DetachIndexFilterConditions(conditions []expression.Expression, indexColumn
 		}
 	}
 	return indexConditions, tableConditions
-}
-
-// DetachIndexScanConditions will detach the index filters from table filters.
-func DetachIndexScanConditions(conditions []expression.Expression, index *model.IndexInfo) (accessConds []expression.Expression,
-	filterConds []expression.Expression, accessEqualCount int, accessInAndEqCount int) {
-	accessConds = make([]expression.Expression, len(index.Columns))
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	for i, cond := range conditions {
-		conditions[i] = expression.PushDownNot(cond, false, nil)
-	}
-	for _, cond := range conditions {
-		offset := getEQFunctionOffset(cond, index.Columns)
-		if offset != -1 {
-			accessConds[offset] = cond
-		}
-	}
-	for i, cond := range accessConds {
-		if cond == nil {
-			accessConds = accessConds[:i]
-			accessEqualCount = i
-			break
-		}
-		if index.Columns[i].Length != types.UnspecifiedLength {
-			filterConds = append(filterConds, cond)
-		}
-		if i == len(accessConds)-1 {
-			accessEqualCount = len(accessConds)
-		}
-	}
-	accessInAndEqCount = accessEqualCount
-	// We should remove all accessConds, so that they will not be added to filter conditions.
-	conditions = removeAccessConditions(conditions, accessConds)
-	var curIndex int
-	for curIndex = accessEqualCount; curIndex < len(index.Columns); curIndex++ {
-		checker := &conditionChecker{
-			idx:          index,
-			columnOffset: curIndex,
-			length:       index.Columns[curIndex].Length,
-		}
-		// First of all, we should extract all of in/eq expressions from rest conditions for every continuous index column.
-		// e.g. For index (a,b,c) and conditions a in (1,2) and b < 1 and c in (3,4), we should only extract column a in (1,2).
-		accessIdx := checker.findEqOrInFunc(conditions)
-		// If we fail to find any in or eq expression, we should consider all of other conditions for the next column.
-		if accessIdx == -1 {
-			accessConds, filterConds = checker.extractAccessAndFilterConds(conditions, accessConds, filterConds)
-			break
-		}
-		accessInAndEqCount++
-		accessConds = append(accessConds, conditions[accessIdx])
-		if index.Columns[curIndex].Length != types.UnspecifiedLength {
-			filterConds = append(filterConds, conditions[accessIdx])
-		}
-		conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
-	}
-	// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
-	if curIndex == len(index.Columns) {
-		filterConds = append(filterConds, conditions...)
-	}
-	return accessConds, filterConds, accessEqualCount, accessInAndEqCount
 }
 
 // DetachColumnConditions distinguishes between access conditions and filter conditions from conditions.

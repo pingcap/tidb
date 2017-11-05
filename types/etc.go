@@ -50,11 +50,6 @@ func IsTypeVarchar(tp byte) bool {
 	return tp == mysql.TypeVarString || tp == mysql.TypeVarchar
 }
 
-// IsTypeJSON returns a boolean indicating whether the tp is the JSON type.
-func IsTypeJSON(tp byte) bool {
-	return tp == mysql.TypeJSON
-}
-
 // IsTypeUnspecified returns a boolean indicating whether the tp is the Unspecified type.
 func IsTypeUnspecified(tp byte) bool {
 	return tp == mysql.TypeUnspecified
