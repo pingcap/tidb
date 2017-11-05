@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -1169,18 +1169,6 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-func findColumnByName(t table.Table, tableName, colName string) (*table.Column, error) {
-	if len(tableName) > 0 && !strings.EqualFold(tableName, t.Meta().Name.O) {
-		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
-	}
-
-	c := table.FindCol(t.Cols(), colName)
-	if c == nil {
-		return nil, errors.Errorf("unknown field %s", colName)
-	}
-	return c, nil
 }
 
 // ReplaceExec represents a replace executor.

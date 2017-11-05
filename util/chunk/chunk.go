@@ -16,9 +16,9 @@ package chunk
 import (
 	"unsafe"
 
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 )
 
 // Chunk stores multiple rows of data in Apache Arrow format.

@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // Enable enables the new privilege check feature.

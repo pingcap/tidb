@@ -19,9 +19,9 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext

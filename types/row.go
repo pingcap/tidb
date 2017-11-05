@@ -13,7 +13,7 @@
 
 package types
 
-import "github.com/pingcap/tidb/util/types/json"
+import "github.com/pingcap/tidb/types/json"
 
 // Row is an interface to read columns values.
 type Row interface {
