@@ -30,6 +30,7 @@ func TestBasicAPI(t *testing.T) {
 	wg.Wait()
 	// cover get()
 	gp.Go(func() {})
+	gp.Close()
 }
 
 func TestGC(t *testing.T) {
@@ -45,6 +46,7 @@ func TestGC(t *testing.T) {
 	}
 	wg.Wait()
 	time.Sleep(300 * time.Millisecond)
+	gp.Close()
 	gp.Go(func() {}) // To trigger count change.
 	gp.Lock()
 	count := gp.count
@@ -60,10 +62,17 @@ func TestRace(t *testing.T) {
 	begin := make(chan struct{})
 	wg.Add(500)
 	for i := 0; i < 50; i++ {
+		idxI := i
 		go func() {
 			<-begin
 			for i := 0; i < 10; i++ {
 				gp.Go(func() {
+				idxJ := i
+				res := gp.Go(func() {})
+				if res != nil {
+					t.Logf("fail to start work %d-%d", idxI, idxJ)
+				}
+				time.Sleep(5 * time.Millisecond)
 					wg.Done()
 				})
 				time.Sleep(5 * time.Millisecond)
@@ -72,6 +81,14 @@ func TestRace(t *testing.T) {
 	}
 	close(begin)
 	wg.Wait()
+	gp.Close()
+	time.Sleep(1e9)
+	gp.Lock()
+	count := gp.count
+	gp.Unlock()
+	if count != 0 {
+		t.Errorf("all goroutines should be recycled, count:%d\n", count)
+	}
 }
 
 func BenchmarkGoPool(b *testing.B) {
@@ -84,6 +101,9 @@ func BenchmarkGoPool(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		gp.Go(dummy)
 	}
+	b.StopTimer()
+
+	gp.Close()
 }
 
 func BenchmarkGo(b *testing.B) {
@@ -108,6 +128,9 @@ func BenchmarkMorestackPool(b *testing.B) {
 		})
 		wg.Wait()
 	}
+	b.StopTimer()
+
+	gp.Close()
 }
 
 func BenchmarkMoreStack(b *testing.B) {

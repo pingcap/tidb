@@ -25,6 +25,8 @@ func New(idleTimeout time.Duration) *Pool {
 }
 
 // Go run f() in a new goroutine.
-func (pool *Pool) Go(f func()) {
+func (pool *Pool) Go(f func()) error {
 	go f()
+
+	return nil
 }
