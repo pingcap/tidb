@@ -936,16 +936,15 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		return nil
 	}
 	e := &TableReaderExecutor{
-		ctx:       b.ctx,
-		schema:    v.Schema(),
-		dagPB:     dagReq,
-		tableID:   ts.Table.ID,
-		table:     table,
-		keepOrder: ts.KeepOrder,
-		desc:      ts.Desc,
-		ranges:    newRanges,
-		columns:   ts.Columns,
-		priority:  b.priority,
+		baseExecutor: baseExecutor{nil, b.ctx, v.Schema()},
+		dagPB:        dagReq,
+		tableID:      ts.Table.ID,
+		table:        table,
+		keepOrder:    ts.KeepOrder,
+		desc:         ts.Desc,
+		ranges:       newRanges,
+		columns:      ts.Columns,
+		priority:     b.priority,
 	}
 
 	for i := range v.Schema().Columns {
@@ -967,8 +966,8 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
-		ctx:       b.ctx,
-		schema:    v.Schema(),
+		baseExecutor: baseExecutor{nil, b.ctx, v.Schema()},
+
 		dagPB:     dagReq,
 		tableID:   is.Table.ID,
 		table:     table,
@@ -1032,8 +1031,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	e := &IndexLookUpExecutor{
-		ctx:               b.ctx,
-		schema:            v.Schema(),
+		baseExecutor:      baseExecutor{nil, b.ctx, v.Schema()},
 		dagPB:             indexReq,
 		tableID:           is.Table.ID,
 		table:             table,

@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -257,11 +256,9 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
-	if err := e.innerExec.doRequestForDatums(e.ctx.GoCtx(), requestRows); err != nil {
+	if err := e.innerExec.resetRequest(e.ctx.GoCtx(), requestRows); err != nil {
 		return errors.Trace(err)
 	}
-
-	defer terror.Call(e.innerExec.Close)
 
 	for {
 		innerRow, err := e.innerExec.Next()
