@@ -2967,6 +2967,24 @@ func (s *testIntegrationSuite) TestIssue4954(c *C) {
 	r.Check(testkit.Rows("F6"))
 }
 
+func (s *testIntegrationSuite) TestIssue4768(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("insert into t1 values (0),(1),(NULL);")
+	r := tk.MustQuery(`SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;`)
+	r.Check(testkit.Rows("0", "1"))
+	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
+	r.Check(testkit.Rows("0"))
+	tk.MustExec("set sql_mode='high_not_precedence';")
+	r = tk.MustQuery(`SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;`)
+	r.Check(testkit.Rows())
+	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
+	r.Check(testkit.Rows("1"))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {
