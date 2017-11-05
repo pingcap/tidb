@@ -26,7 +26,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/types/json"
 )
 
 func truncateStr(str string, flen int) string {
