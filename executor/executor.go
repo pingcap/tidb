@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -771,44 +771,4 @@ func (e *UnionExec) Close() error {
 	<-e.closedCh
 	e.rows = nil
 	return errors.Trace(e.baseExecutor.Close())
-}
-
-// CacheExec represents Cache executor.
-// it stores the return values of the executor of its child node.
-type CacheExec struct {
-	baseExecutor
-
-	storedRows  []Row
-	cursor      int
-	srcFinished bool
-}
-
-// Open implements the Executor Open interface.
-func (e *CacheExec) Open() error {
-	e.cursor = 0
-	return errors.Trace(e.children[0].Open())
-}
-
-// Next implements the Executor Next interface.
-func (e *CacheExec) Next() (Row, error) {
-	if e.srcFinished && e.cursor >= len(e.storedRows) {
-		return nil, nil
-	}
-	if !e.srcFinished {
-		row, err := e.children[0].Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row == nil {
-			e.srcFinished = true
-			err := e.children[0].Close()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		e.storedRows = append(e.storedRows, row)
-	}
-	row := e.storedRows[e.cursor]
-	e.cursor++
-	return row, nil
 }

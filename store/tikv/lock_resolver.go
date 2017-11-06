@@ -33,7 +33,7 @@ type LockResolver struct {
 	store Storage
 	mu    struct {
 		sync.RWMutex
-		// Cache resolved txns (FIFO, txn id -> txnStatus).
+		// resolved caches resolved txns (FIFO, txn id -> txnStatus).
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}

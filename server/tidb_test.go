@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 type TidbTestSuite struct {
@@ -43,7 +44,8 @@ var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	store, err := tidb.NewStore("memory:///tmp/tidb")
+	store, err := tikv.NewMockTikvStore()
+	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -115,13 +117,13 @@ func (ts *TidbTestSuite) TestErrorCode(c *C) {
 func (ts *TidbTestSuite) TestAuth(c *C) {
 	c.Parallel()
 	runTestAuth(c)
+	runTestIssue3682(c)
 }
 
 func (ts *TidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	runTestIssue3662(c)
 	runTestIssue3680(c)
-	runTestIssue3682(c)
 }
 
 func (ts *TidbTestSuite) TestDBNameEscape(c *C) {

@@ -334,8 +334,8 @@ func (s *testSuite) TestShowFullProcessList(c *C) {
 	fullSQL := "show                                                                                        full processlist"
 	simpSQL := "show                                                                                        processlist"
 
-	tk.MustQuery(fullSQL).Check(testutil.RowsWithSep("|", "218|   Query|0|2|"+fullSQL))
-	tk.MustQuery(simpSQL).Check(testutil.RowsWithSep("|", "218|   Query|0|2|"+simpSQL[:100]))
+	tk.MustQuery(fullSQL).Check(testutil.RowsWithSep("|", "220|   Query|0|2|"+fullSQL))
+	tk.MustQuery(simpSQL).Check(testutil.RowsWithSep("|", "220|   Query|0|2|"+simpSQL[:100]))
 
 	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }

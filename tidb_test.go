@@ -14,7 +14,6 @@
 package tidb
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -28,15 +27,14 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	"google.golang.org/grpc"
 )
-
-var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
 
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
@@ -178,13 +176,14 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := NewStore(*store + "://" + dbPath)
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	return store
 }
 
 func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
-	store := newStore(c, dbPath)
+	store, err := tikv.NewMockTikvStore()
+	c.Assert(err, IsNil)
 	dom, err := BootstrapSession(store)
 	c.Assert(err, IsNil)
 	return store, dom
@@ -239,20 +238,6 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
 	}
-}
-
-func matches(c *C, rows [][]types.Datum, expected [][]interface{}) {
-	c.Assert(len(rows), Equals, len(expected))
-	for i := 0; i < len(rows); i++ {
-		match(c, rows[i], expected[i]...)
-	}
-}
-
-func mustExecMatch(c *C, se Session, sql string, expected [][]interface{}) {
-	r := mustExecSQL(c, se, sql)
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	matches(c, rows, expected)
 }
 
 func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {

@@ -17,9 +17,9 @@ import (
 	"crypto/tls"
 	"fmt"
 
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // IDriver opens IContext.
