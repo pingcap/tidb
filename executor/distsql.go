@@ -432,15 +432,24 @@ type TableReaderExecutor struct {
 }
 
 // Close implements the Executor Close interface.
-func (e *TableReaderExecutor) Close() error {
+func (e *TableReaderExecutor) Close() (retErr error) {
 	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
+		retErr = errors.Trace(err)
 	}
 
-	err := closeAll(e.result, e.partialResult)
+	err = closeAll(e.result, e.partialResult)
+	if err != nil {
+		if retErr == nil {
+			retErr = errors.Trace(err)
+		} else {
+			terror.Log(errors.Trace(err))
+		}
+	}
+
 	e.result = nil
 	e.partialResult = nil
-	return errors.Trace(err)
+
+	return retErr
 }
 
 // Next implements the Executor Next interface.
@@ -576,15 +585,24 @@ type IndexReaderExecutor struct {
 }
 
 // Close implements the Executor Close interface.
-func (e *IndexReaderExecutor) Close() error {
+func (e *IndexReaderExecutor) Close() (retErr error) {
 	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
+		retErr = errors.Trace(err)
 	}
 
 	err := closeAll(e.result, e.partialResult)
+	if err != nil {
+		if retErr == nil {
+			retErr = errors.Trace(err)
+		} else {
+			terror.Log(errors.Trace(err))
+		}
+	}
+
 	e.result = nil
 	e.partialResult = nil
-	return errors.Trace(err)
+
+	return retErr
 }
 
 // Next implements the Executor Next interface.
@@ -998,10 +1016,11 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 }
 
 // Close implements Exec Close interface.
-func (e *IndexLookUpExecutor) Close() error {
+func (e *IndexLookUpExecutor) Close() (retErr error) {
 	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
+		retErr = errors.Trace(err)
 	}
+
 	if e.finished != nil {
 		close(e.finished)
 		// Drain the resultCh and discard the result, in case that Next() doesn't fully
@@ -1012,7 +1031,7 @@ func (e *IndexLookUpExecutor) Close() error {
 		e.tableWorker.close()
 		e.finished = nil
 	}
-	return nil
+	return retErr
 }
 
 // Next implements Exec Next interface.
