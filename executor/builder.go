@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -484,7 +484,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		joinType:      v.JoinType,
 		defaultValues: v.DefaultValues,
 	}
-	exec, err := joinBuilder.BuildMergeJoin(v.Desc)
+	exec, err := joinBuilder.BuildMergeJoin()
 	if err != nil {
 		b.err = err
 		return nil
