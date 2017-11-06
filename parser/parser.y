@@ -430,6 +430,8 @@ import (
 	paramMarker	"?"
 	rsh		">>"
 
+%token<ident> or2
+
 %type	<expr>
 	Expression			"expression"
 	BoolPri				"boolean primary expression"
@@ -777,7 +779,7 @@ import (
 %precedence lowerThanOn
 %precedence on using
 %right   assignmentEq
-%left 	oror or
+%left 	oror or or2
 %left 	xor
 %left 	andand and
 %left 	between
@@ -1892,7 +1894,8 @@ Expression:
 
 
 logOr:
-"||" | "OR"
+    or2
+|   "OR"
 
 logAnd:
 "&&" | "AND"
@@ -1982,7 +1985,7 @@ CompareOp:
 |	"<>"
 	{
 		$$ = opcode.NE
-	}
+    }
 |	"="
 	{
 		$$ = opcode.EQ
@@ -2759,6 +2762,10 @@ SimpleExpr:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: $2}
 	}
+|   SimpleExpr oror	SimpleExpr
+    {
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Concat), Args: []ast.ExprNode{$1, $3}}
+    }
 |	SubSelect
 |	'(' Expression ')' {
 		startOffset := parser.startOffset(&yyS[yypt-1])

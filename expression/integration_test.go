@@ -2967,6 +2967,14 @@ func (s *testIntegrationSuite) TestIssue4954(c *C) {
 	r.Check(testkit.Rows("F6"))
 }
 
+func (s *testIntegrationSuite) TestPipesAsConcatMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("SET sql_mode='PIPES_AS_CONCAT';")
+	r := tk.MustQuery(`SELECT 'hello' || 'world';`)
+	r.Check(testkit.Rows("helloworld"))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {

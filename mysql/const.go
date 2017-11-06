@@ -419,6 +419,11 @@ func (m SQLMode) HasStrictMode() bool {
 	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
 }
 
+// HasPipesAsConcatMode detects if 'PIPES_AS_CONCAT' mode is set in SQLMode
+func (m SQLMode) HasPipesAsConcatMode() bool {
+	return m&ModePipesAsConcat == ModePipesAsConcat
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
