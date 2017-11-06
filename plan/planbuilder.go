@@ -115,6 +115,31 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 	return false
 }
 
+// clauseCode indicates in which clause the column is currently.
+type clauseCode int
+
+const (
+	unknowClause  clauseCode = 0
+	fieldList                = 1
+	havingClause             = 2
+	onClause                 = 3
+	orderByClause            = 4
+	whereClause              = 5
+	groupByClause            = 6
+	showStatement            = 7
+)
+
+var clauseMsg = map[clauseCode]string{
+	unknowClause:  "",
+	fieldList:     "field list",
+	havingClause:  "having clause",
+	onClause:      "on clause",
+	orderByClause: "order clause",
+	whereClause:   "where clause",
+	groupByClause: "group statement",
+	showStatement: "show statement",
+}
+
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
@@ -131,6 +156,8 @@ type planBuilder struct {
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
+
+	curClause clauseCode
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

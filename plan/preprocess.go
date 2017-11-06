@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Preprocess resolves names of the node, and checks whether the node is valid.
+// Preprocess resolves table names of the node, and checks whether the node is valid.
 func Preprocess(ctx context.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
 	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare}
 	node.Accept(&v)
@@ -85,7 +85,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.tables = make([]*ast.TableSource, 0)
 		p.fieldList = make([]*ast.ResultField, 0)
 	case *ast.DeleteTableList:
-		p.inDeleteTableList = true
+		return in, true
 	}
 	return in, p.err != nil
 }
@@ -120,8 +120,6 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetResultFields(p.fieldList)
 		p.fieldList = nil
 		p.tableMap = map[string]int{}
-	case *ast.UnionSelectList:
-		p.handleUnionSelectList(x)
 	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 		p.fieldList = nil
 		p.tableMap = map[string]int{}
@@ -129,8 +127,6 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.handleTableName(x)
 	case *ast.TableSource:
 		p.handleTableSource(x)
-	case *ast.DeleteTableList:
-		p.inDeleteTableList = false
 	}
 
 	return in, p.err == nil
@@ -523,19 +519,6 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		// Skip resolving the table to avoid error.
 		return
 	}
-	if p.inDeleteTableList {
-		idx, ok := p.tableMap[p.tableUniqueName(tn.Schema, tn.Name)]
-		if !ok {
-			p.err = errors.Errorf("Unknown table %s", tn.Name.O)
-			return
-		}
-		ts := p.tables[idx]
-		tableName := ts.Source.(*ast.TableName)
-		tn.DBInfo = tableName.DBInfo
-		tn.TableInfo = tableName.TableInfo
-		tn.SetResultFields(tableName.GetResultFields())
-		return
-	}
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		p.err = errors.Trace(err)
@@ -652,23 +635,6 @@ func (p *preprocessor) handleTableSource(ts *ast.TableSource) {
 		dupNames[name] = struct{}{}
 	}
 	p.tables = append(p.tables, ts)
-}
-
-func (p *preprocessor) handleUnionSelectList(u *ast.UnionSelectList) {
-	firstSelFields := u.Selects[0].GetResultFields()
-	unionFields := make([]*ast.ResultField, len(firstSelFields))
-	// Copy first result fields, because we may change the result field type.
-	for i, v := range firstSelFields {
-		rf := *v
-		col := *v.Column
-		rf.Column = &col
-		if rf.Column.Flen == 0 {
-			rf.Column.Flen = types.UnspecifiedLength
-		}
-		rf.Expr = &ast.ValueExpr{}
-		unionFields[i] = &rf
-	}
-	p.fieldList = unionFields
 }
 
 func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {

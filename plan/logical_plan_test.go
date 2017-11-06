@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -1651,5 +1652,63 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestNameResolver(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql          string
+		tblNameValid bool
+		colNameValid bool
+		err          string
+	}{
+		{"select a from t", true, true, ""},
+		{"select c3 from t", true, false, "[plan:1054]Unknown column 'c3' in 'field list'"},
+		{"select c1 from t4", false, true, "[schema:1146]Table 'test.t4' doesn't exist"},
+		{"select * from t", true, true, ""},
+		{"select t.* from t", true, true, ""},
+		{"select t2.* from t", true, false, "[plan:1054]Unknown table 't2'"},
+		{"select b as a, c as a from t group by a", true, false, "[plan:1052]Column 'c' in field list is ambiguous"},
+		{"select 1 as a, b as a, c as a from t group by a", true, true, ""},
+		{"select a, b as a from t group by a+1", true, true, ""},
+		{"select c, a as c from t order by c+1", true, true, ""},
+		{"select * from t as t1, t as t2 join t as t3 on t2.a = t3.a", true, true, ""},
+		{"select * from t as t1, t as t2 join t as t3 on t1.c1 = t2.a", true, false, "[plan:1054]Unknown column 't1.c1' in 'on clause'"},
+		{"select a from t group by a having a = 3", true, true, ""},
+		{"select a from t group by a having c2 = 3", true, false, "[plan:1054]Unknown column 'c2' in 'having clause'"},
+		{"select a from t where exists (select b)", true, true, ""},
+		{"select cnt from (select count(a) as cnt from t group by b) as t2 group by cnt", true, true, ""},
+		{"select a from t where t11.a < t.a", true, false, "[plan:1054]Unknown column 't11.a' in 'where clause'"},
+		{"select a from t having t11.c1 < t.a", true, false, "[plan:1054]Unknown column 't11.c1' in 'having clause'"},
+		{"select a from t where t.a < t.a order by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'order clause'"},
+		{"select a from t group by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'group statement'"},
+	}
+
+	for i, t := range tests {
+		log.Warning(i, t.sql)
+		comment := Commentf("for %s", t.sql)
+		stmt, err := s.ParseOneStmt(t.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := MockPreprocess(stmt, false)
+		if !t.tblNameValid {
+			c.Assert(err.Error(), Equals, t.err)
+			continue
+		}
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		builder.build(stmt)
+		if t.colNameValid {
+			c.Assert(builder.err, IsNil)
+		} else {
+			log.Warning(errors.ErrorStack(builder.err))
+			c.Assert(builder.err.Error(), Equals, t.err)
+		}
 	}
 }
