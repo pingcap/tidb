@@ -21,25 +21,27 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
 
 var (
 	errInvalidResp = terror.ClassXEval.New(codeInvalidResp, "invalid response")
+	selectResultGP = gp.New(time.Minute * 2)
 )
 
 var (
-	_ NewSelectResult  = &newSelectResult{}
-	_ NewPartialResult = &newPartialResult{}
+	_ SelectResult  = &selectResult{}
+	_ PartialResult = &partialResult{}
 )
 
-// NewSelectResult is an iterator of coprocessor partial results.
-type NewSelectResult interface {
+// SelectResult is an iterator of coprocessor partial results.
+type SelectResult interface {
 	// Next gets the next partial result.
-	Next() (NewPartialResult, error)
+	Next() (PartialResult, error)
 	// NextRaw gets the next raw result.
 	NextRaw() ([]byte, error)
 	// Close closes the iterator.
@@ -49,8 +51,8 @@ type NewSelectResult interface {
 	Fetch(ctx goctx.Context)
 }
 
-// NewPartialResult is the result from a single region server.
-type NewPartialResult interface {
+// PartialResult is the result from a single region server.
+type PartialResult interface {
 	// Next returns the next rowData of the sub result.
 	// If no more row to return, rowData would be nil.
 	Next() (rowData []types.Datum, err error)
@@ -58,7 +60,7 @@ type NewPartialResult interface {
 	Close() error
 }
 
-type newSelectResult struct {
+type selectResult struct {
 	label     string
 	aggregate bool
 	resp      kv.Response
@@ -74,11 +76,13 @@ type newResultWithErr struct {
 	err    error
 }
 
-func (r *newSelectResult) Fetch(ctx goctx.Context) {
-	go r.fetch(ctx)
+func (r *selectResult) Fetch(ctx goctx.Context) {
+	selectResultGP.Go(func() {
+		r.fetch(ctx)
+	})
 }
 
-func (r *newSelectResult) fetch(ctx goctx.Context) {
+func (r *selectResult) fetch(ctx goctx.Context) {
 	startTime := time.Now()
 	defer func() {
 		close(r.results)
@@ -107,7 +111,7 @@ func (r *newSelectResult) fetch(ctx goctx.Context) {
 }
 
 // Next returns the next row.
-func (r *newSelectResult) Next() (NewPartialResult, error) {
+func (r *selectResult) Next() (PartialResult, error) {
 	re := <-r.results
 	if re.err != nil {
 		return nil, errors.Trace(re.err)
@@ -115,32 +119,32 @@ func (r *newSelectResult) Next() (NewPartialResult, error) {
 	if re.result == nil {
 		return nil, nil
 	}
-	pr := &newPartialResult{}
+	pr := &partialResult{}
 	pr.rowLen = r.rowLen
 	err := pr.unmarshal(re.result)
 	return pr, errors.Trace(err)
 }
 
 // NextRaw returns the next raw partial result.
-func (r *newSelectResult) NextRaw() ([]byte, error) {
+func (r *selectResult) NextRaw() ([]byte, error) {
 	re := <-r.results
 	return re.result, errors.Trace(re.err)
 }
 
-// Close closes SelectResult.
-func (r *newSelectResult) Close() error {
+// Close closes selectResult.
+func (r *selectResult) Close() error {
 	// Close this channel tell fetch goroutine to exit.
 	close(r.closed)
 	return r.resp.Close()
 }
 
-type newPartialResult struct {
+type partialResult struct {
 	resp     *tipb.SelectResponse
 	chunkIdx int
 	rowLen   int
 }
 
-func (pr *newPartialResult) unmarshal(resultSubset []byte) error {
+func (pr *partialResult) unmarshal(resultSubset []byte) error {
 	pr.resp = new(tipb.SelectResponse)
 	err := pr.resp.Unmarshal(resultSubset)
 	if err != nil {
@@ -156,7 +160,7 @@ func (pr *newPartialResult) unmarshal(resultSubset []byte) error {
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (pr *newPartialResult) Next() (data []types.Datum, err error) {
+func (pr *partialResult) Next() (data []types.Datum, err error) {
 	chunk := pr.getChunk()
 	if chunk == nil {
 		return nil, nil
@@ -173,7 +177,7 @@ func (pr *newPartialResult) Next() (data []types.Datum, err error) {
 	return
 }
 
-func (pr *newPartialResult) getChunk() *tipb.Chunk {
+func (pr *partialResult) getChunk() *tipb.Chunk {
 	for {
 		if pr.chunkIdx >= len(pr.resp.Chunks) {
 			return nil
@@ -187,13 +191,13 @@ func (pr *newPartialResult) getChunk() *tipb.Chunk {
 }
 
 // Close closes the sub result.
-func (pr *newPartialResult) Close() error {
+func (pr *partialResult) Close() error {
 	return nil
 }
 
-// NewSelectDAG sends a DAG request, returns SelectResult.
+// SelectDAG sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func NewSelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen int) (NewSelectResult, error) {
+func SelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen int) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics.
@@ -209,7 +213,7 @@ func NewSelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen
 		err = errors.New("client returns nil response")
 		return nil, errors.Trace(err)
 	}
-	result := &newSelectResult{
+	result := &selectResult{
 		label:   "dag",
 		resp:    resp,
 		results: make(chan newResultWithErr, kvReq.Concurrency),
@@ -219,8 +223,8 @@ func NewSelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen
 	return result, nil
 }
 
-// NewAnalyze do a analyze request.
-func NewAnalyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (NewSelectResult, error) {
+// Analyze do a analyze request.
+func Analyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics.
@@ -235,18 +239,13 @@ func NewAnalyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (NewSele
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-	result := &newSelectResult{
+	result := &selectResult{
 		label:   "analyze",
 		resp:    resp,
 		results: make(chan newResultWithErr, kvReq.Concurrency),
 		closed:  make(chan struct{}),
 	}
 	return result, nil
-}
-
-type resultWithErr struct {
-	result []byte
-	err    error
 }
 
 // XAPI error codes.

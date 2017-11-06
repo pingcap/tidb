@@ -18,9 +18,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestInetAton(c *C) {
