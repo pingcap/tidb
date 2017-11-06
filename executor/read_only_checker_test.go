@@ -37,15 +37,6 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	stmt = &ast.ExplainStmt{}
 	c.Assert(IsReadOnly(stmt), IsTrue)
 
-	// test SelectStmt
-	whereExpr := &ast.FuncCallExpr{}
-	stmt = &ast.SelectStmt{
-		Where: whereExpr,
-	}
-	c.Assert(IsReadOnly(stmt), IsTrue)
-
-	stmt = &ast.SelectStmt{
-		Where: &ast.ExistsSubqueryExpr{},
-	}
+	stmt = &ast.ExplainStmt{}
 	c.Assert(IsReadOnly(stmt), IsTrue)
 }
