@@ -148,10 +148,7 @@ func (d *ddl) splitTableRegion(tableID int64) error {
 }
 
 func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	if tblInfo.OldSchemaID != 0 {
-		schemaID = tblInfo.OldSchemaID
-	}
-	alloc := autoid.NewAllocator(d.store, schemaID)
+	alloc := autoid.NewAllocator(d.store, tblInfo.OldSchemaID, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }

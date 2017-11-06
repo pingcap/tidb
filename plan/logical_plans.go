@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -143,7 +143,7 @@ func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
 }
 
 func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
 		corCols = append(corCols, extractCorColumns(fun)...)
 	}
@@ -173,7 +173,7 @@ type Projection struct {
 }
 
 func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, extractCorColumns(expr)...)
 	}
@@ -195,7 +195,7 @@ type LogicalAggregation struct {
 }
 
 func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.GroupByItems {
 		corCols = append(corCols, extractCorColumns(expr)...)
 	}
@@ -231,7 +231,7 @@ type Selection struct {
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, cond := range p.Conditions {
 		corCols = append(corCols, extractCorColumns(cond)...)
 	}
@@ -347,7 +347,7 @@ type Sort struct {
 }
 
 func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, item := range p.ByItems {
 		corCols = append(corCols, extractCorColumns(item.Expr)...)
 	}
