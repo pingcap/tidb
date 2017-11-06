@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -29,9 +28,9 @@ import (
 // 2. For other cases its preferred not to use SMJ and operator
 // will throw error.
 type MergeJoinExec struct {
-	ctx      context.Context
+	baseExecutor
+
 	stmtCtx  *variable.StatementContext
-	schema   *expression.Schema
 	prepared bool
 
 	outerKeys   []*expression.Column
@@ -127,37 +126,23 @@ func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
+	if err := e.baseExecutor.Close(); err != nil {
+		return errors.Trace(err)
+	}
+
 	e.resultBuffer = nil
-
-	lErr := e.outerIter.reader.Close()
-	if lErr != nil {
-		terror.Log(errors.Trace(e.innerIter.reader.Close()))
-		return errors.Trace(lErr)
-	}
-	rErr := e.innerIter.reader.Close()
-	if rErr != nil {
-		return errors.Trace(rErr)
-	}
-
 	return nil
 }
 
 // Open implements the Executor Open interface.
 func (e *MergeJoinExec) Open() error {
-	e.prepared = false
-	e.resultCursor = 0
-	e.resultBuffer = nil
-
-	err := e.outerIter.reader.Open()
-	if err != nil {
+	if err := e.baseExecutor.Open(); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(e.innerIter.reader.Open())
-}
-
-// Schema implements the Executor Schema interface.
-func (e *MergeJoinExec) Schema() *expression.Schema {
-	return e.schema
+	e.prepared = false
+	e.resultCursor = 0
+	e.resultBuffer = make([]Row, 0, rowBufferSize)
+	return nil
 }
 
 func compareKeys(stmtCtx *variable.StatementContext,
@@ -262,9 +247,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 }
 
 func (e *MergeJoinExec) prepare() error {
-	e.stmtCtx = e.ctx.GetSessionVars().StmtCtx
-	e.resultBuffer = make([]Row, 0, rowBufferSize)
-
 	err := e.outerIter.init()
 	if err != nil {
 		return errors.Trace(err)
