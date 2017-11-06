@@ -71,7 +71,7 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 		},
 		{
 			zipfFactor: 3,
-			avgError:   70,
+			avgError:   90,
 		},
 	}
 	d, w := int32(8), int32(2048)
