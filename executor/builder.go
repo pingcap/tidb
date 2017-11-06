@@ -469,32 +469,76 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	return us
 }
 
-// buildMergeJoin builds SortMergeJoin executor.
-// TODO: Refactor against different join strategies by extracting common code base
+// buildMergeJoin builds MergeJoinExec executor.
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
-	joinBuilder := &joinBuilder{
-		context:       b.ctx,
-		leftChild:     b.build(v.Children()[0]),
-		rightChild:    b.build(v.Children()[1]),
-		eqConditions:  v.EqualConditions,
-		leftFilter:    v.LeftConditions,
-		rightFilter:   v.RightConditions,
-		otherFilter:   v.OtherConditions,
-		schema:        v.Schema(),
-		joinType:      v.JoinType,
-		defaultValues: v.DefaultValues,
-	}
-	exec, err := joinBuilder.BuildMergeJoin()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	if exec == nil {
-		b.err = ErrBuildExecutor.GenByArgs("failed to generate merge join executor: ", v.ID())
+	leftExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
-	return exec
+	rightExec := b.build(v.Children()[1])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
+	leftKeys := make([]*expression.Column, 0, len(v.EqualConditions))
+	rightKeys := make([]*expression.Column, 0, len(v.EqualConditions))
+	for _, eqCond := range v.EqualConditions {
+		if len(eqCond.GetArgs()) != 2 {
+			b.err = errors.Annotate(ErrBuildExecutor, "invalid join key for equal condition")
+			return nil
+		}
+		leftKey, ok := eqCond.GetArgs()[0].(*expression.Column)
+		if !ok {
+			b.err = errors.Annotate(ErrBuildExecutor, "left side of join key must be column for merge join")
+			return nil
+		}
+		rightKey, ok := eqCond.GetArgs()[1].(*expression.Column)
+		if !ok {
+			b.err = errors.Annotate(ErrBuildExecutor, "right side of join key must be column for merge join")
+			return nil
+		}
+		leftKeys = append(leftKeys, leftKey)
+		rightKeys = append(rightKeys, rightKey)
+	}
+
+	leftRowBlock := &rowBlockIterator{
+		ctx:      b.ctx,
+		reader:   leftExec,
+		filter:   v.LeftConditions,
+		joinKeys: leftKeys,
+	}
+
+	rightRowBlock := &rowBlockIterator{
+		ctx:      b.ctx,
+		reader:   rightExec,
+		filter:   v.RightConditions,
+		joinKeys: rightKeys,
+	}
+
+	mergeJoinExec := &MergeJoinExec{
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.DefaultValues, v.OtherConditions),
+		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
+		// left is the outer side by default.
+		outerKeys: leftKeys,
+		innerKeys: rightKeys,
+		outerIter: leftRowBlock,
+		innerIter: rightRowBlock,
+	}
+	if v.JoinType == plan.RightOuterJoin {
+		mergeJoinExec.outerKeys, mergeJoinExec.innerKeys = mergeJoinExec.innerKeys, mergeJoinExec.outerKeys
+		mergeJoinExec.outerIter, mergeJoinExec.innerIter = mergeJoinExec.innerIter, mergeJoinExec.outerIter
+	}
+
+	if v.JoinType != plan.InnerJoin {
+		mergeJoinExec.outerFilter = mergeJoinExec.outerIter.filter
+		mergeJoinExec.outerIter.filter = nil
+	}
+
+	return mergeJoinExec
 }
 
 func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {

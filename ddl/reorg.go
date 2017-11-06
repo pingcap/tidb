@@ -69,10 +69,11 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	// wait reorganization job done or timeout
 	select {
 	case err := <-d.reorgDoneCh:
-		log.Info("[ddl] run reorg job done")
+		rowCount := d.getReorgRowCount()
+		log.Info("[ddl] run reorg job done, handled %d rows", rowCount)
 		d.reorgDoneCh = nil
 		// Update a job's RowCount.
-		job.SetRowCount(d.getReorgRowCount())
+		job.SetRowCount(rowCount)
 		d.setReorgRowCount(0)
 		return errors.Trace(err)
 	case <-d.quitCh:
@@ -81,9 +82,10 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		log.Infof("[ddl] run reorg job wait timeout %v", waitTimeout)
+		rowCount := d.getReorgRowCount()
+		log.Infof("[ddl] run reorg job wait timeout %v, handled %d rows", waitTimeout, rowCount)
 		// Update a job's RowCount.
-		job.SetRowCount(d.getReorgRowCount())
+		job.SetRowCount(rowCount)
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
