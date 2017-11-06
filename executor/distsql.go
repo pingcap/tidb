@@ -426,7 +426,7 @@ type TableReaderExecutor struct {
 	partialResult distsql.PartialResult
 	priority      int
 
-	prepared   bool
+	fetched    bool
 	request    *kv.Request
 	requestCtx goctx.Context
 }
@@ -445,8 +445,8 @@ func (e *TableReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *TableReaderExecutor) Next() (Row, error) {
-	if !e.prepared {
-		err := e.prepare()
+	if !e.fetched {
+		err := e.fetch()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -503,7 +503,7 @@ func (e *TableReaderExecutor) Open() error {
 	}
 	e.request = kvReq
 	e.requestCtx = e.ctx.GoCtx()
-	e.prepared = false
+	e.fetched = false
 	return nil
 }
 
@@ -537,17 +537,17 @@ func (e *TableReaderExecutor) resetRequest4Handles(goCtx goctx.Context, handles 
 	}
 	e.request = kvReq
 	e.requestCtx = goCtx
-	e.prepared = false
+	e.fetched = false
 	return nil
 }
 
-func (e *TableReaderExecutor) prepare() (err error) {
+func (e *TableReaderExecutor) fetch() (err error) {
 	e.result, err = distsql.SelectDAG(e.requestCtx, e.ctx.GetClient(), e.request, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.result.Fetch(e.requestCtx)
-	e.prepared = true
+	e.fetched = true
 	return nil
 }
 
@@ -570,7 +570,7 @@ type IndexReaderExecutor struct {
 	columns  []*model.ColumnInfo
 	priority int
 
-	prepared   bool
+	fetched    bool
 	request    *kv.Request
 	requestCtx goctx.Context
 }
@@ -589,8 +589,8 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next() (Row, error) {
-	if !e.prepared {
-		err := e.prepare()
+	if !e.fetched {
+		err := e.fetch()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -652,7 +652,7 @@ func (e *IndexReaderExecutor) Open() error {
 	}
 	e.request = kvReq
 	e.requestCtx = e.ctx.GoCtx()
-	e.prepared = false
+	e.fetched = false
 	return nil
 }
 
@@ -676,17 +676,17 @@ func (e *IndexReaderExecutor) resetRequest(goCtx goctx.Context, values [][]types
 	}
 	e.request = kvReq
 	e.requestCtx = goCtx
-	e.prepared = false
+	e.fetched = false
 	return nil
 }
 
-func (e *IndexReaderExecutor) prepare() (err error) {
-	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), e.request, e.schema.Len())
+func (e *IndexReaderExecutor) fetch() (err error) {
+	e.result, err = distsql.SelectDAG(e.requestCtx, e.ctx.GetClient(), e.request, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.result.Fetch(e.requestCtx)
-	e.prepared = true
+	e.fetched = true
 	return nil
 }
 
@@ -721,7 +721,7 @@ type IndexLookUpExecutor struct {
 	resultCurr *lookupTableTask
 
 	requestRanges []kv.KeyRange
-	prepared      bool
+	fetched       bool
 }
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
@@ -853,7 +853,7 @@ func (e *IndexLookUpExecutor) Open() error {
 	}
 
 	e.requestRanges = kvRanges
-	e.prepared = false
+	e.fetched = false
 	return nil
 }
 
@@ -882,12 +882,12 @@ func (e *IndexLookUpExecutor) indexRangesToKVRanges() ([]kv.KeyRange, error) {
 	return indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes)
 }
 
-func (e *IndexLookUpExecutor) prepare() error {
+func (e *IndexLookUpExecutor) fetch() error {
 	err := e.open(e.requestRanges)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.prepared = true
+	e.fetched = true
 	return nil
 }
 
@@ -908,7 +908,7 @@ func (e *IndexLookUpExecutor) resetRequest(goCtx goctx.Context, values [][]types
 		return errors.Trace(err)
 	}
 	e.requestRanges = kvRanges
-	e.prepared = false
+	e.fetched = false
 	return nil
 }
 
@@ -1017,8 +1017,8 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next() (Row, error) {
-	if !e.prepared {
-		err := e.prepare()
+	if !e.fetched {
+		err := e.fetch()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
