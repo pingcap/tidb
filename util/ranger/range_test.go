@@ -393,6 +393,13 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			filterConds: "[]",
 			resultStr:   `[[a <nil>,a <nil>] [a 1,a 1] [a 2,a 2]]`,
 		},
+		{
+			indexPos:    1,
+			exprStr:     `c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)`,
+			accessConds: "[in(test.t.c, 1.1, 1, 1.1) in(test.t.a, 1, a, <nil>)]",
+			filterConds: "[]",
+			resultStr:   `[[1 <nil>,1 <nil>] [1 1,1 1] [1 a,1 a] [1.1 <nil>,1.1 <nil>] [1.1 1,1.1 1] [1.1 a,1.1 a]]`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -420,7 +427,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[0])
+		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
 		var filter []expression.Expression
 		conds, filter = ranger.DetachIndexConditions(conds, cols, lengths)
