@@ -235,6 +235,11 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
+const (
+	defaultBatchCnt      = 1024
+	defaultSmallBatchCnt = 128
+)
+
 // addTableColumn adds a column to the table.
 // TODO: Use it when updating the column type or remove it.
 // How to backfill column data in reorganization state?
