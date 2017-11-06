@@ -151,7 +151,10 @@ func (e *IndexLookUpJoin) Close() error {
 // Step6: fetch a batch of sorted "inner rows" based on the request rows.
 // Step7: do merge join on the **sorted** outer and inner rows.
 func (e *IndexLookUpJoin) Next() (Row, error) {
-	for ; e.resultCursor == len(e.resultBuffer); e.resultCursor = 0 {
+	for batchSize := 128; e.resultCursor == len(e.resultBuffer); e.resultCursor, batchSize = 0, batchSize*2 {
+		if batchSize > e.batchSize {
+			batchSize = e.batchSize
+		}
 		if e.exhausted {
 			return nil, nil
 		}
@@ -159,8 +162,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 		e.outerOrderedRows.reset()
 		e.innerOrderedRows.reset()
 		e.resultBuffer = e.resultBuffer[:0:cap(e.resultBuffer)]
-
-		for i := 0; i < e.batchSize; i++ {
+		for i := 0; i < batchSize; i++ {
 			outerRow, err := e.outerExec.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
