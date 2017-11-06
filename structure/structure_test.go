@@ -36,7 +36,7 @@ type testTxStructureSuite struct {
 }
 
 func (s *testTxStructureSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest(c)
+	testleak.BeforeTest()
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
