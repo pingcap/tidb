@@ -121,7 +121,7 @@ func (h *Handle) DumpStatsDeltaToKV() {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
-	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(h.ctx.GoCtx(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -130,11 +130,11 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 		op = "-"
 		delta.Delta = -delta.Delta
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count %s %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), op, delta.Delta, delta.Count, id))
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(h.ctx.GoCtx(), fmt.Sprintf("update mysql.stats_meta set version = %d, count = count %s %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), op, delta.Delta, delta.Count, id))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(h.ctx.GoCtx(), "commit")
 	return errors.Trace(err)
 }
 
