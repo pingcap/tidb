@@ -22,13 +22,12 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // Error instances.
@@ -42,6 +41,7 @@ var (
 	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
 	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
+	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
 )
 
 // Error codes.
@@ -55,6 +55,7 @@ const (
 	CodeUnknownTable                      = mysql.ErrBadTable
 	CodeWrongArguments                    = 1210
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
+	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
 )
 
 func init() {
@@ -64,6 +65,7 @@ func init() {
 		CodeAmbiguous:          mysql.ErrNonUniq,
 		CodeWrongArguments:     mysql.ErrWrongArguments,
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
+		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
@@ -427,15 +429,13 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
-	pushdownIdx := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx)
-	pushdownCol := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeCol)
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		for _, idx := range idxInfo {
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx, PushDown: pushdownIdx})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo, PushDown: pushdownCol})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
 		}
 	}
 	p.SetSchema(&expression.Schema{})
@@ -445,14 +445,13 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	tblInfo := as.TableNames[0].TableInfo
-	pushdown := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx)
 	for _, idxName := range as.IndexNames {
 		idx := findIndexByName(tblInfo.Indices, idxName)
 		if idx == nil || idx.State != model.StatePublic {
 			b.err = ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
 			break
 		}
-		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx, PushDown: pushdown})
+		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
 	}
 	p.SetSchema(&expression.Schema{})
 	return p

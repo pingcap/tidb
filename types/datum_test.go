@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/types/json"
 )
 
 var _ = Suite(&testDatumSuite{})

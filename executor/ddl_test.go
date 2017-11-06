@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {

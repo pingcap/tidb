@@ -472,7 +472,7 @@ func (d *MyDecimal) Shift(shift int) error {
 		if wordsFrac < lack {
 			return ErrOverflow
 		}
-		/* cat off fraction part to allow new number to fit in our buffer */
+		/* cut off fraction part to allow new number to fit in our buffer */
 		err = ErrTruncated
 		wordsFrac -= lack
 		diff := digitsFrac - wordsFrac*digitsPerWord
@@ -1966,7 +1966,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	start1 := 0
 	stop1 := len1
 	start2 := idx2
-	stop2 := digitsToWords(idx2+prec2) - 1
+	stop2 := idx2 + digitsToWords(prec2) - 1
 
 	/* removing end zeroes */
 	for from2.wordBuf[stop2] == 0 && stop2 >= start2 {
