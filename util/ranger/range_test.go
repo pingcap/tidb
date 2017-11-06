@@ -160,7 +160,6 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			filterConds: "[]",
 			resultStr:   "[(-inf,-1] [1,+inf)]",
 		},
-		// TODO: cast will change the extraction behavior of accessCondition.
 		{
 			exprStr:     "a in (1, 3, NULL, 2)",
 			accessConds: "[in(test.t.a, 1, 3, <nil>, 2)]",
