@@ -503,5 +503,3 @@ func (r *builder) merge(a, b []point, union bool) []point {
 	}
 	return merged
 }
-
-
