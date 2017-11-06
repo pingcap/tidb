@@ -38,7 +38,7 @@ var MySQLState = map[uint16]string{
 	ErrNonUniq:                             "23000",
 	ErrServerShutdown:                      "08S01",
 	ErrBadField:                            "42S22",
-	ErrWrongFieldWithGroup:                 "42000",
+	ErrFieldNotInGroupBy:                   "42000",
 	ErrWrongSumSelect:                      "42000",
 	ErrWrongGroupField:                     "42000",
 	ErrWrongValueCount:                     "21S01",
