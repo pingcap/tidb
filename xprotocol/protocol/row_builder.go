@@ -24,9 +24,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func dumpIntBinary(value int64) []byte {
