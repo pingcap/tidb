@@ -2979,6 +2979,18 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	r.Check(testkit.Rows("1 hello", "2 hello"))
 }
 
+func (s *testIntegrationSuite) TestNoUnsignedSubTractionMode(c *C) {
+   tk := testkit.NewTestKit(c, s.store)
+   defer s.cleanEnv(c)
+   tk.MustExec("use test")
+   tk.MustExec("drop table if exists t")
+   tk.MustExec("CREATE TABLE t (a BIGINT, b BIGINT UNSIGNED);")
+   tk.MustExec("INSERT INTO t VALUES(1,1);")
+   tk.MustExec("set sql_Mode='NO_UNSIGNED_SUBTRACTION'")
+   r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
+   r.Check(testkit.Rows("-1"))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {
