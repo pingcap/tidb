@@ -5258,7 +5258,11 @@ FloatingPointType:
 	}
 |	"REAL"
 	{
-		$$ = mysql.TypeDouble
+	    if parser.lexer.GetSQLMode().HasRealAsFloatMode() {
+		    $$ = mysql.TypeFloat
+	    } else {
+		    $$ = mysql.TypeDouble
+	    }
 	}
 |	"DOUBLE"
 	{
