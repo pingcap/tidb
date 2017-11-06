@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {

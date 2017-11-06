@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 const (
@@ -1575,11 +1575,11 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
 		}
-		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
+		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}

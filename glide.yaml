@@ -1,7 +1,5 @@
 package: github.com/pingcap/tidb
 import:
-- package: github.com/boltdb/bolt
-  version: d97499360d1ecebc492ea66c7447ea948f417620
 - package: github.com/BurntSushi/toml
   version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - package: github.com/cloudfoundry-incubator/candiedyaml
