@@ -951,7 +951,18 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 
 	// for IndexLookUpJoin, left is always the outer side.
 	outerExec := b.build(v.Children()[0])
-	innerExec := b.build(v.Children()[1]).(DataReader)
+	executor := b.build(v.Children()[1])
+	var innerExec DataReader
+	switch raw := executor.(type) {
+	case *TableReaderExecutor:
+		innerExec = &tableDataReader{*raw}
+	case *IndexReaderExecutor:
+		innerExec = &indexDataReader{*raw}
+	case *IndexLookUpExecutor:
+		innerExec = &indexLookupDataReader{*raw}
+	default:
+		panic("should never get here!")
+	}
 
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
