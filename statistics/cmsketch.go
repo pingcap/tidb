@@ -18,8 +18,8 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -40,8 +40,8 @@ func newCMSketch(d, w int32) *CMSketch {
 	return &CMSketch{depth: d, width: w, table: tbl}
 }
 
-func (c *CMSketch) insert(val types.Datum) error {
-	bytes, err := codec.EncodeValue(nil, val)
+func (c *CMSketch) insert(val *types.Datum) error {
+	bytes, err := codec.EncodeValue(nil, *val)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -60,8 +60,8 @@ func (a uint32arr) Len() int           { return len(a) }
 func (a uint32arr) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a uint32arr) Less(i, j int) bool { return a[i] < a[j] }
 
-func (c *CMSketch) query(val types.Datum) (uint32, error) {
-	bytes, err := codec.EncodeValue(nil, val)
+func (c *CMSketch) query(val *types.Datum) (uint32, error) {
+	bytes, err := codec.EncodeValue(nil, *val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

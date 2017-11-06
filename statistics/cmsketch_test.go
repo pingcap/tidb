@@ -19,7 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 func buildCMSketchAndMap(d, w int32, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
@@ -27,20 +27,21 @@ func buildCMSketchAndMap(d, w int32, total, imax uint64, s float64) (*CMSketch, 
 	mp := make(map[int64]uint32)
 	zipf := rand.NewZipf(rand.New(rand.NewSource(time.Now().UnixNano())), s, 1, imax)
 	for i := uint64(0); i < total; i++ {
-		val := int64(zipf.Uint64())
-		err := cms.insert(types.NewIntDatum(val))
+		val := types.NewIntDatum(int64(zipf.Uint64()))
+		err := cms.insert(&val)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		mp[val]++
+		mp[val.GetInt64()]++
 	}
 	return cms, mp, nil
 }
 
 func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
 	var total uint64
-	for val, count := range mp {
-		estimate, err := cms.query(types.NewIntDatum(val))
+	for num, count := range mp {
+		val := types.NewIntDatum(num)
+		estimate, err := cms.query(&val)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
