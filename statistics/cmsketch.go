@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/cznic/sortutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -54,12 +55,6 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	return nil
 }
 
-type uint32arr []uint32
-
-func (a uint32arr) Len() int           { return len(a) }
-func (a uint32arr) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a uint32arr) Less(i, j int) bool { return a[i] < a[j] }
-
 func (c *CMSketch) query(val *types.Datum) (uint32, error) {
 	bytes, err := codec.EncodeValue(nil, *val)
 	if err != nil {
@@ -80,7 +75,7 @@ func (c *CMSketch) query(val *types.Datum) (uint32, error) {
 			vals[i] = c.table[i][j] - uint32(noise)
 		}
 	}
-	sort.Sort(uint32arr(vals))
+	sort.Sort(sortutil.Uint32Slice(vals))
 	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
 	if res > min {
 		return min, nil
