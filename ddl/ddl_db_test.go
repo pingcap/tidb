@@ -459,11 +459,11 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
 		s.mustExec(c, sql)
 	}
-	// add some discrete rows
+	// Add some discrete rows.
 	maxBatch := 20
 	batchCnt := 100
 	otherKeys := make([]int, 0, batchCnt*maxBatch)
-	// Make sure it isn't duplicated key.
+	// Make sure there are no duplicate keys.
 	base := defaultBatchSize * 20
 	for i := 1; i < batchCnt; i++ {
 		n := base + i*defaultBatchSize + i
