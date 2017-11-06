@@ -126,11 +126,10 @@ func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
+	e.resultBuffer = nil
 	if err := e.baseExecutor.Close(); err != nil {
 		return errors.Trace(err)
 	}
-
-	e.resultBuffer = nil
 	return nil
 }
 
