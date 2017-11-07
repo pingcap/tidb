@@ -2953,7 +2953,8 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
 }
 
-func (s *testIntegrationSuite) TestIssue4954(c *C) {
+func (s *testIntegrationSuite) TestIssues(c *C) {
+	// for issue #4954
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 	tk.MustExec("use test")
@@ -2965,6 +2966,17 @@ func (s *testIntegrationSuite) TestIssue4954(c *C) {
 	r.Check(testkit.Rows("oe"))
 	r = tk.MustQuery(`SELECT HEX(a) FROM t WHERE a= 0xf6;`)
 	r.Check(testkit.Rows("F6"))
+
+	// for issue #4006
+	tk.MustExec(`drop table if exists tb`)
+	tk.MustExec("create table tb(id int auto_increment primary key, v varchar(32));")
+	tk.MustExec("insert into tb(v) (select v from tb);")
+	r = tk.MustQuery(`SELECT * FROM tb;`)
+	r.Check(testkit.Rows())
+	tk.MustExec(`insert into tb(v) values('hello');`)
+	tk.MustExec("insert into tb(v) (select v from tb);")
+	r = tk.MustQuery(`SELECT * FROM tb;`)
+	r.Check(testkit.Rows("1 hello", "2 hello"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -194,48 +195,58 @@ func (col *Column) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (col *Column) Eval(row types.Row) (types.Datum, error) {
-	return row.(types.DatumRow)[col.Index], nil
+	return row.GetDatum(col.Index, col.RetType), nil
 }
 
 // EvalInt returns int representation of Column.
 func (col *Column) EvalInt(row types.Row, sc *variable.StatementContext) (int64, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
-		return 0, true, nil
-	}
 	if col.GetType().Hybrid() {
+		val := row.GetDatum(col.Index, col.RetType)
+		if val.IsNull() {
+			return 0, true, nil
+		}
 		res, err := val.ToInt64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
-	return val.GetInt64(), false, nil
+	val, isNull := row.GetInt64(col.Index)
+	return val, isNull, nil
 }
 
 // EvalReal returns real representation of Column.
 func (col *Column) EvalReal(row types.Row, sc *variable.StatementContext) (float64, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
-		return 0, true, nil
-	}
 	if col.GetType().Hybrid() {
+		val := row.GetDatum(col.Index, col.RetType)
+		if val.IsNull() {
+			return 0, true, nil
+		}
 		res, err := val.ToFloat64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
-	return val.GetFloat64(), false, nil
+	if col.GetType().Tp == mysql.TypeFloat {
+		val, isNull := row.GetFloat32(col.Index)
+		return float64(val), isNull, nil
+	}
+	val, isNull := row.GetFloat64(col.Index)
+	return val, isNull, nil
 }
 
 // EvalString returns string representation of Column.
 func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (string, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
-		return "", true, nil
+	if col.GetType().Hybrid() {
+		val := row.GetDatum(col.Index, col.RetType)
+		if val.IsNull() {
+			return "", true, nil
+		}
+		res, err := val.ToString()
+		return res, err != nil, errors.Trace(err)
 	}
-	res, err := val.ToString()
-	return res, err != nil, errors.Trace(err)
+	val, isNull := row.GetString(col.Index)
+	return val, isNull, nil
 }
 
 // EvalDecimal returns decimal representation of Column.
 func (col *Column) EvalDecimal(row types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
+	val := row.GetDatum(col.Index, col.RetType)
 	if val.IsNull() {
 		return nil, true, nil
 	}
