@@ -151,7 +151,6 @@ func (s *testMySQLConstSuite) TestRealAsFloatMode(c *C) {
 
 func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer s.cleanEnv(c)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int);")
