@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"golang.org/x/tools/go/gcimporter15/testdata"
 )
 
 var (
@@ -284,10 +285,16 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	readOnly := false
+	if execPlan, ok := execPlan.(*plan.Execute); ok {
+		readOnly = IsReadOnly(execPlan.Stmt)
+	}
+
 	stmt := &ExecStmt{
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
-		ReadOnly:   IsReadOnly(execStmt),
+		ReadOnly:   readOnly,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
 		stmt.Text = prepared.Stmt.Text()
