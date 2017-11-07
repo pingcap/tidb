@@ -2953,7 +2953,8 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
 }
 
-func (s *testIntegrationSuite) TestIssue4954(c *C) {
+func (s *testIntegrationSuite) TestIssues(c *C) {
+	// for issue #4954
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 	tk.MustExec("use test")
@@ -2965,24 +2966,17 @@ func (s *testIntegrationSuite) TestIssue4954(c *C) {
 	r.Check(testkit.Rows("oe"))
 	r = tk.MustQuery(`SELECT HEX(a) FROM t WHERE a= 0xf6;`)
 	r.Check(testkit.Rows("F6"))
-}
 
-func (s *testIntegrationSuite) TestIssue4768(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	defer s.cleanEnv(c)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int);")
-	tk.MustExec("insert into t1 values (0),(1),(NULL);")
-	r := tk.MustQuery(`SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;`)
-	r.Check(testkit.Rows("0", "1"))
-	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
-	r.Check(testkit.Rows("0"))
-	tk.MustExec("set sql_mode='high_not_precedence';")
-	r = tk.MustQuery(`SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;`)
+	// for issue #4006
+	tk.MustExec(`drop table if exists tb`)
+	tk.MustExec("create table tb(id int auto_increment primary key, v varchar(32));")
+	tk.MustExec("insert into tb(v) (select v from tb);")
+	r = tk.MustQuery(`SELECT * FROM tb;`)
 	r.Check(testkit.Rows())
-	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
-	r.Check(testkit.Rows("1"))
+	tk.MustExec(`insert into tb(v) values('hello');`)
+	tk.MustExec("insert into tb(v) (select v from tb);")
+	r = tk.MustQuery(`SELECT * FROM tb;`)
+	r.Check(testkit.Rows("1 hello", "2 hello"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
