@@ -165,8 +165,8 @@ func BuildTableRange(accessConditions []expression.Expression, sc *variable.Stat
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges := rb.buildTableRanges(rangePoints)
-	if rb.err != nil {
+	ranges, err := points2TableRanges(sc, rangePoints)
+	if err != nil {
 		return nil, errors.Trace(rb.err)
 	}
 	return ranges, nil
