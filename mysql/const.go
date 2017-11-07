@@ -432,6 +432,11 @@ func (m SQLMode) HasNoUnsignedSubtractionMode() bool {
 	return m&ModeNoUnsignedSubtraction == ModeNoUnsignedSubtraction
 }
 
+// HasRealAsFloatMode detects if 'REAL_AS_FLOAT' mode is set in SQLMode
+func (m SQLMode) HasRealAsFloatMode() bool {
+	return m&ModeRealAsFloat == ModeRealAsFloat
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
