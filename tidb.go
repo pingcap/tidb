@@ -145,12 +145,14 @@ func Compile(ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	span, ctx1 := opentracing.StartSpanFromContext(ctx.GoCtx(), "runStmt")
+	span.LogKV("sql", s.OriginText())
 	defer span.Finish()
 
 	var err error
 	var rs ast.RecordSet
 	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
+	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
