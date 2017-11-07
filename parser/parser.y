@@ -281,6 +281,7 @@ import (
 	engine		"ENGINE"
 	engines		"ENGINES"
 	enum 		"ENUM"
+	event		"EVENT"
 	events		"EVENTS"
 	escape 		"ESCAPE"
 	exclusive       "EXCLUSIVE"
@@ -332,10 +333,12 @@ import (
 	query		"QUERY"
 	quick		"QUICK"
 	redundant	"REDUNDANT"
+	reload		"RELOAD"
 	repeatable	"REPEATABLE"
 	replication	"REPLICATION"
 	reverse		"REVERSE"
 	rollback	"ROLLBACK"
+	routine		"ROUTINE"
 	row 		"ROW"
 	rowCount	"ROW_COUNT"
 	rowFormat	"ROW_FORMAT"
@@ -356,6 +359,7 @@ import (
 	some 		"SOME"
 	global		"GLOBAL"
 	tables		"TABLES"
+	temporary	"TEMPORARY"
 	textType	"TEXT"
 	than		"THAN"
 	timeType	"TIME"
@@ -2314,7 +2318,7 @@ UnReservedKeyword:
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
-| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT"
 
 TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
@@ -5885,6 +5889,38 @@ PrivType:
 		$$ = mysql.PrivilegeType(0)
 	}
 |	"USAGE"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"RELOAD"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"CREATE" "TEMPORARY" "TABLES"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"LOCK" "TABLES"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"CREATE" "VIEW"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"SHOW" "VIEW"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"CREATE" "ROUTINE"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"ALTER" "ROUTINE"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"EVENT"
 	{
 		$$ = mysql.PrivilegeType(0)
 	}

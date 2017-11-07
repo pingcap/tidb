@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -52,15 +53,15 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.se, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute("create database test_db_state")
+	_, err = s.se.Execute(goctx.Background(), "create database test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute("use test_db_state")
+	_, err = s.se.Execute(goctx.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	s.p = parser.New()
 }
 
 func (s *testStateChangeSuite) TearDownSuite(c *C) {
-	s.se.Execute("drop database if exists test_db_state")
+	s.se.Execute(goctx.Background(), "drop database if exists test_db_state")
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
@@ -100,15 +101,15 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 
 func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testInfo *testExecInfo) {
 	defer testleak.AfterTest(c)()
-	_, err := s.se.Execute(`create table t (
+	_, err := s.se.Execute(goctx.Background(), `create table t (
 		c1 int,
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute("drop table t")
-	_, err = s.se.Execute("insert into t values(1, 'a', 'N', '2017-07-01')")
+	defer s.se.Execute(goctx.Background(), "drop table t")
+	_, err = s.se.Execute(goctx.Background(), "insert into t values(1, 'a', 'N', '2017-07-01')")
 	c.Assert(err, IsNil)
 
 	callback := &ddl.TestDDLCallback{}
@@ -167,7 +168,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	}
 	d := s.dom.DDL()
 	d.SetHook(callback)
-	_, err = s.se.Execute(alterTableSQL)
+	_, err = s.se.Execute(goctx.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
 	err = testInfo.compileSQL(4)
 	c.Assert(err, IsNil)
@@ -213,7 +214,7 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			_, err = c.session.Execute("use " + useDB)
+			_, err = c.session.Execute(goctx.Background(), "use "+useDB)
 			if err != nil {
 				return errors.Trace(err)
 			}
