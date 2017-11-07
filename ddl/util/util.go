@@ -84,7 +84,11 @@ func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeT
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx context.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(ctx.GoCtx(), sql)
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	return errors.Trace(err)
 }
 
@@ -93,6 +97,10 @@ func UpdateDeleteRange(ctx context.Context, dr DelRangeTask, newStartKey, oldSta
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(ctx.GoCtx(), sql)
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	return errors.Trace(err)
 }
