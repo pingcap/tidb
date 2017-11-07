@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -1679,7 +1678,6 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		if t.colNameValid {
 			c.Assert(builder.err, IsNil)
 		} else {
-			log.Warning(errors.ErrorStack(builder.err))
 			c.Assert(builder.err.Error(), Equals, t.err)
 		}
 	}
