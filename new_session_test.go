@@ -290,7 +290,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.Execute("create table retrytxn (a int unique, b int)")
+	tk.MustExec("create table retrytxn (a int unique, b int)")
 	tk.MustExec("insert retrytxn values (1, 1)")
 	tk.MustExec("begin")
 	tk.MustExec("update retrytxn set b = b + 1 where a = 1")
@@ -857,9 +857,8 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		{"select /*!32301 1 + 1, */ +1;", "1 + 1"},
 	}
 	for _, tt := range tests {
-		results, err := tk.Se.Execute(tt.sql)
+		result, err := tk.Exec(tt.sql)
 		c.Assert(err, IsNil)
-		result := results[0]
 		fields, err := result.Fields()
 		c.Assert(err, IsNil)
 		c.Assert(fields[0].ColumnAsName.O, Equals, tt.field)

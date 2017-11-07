@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 // Histogram represents statistics for a column or index.
@@ -64,25 +65,29 @@ type Bucket struct {
 
 // SaveToStorage saves the histogram to storage.
 func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int64, isIndex int) error {
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
 	exec := ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute("begin")
+	_, err := exec.Execute(goCtx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	txn := ctx.Txn()
 	version := txn.StartTS()
 	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = exec.Execute(replaceSQL)
+	_, err = exec.Execute(goCtx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count) values (%d, %d, %d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount)
-	_, err = exec.Execute(replaceSQL)
+	_, err = exec.Execute(goCtx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(deleteSQL)
+	_, err = exec.Execute(goCtx, deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -104,12 +109,12 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 			return errors.Trace(err)
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, bucket.Repeats, lowerBound.GetBytes(), upperBound.GetBytes())
-		_, err = exec.Execute(insertSQL)
+		_, err = exec.Execute(goCtx, insertSQL)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = exec.Execute("commit")
+	_, err = exec.Execute(goCtx, "commit")
 	return errors.Trace(err)
 }
 
