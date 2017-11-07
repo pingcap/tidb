@@ -34,6 +34,7 @@ var (
 // joinResultGenerator is used to generate join results according the join type, see every implementor for detailed information.
 type joinResultGenerator interface {
 	// emitMatchedInners should be called when key in outer row is equal to key in every inner row.
+	// Reutrn true if outer row can be joined with any input inner row.
 	emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error)
 	// emitUnMatchedOuter should be called when outer row is not matched to any inner row.
 	emitUnMatchedOuter(outer Row, resultBuffer []Row) []Row
