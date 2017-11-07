@@ -922,8 +922,16 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 }
 
 func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn,
-	tbl *model.TableInfo) (indexConds, tableConds []expression.Expression) {
-	pkName := tbl.GetPkName()
+	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
+	var pkName model.CIStr
+	if table.PKIsHandle {
+		for _, colInfo := range table.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				pkName = colInfo.Name
+				break
+			}
+		}
+	}
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
 		if checkIndexCondition(cond, indexColumns, pkName) {
