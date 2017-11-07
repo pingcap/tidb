@@ -19,9 +19,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types/json"
 )
 
 // UnspecifiedLength is unspecified length.

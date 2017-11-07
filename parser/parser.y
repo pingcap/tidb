@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 %}
@@ -2359,6 +2359,10 @@ InsertValues:
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
 		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.SelectStmt)}
+	}
+|	'(' ColumnNameListOpt ')' '(' SelectStmt ')'
+	{
+		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $5.(*ast.SelectStmt)}
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{

@@ -19,8 +19,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -71,7 +71,7 @@ func (c *inFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
-		argTps[i] = args[i].GetType().EvalType()
+		argTps[i] = args[0].GetType().EvalType()
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
 	bf.tp.Flen = 1

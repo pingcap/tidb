@@ -40,12 +40,12 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -58,7 +58,7 @@ const (
 
 var _ = Suite(&testDBSuite{})
 
-const defaultBatchSize = 4196
+const defaultBatchSize = 2048
 
 type testDBSuite struct {
 	store      kv.Storage
@@ -459,6 +459,21 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
 		s.mustExec(c, sql)
 	}
+	// Add some discrete rows.
+	maxBatch := 20
+	batchCnt := 100
+	otherKeys := make([]int, 0, batchCnt*maxBatch)
+	// Make sure there are no duplicate keys.
+	base := defaultBatchSize * 20
+	for i := 1; i < batchCnt; i++ {
+		n := base + i*defaultBatchSize + i
+		for j := 0; j < rand.Intn(maxBatch); j++ {
+			n += j
+			sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", n, n, n)
+			s.mustExec(c, sql)
+			otherKeys = append(otherKeys, n)
+		}
+	}
 
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
@@ -503,6 +518,7 @@ LOOP:
 		}
 		keys = append(keys, i)
 	}
+	keys = append(keys, otherKeys...)
 
 	// test index key
 	expectedRows := make([][]interface{}, 0, len(keys))

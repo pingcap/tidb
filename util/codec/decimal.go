@@ -17,7 +17,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // EncodeDecimal encodes a decimal d into a byte slice which can be sorted lexicographically later.

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
