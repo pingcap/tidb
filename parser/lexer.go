@@ -176,6 +176,11 @@ func (s *Scanner) SetSQLMode(mode mysql.SQLMode) {
 	s.sqlMode = mode
 }
 
+// GetSQLMode return the SQL mode of scanner.
+func (s *Scanner) GetSQLMode() mysql.SQLMode {
+	return s.sqlMode
+}
+
 // NewScanner returns a new scanner object.
 func NewScanner(s string) *Scanner {
 	return &Scanner{r: reader{s: s}}

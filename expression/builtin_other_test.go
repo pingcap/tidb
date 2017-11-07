@@ -77,10 +77,14 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 func (s *testEvaluatorSuite) TestInFunc(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.In]
-	time1 := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
-	time2 := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
-	time3 := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
-	time4 := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
+	decimal1 := types.NewDecFromFloatForTest(123.121)
+	decimal2 := types.NewDecFromFloatForTest(123.122)
+	decimal3 := types.NewDecFromFloatForTest(123.123)
+	decimal4 := types.NewDecFromFloatForTest(123.124)
+	time1 := types.Time{Time: types.FromGoTime(time.Date(2017, 1, 1, 1, 1, 1, 1, time.UTC)), Fsp: 6, Type: mysql.TypeDatetime}
+	time2 := types.Time{Time: types.FromGoTime(time.Date(2017, 1, 2, 1, 1, 1, 1, time.UTC)), Fsp: 6, Type: mysql.TypeDatetime}
+	time3 := types.Time{Time: types.FromGoTime(time.Date(2017, 1, 3, 1, 1, 1, 1, time.UTC)), Fsp: 6, Type: mysql.TypeDatetime}
+	time4 := types.Time{Time: types.FromGoTime(time.Date(2017, 1, 4, 1, 1, 1, 1, time.UTC)), Fsp: 6, Type: mysql.TypeDatetime}
 	duration1 := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
 	duration2 := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute)}
 	duration3 := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Second)}
@@ -104,6 +108,8 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 		{[]interface{}{1, 0, 2, 3}, int64(0)},
 		{[]interface{}{1.1, 1.2, 1.3}, int64(0)},
 		{[]interface{}{1.1, 1.1, 1.2, 1.3}, int64(1)},
+		{[]interface{}{decimal1, decimal2, decimal3, decimal4}, int64(0)},
+		{[]interface{}{decimal1, decimal2, decimal3, decimal1}, int64(1)},
 		{[]interface{}{"1.1", "1.1", "1.2", "1.3"}, int64(1)},
 		{[]interface{}{"1.1", hack.Slice("1.1"), "1.2", "1.3"}, int64(1)},
 		{[]interface{}{hack.Slice("1.1"), "1.1", "1.2", "1.3"}, int64(1)},
@@ -119,7 +125,7 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		c.Assert(d.GetValue(), Equals, tc.res)
+		c.Assert(d.GetValue(), Equals, tc.res, Commentf("%v", types.MakeDatums(tc.args)))
 	}
 }
 
@@ -202,11 +208,11 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, "Session current insert values is nil")
-	s.ctx.GetSessionVars().CurrInsertValues = types.MakeDatums("1")
+	s.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(types.MakeDatums("1"))
 	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, fmt.Sprintf("Session current insert values len %d and column's offset %v don't match", 1, 1))
 	currInsertValues := types.MakeDatums("1", "2")
-	s.ctx.GetSessionVars().CurrInsertValues = currInsertValues
+	s.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(currInsertValues)
 	ret, err := evalBuiltinFunc(sig, nil)
 	c.Assert(err, IsNil)
 	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])

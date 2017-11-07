@@ -101,8 +101,9 @@ type IndexLookUpJoin struct {
 	buffer4JoinKeys [][]types.Datum
 	buffer4JoinKey  []types.Datum
 
-	batchSize int
-	exhausted bool // exhausted means whether all data has been extracted.
+	maxBatchSize int
+	curBatchSize int
+	exhausted    bool // exhausted means whether all data has been extracted.
 }
 
 // Open implements the Executor Open interface.
@@ -112,9 +113,10 @@ func (e *IndexLookUpJoin) Open() error {
 	}
 
 	e.resultCursor = 0
-	e.resultBuffer = make([]Row, 0, e.batchSize)
-	e.buffer4JoinKeys = make([][]types.Datum, 0, e.batchSize)
-	e.buffer4JoinKey = make([]types.Datum, 0, e.batchSize*len(e.outerKeys))
+	e.curBatchSize = 32
+	e.resultBuffer = make([]Row, 0, e.maxBatchSize)
+	e.buffer4JoinKeys = make([][]types.Datum, 0, e.maxBatchSize)
+	e.buffer4JoinKey = make([]types.Datum, 0, e.maxBatchSize*len(e.outerKeys))
 	e.exhausted = false
 	return nil
 }
@@ -152,6 +154,9 @@ func (e *IndexLookUpJoin) Close() error {
 // Step7: do merge join on the **sorted** outer and inner rows.
 func (e *IndexLookUpJoin) Next() (Row, error) {
 	for ; e.resultCursor == len(e.resultBuffer); e.resultCursor = 0 {
+		if e.curBatchSize < e.maxBatchSize {
+			e.curBatchSize *= 2
+		}
 		if e.exhausted {
 			return nil, nil
 		}
@@ -160,7 +165,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 		e.innerOrderedRows.reset()
 		e.resultBuffer = e.resultBuffer[:0:cap(e.resultBuffer)]
 
-		for i := 0; i < e.batchSize; i++ {
+		for i := 0; i < e.curBatchSize; i++ {
 			outerRow, err := e.outerExec.Next()
 			if err != nil {
 				return nil, errors.Trace(err)

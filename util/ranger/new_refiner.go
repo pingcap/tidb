@@ -28,6 +28,7 @@ func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, l
 	var (
 		ranges       []*types.IndexRange
 		eqAndInCount int
+		err          error
 	)
 	for eqAndInCount = 0; eqAndInCount < len(accessCondition) && eqAndInCount < len(cols); eqAndInCount++ {
 		if sf, ok := accessCondition[eqAndInCount].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
@@ -35,21 +36,30 @@ func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, l
 		}
 		// Build ranges for equal or in access conditions.
 		point := rb.build(accessCondition[eqAndInCount])
+		if rb.err != nil {
+			return nil, errors.Trace(rb.err)
+		}
 		if eqAndInCount == 0 {
-			ranges = rb.buildIndexRanges(point, cols[eqAndInCount].RetType)
+			ranges, err = points2IndexRanges(sc, point, cols[eqAndInCount].RetType)
 		} else {
-			ranges = rb.appendIndexRanges(ranges, point, cols[eqAndInCount].RetType)
+			ranges, err = appendPoints2IndexRanges(sc, ranges, point, cols[eqAndInCount].RetType)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
+		if rb.err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if eqAndInCount == 0 {
-		ranges = rb.buildIndexRanges(rangePoints, cols[0].RetType)
+		ranges, err = points2IndexRanges(sc, rangePoints, cols[0].RetType)
 	} else if eqAndInCount < len(accessCondition) {
-		ranges = rb.appendIndexRanges(ranges, rangePoints, cols[eqAndInCount].RetType)
+		ranges, err = appendPoints2IndexRanges(sc, ranges, rangePoints, cols[eqAndInCount].RetType)
 	}
 
 	// Take prefix index into consideration.
@@ -73,7 +83,7 @@ func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, l
 			}
 		}
 	}
-	return ranges, errors.Trace(rb.err)
+	return ranges, nil
 }
 
 func hasPrefix(lengths []int) bool {
@@ -270,8 +280,8 @@ func buildColumnRange(conds []expression.Expression, sc *variable.StatementConte
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges := rb.buildColumnRanges(rangePoints, tp)
-	if rb.err != nil {
+	ranges, err := points2ColumnRanges(sc, rangePoints, tp)
+	if err != nil {
 		return nil, errors.Trace(rb.err)
 	}
 	return ranges, nil
