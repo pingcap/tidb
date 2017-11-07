@@ -39,7 +39,6 @@ func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, l
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
-		var err error
 		if eqAndInCount == 0 {
 			ranges, err = points2IndexRanges(sc, point, cols[eqAndInCount].RetType)
 		} else {
