@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"sort"
 	"time"
 
 	"github.com/juju/errors"
@@ -952,14 +953,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	// for IndexLookUpJoin, left is always the outer side.
 	outerExec := b.build(v.Children()[0])
 	executor := b.build(v.Children()[1])
-	var innerExec DataReader
+	var innerExecBuilder DataReaderBuilder
 	switch raw := executor.(type) {
 	case *TableReaderExecutor:
-		innerExec = &tableDataReader{*raw}
+		innerExecBuilder = &tableReaderBuilder{*raw}
 	case *IndexReaderExecutor:
-		innerExec = &indexDataReader{*raw}
+		innerExecBuilder = &indexReaderBuilder{*raw}
 	case *IndexLookUpExecutor:
-		innerExec = &indexLookupDataReader{*raw}
+		innerExecBuilder = &indexLookupBuilder{*raw}
 	default:
 		panic("should never get here!")
 	}
@@ -967,7 +968,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
-		innerExec:        innerExec,
+		innerExecBuilder: innerExecBuilder,
 		outerKeys:        v.OuterJoinKeys,
 		innerKeys:        v.InnerJoinKeys,
 		outerFilter:      v.LeftConditions,
@@ -1103,4 +1104,94 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableReaderSchema: tableReaderSchema,
 	}
 	return e
+}
+
+// DataReaderBuilder build a executor.
+// The executor can be used to read data in the ranges which are constructed by datums.
+type DataReaderBuilder interface {
+	BuildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error)
+}
+
+var (
+	_ DataReaderBuilder = &tableReaderBuilder{}
+	_ DataReaderBuilder = &indexReaderBuilder{}
+	_ DataReaderBuilder = &indexLookupBuilder{}
+)
+
+type tableReaderBuilder struct {
+	TableReaderExecutor
+}
+
+// doRequestForDatums constructs kv ranges by Datums. It is used by index look up join.
+// Every lens for `datums` will always be one and must be type of int64.
+func (dataReader *tableReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
+	handles := make([]int64, 0, len(datums))
+	for _, datum := range datums {
+		handles = append(handles, datum[0].GetInt64())
+	}
+	return dataReader.doRequestForHandles(goCtx, handles)
+}
+
+func (dataReader *tableReaderBuilder) doRequestForHandles(goCtx goctx.Context, handles []int64) (Executor, error) {
+	e := dataReader.TableReaderExecutor
+	sort.Sort(int64Slice(handles))
+	var builder requestBuilder
+	kvReq, err := builder.SetTableHandles(e.tableID, handles).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.result.Fetch(goCtx)
+	return &e, nil
+}
+
+type indexReaderBuilder struct {
+	IndexReaderExecutor
+}
+
+// doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
+func (dataReader *indexReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context, values [][]types.Datum) (Executor, error) {
+	e := dataReader.IndexReaderExecutor
+
+	var builder requestBuilder
+	kvReq, err := builder.SetIndexValues(e.tableID, e.index.ID, values).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.result.Fetch(goCtx)
+	return &e, nil
+}
+
+type indexLookupBuilder struct {
+	IndexLookUpExecutor
+}
+
+// doRequestForDatums constructs kv ranges by datums. It is used by index look up join.
+func (dataReader *indexLookupBuilder) BuildExecutorForDatums(goCtx goctx.Context, values [][]types.Datum) (Executor, error) {
+	e := dataReader.IndexLookUpExecutor
+	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = e.open(kvRanges)
+	return &e, errors.Trace(err)
 }

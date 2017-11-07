@@ -18,12 +18,10 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	goctx "golang.org/x/net/context"
 )
 
 type keyRowBlock struct {
@@ -88,7 +86,7 @@ type IndexLookUpJoin struct {
 	baseExecutor
 
 	outerExec        Executor
-	innerExec        DataReader
+	innerExecBuilder DataReaderBuilder
 	outerKeys        []*expression.Column
 	innerKeys        []*expression.Column
 	outerFilter      expression.CNFExprs
@@ -129,7 +127,7 @@ func (e *IndexLookUpJoin) Close() error {
 
 	// release all resource references.
 	e.outerExec = nil
-	e.innerExec = nil
+	e.innerExecBuilder = nil
 	e.outerKeys = nil
 	e.innerKeys = nil
 	e.outerFilter = nil
@@ -259,16 +257,16 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
-	e1, err := e.innerExec.doRequestForDatums(e.ctx.GoCtx(), requestRows)
+	e1, err := e.innerExecBuilder.BuildExecutorForDatums(e.ctx.GoCtx(), requestRows)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer terror.Call(e1.Close)
 
 	for {
-		innerRow, err := e1.Next()
+		innerRow, err1 := e1.Next()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Trace(err1)
 		} else if innerRow == nil {
 			break
 		}
@@ -334,83 +332,4 @@ func (e *IndexLookUpJoin) doMergeJoin() (err error) {
 	}
 	e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerOrderedRows.rows[outerCursor:], e.resultBuffer)
 	return nil
-}
-
-type tableDataReader struct {
-	TableReaderExecutor
-}
-
-// doRequestForDatums constructs kv ranges by Datums. It is used by index look up join.
-// Every lens for `datums` will always be one and must be type of int64.
-func (dataReader *tableDataReader) doRequestForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
-	handles := make([]int64, 0, len(datums))
-	for _, datum := range datums {
-		handles = append(handles, datum[0].GetInt64())
-	}
-	return dataReader.doRequestForHandles(goCtx, handles)
-}
-
-func (dataReader *tableDataReader) doRequestForHandles(goCtx goctx.Context, handles []int64) (Executor, error) {
-	e := dataReader.TableReaderExecutor
-	sort.Sort(int64Slice(handles))
-	var builder requestBuilder
-	kvReq, err := builder.SetTableHandles(e.tableID, handles).
-		SetDAGRequest(e.dagPB).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		Build()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.result.Fetch(goCtx)
-	return &e, nil
-}
-
-type indexDataReader struct {
-	IndexReaderExecutor
-}
-
-// doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
-func (dataReader *indexDataReader) doRequestForDatums(goCtx goctx.Context, values [][]types.Datum) (Executor, error) {
-	e := dataReader.IndexReaderExecutor
-
-	var builder requestBuilder
-	kvReq, err := builder.SetIndexValues(e.tableID, e.index.ID, values).
-		SetDAGRequest(e.dagPB).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		Build()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.result.Fetch(goCtx)
-	return &e, nil
-}
-
-type indexLookupDataReader struct {
-	IndexLookUpExecutor
-}
-
-// doRequestForDatums constructs kv ranges by datums. It is used by index look up join.
-func (dataReader *indexLookupDataReader) doRequestForDatums(goCtx goctx.Context, values [][]types.Datum) (Executor, error) {
-	e := dataReader.IndexLookUpExecutor
-
-	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = e.open(kvRanges)
-	return &e, errors.Trace(err)
 }

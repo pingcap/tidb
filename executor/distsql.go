@@ -43,10 +43,6 @@ var (
 	_ Executor = &TableReaderExecutor{}
 	_ Executor = &IndexReaderExecutor{}
 	_ Executor = &IndexLookUpExecutor{}
-
-	_ DataReader = &tableDataReader{}
-	_ DataReader = &indexDataReader{}
-	_ DataReader = &indexLookupDataReader{}
 )
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
@@ -391,11 +387,6 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 		}
 	}
 	return nil
-}
-
-// DataReader can send requests which ranges are constructed by datums.
-type DataReader interface {
-	doRequestForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error)
 }
 
 // handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
@@ -783,7 +774,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		schema = e.schema
 	}
 
-	tableReader := tableDataReader{
+	tableReader := tableReaderBuilder{
 		TableReaderExecutor{
 			table:   e.table,
 			tableID: e.tableID,
