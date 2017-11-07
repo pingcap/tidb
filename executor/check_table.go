@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 )
 
-var var_ Executor = &CheckTableExec{}
+var _ Executor = &CheckTableExec{}
 
 // CheckTableExec represents a check table executor.
 // It is built from the "admin check table" statement, and it checks if the
