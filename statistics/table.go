@@ -95,7 +95,7 @@ func (h *Handle) indexStatsFromStorage(row *ast.Row, table *Table, tableInfo *mo
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, err := decodeCMSketch(row.Data[6].GetBytes())
+			cms, err := h.cmSketchFromStorage(tableInfo.ID, 1, idxInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -137,7 +137,7 @@ func (h *Handle) columnStatsFromStorage(row *ast.Row, table *Table, tableInfo *m
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, err := decodeCMSketch(row.Data[6].GetBytes())
+			cms, err := h.cmSketchFromStorage(tableInfo.ID, 0, colInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -169,7 +169,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch from mysql.stats_histograms where table_id = %d", tableInfo.ID)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
