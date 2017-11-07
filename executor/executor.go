@@ -25,57 +25,21 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 )
 
 var (
 	_ Executor = &CheckTableExec{}
-	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
-	_ Executor = &LimitExec{}
-	_ Executor = &MaxOneRowExec{}
-	_ Executor = &ProjectionExec{}
-	_ Executor = &SelectionExec{}
-	_ Executor = &SelectLockExec{}
-	_ Executor = &ShowDDLExec{}
-	_ Executor = &ShowDDLJobsExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
-)
-
-// Error instances.
-var (
-	ErrUnknownPlan          = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
-	ErrPrepareMulti         = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrPrepareDDL           = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
-	ErrPasswordNoMatch      = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
-	ErrResultIsEmpty        = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
-	ErrBuildExecutor        = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
-	ErrBatchInsertFail      = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
-	ErrWrongValueCountOnRow = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
-)
-
-// Error codes.
-const (
-	codeUnknownPlan          terror.ErrCode = 1
-	codePrepareMulti         terror.ErrCode = 2
-	codePrepareDDL           terror.ErrCode = 7
-	codeResultIsEmpty        terror.ErrCode = 8
-	codeErrBuildExec         terror.ErrCode = 9
-	codeBatchInsertFail      terror.ErrCode = 10
-	CodePasswordNoMatch      terror.ErrCode = 1133 // MySQL error code
-	CodeCannotUser           terror.ErrCode = 1396 // MySQL error code
-	codeWrongValueCountOnRow terror.ErrCode = 1136 // MySQL error code
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -165,59 +129,6 @@ func (e *CancelDDLJobsExec) Next() (Row, error) {
 	return row, nil
 }
 
-// ShowDDLExec represents a show DDL executor.
-type ShowDDLExec struct {
-	baseExecutor
-
-	ddlOwnerID string
-	selfID     string
-	ddlInfo    *admin.DDLInfo
-	done       bool
-}
-
-// Next implements the Executor Next interface.
-func (e *ShowDDLExec) Next() (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-
-	var ddlJob string
-	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.String()
-	}
-
-	row := types.MakeDatums(
-		e.ddlInfo.SchemaVer,
-		e.ddlOwnerID,
-		ddlJob,
-		e.selfID,
-	)
-	e.done = true
-
-	return row, nil
-}
-
-// ShowDDLJobsExec represent a show DDL jobs executor.
-type ShowDDLJobsExec struct {
-	baseExecutor
-
-	cursor int
-	jobs   []*model.Job
-}
-
-// Next implements the Executor Next interface.
-func (e *ShowDDLJobsExec) Next() (Row, error) {
-	if e.cursor >= len(e.jobs) {
-		return nil, nil
-	}
-
-	job := e.jobs[e.cursor]
-	row := types.MakeDatums(job.String(), job.State.String())
-	e.cursor++
-
-	return row, nil
-}
-
 // CheckTableExec represents a check table executor.
 // It is built from the "admin check table" statement, and it checks if the
 // index matches the records in the table.
@@ -261,91 +172,6 @@ func (e *CheckTableExec) Close() error {
 	return nil
 }
 
-// SelectLockExec represents a select lock executor.
-// It is built from the "SELECT .. FOR UPDATE" or the "SELECT .. LOCK IN SHARE MODE" statement.
-// For "SELECT .. FOR UPDATE" statement, it locks every row key from source Executor.
-// After the execution, the keys are buffered in transaction, and will be sent to KV
-// when doing commit. If there is any key already locked by another transaction,
-// the transaction will rollback and retry.
-type SelectLockExec struct {
-	baseExecutor
-
-	Lock ast.SelectLockType
-}
-
-// Next implements the Executor Next interface.
-func (e *SelectLockExec) Next() (Row, error) {
-	row, err := e.children[0].Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		return nil, nil
-	}
-	// If there's no handle or it isn't a `select for update`.
-	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
-		return row, nil
-	}
-	txn := e.ctx.Txn()
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
-	for id, cols := range e.Schema().TblID2Handle {
-		for _, col := range cols {
-			handle := row[col.Index].GetInt64()
-			lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
-			err = txn.LockKeys(lockKey)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(id, 0, 0)
-		}
-	}
-	return row, nil
-}
-
-// LimitExec represents limit executor
-// It ignores 'Offset' rows from src, then returns 'Count' rows at maximum.
-type LimitExec struct {
-	baseExecutor
-
-	Offset uint64
-	Count  uint64
-	Idx    uint64
-}
-
-// Next implements the Executor Next interface.
-func (e *LimitExec) Next() (Row, error) {
-	for e.Idx < e.Offset {
-		srcRow, err := e.children[0].Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return nil, nil
-		}
-		e.Idx++
-	}
-	if e.Idx >= e.Count+e.Offset {
-		return nil, nil
-	}
-	srcRow, err := e.children[0].Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if srcRow == nil {
-		return nil, nil
-	}
-	e.Idx++
-	return srcRow, nil
-}
-
-// Open implements the Executor Open interface.
-func (e *LimitExec) Open() error {
-	e.Idx = 0
-	return errors.Trace(e.children[0].Open())
-}
-
 func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
@@ -375,39 +201,6 @@ func init() {
 			rows = append(rows, row)
 		}
 	}
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeCannotUser:           mysql.ErrCannotUser,
-		CodePasswordNoMatch:      mysql.ErrPasswordNoMatch,
-		codeWrongValueCountOnRow: mysql.ErrWrongValueCountOnRow,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
-}
-
-// ProjectionExec represents a select fields executor.
-type ProjectionExec struct {
-	baseExecutor
-
-	exprs []expression.Expression
-}
-
-// Next implements the Executor Next interface.
-func (e *ProjectionExec) Next() (retRow Row, err error) {
-	srcRow, err := e.children[0].Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if srcRow == nil {
-		return nil, nil
-	}
-	row := make([]types.Datum, 0, len(e.exprs))
-	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRow)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		row = append(row, val)
-	}
-	return row, nil
 }
 
 // TableDualExec represents a dual table executor.
@@ -431,33 +224,6 @@ func (e *TableDualExec) Next() (Row, error) {
 	}
 	e.returnCnt++
 	return Row{}, nil
-}
-
-// SelectionExec represents a filter executor.
-type SelectionExec struct {
-	baseExecutor
-
-	Conditions []expression.Expression
-}
-
-// Next implements the Executor Next interface.
-func (e *SelectionExec) Next() (Row, error) {
-	for {
-		srcRow, err := e.children[0].Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return nil, nil
-		}
-		match, err := expression.EvalBool(e.Conditions, srcRow, e.ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if match {
-			return srcRow, nil
-		}
-	}
 }
 
 // TableScanExec is a table scan executor without result fields.
@@ -587,70 +353,6 @@ func (e *TableScanExec) Open() error {
 	e.iter = nil
 	e.cursor = 0
 	return nil
-}
-
-// ExistsExec represents exists executor.
-type ExistsExec struct {
-	baseExecutor
-
-	evaluated bool
-}
-
-// Open implements the Executor Open interface.
-func (e *ExistsExec) Open() error {
-	e.evaluated = false
-	return errors.Trace(e.children[0].Open())
-}
-
-// Next implements the Executor Next interface.
-// We always return one row with one column which has true or false value.
-func (e *ExistsExec) Next() (Row, error) {
-	if !e.evaluated {
-		e.evaluated = true
-		srcRow, err := e.children[0].Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return Row{types.NewDatum(srcRow != nil)}, nil
-	}
-	return nil, nil
-}
-
-// MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
-// It's built from subquery expression.
-type MaxOneRowExec struct {
-	baseExecutor
-
-	evaluated bool
-}
-
-// Open implements the Executor Open interface.
-func (e *MaxOneRowExec) Open() error {
-	e.evaluated = false
-	return errors.Trace(e.children[0].Open())
-}
-
-// Next implements the Executor Next interface.
-func (e *MaxOneRowExec) Next() (Row, error) {
-	if !e.evaluated {
-		e.evaluated = true
-		srcRow, err := e.children[0].Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return make([]types.Datum, e.schema.Len()), nil
-		}
-		srcRow1, err := e.children[0].Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow1 != nil {
-			return nil, errors.New("subquery returns more than 1 row")
-		}
-		return srcRow, nil
-	}
-	return nil, nil
 }
 
 // UnionExec represents union executor.
