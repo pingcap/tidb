@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -54,51 +55,51 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 // new columns and indices which belong to this table.
 func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute("begin")
+	_, err := exec.Execute(goctx.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.ctx.Txn().StartTS(), info.ID))
+	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.ctx.Txn().StartTS(), info.ID))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, col := range info.Columns {
-		_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
+		_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range info.Indices {
-		_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
+		_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = exec.Execute("commit")
+	_, err = exec.Execute(goctx.Background(), "commit")
 	return errors.Trace(err)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 func (h *Handle) DeleteTableStatsFromKV(id int64) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute("begin")
+	_, err := exec.Execute(goctx.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// First of all, we update the version.
-	_, err = exec.Execute(fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), id))
+	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), id))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", id))
+	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", id))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", id))
+	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", id))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute("commit")
+	_, err = exec.Execute(goctx.Background(), "commit")
 	return errors.Trace(err)
 }
 
@@ -106,12 +107,12 @@ func (h *Handle) DeleteTableStatsFromKV(id int64) error {
 // This operation also updates version.
 func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute("begin")
+	_, err := exec.Execute(goctx.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// First of all, we update the version.
-	_, err = exec.Execute(fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
+	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -120,7 +121,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		exec := h.ctx.(sqlexec.SQLExecutor)
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs []ast.RecordSet
-		rs, err = exec.Execute(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		rs, err = exec.Execute(goctx.Background(), fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -137,13 +138,13 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		}
 		if value.IsNull() {
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
-			_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, count))
+			_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, count))
 			if err != nil {
 				return errors.Trace(err)
 			}
 		} else {
 			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-			_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count) values (%d, %d, 0, %d, 1)", h.ctx.Txn().StartTS(), tableID, colInfo.ID))
+			_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count) values (%d, %d, 0, %d, 1)", h.ctx.Txn().StartTS(), tableID, colInfo.ID))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -152,38 +153,38 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 				return errors.Trace(err)
 			}
 			// There must be only one bucket for this new column and the value is the default value.
-			_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", tableID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
+			_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", tableID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
-	_, err = exec.Execute("commit")
+	_, err = exec.Execute(goctx.Background(), "commit")
 	return errors.Trace(err)
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute("begin")
+	_, err := exec.Execute(goctx.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	_, err = exec.Execute(fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
+	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// delete histogram meta
-	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
+	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// delete all buckets
-	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
+	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute("commit")
+	_, err = exec.Execute(goctx.Background(), "commit")
 	return errors.Trace(err)
 }
