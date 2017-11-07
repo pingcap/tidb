@@ -57,6 +57,7 @@ type Row interface {
 	GetJSON(colIdx int) (json.JSON, bool)
 
 	// GetDatum returns a Datum with the colIdx and field type.
+	// This method is provided for convenience, direct type methods are preferred for better performance.
 	GetDatum(colIdx int, tp *FieldType) Datum
 }
 
