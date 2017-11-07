@@ -149,7 +149,7 @@ func (s *testMySQLConstSuite) TestRealAsFloatMode(c *C) {
 	c.Assert(row[1], Equals, "float")
 }
 
-func (s *testMySQLConstSuite) TestNoUnsignedSubTractionMode(c *C) {
+func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
 	r.Check(testkit.Rows("-1"))

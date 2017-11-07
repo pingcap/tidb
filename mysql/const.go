@@ -427,7 +427,7 @@ func (m SQLMode) HasStrictMode() bool {
 	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
 }
 
-// HasNoUnsignedSubtractionMode detects if 'NO_UNSIGNED_SUBSTRACTION' mode is set in SQLMode
+// HasNoUnsignedSubtractionMode detects if 'NO_UNSIGNED_SUBTRACTION' mode is set in SQLMode
 func (m SQLMode) HasNoUnsignedSubtractionMode() bool {
 	return m&ModeNoUnsignedSubtraction == ModeNoUnsignedSubtraction
 }
