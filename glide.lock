@@ -1,5 +1,5 @@
-hash: 3b633ed1ad76ed21935b44bd36da61fa30a2d8fab356c5d4a78bee89cf8753e2
-updated: 2017-11-06T15:48:29.592342374+08:00
+hash: c2206ef25a52d5baa44acc18fb1ecf4abdd8924dfdd1dafd4cff3baa45d06b08
+updated: 2017-11-07T16:02:42.213339698+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -142,7 +142,7 @@ imports:
   version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
   repo: git@github.com:pingcap/mysqlx-driver.git
 - name: github.com/pingcap/pd
-  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
+  version: f931b1dae9ccecb72d671a654b6f26a15075ec71
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
@@ -207,7 +207,7 @@ imports:
   subpackages:
   - metrics
 - name: github.com/uber/tchannel-go
-  version: a7ad9ecb640b5f10a0395b38d6319175172b3ab2
+  version: cc230a2942d078a8b01f4a79895dad62e6c572f1
   subpackages:
   - atomic
   - thrift
