@@ -86,7 +86,7 @@ type IndexLookUpJoin struct {
 	baseExecutor
 
 	outerExec        Executor
-	innerExecBuilder DataReaderBuilder
+	innerExecBuilder *dataReaderBuilder
 	outerKeys        []*expression.Column
 	innerKeys        []*expression.Column
 	outerFilter      expression.CNFExprs

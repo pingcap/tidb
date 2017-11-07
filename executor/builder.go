@@ -952,19 +952,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 
 	// for IndexLookUpJoin, left is always the outer side.
 	outerExec := b.build(v.Children()[0])
-	executor := b.build(v.Children()[1])
-	var innerExecBuilder DataReaderBuilder
-	switch raw := executor.(type) {
-	case *TableReaderExecutor:
-		innerExecBuilder = &tableReaderBuilder{*raw}
-	case *IndexReaderExecutor:
-		innerExecBuilder = &indexReaderBuilder{*raw}
-	case *IndexLookUpExecutor:
-		innerExecBuilder = &indexLookupBuilder{*raw}
-	default:
-		panic("should never get here!")
-	}
-
+	innerExecBuilder := &dataReaderBuilder{v.Children()[1], b}
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
@@ -980,7 +968,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	}
 }
 
-func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
 	dagReq := b.constructDAGReq(v.TablePlans)
 	if b.err != nil {
 		return nil
@@ -1011,7 +999,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	return e
 }
 
-func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor {
+func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexReaderExecutor {
 	dagReq := b.constructDAGReq(v.IndexPlans)
 	if b.err != nil {
 		return nil
@@ -1043,7 +1031,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	return e
 }
 
-func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) Executor {
+func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
 	indexReq := b.constructDAGReq(v.IndexPlans)
 	if b.err != nil {
 		return nil
@@ -1106,34 +1094,37 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	return e
 }
 
-// DataReaderBuilder build a executor.
+// dataReaderBuilder build a executor.
 // The executor can be used to read data in the ranges which are constructed by datums.
-type DataReaderBuilder interface {
-	BuildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error)
+type dataReaderBuilder struct {
+	plan.Plan
+	*executorBuilder
 }
 
-var (
-	_ DataReaderBuilder = &tableReaderBuilder{}
-	_ DataReaderBuilder = &indexReaderBuilder{}
-	_ DataReaderBuilder = &indexLookupBuilder{}
-)
-
-type tableReaderBuilder struct {
-	TableReaderExecutor
+func (builder *dataReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
+	switch v := builder.Plan.(type) {
+	case *plan.PhysicalIndexReader:
+		e := builder.executorBuilder.buildIndexReader(v)
+		return buildIndexReaderForDatums(goCtx, e, datums)
+	case *plan.PhysicalTableReader:
+		e := builder.executorBuilder.buildTableReader(v)
+		return buildTableReaderForDatums(goCtx, e, datums)
+	case *plan.PhysicalIndexLookUpReader:
+		e := builder.executorBuilder.buildIndexLookUpReader(v)
+		return buildIndexLookUpReaderForDatums(goCtx, e, datums)
+	}
+	return nil, errors.New("should never run here")
 }
 
-// doRequestForDatums constructs kv ranges by Datums. It is used by index look up join.
-// Every lens for `datums` will always be one and must be type of int64.
-func (dataReader *tableReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
+func buildTableReaderForDatums(goCtx goctx.Context, e *TableReaderExecutor, datums [][]types.Datum) (Executor, error) {
 	handles := make([]int64, 0, len(datums))
 	for _, datum := range datums {
 		handles = append(handles, datum[0].GetInt64())
 	}
-	return dataReader.doRequestForHandles(goCtx, handles)
+	return doRequestForHandles(goCtx, e, handles)
 }
 
-func (dataReader *tableReaderBuilder) doRequestForHandles(goCtx goctx.Context, handles []int64) (Executor, error) {
-	e := dataReader.TableReaderExecutor
+func doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
 	sort.Sort(int64Slice(handles))
 	var builder requestBuilder
 	kvReq, err := builder.SetTableHandles(e.tableID, handles).
@@ -1151,17 +1142,10 @@ func (dataReader *tableReaderBuilder) doRequestForHandles(goCtx goctx.Context, h
 		return nil, errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
-	return &e, nil
+	return e, nil
 }
 
-type indexReaderBuilder struct {
-	IndexReaderExecutor
-}
-
-// doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
-func (dataReader *indexReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context, values [][]types.Datum) (Executor, error) {
-	e := dataReader.IndexReaderExecutor
-
+func buildIndexReaderForDatums(goCtx goctx.Context, e *IndexReaderExecutor, values [][]types.Datum) (Executor, error) {
 	var builder requestBuilder
 	kvReq, err := builder.SetIndexValues(e.tableID, e.index.ID, values).
 		SetDAGRequest(e.dagPB).
@@ -1178,20 +1162,14 @@ func (dataReader *indexReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context
 		return nil, errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
-	return &e, nil
+	return e, nil
 }
 
-type indexLookupBuilder struct {
-	IndexLookUpExecutor
-}
-
-// doRequestForDatums constructs kv ranges by datums. It is used by index look up join.
-func (dataReader *indexLookupBuilder) BuildExecutorForDatums(goCtx goctx.Context, values [][]types.Datum) (Executor, error) {
-	e := dataReader.IndexLookUpExecutor
+func buildIndexLookUpReaderForDatums(goCtx goctx.Context, e *IndexLookUpExecutor, values [][]types.Datum) (Executor, error) {
 	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	err = e.open(kvRanges)
-	return &e, errors.Trace(err)
+	return e, errors.Trace(err)
 }
