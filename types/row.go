@@ -17,6 +17,8 @@ import "github.com/pingcap/tidb/types/json"
 
 // Row is an interface to read columns values.
 type Row interface {
+	// Len returns the number of values in the row.
+	Len() int
 
 	// GetInt64 returns the int64 value and isNull with the colIdx.
 	GetInt64(colIdx int) (val int64, isNull bool)
@@ -53,12 +55,21 @@ type Row interface {
 
 	// GetJSON returns the JSON value and isNull with the colIdx.
 	GetJSON(colIdx int) (json.JSON, bool)
+
+	// GetDatum returns a Datum with the colIdx and field type.
+	// This method is provided for convenience, direct type methods are preferred for better performance.
+	GetDatum(colIdx int, tp *FieldType) Datum
 }
 
 var _ Row = DatumRow{}
 
 // DatumRow is a slice of Datum, implements Row interface.
 type DatumRow []Datum
+
+// Len implements Row interface.
+func (dr DatumRow) Len() int {
+	return len(dr)
+}
 
 // GetInt64 implements Row interface.
 func (dr DatumRow) GetInt64(colIdx int) (int64, bool) {
@@ -166,4 +177,9 @@ func (dr DatumRow) GetJSON(colIdx int) (json.JSON, bool) {
 		return json.JSON{}, true
 	}
 	return dr[colIdx].GetMysqlJSON(), false
+}
+
+// GetDatum implements Row interface.
+func (dr DatumRow) GetDatum(colIdx int, tp *FieldType) Datum {
+	return dr[colIdx]
 }
