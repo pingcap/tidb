@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/types"
 )
 
 /***
@@ -85,7 +85,7 @@ func (e *GrantExec) Next() (Row, error) {
 
 			user := fmt.Sprintf(`("%s", "%s", "%s")`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
+			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(e.ctx.GoCtx(), sql)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

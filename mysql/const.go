@@ -359,6 +359,9 @@ var AllColumnPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv}
 // AllPrivilegeLiteral is the string literal for All Privilege.
 const AllPrivilegeLiteral = "ALL PRIVILEGES"
 
+// DefaultSQLMode for GLOBAL_VARIABLES
+const DefaultSQLMode = "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"
+
 // DefaultLengthOfMysqlTypes is the map for default physical length of MySQL data types.
 // See http://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 var DefaultLengthOfMysqlTypes = map[byte]int{
@@ -414,6 +417,11 @@ func (m SQLMode) HasErrorForDivisionByZeroMode() bool {
 	return m&ModeErrorForDivisionByZero == ModeErrorForDivisionByZero
 }
 
+// HasOnlyFullGroupBy detects if 'ONLY_FULL_GROUP_BY' mode is set in SQLMode
+func (m SQLMode) HasOnlyFullGroupBy() bool {
+	return m&ModeOnlyFullGroupBy == ModeOnlyFullGroupBy
+}
+
 // HasStrictMode detects if 'STRICT_TRANS_TABLES' or 'STRICT_ALL_TABLES' mode is set in SQLMode
 func (m SQLMode) HasStrictMode() bool {
 	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
@@ -422,6 +430,11 @@ func (m SQLMode) HasStrictMode() bool {
 // HasPipesAsConcatMode detects if 'PIPES_AS_CONCAT' mode is set in SQLMode
 func (m SQLMode) HasPipesAsConcatMode() bool {
 	return m&ModePipesAsConcat == ModePipesAsConcat
+}
+
+// HasRealAsFloatMode detects if 'REAL_AS_FLOAT' mode is set in SQLMode
+func (m SQLMode) HasRealAsFloatMode() bool {
+	return m&ModeRealAsFloat == ModeRealAsFloat
 }
 
 // consts for sql modes.

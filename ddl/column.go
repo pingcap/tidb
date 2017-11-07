@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, added bool) {
@@ -235,6 +235,11 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	return ver, errors.Trace(err)
 }
+
+const (
+	defaultBatchCnt      = 1024
+	defaultSmallBatchCnt = 128
+)
 
 // addTableColumn adds a column to the table.
 // TODO: Use it when updating the column type or remove it.

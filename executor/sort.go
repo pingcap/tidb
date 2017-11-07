@@ -20,7 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // orderByRow binds a row to its order values, so it can be sorted.

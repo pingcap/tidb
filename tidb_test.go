@@ -28,11 +28,12 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -208,7 +209,7 @@ func removeStore(c *C, dbPath string) {
 
 func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	if len(args) == 0 {
-		rs, err := se.Execute(sql)
+		rs, err := se.Execute(goctx.Background(), sql)
 		if err == nil && len(rs) > 0 {
 			return rs[0], nil
 		}

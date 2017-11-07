@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -1151,7 +1151,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 	}
 
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	e.ctx.GetSessionVars().CurrInsertValues = row
+	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(row)
 
 	// evaluate assignment
 	assignFlag := make([]bool, len(e.Table.WritableCols()))

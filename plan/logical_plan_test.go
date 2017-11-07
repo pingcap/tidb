@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -406,6 +406,10 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a from (select a from t where d = 0) k where k.a = 5",
+			best: "DataScan(t)->Projection->Projection",
+		},
+		{
+			sql:  "select a from (select a+1 as a from t) k where k.a = 5",
 			best: "DataScan(t)->Projection->Projection",
 		},
 		{
