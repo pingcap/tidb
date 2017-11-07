@@ -113,7 +113,7 @@ func (e *IndexLookUpJoin) Open() error {
 	}
 
 	e.resultCursor = 0
-	e.curBatchSize = 128
+	e.curBatchSize = 32
 	e.resultBuffer = make([]Row, 0, e.batchSize)
 	e.buffer4JoinKeys = make([][]types.Datum, 0, e.batchSize)
 	e.buffer4JoinKey = make([]types.Datum, 0, e.batchSize*len(e.outerKeys))
@@ -153,9 +153,9 @@ func (e *IndexLookUpJoin) Close() error {
 // Step6: fetch a batch of sorted "inner rows" based on the request rows.
 // Step7: do merge join on the **sorted** outer and inner rows.
 func (e *IndexLookUpJoin) Next() (Row, error) {
-	for ; e.resultCursor == len(e.resultBuffer); e.resultCursor, e.curBatchSize = 0, e.curBatchSize*2 {
-		if e.curBatchSize > e.batchSize {
-			e.curBatchSize = e.batchSize
+	for ; e.resultCursor == len(e.resultBuffer); e.resultCursor = 0 {
+		if e.curBatchSize < e.batchSize {
+			e.curBatchSize *= 2
 		}
 		if e.exhausted {
 			return nil, nil
