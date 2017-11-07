@@ -24,6 +24,11 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 )
 
+var (
+	_ Executor = &HashAggExec{}
+	_ Executor = &StreamAggExec{}
+)
+
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
 
 // HashAggExec deals with all the aggregate functions.
