@@ -347,9 +347,9 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row types.Row) (val int64, isNull
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	unsignedSubtraction := !s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag) && unsignedSubtraction
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag) && unsignedSubtraction
+	forceToSigned := s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+	isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
+	isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:

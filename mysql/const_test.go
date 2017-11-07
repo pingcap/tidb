@@ -148,3 +148,15 @@ func (s *testMySQLConstSuite) TestRealAsFloatMode(c *C) {
 	row = result.Rows()[0]
 	c.Assert(row[1], Equals, "float")
 }
+
+func (s *testMySQLConstSuite) TestNoUnsignedSubTractionMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a BIGINT, b BIGINT UNSIGNED);")
+	tk.MustExec("INSERT INTO t VALUES(1,1);")
+	tk.MustExec("set sql_Mode='NO_UNSIGNED_SUBTRACTION'")
+	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
+	r.Check(testkit.Rows("-1"))
+}
