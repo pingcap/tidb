@@ -16,6 +16,7 @@ package plan_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1048,15 +1049,15 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c = 'hanfei'`,
-			best: "IndexReader(Index(t.c_d_e)[[0,0]])->Projection",
-			//best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), cast(hanfei))])->Projection",
+			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), cast(hanfei))])->Projection",
 		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
+		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc.IgnoreTruncate = false
 		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil, comment)
 		p, err := plan.Optimize(se, stmt, is)
