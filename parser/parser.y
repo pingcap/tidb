@@ -2766,9 +2766,9 @@ SimpleExpr:
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: $2}
 	}
 |	not2 SimpleExpr %prec neg
-    {
+	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2}
-    }
+	}
 |	SubSelect
 |	'(' Expression ')' {
 		startOffset := parser.startOffset(&yyS[yypt-1])
