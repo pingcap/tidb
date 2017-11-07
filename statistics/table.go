@@ -293,7 +293,6 @@ func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.D
 	}
 	hist := t.Columns[colID]
 	result, err := hist.equalRowCount(sc, value)
-	log.Warnf("%s", result)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
