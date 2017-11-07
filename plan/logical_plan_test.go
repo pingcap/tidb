@@ -409,6 +409,10 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best: "DataScan(t)->Projection->Projection",
 		},
 		{
+			sql:  "select a from (select a+1 as a from t) k where k.a = 5",
+			best: "DataScan(t)->Projection->Projection",
+		},
+		{
 			sql:  "select a from (select 1+2 as a from t where d = 0) k where k.a = 5",
 			best: "DataScan(t)->Projection->Projection",
 		},
