@@ -854,9 +854,9 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	return types.ETReal
 }
 
-// getAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
+// GetAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
 // getBaseCmpType does.
-func getAccurateCmpType(lhs, rhs Expression) types.EvalType {
+func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
@@ -946,8 +946,8 @@ func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 	}
 }
 
-// refineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func refineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
+// RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
+func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
 	sc := ctx.GetSessionVars().StmtCtx
 	dt, err := con.Eval(nil)
 	if err != nil {
@@ -994,12 +994,12 @@ func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression
 	arg1, arg1IsCon := args[1].(*Constant)
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1 = refineConstantArg(ctx, arg1, c.op)
+		arg1 = RefineConstantArg(ctx, arg1, c.op)
 		return []Expression{args[0], arg1}
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0 = refineConstantArg(ctx, arg0, symmetricOp[c.op])
+		arg0 = RefineConstantArg(ctx, arg0, symmetricOp[c.op])
 		return []Expression{arg0, args[1]}
 	}
 	return args
@@ -1011,7 +1011,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 		return nil, errors.Trace(err)
 	}
 	args := c.refineArgs(ctx, rawArgs)
-	cmpType := getAccurateCmpType(args[0], args[1])
+	cmpType := GetAccurateCmpType(args[0], args[1])
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
 	return sig, errors.Trace(err)
 }

@@ -427,6 +427,11 @@ func (m SQLMode) HasStrictMode() bool {
 	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
 }
 
+// HasRealAsFloatMode detects if 'REAL_AS_FLOAT' mode is set in SQLMode
+func (m SQLMode) HasRealAsFloatMode() bool {
+	return m&ModeRealAsFloat == ModeRealAsFloat
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
