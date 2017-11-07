@@ -53,6 +53,7 @@ func (checker *readOnlyChecker) Enter(in ast.Node) (out ast.Node, skipChildren b
 		// like func rewriteVariable(), this stands for SetVar.
 		if !node.IsSystem && node.Value != nil {
 			checker.readOnly = false
+			return in, true
 		}
 	}
 	return in, false
