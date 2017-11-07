@@ -51,7 +51,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	collector := &tipb.SampleCollector{
 		NullCount: c.NullCount,
 		Count:     c.Count,
-		Sketch:    FMSketchToProto(c.Sketch),
+		FmSketch:  FMSketchToProto(c.Sketch),
 	}
 	for _, sample := range c.Samples {
 		collector.Samples = append(collector.Samples, sample.GetBytes())
@@ -64,7 +64,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	s := &SampleCollector{
 		NullCount: collector.NullCount,
 		Count:     collector.Count,
-		Sketch:    FMSketchFromProto(collector.Sketch),
+		Sketch:    FMSketchFromProto(collector.FmSketch),
 	}
 	for _, val := range collector.Samples {
 		s.Samples = append(s.Samples, types.NewBytesDatum(val))
