@@ -222,6 +222,11 @@ func (s *testParserSuite) TestSimple(c *C) {
 	for _, col := range ct.Cols {
 		c.Assert(col.Tp.Flag&mysql.UnsignedFlag, Equals, uint(0))
 	}
+
+	// for issue #4006
+	src = `insert into tb(v) (select v from tb);`
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 }
 
 type testCase struct {
