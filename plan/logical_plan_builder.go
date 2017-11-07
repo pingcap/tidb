@@ -1033,18 +1033,17 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func tblInfoFromCol(from ast.ResultSetNode, col *expression.Column) *model.TableInfo {
-	for _, field := range from.GetResultFields() {
-		if field.Column.Name.L != col.ColName.L {
+	var tableList []*ast.TableName
+	tableList = extractTableList(from, tableList)
+	for _, field := range tableList {
+		if field.Name.L == col.TblName.L {
+			return field.TableInfo
+		}
+		if field.Name.L != col.TblName.L {
 			continue
 		}
-		if field.TableAsName.L == col.TblName.L {
-			return field.Table
-		}
-		if field.TableName.Name.L != col.TblName.L {
-			continue
-		}
-		if field.DBName.L == col.DBName.L {
-			return field.Table
+		if field.Schema.L == col.DBName.L {
+			return field.TableInfo
 		}
 	}
 	return nil

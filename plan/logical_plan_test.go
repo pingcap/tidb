@@ -1658,8 +1658,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"select a from t group by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'group statement'"},
 	}
 
-	for i, t := range tests {
-		log.Warning(i, t.sql)
+	for _, t := range tests {
 		comment := Commentf("for %s", t.sql)
 		stmt, err := s.ParseOneStmt(t.sql, "", "")
 		c.Assert(err, IsNil, comment)
