@@ -438,15 +438,18 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
 	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
 	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
-	isPrimary := bytes.Equal(batch.keys[0], c.primary())
-
-	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
-	if err != nil {
-		if isPrimary {
-			// change the Cause of the error to be returned
-			return errors.Trace(errors.Wrap(err, terror.ErrResultUndetermined))
+	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
+	errWrapper := func(err error) error {
+		if bytes.Equal(batch.keys[0], c.primary()) && sender.rpcError != nil {
+			log.Warnf("2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", err, sender.rpcError, c.startTS)
+			return errors.Wrap(err, terror.ErrResultUndetermined)
 		}
-		return errors.Trace(err)
+		return err
+	}
+
+	resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+	if err != nil {
+		return errors.Trace(errWrapper(err))
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
@@ -455,11 +458,11 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	if regionErr != nil {
 		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Trace(errWrapper(err))
 		}
 		// re-split keys and commit again.
 		err = c.commitKeys(bo, batch.keys)
-		return errors.Trace(err)
+		return errors.Trace(errWrapper(err))
 	}
 	commitResp := resp.Commit
 	if commitResp == nil {
