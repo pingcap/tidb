@@ -35,13 +35,14 @@ var (
 	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
-	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadTable])
+	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
 	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
 	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
+	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
 )
 
 // Error codes.
@@ -52,10 +53,11 @@ const (
 	CodeAnalyzeMissIndex                  = 4
 	CodeAmbiguous                         = 1052
 	CodeUnknownColumn                     = mysql.ErrBadField
-	CodeUnknownTable                      = mysql.ErrBadTable
+	CodeUnknownTable                      = mysql.ErrUnknownTable
 	CodeWrongArguments                    = 1210
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
+	CodeBadTable                          = mysql.ErrBadTable
 )
 
 func init() {
@@ -66,6 +68,7 @@ func init() {
 		CodeWrongArguments:     mysql.ErrWrongArguments,
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
 		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
+		CodeBadTable:           mysql.ErrBadTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }

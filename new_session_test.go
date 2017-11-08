@@ -1118,6 +1118,11 @@ func (s *testSessionSuite) TestDelete(c *C) {
 	tk.MustExec("insert into t (F1) values ('1'), ('2');")
 	tk.MustExec("delete test1.t from test1.t inner join test.t where test1.t.F1 > test.t.F1")
 	tk1.MustQuery("select * from t;").Check(testkit.Rows("1"))
+
+	_, err := tk.Exec("delete a from (select * from t ) as a, t")
+	c.Assert(err.Error(), Equals, "[optimizer:1288]The target table a of the DELETE is not updatable")
+	_, err = tk.Exec("delete b from (select * from t ) as a, t")
+	c.Assert(err.Error(), Equals, "[plan:1109]Unknown table 'b' in MULTI DELETE")
 }
 
 func (s *testSessionSuite) TestUnique(c *C) {

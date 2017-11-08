@@ -192,6 +192,7 @@ const (
 	CodeUnknownExplainFormat terror.ErrCode = mysql.ErrUnknownExplainFormat
 	CodeWrongGroupField                     = mysql.ErrWrongGroupField
 	CodeDupFieldName                        = mysql.ErrDupFieldName
+	CodeNonUpdatableTable                   = mysql.ErrNonUpdatableTable
 )
 
 // Optimizer base errors.
@@ -208,6 +209,7 @@ var (
 	ErrSchemaChanged               = terror.ClassOptimizer.New(CodeSchemaChanged, "Schema has changed")
 	ErrWrongGroupField             = terror.ClassOptimizer.New(CodeWrongGroupField, mysql.MySQLErrName[mysql.ErrWrongGroupField])
 	ErrDupFieldName                = terror.ClassOptimizer.New(CodeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
+	ErrNonUpdatableTable           = terror.ClassOptimizer.New(CodeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 )
 
 func init() {
@@ -220,6 +222,7 @@ func init() {
 		CodeUnknownExplainFormat: mysql.ErrUnknownExplainFormat,
 		CodeWrongGroupField:      mysql.ErrWrongGroupField,
 		CodeDupFieldName:         mysql.ErrDupFieldName,
+		CodeNonUpdatableTable:    mysql.ErrUnknownTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 	expression.EvalAstExpr = evalAstExpr

@@ -116,11 +116,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if !valid {
 			p.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
 		}
-	case *ast.SelectStmt:
-		x.SetResultFields(p.fieldList)
-		p.fieldList = nil
-		p.tableMap = map[string]int{}
-	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+	case *ast.SelectStmt, *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 		p.fieldList = nil
 		p.tableMap = map[string]int{}
 	case *ast.TableName:

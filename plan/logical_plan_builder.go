@@ -1011,6 +1011,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
+	extractor := &AggregateFuncExtractor{}
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		col, err := g.schema.FindColumn(v.Name)
@@ -1025,7 +1026,8 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			}
 			if index != -1 {
 				ret := g.fields[index].Expr
-				if _, ok := ret.(*ast.AggregateFuncExpr); ok {
+				ret.Accept(extractor)
+				if len(extractor.AggFuncs) != 0 {
 					err = ErrIllegalReference.GenByArgs(v.Name.OrigColName(), "reference to group function")
 				} else {
 					return ret, true
@@ -1040,7 +1042,8 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		ret := g.fields[v.N-1].Expr
-		if _, ok := ret.(*ast.AggregateFuncExpr); ok {
+		ret.Accept(extractor)
+		if len(extractor.AggFuncs) != 0 {
 			g.err = ErrWrongGroupField.GenByArgs(g.fields[v.N-1].Text())
 			return inNode, false
 		}
@@ -1391,7 +1394,7 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 			}
 		}
 		if !findTblNameInSchema {
-			b.err = ErrUnknownTable.GenByArgs(tblName)
+			b.err = ErrBadTable.GenByArgs(tblName)
 		}
 	}
 	return
@@ -2020,7 +2023,19 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 				}
 			}
 			if !foundMatch {
-				b.err = errors.Errorf("Unknown table %s", tn.Name.O)
+				var asNameList []string
+				asNameList = extractTableSourceAsNames(delete.TableRefs.TableRefs, asNameList)
+				for _, asName := range asNameList {
+					tblName := tn.Name.L
+					if tn.Schema.L != "" {
+						tblName = tn.Schema.L + "." + tblName
+					}
+					if asName == tblName {
+						b.err = ErrNonUpdatableTable.GenByArgs(tn.Name.O, "DELETE")
+						return nil
+					}
+				}
+				b.err = ErrUnknownTable.GenByArgs(tn.Name.O, "MULTI DELETE")
 				return nil
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "")
@@ -2039,6 +2054,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	return del
 }
 
+// extractTableList extracts all the TableNames from node.
 func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.Join:
@@ -2047,10 +2063,32 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.Tab
 	case *ast.TableSource:
 		if s, ok := x.Source.(*ast.TableName); ok {
 			if x.AsName.L != "" {
+				newTableName := *s
+				newTableName.Name = x.AsName
 				s.Name = x.AsName
+				input = append(input, &newTableName)
+			} else {
+				input = append(input, s)
 			}
-			input = append(input, s)
 		}
+	}
+	return input
+}
+
+// extractTableSourceAsNames extracts all the TableSource.AsNames from node.
+func extractTableSourceAsNames(node ast.ResultSetNode, input []string) []string {
+	switch x := node.(type) {
+	case *ast.Join:
+		input = extractTableSourceAsNames(x.Left, input)
+		input = extractTableSourceAsNames(x.Right, input)
+	case *ast.TableSource:
+		if s, ok := x.Source.(*ast.TableName); ok {
+			if x.AsName.L == "" {
+				input = append(input, s.Name.L)
+				break
+			}
+		}
+		input = append(input, x.AsName.L)
 	}
 	return input
 }

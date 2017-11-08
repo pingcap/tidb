@@ -1644,7 +1644,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"select c1 from t4", false, true, "[schema:1146]Table 'test.t4' doesn't exist"},
 		{"select * from t", true, true, ""},
 		{"select t.* from t", true, true, ""},
-		{"select t2.* from t", true, false, "[plan:1054]Unknown table 't2'"},
+		{"select t2.* from t", true, false, "[plan:1051]Unknown table 't2'"},
 		{"select b as a, c as a from t group by a", true, false, "[plan:1052]Column 'c' in field list is ambiguous"},
 		{"select 1 as a, b as a, c as a from t group by a", true, true, ""},
 		{"select a, b as a from t group by a+1", true, true, ""},
