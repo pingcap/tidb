@@ -38,12 +38,14 @@ type testForeighKeySuite struct {
 }
 
 func (s *testForeighKeySuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_foreign")
 }
 
 func (s *testForeighKeySuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
@@ -110,7 +112,6 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
-	defer testleak.AfterTest(c)()
 	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	s.d = d
@@ -125,7 +126,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	// fix data race
@@ -159,7 +160,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
 	testCheckJobDone(c, d, job, true)
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 	mu.Lock()
 	hErr := hookErr
@@ -217,6 +218,6 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }

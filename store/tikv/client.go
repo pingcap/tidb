@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/grpc-ecosystem/go-grpc-middleware"
+	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -28,12 +30,13 @@ import (
 	"google.golang.org/grpc"
 )
 
+// Timeout durations.
 const (
 	maxConnectionNumber = 16
 	dialTimeout         = 5 * time.Second
 	readTimeoutShort    = 20 * time.Second  // For requests that read/write several key-values.
-	readTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
-	readTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
+	ReadTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
+	ReadTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
@@ -69,14 +72,22 @@ func newConnArray(maxSize uint32, addr string) (*connArray, error) {
 
 func (a *connArray) Init(addr string) error {
 	for i := range a.v {
+		unaryInterceptor := grpc_middleware.ChainUnaryClient(
+			grpc_prometheus.UnaryClientInterceptor,
+			grpc_opentracing.UnaryClientInterceptor(),
+		)
+		streamInterceptor := grpc_middleware.ChainStreamClient(
+			grpc_prometheus.StreamClientInterceptor,
+			grpc_opentracing.StreamClientInterceptor(),
+		)
 		conn, err := grpc.Dial(
 			addr,
 			grpc.WithInsecure(),
 			grpc.WithTimeout(dialTimeout),
 			grpc.WithInitialWindowSize(grpcInitialWindowSize),
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
-			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
+			grpc.WithUnaryInterceptor(unaryInterceptor),
+			grpc.WithStreamInterceptor(streamInterceptor))
 		if err != nil {
 			// Cleanup if the initialization fails.
 			a.Close()
@@ -102,6 +113,7 @@ func (a *connArray) Close() {
 	}
 }
 
+// rpcClient is RPC client struct.
 // TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
 // Since we use shared client connection to communicate to the same TiKV, it's possible
 // that there are too many concurrent requests which overload the service of TiKV.

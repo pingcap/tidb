@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -121,7 +122,11 @@ func (h *Handle) DumpStatsDeltaToKV() {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
-	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
+	goCtx := h.ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -130,11 +135,11 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 		op = "-"
 		delta.Delta = -delta.Delta
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count %s %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), op, delta.Delta, delta.Count, id))
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, fmt.Sprintf("update mysql.stats_meta set version = %d, count = count %s %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), op, delta.Delta, delta.Count, id))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "commit")
 	return errors.Trace(err)
 }
 

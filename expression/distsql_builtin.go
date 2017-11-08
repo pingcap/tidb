@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -484,6 +484,21 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinJSONMergeSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base}
+
+	case tipb.ScalarFuncSig_InInt:
+		f = &builtinInIntSig{base}
+	case tipb.ScalarFuncSig_InReal:
+		f = &builtinInRealSig{base}
+	case tipb.ScalarFuncSig_InDecimal:
+		f = &builtinInDecimalSig{base}
+	case tipb.ScalarFuncSig_InString:
+		f = &builtinInStringSig{base}
+	case tipb.ScalarFuncSig_InTime:
+		f = &builtinInTimeSig{base}
+	case tipb.ScalarFuncSig_InDuration:
+		f = &builtinInDurationSig{base}
+	case tipb.ScalarFuncSig_InJson:
+		f = &builtinInJSONSig{base}
 
 	default:
 		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)

@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -177,7 +177,7 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID)
+	alloc := autoid.NewAllocator(d.store, tblInfo.OldSchemaID, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -191,17 +191,12 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
-
-	// Use a smaller limit to prevent the test from consuming too much time.
-	reorgTableDeleteLimit = 2000
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.Stop()
 	s.store.Close()
-
-	reorgTableDeleteLimit = 65536
 }
 
 func (s *testTableSuite) TestTable(c *C) {
@@ -219,9 +214,9 @@ func (s *testTableSuite) TestTable(c *C) {
 	newTblInfo := testTableInfo(c, d, "t", 3)
 	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
 
-	// To drop a table with reorgTableDeleteLimit+10 records.
+	count := 2000
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	for i := 1; i <= reorgTableDeleteLimit+10; i++ {
+	for i := 1; i <= count; i++ {
 		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}

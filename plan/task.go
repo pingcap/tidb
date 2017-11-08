@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -37,8 +37,8 @@ type task interface {
 	invalid() bool
 }
 
-// TODO: In future, we should split copTask to indexTask and tableTask.
 // copTask is a task that runs in a distributed kv store.
+// TODO: In future, we should split copTask to indexTask and tableTask.
 type copTask struct {
 	indexPlan PhysicalPlan
 	tablePlan PhysicalPlan
@@ -114,11 +114,17 @@ func (t *copTask) finishIndexPlan() {
 }
 
 func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() {
+		return invalidTask
+	}
 	t := finishCopTask(tasks[0].copy(), p.basePlan.ctx, p.basePlan.allocator)
 	return attachPlan2Task(p.basePlan.self.(PhysicalPlan).Copy(), t)
 }
 
 func (p *PhysicalApply) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() || tasks[1].invalid() {
+		return invalidTask
+	}
 	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
 	np := p.Copy().(*PhysicalApply)
@@ -131,6 +137,9 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
+	if tasks[p.outerIndex].invalid() {
+		return invalidTask
+	}
 	lTask := finishCopTask(tasks[p.outerIndex].copy(), p.ctx, p.allocator)
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), p.innerPlan)
@@ -169,6 +178,9 @@ func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() || tasks[1].invalid() {
+		return invalidTask
+	}
 	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
 	np := p.Copy()
@@ -184,6 +196,9 @@ func (p *PhysicalMergeJoin) getCost(lCnt, rCnt float64) float64 {
 }
 
 func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() || tasks[1].invalid() {
+		return invalidTask
+	}
 	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
 	np := p.Copy()
@@ -202,6 +217,9 @@ func (p *PhysicalHashSemiJoin) getCost(lCnt, rCnt float64) float64 {
 }
 
 func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() || tasks[1].invalid() {
+		return invalidTask
+	}
 	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
 	np := p.Copy()
@@ -275,8 +293,8 @@ func (t *rootTask) plan() PhysicalPlan {
 
 func (p *Limit) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
-	if tasks[0].plan() == nil {
-		return tasks[0]
+	if tasks[0].invalid() {
+		return invalidTask
 	}
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
@@ -330,6 +348,9 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 }
 
 func (p *Sort) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() {
+		return invalidTask
+	}
 	t := tasks[0].copy()
 	t = attachPlan2Task(p.Copy(), t)
 	t.addCost(p.getCost(t.count()))
@@ -338,8 +359,8 @@ func (p *Sort) attach2Task(tasks ...task) task {
 
 func (p *TopN) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
-	if tasks[0].plan() == nil {
-		return tasks[0]
+	if tasks[0].invalid() {
+		return invalidTask
 	}
 	t := tasks[0].copy()
 	// This is a topN plan.
@@ -377,6 +398,9 @@ func (p *TopN) attach2Task(tasks ...task) task {
 }
 
 func (p *Projection) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() {
+		return invalidTask
+	}
 	t := tasks[0].copy()
 	np := p.Copy()
 	switch tp := t.(type) {
@@ -396,6 +420,9 @@ func (p *Union) attach2Task(tasks ...task) task {
 	newTask := &rootTask{p: np}
 	newChildren := make([]Plan, 0, len(p.children))
 	for _, task := range tasks {
+		if task.invalid() {
+			return invalidTask
+		}
 		task = finishCopTask(task, p.ctx, p.allocator)
 		newTask.cst += task.cost()
 		newChildren = append(newChildren, task.plan())
@@ -405,6 +432,9 @@ func (p *Union) attach2Task(tasks ...task) task {
 }
 
 func (sel *Selection) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() {
+		return invalidTask
+	}
 	t := finishCopTask(tasks[0].copy(), sel.ctx, sel.allocator)
 	t.addCost(t.count() * cpuFactor)
 	t = attachPlan2Task(sel.Copy(), t)
@@ -480,8 +510,8 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 
 func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
-	if tasks[0].plan() == nil {
-		return tasks[0]
+	if tasks[0].invalid() {
+		return invalidTask
 	}
 	cardinality := p.statsProfile().count
 	task := tasks[0].copy()

@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // ShowExec represents a show executor.
@@ -177,6 +177,14 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if len(pi.Info) != 0 {
 			t = uint64(time.Since(pi.Time) / time.Second)
 		}
+
+		var info string
+		if e.Full {
+			info = pi.Info
+		} else {
+			info = fmt.Sprintf("%.100v", pi.Info)
+		}
+
 		row := []types.Datum{
 			types.NewUintDatum(pi.ID),
 			types.NewStringDatum(pi.User),
@@ -185,10 +193,11 @@ func (e *ShowExec) fetchShowProcessList() error {
 			types.NewStringDatum(pi.Command),
 			types.NewUintDatum(t),
 			types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
-			types.NewStringDatum(pi.Info),
+			types.NewStringDatum(info),
 		}
 		e.rows = append(e.rows, row)
 	}
+
 	return nil
 }
 

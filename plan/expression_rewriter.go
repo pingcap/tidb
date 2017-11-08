@@ -27,8 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -92,7 +91,6 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-
 	return er.ctxStack[0], er.p, nil
 }
 
@@ -685,8 +683,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		types.DefaultTypeForValue(v.GetValue(), tp)
+		types.DefaultParamTypeForValue(v.GetValue(), tp)
 		value := &expression.Constant{Value: v.Datum, RetType: tp}
+		if er.useCache() {
+			value.DeferredExpr = er.getParamExpression(v)
+		}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
@@ -736,8 +737,25 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	return originInNode, true
 }
 
+func (er *expressionRewriter) useCache() bool {
+	return er.ctx.GetSessionVars().StmtCtx.UseCache
+}
+
 func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
+}
+
+func (er *expressionRewriter) getParamExpression(v *ast.ParamMarkerExpr) expression.Expression {
+	f, err := expression.NewFunction(er.ctx,
+		ast.GetParam,
+		&v.Type,
+		datumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
+	if err != nil {
+		er.err = errors.Trace(err)
+		return nil
+	}
+	f.GetType().Tp = v.Type.Tp
+	return f
 }
 
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
@@ -895,35 +913,48 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			return
 		}
 	}
-	// a in (b, c, d)
-	leftArg := er.ctxStack[stkLen-lLen-1]
-	// function ==> a = b
-	function, err := er.constructBinaryOpFunction(leftArg, er.ctxStack[stkLen-lLen], ast.EQ)
-	if err != nil {
-		er.err = err
+	args := er.ctxStack[stkLen-lLen-1:]
+	leftEt, leftIsNull := args[0].GetType().EvalType(), args[0].GetType().Tp == mysql.TypeNull
+	if leftIsNull {
+		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
+		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
 		return
 	}
-	// function ==> (a = b) or (a = c) or (a = d)
-	for i := stkLen - lLen + 1; i < stkLen; i++ {
-		var expr expression.Expression
-		expr, err = er.constructBinaryOpFunction(leftArg, er.ctxStack[i], ast.EQ)
-		if err != nil {
-			er.err = err
-			return
-		}
-		fieldTp := &types.FieldType{Tp: mysql.TypeLonglong, Flen: 1, Decimal: 0, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag}
-		function, err = expression.NewFunction(er.ctx, ast.LogicOr, fieldTp, function, expr)
-		if err != nil {
-			er.err = err
-			return
+	if leftEt == types.ETInt {
+		for i := 1; i < len(args); i++ {
+			if c, ok := args[i].(*expression.Constant); ok {
+				args[i] = expression.RefineConstantArg(er.ctx, c, opcode.EQ)
+			}
 		}
 	}
-	if not {
-		tp := *function.GetType()
-		function, err = expression.NewFunction(er.ctx, ast.UnaryNot, &tp, function)
-		if err != nil {
-			er.err = err
-			return
+	allSameType := true
+	for _, arg := range args[1:] {
+		if arg.GetType().Tp != mysql.TypeNull && expression.GetAccurateCmpType(args[0], arg) != leftEt {
+			allSameType = false
+			break
+		}
+	}
+	var function expression.Expression
+	if allSameType && l == 1 {
+		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
+	} else {
+		eqFunctions := make([]expression.Expression, 0, lLen)
+		for i := stkLen - lLen; i < stkLen; i++ {
+			expr, err := er.constructBinaryOpFunction(args[0], er.ctxStack[i], ast.EQ)
+			if err != nil {
+				er.err = err
+				return
+			}
+			eqFunctions = append(eqFunctions, expr)
+		}
+		function = expression.ComposeDNFCondition(er.ctx, eqFunctions...)
+		if not {
+			var err error
+			function, err = expression.NewFunction(er.ctx, ast.UnaryNot, tp, function)
+			if err != nil {
+				er.err = err
+				return
+			}
 		}
 	}
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]

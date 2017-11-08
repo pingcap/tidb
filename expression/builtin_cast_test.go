@@ -22,10 +22,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -1004,7 +1004,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	c.Assert(err, IsNil)
 
 	// test hybridType case.
-	args = []Expression{&Constant{types.NewDatum(types.Enum{Name: "a", Value: 0}), types.NewFieldType(mysql.TypeEnum)}}
+	args = []Expression{&Constant{Value: types.NewDatum(types.Enum{Name: "a", Value: 0}), RetType: types.NewFieldType(mysql.TypeEnum)}}
 	sig = &builtinCastStringAsIntSig{newBaseBuiltinFunc(ctx, args)}
 	iRes, isNull, err := sig.evalInt(nil)
 	c.Assert(isNull, Equals, false)

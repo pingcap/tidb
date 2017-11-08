@@ -62,7 +62,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
-		"generated", "virtual", "stored",
+		"generated", "virtual", "stored", "usage",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window",
 		// TODO: support the following keywords
@@ -97,7 +97,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
-		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version",
+		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version", "replication", "slave", "client",
+		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last",
 	}
 	for _, kw := range unreservedKws {
@@ -196,6 +197,39 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// src = "select 0b'';"
 	// _, err = parser.ParseOneStmt(src, "", "")
 	// c.Assert(err, NotNil)
+
+	// for #4909, support numericType `signed` filedOpt.
+	src = "CREATE TABLE t(_sms smallint signed, _smu smallint unsigned);"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = `CREATE TABLE t(a tinyint signed,
+		b smallint signed,
+		c mediumint signed,
+		d int signed,
+		e int1 signed,
+		f int2 signed,
+		g int3 signed,
+		h int4 signed,
+		i int8 signed,
+		j integer signed,
+		k bigint signed,
+		l bool signed,
+		m boolean signed
+		);`
+
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	ct, ok := st.(*ast.CreateTableStmt)
+	c.Assert(ok, IsTrue)
+	for _, col := range ct.Cols {
+		c.Assert(col.Tp.Flag&mysql.UnsignedFlag, Equals, uint(0))
+	}
+
+	// for issue #4006
+	src = `insert into tb(v) (select v from tb);`
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 }
 
 type testCase struct {
@@ -364,6 +398,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 natural left outer join t2", true},
 		{"select * from t1 natural inner join t2", false},
 		{"select * from t1 natural cross join t2", false},
+
+		// for straight_join
+		{"select * from t1 straight_join t2 on t1.id = t2.id", true},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -1429,10 +1466,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (a timestamp default now())", true},
 		{"create table t (a timestamp default now() on update now)", false},
 		{"create table t (a timestamp default now() on update now())", true},
+		{"CREATE TABLE t (c TEXT) default CHARACTER SET utf8, default COLLATE utf8_general_ci;", true},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
 
 		// for alter table
+		{"ALTER TABLE t ADD COLUMN( a SMALLINT UNSIGNED )", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
@@ -1467,6 +1506,16 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ENGINE ''", true},
+		{"ALTER TABLE t ENGINE = ''", true},
+		{"ALTER TABLE t ENGINE = 'innodb'", true},
+		{"ALTER TABLE t ENGINE = innodb", true},
+		{"ALTER TABLE `db`.`t` ENGINE = ``", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, ADD COLUMN a SMALLINT", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT, ENGINE = '', default COLLATE = utf8_general_ci", true},
+		{"ALTER TABLE t ENGINE = '', COMMENT='', default COLLATE = utf8_general_ci", true},
+		{"ALTER TABLE t ENGINE = '', ADD COLUMN a SMALLINT", true},
+		{"ALTER TABLE t default COLLATE = utf8_general_ci, ENGINE = '', ADD COLUMN a SMALLINT", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -1622,7 +1671,9 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
-		{"GRANT SELECT ON test.* to 'test'", true}, // For issue 2654.
+		{"GRANT SELECT ON test.* to 'test'", true},                                                                                                            // For issue 2654.
+		{"grant PROCESS,usage, REPLICATION SLAVE, REPLICATION CLIENT on *.* to 'xxxxxxxxxx'@'%' identified by password 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx'", true}, // For issue 4865
+		{"/* rds internal mark */ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, RELOAD, PROCESS, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES,      EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT,      TRIGGER on *.* to 'root2'@'%' identified by password '*sdsadsdsadssadsadsadsadsada' with grant option", true},
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},
@@ -1881,6 +1932,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb connection 23123", true},
 		{"kill tidb query 23123", true},
 		{"show processlist", true},
+		{"show full processlist", true},
 	}
 	s.RunTest(c, table)
 }

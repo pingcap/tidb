@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -99,7 +99,7 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	for _, colInfo := range t.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		// This column should have histogram.
-		if col != nil && len(colInfo.Histogram.Buckets) > 0 {
+		if col != nil && !t.ColumnIsInvalid(ctx.GetSessionVars().StmtCtx, col.ID) {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, exprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
 				return 0, errors.Trace(err)

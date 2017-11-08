@@ -28,6 +28,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -169,7 +170,7 @@ type DDL interface {
 	// Stop stops DDL worker.
 	Stop() error
 	// RegisterEventCh registers event channel for ddl.
-	RegisterEventCh(chan<- *Event)
+	RegisterEventCh(chan<- *util.Event)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager, and it's used for testing.
@@ -180,29 +181,6 @@ type DDL interface {
 	SetHook(h Callback)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
-}
-
-// Event is an event that a ddl operation happened.
-type Event struct {
-	Tp         model.ActionType
-	TableInfo  *model.TableInfo
-	ColumnInfo *model.ColumnInfo
-	IndexInfo  *model.IndexInfo
-}
-
-// String implements fmt.Stringer interface.
-func (e *Event) String() string {
-	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
-	if e.TableInfo != nil {
-		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
-	}
-	if e.ColumnInfo != nil {
-		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfo.ID, e.ColumnInfo.Name)
-	}
-	if e.IndexInfo != nil {
-		ret += fmt.Sprintf(", Index ID: %d, Index Name %s", e.IndexInfo.ID, e.IndexInfo.Name)
-	}
-	return ret
 }
 
 // ddl represents the statements which are used to define the database structure or schema.
@@ -220,7 +198,7 @@ type ddl struct {
 	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *Event
+	ddlEventCh   chan<- *util.Event
 
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
@@ -241,13 +219,13 @@ type ddl struct {
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
-func (d *ddl) RegisterEventCh(ch chan<- *Event) {
+func (d *ddl) RegisterEventCh(ch chan<- *util.Event) {
 	d.ddlEventCh = ch
 }
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func (d *ddl) asyncNotifyEvent(e *Event) {
+func (d *ddl) asyncNotifyEvent(e *util.Event) {
 	if d.ddlEventCh != nil {
 		if d.lease == 0 {
 			// If lease is 0, it's always used in test.
@@ -518,13 +496,6 @@ func (d *ddl) GetHook() Callback {
 
 func (d *ddl) WorkerVars() *variable.SessionVars {
 	return d.workerVars
-}
-
-func filterError(err, exceptErr error) error {
-	if terror.ErrorEqual(err, exceptErr) {
-		return nil
-	}
-	return errors.Trace(err)
 }
 
 // DDL error codes.

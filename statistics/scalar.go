@@ -18,7 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]

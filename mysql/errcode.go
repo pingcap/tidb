@@ -72,7 +72,7 @@ const (
 	ErrNonUniq                                                      = 1052
 	ErrServerShutdown                                               = 1053
 	ErrBadField                                                     = 1054
-	ErrWrongFieldWithGroup                                          = 1055
+	ErrFieldNotInGroupBy                                            = 1055
 	ErrWrongGroupField                                              = 1056
 	ErrWrongSumSelect                                               = 1057
 	ErrWrongValueCount                                              = 1058
@@ -896,7 +896,7 @@ const (
 	ErrTiKVServerTimeout  = 9002
 	ErrTiKVServerBusy     = 9003
 	ErrResolveLockTimeout = 9004
-	ErrRegionUnavaiable   = 9005
+	ErrRegionUnavailable  = 9005
 	ErrGCTooEarly         = 9006
 
 	ErrTxnTooLarge = 9500

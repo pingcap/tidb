@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -301,7 +302,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(true, t3.a),Table(true, t3.b)}",
+			best: "Analyze{Index(t3.a),Table(t3.b)}",
 		},
 		// Test analyze full table.
 		{
@@ -343,12 +344,55 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.Preprocess(ctx, stmt, is, false)
+		c.Assert(err, IsNil)
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
+}
+
+func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	cfg := config.GetGlobalConfig()
+	orgEnable := cfg.PreparedPlanCache.Enabled
+	orgCapacity := cfg.PreparedPlanCache.Capacity
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		cfg.PreparedPlanCache.Enabled = flag
+		cfg.PreparedPlanCache.Capacity = 100
+		testKit := testkit.NewTestKit(c, store)
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec("create table t (id int, KEY id (id))")
+		testKit.MustExec("insert into t values (1), (2), (3)")
+
+		sql := "select * from t where id = ?"
+		best := "IndexReader(Index(t.id)[])"
+
+		ctx := testKit.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, sql)
+		stmt := stmts[0]
+
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.ResolveName(stmt, is, ctx)
+		c.Assert(err, IsNil)
+		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(err, IsNil)
+
+		c.Assert(plan.ToString(p), Equals, best, Commentf("for %s", sql))
+	}
+	cfg.PreparedPlanCache.Enabled = orgEnable
+	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

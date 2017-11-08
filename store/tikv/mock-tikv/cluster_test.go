@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testClusterSuite{})
@@ -67,7 +68,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		txn.Set(idxKey, []byte{'0'})
 		handle++
 	}
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	// Split Table into 10 regions.

@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/types"
 )
 
 type columnPruner struct {
@@ -243,9 +244,9 @@ func (p *LogicalJoin) mergeSchema() {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	composedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
-	if p.JoinType == SemiJoin {
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.schema = lChild.Schema().Clone()
-	} else if p.JoinType == LeftOuterSemiJoin {
+	} else if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
 		p.schema = lChild.Schema().Clone()
 		p.schema.Append(joinCol)
@@ -261,6 +262,12 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) {
 	rChild := p.children[1].(LogicalPlan)
 	lChild.PruneColumns(leftCols)
 	rChild.PruneColumns(rightCols)
+	// After column pruning, the size of schema may change, so we should also change the len of default value.
+	if p.JoinType == LeftOuterJoin {
+		p.DefaultValues = make([]types.Datum, p.children[1].Schema().Len())
+	} else if p.JoinType == RightOuterJoin {
+		p.DefaultValues = make([]types.Datum, p.children[0].Schema().Len())
+	}
 	p.mergeSchema()
 }
 

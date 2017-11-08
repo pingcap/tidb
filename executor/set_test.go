@@ -104,7 +104,7 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	// Test session variable states.
 	vars := tk.Se.(context.Context).GetSessionVars()
-	tk.Se.CommitTxn()
+	tk.Se.CommitTxn(tk.Se.GoCtx())
 	tk.MustExec("set @@autocommit = 1")
 	c.Assert(vars.InTxn(), IsFalse)
 	c.Assert(vars.IsAutocommit(), IsTrue)
@@ -140,7 +140,7 @@ func (s *testSuite) TestSetVar(c *C) {
 	// Even the transaction fail, set session variable would success.
 	tk.MustExec("BEGIN")
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-	_, err = tk.Se.Execute(`INSERT INTO t VALUES ("sdfsdf")`)
+	_, err = tk.Exec(`INSERT INTO t VALUES ("sdfsdf")`)
 	c.Assert(err, NotNil)
 	tk.MustExec("COMMIT")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))

@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -172,7 +173,11 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx context.Context) error {
 
 func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 	decodeTableRow func(*ast.Row, []*ast.ResultField) error) error {
-	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
+	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -433,7 +438,7 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 		return true
 	}
 
-	return false
+	return priv == 0
 }
 
 // DBIsVisible checks whether the user can see the db.

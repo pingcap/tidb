@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -57,10 +57,6 @@ var (
 var (
 	ErrUnknownPlan          = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti         = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrStmtNotFound         = terror.ClassExecutor.New(codeStmtNotFound, "Prepared statement not found")
-	ErrSchemaChanged        = terror.ClassExecutor.New(codeSchemaChanged, "Schema has changed")
-	ErrWrongParamCount      = terror.ClassExecutor.New(codeWrongParamCount, "Wrong parameter count")
-	ErrRowKeyCount          = terror.ClassExecutor.New(codeRowKeyCount, "Wrong row key entry count")
 	ErrPrepareDDL           = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
 	ErrPasswordNoMatch      = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
 	ErrResultIsEmpty        = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
@@ -73,10 +69,6 @@ var (
 const (
 	codeUnknownPlan          terror.ErrCode = 1
 	codePrepareMulti         terror.ErrCode = 2
-	codeStmtNotFound         terror.ErrCode = 3
-	codeSchemaChanged        terror.ErrCode = 4
-	codeWrongParamCount      terror.ErrCode = 5
-	codeRowKeyCount          terror.ErrCode = 6
 	codePrepareDDL           terror.ErrCode = 7
 	codeResultIsEmpty        terror.ErrCode = 8
 	codeErrBuildExec         terror.ErrCode = 9
@@ -779,44 +771,4 @@ func (e *UnionExec) Close() error {
 	<-e.closedCh
 	e.rows = nil
 	return errors.Trace(e.baseExecutor.Close())
-}
-
-// CacheExec represents Cache executor.
-// it stores the return values of the executor of its child node.
-type CacheExec struct {
-	baseExecutor
-
-	storedRows  []Row
-	cursor      int
-	srcFinished bool
-}
-
-// Open implements the Executor Open interface.
-func (e *CacheExec) Open() error {
-	e.cursor = 0
-	return errors.Trace(e.children[0].Open())
-}
-
-// Next implements the Executor Next interface.
-func (e *CacheExec) Next() (Row, error) {
-	if e.srcFinished && e.cursor >= len(e.storedRows) {
-		return nil, nil
-	}
-	if !e.srcFinished {
-		row, err := e.children[0].Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row == nil {
-			e.srcFinished = true
-			err := e.children[0].Close()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		e.storedRows = append(e.storedRows, row)
-	}
-	row := e.storedRows[e.cursor]
-	e.cursor++
-	return row, nil
 }

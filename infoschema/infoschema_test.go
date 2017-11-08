@@ -14,7 +14,6 @@
 package infoschema_test
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 
@@ -26,11 +25,10 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/perfschema"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -45,8 +43,7 @@ type testSuite struct {
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -201,8 +198,7 @@ func (testSuite) TestConcurrent(c *C) {
 	storeCount := 5
 	stores := make([]kv.Storage, storeCount)
 	for i := 0; i < storeCount; i++ {
-		driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-		store, err := driver.Open(fmt.Sprintf("memory_path_%d", i))
+		store, err := tikv.NewMockTikvStore()
 		c.Assert(err, IsNil)
 		stores[i] = store
 	}
@@ -225,8 +221,7 @@ func (testSuite) TestConcurrent(c *C) {
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func (*testSuite) TestInfoTables(c *C) {
 	defer testleak.AfterTest(c)()
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	handle := infoschema.NewHandle(store)

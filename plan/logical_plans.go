@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -56,8 +56,12 @@ const (
 	RightOuterJoin
 	// SemiJoin means if row a in table A matches some rows in B, just output a.
 	SemiJoin
+	// AntiSemiJoin means if row a in table A does not match any row in B, then output a.
+	AntiSemiJoin
 	// LeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
 	LeftOuterSemiJoin
+	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
+	AntiLeftOuterSemiJoin
 )
 
 func (tp JoinType) String() string {
@@ -70,8 +74,12 @@ func (tp JoinType) String() string {
 		return "right outer join"
 	case SemiJoin:
 		return "semi join"
+	case AntiSemiJoin:
+		return "anti semi join"
 	case LeftOuterSemiJoin:
 		return "left outer semi join"
+	case AntiLeftOuterSemiJoin:
+		return "anti left outer semi join"
 	}
 	return "unsupported join type"
 }
@@ -87,7 +95,6 @@ type LogicalJoin struct {
 	baseLogicalPlan
 
 	JoinType        JoinType
-	anti            bool
 	reordered       bool
 	cartesianJoin   bool
 	preferINLJ      int
@@ -136,7 +143,7 @@ func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
 }
 
 func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
 		corCols = append(corCols, extractCorColumns(fun)...)
 	}
@@ -166,7 +173,7 @@ type Projection struct {
 }
 
 func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, extractCorColumns(expr)...)
 	}
@@ -188,7 +195,7 @@ type LogicalAggregation struct {
 }
 
 func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.GroupByItems {
 		corCols = append(corCols, extractCorColumns(expr)...)
 	}
@@ -224,7 +231,7 @@ type Selection struct {
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, cond := range p.Conditions {
 		corCols = append(corCols, extractCorColumns(cond)...)
 	}
@@ -340,7 +347,7 @@ type Sort struct {
 }
 
 func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, item := range p.ByItems {
 		corCols = append(corCols, extractCorColumns(item.Expr)...)
 	}

@@ -66,13 +66,6 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
-// Prepared represents a prepared statement.
-type Prepared struct {
-	Stmt          ast.StmtNode
-	Params        []*ast.ParamMarkerExpr
-	SchemaVersion int64
-}
-
 // PrepareExec represents a PREPARE executor.
 type PrepareExec struct {
 	IS      infoschema.InfoSchema
@@ -145,7 +138,7 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.Preprocess(stmt, e.IS, e.Ctx)
+	err = plan.ResolveName(stmt, e.IS, e.Ctx)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -160,11 +153,15 @@ func (e *PrepareExec) DoPrepare() {
 	sorter := &paramMarkerSorter{markers: extractor.markers}
 	sort.Sort(sorter)
 	e.ParamCount = len(sorter.markers)
-	prepared := &Prepared{
+	for i := 0; i < e.ParamCount; i++ {
+		sorter.markers[i].Order = i
+	}
+	prepared := &plan.Prepared{
 		Stmt:          stmt,
 		Params:        sorter.markers,
 		SchemaVersion: e.IS.SchemaMetaVersion(),
 	}
+	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
 	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
 	if err != nil {
@@ -221,41 +218,8 @@ func (e *ExecuteExec) Close() error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
-	vars := e.Ctx.GetSessionVars()
-	if e.Name != "" {
-		e.ID = vars.PreparedStmtNameToID[e.Name]
-	}
-	v := vars.PreparedStmts[e.ID]
-	if v == nil {
-		return errors.Trace(ErrStmtNotFound)
-	}
-	prepared := v.(*Prepared)
-
-	if len(prepared.Params) != len(e.UsingVars) {
-		return errors.Trace(ErrWrongParamCount)
-	}
-
-	for i, usingVar := range e.UsingVars {
-		val, err := usingVar.Eval(nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		prepared.Params[i].SetDatum(val)
-	}
-	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
-		// If the schema version has changed we need to prepare it again,
-		// if this time it failed, the real reason for the error is schema changed.
-		err := plan.PrepareStmt(e.IS, e.Ctx, prepared.Stmt)
-		if err != nil {
-			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
-		}
-		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
-	}
-	p, err := plan.Optimize(e.Ctx, prepared.Stmt, e.IS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, p) {
+	var err error
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, e.Plan) {
 		err = e.Ctx.InitTxnWithStartTS(math.MaxUint64)
 	} else {
 		err = e.Ctx.ActivePendingTxn()
@@ -264,13 +228,11 @@ func (e *ExecuteExec) Build() error {
 		return errors.Trace(err)
 	}
 	b := newExecutorBuilder(e.Ctx, e.IS, kv.PriorityNormal)
-	stmtExec := b.build(p)
+	stmtExec := b.build(e.Plan)
 	if b.err != nil {
 		return errors.Trace(b.err)
 	}
 	e.StmtExec = stmtExec
-	e.Stmt = prepared.Stmt
-	e.Plan = p
 	ResetStmtCtx(e.Ctx, e.Stmt)
 	stmtCount(e.Stmt, e.Plan, e.Ctx.GetSessionVars().InRestrictedSQL)
 	return nil
@@ -293,7 +255,7 @@ func (e *DeallocateExec) Next() (Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return nil, errors.Trace(ErrStmtNotFound)
+		return nil, errors.Trace(plan.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)
@@ -311,21 +273,25 @@ func (e *DeallocateExec) Open() error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) ast.Statement {
-	execPlan := &plan.Execute{ExecID: ID}
-	execPlan.UsingVars = make([]expression.Expression, len(args))
+func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
+	execStmt := &ast.ExecuteStmt{ExecID: ID}
+	execStmt.UsingVars = make([]ast.ExprNode, len(args))
 	for i, val := range args {
-		value := ast.NewValueExpr(val)
-		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
+		execStmt.UsingVars[i] = ast.NewValueExpr(val)
+	}
+	is := GetInfoSchema(ctx)
+	execPlan, err := plan.Optimize(ctx, execStmt, is)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	stmt := &ExecStmt{
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
 	}
-	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*Prepared); ok {
+	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
 		stmt.Text = prepared.Stmt.Text()
 	}
-	return stmt
+	return stmt, nil
 }
 
 // ResetStmtCtx resets the StmtContext.
@@ -397,6 +363,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sessVars.PrevLastInsertID = sessVars.LastInsertID
 		sessVars.LastInsertID = 0
 	}
+	sessVars.ResetPrevAffectedRows()
 	sessVars.InsertID = 0
 	sessVars.StmtCtx = sc
 }

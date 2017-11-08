@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/prometheus/client_golang/prometheus"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -102,7 +103,7 @@ func batchRW(value []byte) {
 				key := fmt.Sprintf("key_%d", k)
 				err = txn.Set([]byte(key), value)
 				terror.Log(errors.Trace(err))
-				err = txn.Commit()
+				err = txn.Commit(goctx.Background())
 				if err != nil {
 					txnRolledbackCounter.WithLabelValues("txn").Inc()
 					terror.Call(txn.Rollback)
