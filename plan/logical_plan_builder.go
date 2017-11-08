@@ -909,11 +909,7 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 					return n, true
 				}
 			}
-			cn := v.Name.Name.L
-			if tn := v.Name.Table.L; tn != "" {
-				cn = tn + "." + cn
-			}
-			a.err = ErrUnknownColumn.GenByArgs(cn, clauseMsg[a.curClause])
+			a.err = ErrUnknownColumn.GenByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
 			return node, false
 		}
 		if a.inAggFunc {
@@ -1017,7 +1013,12 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				return inNode, true
 			}
 			if index != -1 {
-				return g.fields[index].Expr, true
+				ret := g.fields[index].Expr
+				if _, ok := ret.(*ast.AggregateFuncExpr); ok {
+					err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", v.Name.OrigColName())
+				} else {
+					return g.fields[index].Expr, true
+				}
 			}
 			g.err = errors.Trace(err)
 			return inNode, false
@@ -1027,7 +1028,12 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
 			return inNode, false
 		}
-		return g.fields[v.N-1].Expr, true
+		ret := g.fields[v.N-1].Expr
+		if _, ok := ret.(*ast.AggregateFuncExpr); ok {
+			g.err = ErrWrongGroupField.GenByArgs(g.fields[v.N-1].Text())
+			return inNode, false
+		}
+		return ret, true
 	}
 	return inNode, true
 }

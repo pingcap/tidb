@@ -357,6 +357,20 @@ func (n *ColumnName) String() string {
 	return result
 }
 
+// OrigColName returns the full original column name.
+func (n *ColumnName) OrigColName() (ret string) {
+	ret = n.Name.O
+	if n.Table.O == "" {
+		return
+	}
+	ret = n.Table.O + "." + ret
+	if n.Schema.O == "" {
+		return
+	}
+	ret = n.Schema.O + "." + ret
+	return
+}
+
 // ColumnNameExpr represents a column name expression.
 type ColumnNameExpr struct {
 	exprNode

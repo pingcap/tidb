@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/types"
+	"strconv"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -219,6 +220,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		if !ok {
 			er.err = errors.New("Can't appear aggrFunctions")
+			if er.b.curClause == groupByClause {
+				er.err = ErrInvalidGroupFuncUse
+			}
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
@@ -882,7 +886,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 	if v.N > 0 && v.N <= er.schema.Len() {
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[v.N-1])
 	} else {
-		er.err = errors.Errorf("Position %d is out of range", v.N)
+		er.err = ErrUnknownColumn.GenByArgs(strconv.Itoa(v.N), clauseMsg[er.b.curClause])
 	}
 }
 
