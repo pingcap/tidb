@@ -440,7 +440,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
 	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
 	errWrapper := func(err error) error {
-		if bytes.Equal(batch.keys[0], c.primary()) && sender.rpcError != nil {
+		if err != nil && bytes.Equal(batch.keys[0], c.primary()) && sender.rpcError != nil {
 			log.Warnf("2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", err, sender.rpcError, c.startTS)
 			return errors.Wrap(err, terror.ErrResultUndetermined)
 		}
