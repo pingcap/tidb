@@ -88,14 +88,14 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.s, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 
-	_, err = s.s.Execute("create database test_db")
+	_, err = s.s.Execute(goctx.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 
 	s.tk = testkit.NewTestKit(c, s.store)
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	s.s.Execute("drop database if exists test_db")
+	s.s.Execute(goctx.Background(), "drop database if exists test_db")
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
@@ -224,12 +224,12 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 		return
 	}
 	defer se.Close()
-	_, err = se.Execute("use test_db")
+	_, err = se.Execute(goctx.Background(), "use test_db")
 	if err != nil {
 		done <- errors.Trace(err)
 		return
 	}
-	_, err = se.Execute(sql)
+	_, err = se.Execute(goctx.Background(), sql)
 	done <- errors.Trace(err)
 }
 
@@ -764,9 +764,9 @@ func (s *testDBSuite) TestColumn(c *C) {
 func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := tidb.CreateSession(s)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test_db")
+	_, err = se.Execute(goctx.Background(), "use test_db")
 	c.Assert(err, IsNil)
-	rs, err := se.Execute(sql)
+	rs, err := se.Execute(goctx.Background(), sql)
 	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 	c.Assert(rs, IsNil)
 	se.Close()
@@ -780,12 +780,12 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
 			return
 		}
 		defer se.Close()
-		_, err = se.Execute("use test_db")
+		_, err = se.Execute(goctx.Background(), "use test_db")
 		if err != nil {
 			done <- errors.Trace(err)
 			return
 		}
-		rs, err := se.Execute(sql)
+		rs, err := se.Execute(goctx.Background(), sql)
 		if err != nil {
 			done <- errors.Trace(err)
 			return

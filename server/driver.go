@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	goctx "golang.org/x/net/context"
 )
 
 // IDriver opens IContext.
@@ -58,7 +59,7 @@ type QueryCtx interface {
 	CurrentDB() string
 
 	// Execute executes a SQL statement.
-	Execute(sql string) ([]ResultSet, error)
+	Execute(goCtx goctx.Context, sql string) ([]ResultSet, error)
 
 	// SetClientCapability sets client capability flags
 	SetClientCapability(uint32)
