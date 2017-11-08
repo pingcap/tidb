@@ -63,8 +63,8 @@ type HashJoinExec struct {
 }
 
 type hashJoinBuffer struct {
-	datums []types.Datum
-	bytes  []byte
+	data  []types.Datum
+	bytes []byte
 }
 
 // Close implements the Executor Close interface.
@@ -96,8 +96,8 @@ func (e *HashJoinExec) Open() error {
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		buffer := &hashJoinBuffer{
-			datums: make([]types.Datum, len(e.outerKeys)),
-			bytes:  make([]byte, 0, 10000),
+			data:  make([]types.Datum, len(e.outerKeys)),
+			bytes: make([]byte, 0, 10000),
 		}
 		e.hashJoinBuffers = append(e.hashJoinBuffers, buffer)
 	}
@@ -216,7 +216,7 @@ func (e *HashJoinExec) prepare() error {
 			continue
 		}
 
-		hasNull, joinKey, err := getJoinKey(e.innerKeys, innerRow, e.hashJoinBuffers[0].datums, nil)
+		hasNull, joinKey, err := getJoinKey(e.innerKeys, innerRow, e.hashJoinBuffers[0].data, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -330,7 +330,7 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 	}
 
 	buffer := e.hashJoinBuffers[workerID]
-	hasNull, joinKey, err := getJoinKey(e.outerKeys, outerRow, buffer.datums, buffer.bytes[:0:cap(buffer.bytes)])
+	hasNull, joinKey, err := getJoinKey(e.outerKeys, outerRow, buffer.data, buffer.bytes[:0:cap(buffer.bytes)])
 	if err != nil {
 		resultBuffer.err = errors.Trace(err)
 		return false
