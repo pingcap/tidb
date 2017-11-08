@@ -69,6 +69,8 @@ func (res *Result) Sort() *Result {
 		for i := range a {
 			if a[i] < b[i] {
 				return true
+			} else if a[i] > b[i] {
+				return false
 			}
 		}
 		return false
