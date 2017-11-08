@@ -376,7 +376,7 @@ func (e *HashJoinExec) Next() (Row, error) {
 		}
 	}
 
-	for ok := true; ok && e.resultCursor >= len(e.resultBuffer); {
+	if ok := true; ok && e.resultCursor >= len(e.resultBuffer) {
 		var resultBuffer *execResult
 		select {
 		case resultBuffer, ok = <-e.resultBufferCh:
@@ -390,9 +390,12 @@ func (e *HashJoinExec) Next() (Row, error) {
 		case <-e.ctx.GoCtx().Done():
 			return nil, nil
 		}
-
 		e.resultBuffer = resultBuffer.rows
 		e.resultCursor = 0
+	}
+
+	if len(e.resultBuffer) == 0 {
+		return nil, nil
 	}
 
 	result := e.resultBuffer[e.resultCursor]
