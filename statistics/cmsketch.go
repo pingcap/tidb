@@ -101,13 +101,12 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 
 // CMSketchToProto converts CMSketch to its protobuf representation.
 func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
-	protoSketch := &tipb.CMSketch{}
+	protoSketch := &tipb.CMSketch{Rows: make([]*tipb.CMSketchRow, c.depth)}
 	for i := range c.table {
-		row := &tipb.CMSketchRow{}
+		protoSketch.Rows[i] = &tipb.CMSketchRow{Counters: make([]uint32, c.width)}
 		for j := range c.table[i] {
-			row.Counters = append(row.Counters, c.table[i][j])
+			protoSketch.Rows[i].Counters[j] = c.table[i][j]
 		}
-		protoSketch.Rows = append(protoSketch.Rows, row)
 	}
 	return protoSketch
 }
