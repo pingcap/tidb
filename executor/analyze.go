@@ -162,7 +162,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 }
 
 func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
-	hist, cms, err := idxExec.buildIndexStats()
+	hist, cms, err := idxExec.buildStats()
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
@@ -211,7 +211,7 @@ func (e *AnalyzeIndexExec) open() error {
 	return nil
 }
 
-func (e *AnalyzeIndexExec) buildIndexStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
+func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
 	if err = e.open(); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -253,7 +253,7 @@ func (e *AnalyzeIndexExec) buildIndexStats() (hist *statistics.Histogram, cms *s
 }
 
 func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResult {
-	hists, cms, err := colExec.buildColumnStats()
+	hists, cms, err := colExec.buildStats()
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
@@ -304,7 +304,7 @@ func (e *AnalyzeColumnsExec) open() error {
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildColumnStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
+func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
 	if err = e.open(); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
