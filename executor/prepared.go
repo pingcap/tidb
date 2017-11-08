@@ -284,9 +284,16 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	readOnly := false
+	if execute, ok := execPlan.(*plan.Execute); ok {
+		readOnly = ast.IsReadOnly(execute.Stmt)
+	}
+
 	stmt := &ExecStmt{
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
+		ReadOnly:   readOnly,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
 		stmt.Text = prepared.Stmt.Text()
