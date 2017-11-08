@@ -1989,7 +1989,7 @@ CompareOp:
 |	"<>"
 	{
 		$$ = opcode.NE
-    }
+	}
 |	"="
 	{
 		$$ = opcode.EQ
@@ -2771,9 +2771,9 @@ SimpleExpr:
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: $2}
 	}
 |	SimpleExpr pipes SimpleExpr
-    {
+	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Concat), Args: []ast.ExprNode{$1, $3}}
-    }
+	}
 |	SubSelect
 |	'(' Expression ')' {
 		startOffset := parser.startOffset(&yyS[yypt-1])
