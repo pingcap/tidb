@@ -393,10 +393,7 @@ func (e *HashJoinExec) Next() (Row, error) {
 		}
 	}
 
-	if len(e.resultBuffer) == 0 {
-		return nil, nil
-	}
-
+	// len(e.resultBuffer) > 0 is guaranteed in the above "select".
 	result := e.resultBuffer[e.resultCursor]
 	e.resultCursor++
 	return result, nil
