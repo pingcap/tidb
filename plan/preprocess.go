@@ -45,8 +45,6 @@ type preprocessor struct {
 	inPrepare bool
 	// When visiting create/drop table statement.
 	inCreateOrDropTable bool
-	// When visiting multi-table delete stmt table list.
-	inDeleteTableList bool
 	/* For Select Statement. */
 	// table map to lookup and check table name conflict.
 	tableMap map[string]int
@@ -54,8 +52,6 @@ type preprocessor struct {
 	derivedTableMap map[string]int
 	// tables indicates tableSources collected in from clause.
 	tables []*ast.TableSource
-	// result fields collected in select field list.
-	fieldList []*ast.ResultField
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -83,7 +79,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.tableMap = map[string]int{}
 		p.derivedTableMap = map[string]int{}
 		p.tables = make([]*ast.TableSource, 0)
-		p.fieldList = make([]*ast.ResultField, 0)
 	case *ast.DeleteTableList:
 		return in, true
 	}
@@ -117,7 +112,6 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
 		}
 	case *ast.SelectStmt, *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
-		p.fieldList = nil
 		p.tableMap = map[string]int{}
 	case *ast.TableName:
 		p.handleTableName(x)
