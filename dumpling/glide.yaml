@@ -136,7 +136,7 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: f931b1dae9ccecb72d671a654b6f26a15075ec71
+  version: 96db717124a5bd980e8a244af2db8952e04159d6
   subpackages:
   - pd-client
 - package: github.com/pingcap/tipb
