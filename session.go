@@ -427,6 +427,9 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
+			if st.IsReadOnly() {
+				continue
+			}
 			txt := st.OriginText()
 			if infoSchemaChanged {
 				st, err = updateStatement(st, s, txt)
@@ -730,6 +733,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			Plan:       cacheValue.(*plan.SQLCacheValue).Plan,
 			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
 			Text:       stmtNode.Text(),
+			ReadOnly:   ast.IsReadOnly(stmtNode),
 		}
 
 		s.PrepareTxnCtx(s.goCtx)
