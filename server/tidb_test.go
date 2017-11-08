@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
+	goctx "golang.org/x/net/context"
 )
 
 type TidbTestSuite struct {
@@ -379,7 +380,7 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	// issue #4540
 	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute("use test;")
+	_, err = ctx.Execute(goctx.Background(), "use test;")
 	c.Assert(err, IsNil)
 
 	testSQL := "CREATE TABLE `t1` (" +
@@ -409,9 +410,9 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 		"`x` varchar(250) DEFAULT ''," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = ctx.Execute(testSQL)
+	_, err = ctx.Execute(goctx.Background(), testSQL)
 	c.Assert(err, IsNil)
-	rs, err := ctx.Execute("show create table t1")
+	rs, err := ctx.Execute(goctx.Background(), "show create table t1")
 	row, err := rs[0].Next()
 	c.Assert(err, IsNil)
 	cols, err := rs[0].Columns()

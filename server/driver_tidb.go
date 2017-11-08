@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	goctx "golang.org/x/net/context"
 )
 
 // TiDBDriver implements IDriver.
@@ -190,8 +191,8 @@ func (tc *TiDBContext) WarningCount() uint16 {
 }
 
 // Execute implements QueryCtx Execute method.
-func (tc *TiDBContext) Execute(sql string) (rs []ResultSet, err error) {
-	rsList, err := tc.session.Execute(sql)
+func (tc *TiDBContext) Execute(goCtx goctx.Context, sql string) (rs []ResultSet, err error) {
+	rsList, err := tc.session.Execute(goCtx, sql)
 	if err != nil {
 		return
 	}
@@ -230,7 +231,7 @@ func (tc *TiDBContext) Auth(user *auth.UserIdentity, auth []byte, salt []byte) b
 
 // FieldList implements QueryCtx FieldList method.
 func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error) {
-	rs, err := tc.Execute("SELECT * FROM `" + table + "` LIMIT 0")
+	rs, err := tc.Execute(goctx.Background(), "SELECT * FROM `"+table+"` LIMIT 0")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
