@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -496,7 +497,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
