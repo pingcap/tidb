@@ -34,11 +34,11 @@ type reorgCtx struct {
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
 	doneCh chan error
-	// rowCount uses to simulate a job's row count.
+	// rowCount is used to simulate a job's row count.
 	rowCount int64
 	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
 	notifyCancelReorgJob chan struct{}
-	// doneHandle uses to simulate the handle that is processed.
+	// doneHandle is used to simulate the handle that is processed.
 	doneHandle int64
 }
 
