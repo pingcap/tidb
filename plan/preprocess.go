@@ -582,7 +582,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 	}
 }
 
-// handleTableSources checks name duplication
+// handleTableSource checks name duplication
 // and puts the table source in current resolverContext.
 // Note:
 // "select * from t as a join (select 1) as a;" is not duplicate.
@@ -614,32 +614,5 @@ func (p *preprocessor) handleTableSource(ts *ast.TableSource) {
 		}
 		p.derivedTableMap[name] = len(p.tables)
 	}
-	dupNames := make(map[string]struct{}, len(ts.GetResultFields()))
-	for _, f := range ts.GetResultFields() {
-		name := f.ColumnAsName.L
-		if name == "" {
-			name = f.Column.Name.L
-		}
-	}
-	for _, f := range ts.GetResultFields() {
-		// duplicate column name in one table is not allowed.
-		// "select * from (select 1, 1) as a;" is duplicate.
-		name := f.ColumnAsName.L
-		if name == "" {
-			name = f.Column.Name.L
-		}
-		if _, ok := dupNames[name]; ok {
-			p.err = errors.Errorf("Duplicate column name '%s'", name)
-			return
-		}
-		dupNames[name] = struct{}{}
-	}
 	p.tables = append(p.tables, ts)
-}
-
-func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
-	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
-		return getInnerFromParentheses(pexpr.Expr)
-	}
-	return expr
 }

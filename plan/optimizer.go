@@ -182,12 +182,12 @@ const (
 	CodeInvalidWildCard     terror.ErrCode = 3
 	CodeUnsupported         terror.ErrCode = 4
 	CodeInvalidGroupFuncUse terror.ErrCode = 5
-	CodeIllegalReference    terror.ErrCode = 6
 	CodeStmtNotFound        terror.ErrCode = 7
 	CodeWrongParamCount     terror.ErrCode = 8
 	CodeSchemaChanged       terror.ErrCode = 9
 
 	// MySQL error code.
+	CodeIllegalReference     terror.ErrCode = mysql.ErrIllegalReference
 	CodeNoDB                 terror.ErrCode = mysql.ErrNoDB
 	CodeUnknownExplainFormat terror.ErrCode = mysql.ErrUnknownExplainFormat
 	CodeWrongGroupField                     = mysql.ErrWrongGroupField
@@ -200,7 +200,7 @@ var (
 	ErrInvalidWildCard             = terror.ClassOptimizer.New(CodeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
-	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
+	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, mysql.MySQLErrName[mysql.ErrIllegalReference])
 	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
 	ErrUnknownExplainFormat        = terror.ClassOptimizer.New(CodeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
 	ErrStmtNotFound                = terror.ClassOptimizer.New(CodeStmtNotFound, "Prepared statement not found")

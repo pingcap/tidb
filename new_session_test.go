@@ -673,8 +673,6 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec(`INSERT INTO t VALUES ("id");`)
 	id, ps, _, err := tk.Se.PrepareStmt("select id+? from t")
 	c.Assert(err, IsNil)
-	// We do not create ResultFields anymore when preprocessing.
-	//c.Assert(fields, HasLen, 1)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)

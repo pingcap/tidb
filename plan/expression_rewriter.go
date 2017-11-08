@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/types"
-	"strconv"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.

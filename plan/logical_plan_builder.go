@@ -151,6 +151,17 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 				col.DBName = model.NewCIStr("")
 			}
 		}
+		// duplicate column name in one table is not allowed.
+		// "select * from (select 1, 1) as a;" is duplicate
+		dupNames := make(map[string]struct{}, len(p.Schema().Columns))
+		for _, col := range p.Schema().Columns {
+			name := col.ColName.O
+			if _, ok := dupNames[name]; ok {
+				b.err = ErrDupFieldName.GenByArgs(name)
+				return nil
+			}
+			dupNames[name] = struct{}{}
+		}
 		return p
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
@@ -1015,9 +1026,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			if index != -1 {
 				ret := g.fields[index].Expr
 				if _, ok := ret.(*ast.AggregateFuncExpr); ok {
-					err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", v.Name.OrigColName())
+					err = ErrIllegalReference.GenByArgs(v.Name.OrigColName(), "reference to group function")
 				} else {
-					return g.fields[index].Expr, true
+					return ret, true
 				}
 			}
 			g.err = errors.Trace(err)
@@ -1440,17 +1451,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	)
 	if sel.From != nil {
 		p = b.buildResultSetNode(sel.From.TableRefs)
-		// duplicate column name in one table is not allowed.
-		// "select * from (select 1, 1) as a;" is duplicate
-		dupNames := make(map[string]struct{}, len(p.Schema().Columns))
-		for _, col := range p.Schema().Columns {
-			name := col.ColName.O
-			if _, ok := dupNames[name]; ok {
-				b.err = ErrDupFieldName.GenByArgs(name)
-				return nil
-			}
-			dupNames[name] = struct{}{}
-		}
 	} else {
 		p = b.buildTableDual()
 	}
@@ -1849,6 +1849,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+	b.curClause = fieldList
 	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
@@ -2003,12 +2004,12 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	// Collect visitInfo.
 	if delete.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
-		dbName := b.ctx.GetSessionVars().CurrentDB
 		for _, tn := range delete.Tables.Tables {
 			foundMatch := false
 			for _, v := range tableList {
-				if dn := v.Schema.L; dn != "" {
-					dbName = dn
+				dbName := v.Schema.L
+				if dbName == "" {
+					dbName = b.ctx.GetSessionVars().CurrentDB
 				}
 				if (tn.Schema.L == "" || tn.Schema.L == dbName) && tn.Name.L == v.Name.L {
 					tn.Schema.L = dbName
@@ -2061,4 +2062,11 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 		table:     tbl,
 		column:    col,
 	})
+}
+
+func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
+		return getInnerFromParentheses(pexpr.Expr)
+	}
+	return expr
 }
