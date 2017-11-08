@@ -43,7 +43,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 	tests := []struct {
 		sql  string
@@ -197,7 +197,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -369,7 +369,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -441,7 +441,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -583,7 +583,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -634,7 +634,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -703,7 +703,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	se.Execute("use test")
+	se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -845,7 +845,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
