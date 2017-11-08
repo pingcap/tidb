@@ -176,6 +176,9 @@ type Statement interface {
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool
+
+	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
+	IsReadOnly() bool
 }
 
 // Visitor visits a Node.
