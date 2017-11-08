@@ -471,7 +471,7 @@ func (s *testCommitterSuite) TestCommitPrimaryRPCErrorThenRegionError(c *C) {
 	t1 := s.begin(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	err = t1.Commit(goctx.Background())
+	err = t1.Commit()
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
