@@ -1440,6 +1440,17 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	)
 	if sel.From != nil {
 		p = b.buildResultSetNode(sel.From.TableRefs)
+		// duplicate column name in one table is not allowed.
+		// "select * from (select 1, 1) as a;" is duplicate
+		dupNames := make(map[string]struct{}, len(p.Schema().Columns))
+		for _, col := range p.Schema().Columns {
+			name := col.ColName.O
+			if _, ok := dupNames[name]; ok {
+				b.err = ErrDupFieldName.GenByArgs(name)
+				return nil
+			}
+			dupNames[name] = struct{}{}
+		}
 	} else {
 		p = b.buildTableDual()
 	}
