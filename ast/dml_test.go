@@ -28,6 +28,8 @@ func (ts *testDMLSuite) TestDMLVisitorCover(c *C) {
 
 	tableRefsClause := &TableRefsClause{TableRefs: &Join{Left: &TableSource{Source: &TableName{}}, On: &OnCondition{Expr: ce}}}
 
+	windowDef := &WindowDef{Spec: &WindowSpec{}}
+
 	stmts := []struct {
 		node             Node
 		expectedEnterCnt int
@@ -50,6 +52,10 @@ func (ts *testDMLSuite) TestDMLVisitorCover(c *C) {
 		{tableRefsClause, 1, 1},
 		{&TableSource{Source: &TableName{}}, 0, 0},
 		{&WildCardField{}, 0, 0},
+		{&WindowSpec{}, 0, 0},
+		{windowDef, 0, 0},
+		{&WindowClause{Defs: []*WindowDef{windowDef, windowDef}}, 0, 0},
+		{&WindowingClause{Spec: &WindowSpec{}}, 0, 0},
 
 		// TODO: cover childrens
 		{&InsertStmt{Table: tableRefsClause}, 1, 1},
