@@ -199,8 +199,8 @@ type ddl struct {
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
-	// reorg is for reorganization.
-	reorg *reorg
+	// reorgCtx is for reorganization.
+	reorgCtx *reorgCtx
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
@@ -271,7 +271,7 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		lease:        lease,
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
-		reorg:        &reorg{notifyCancelReorgJob: make(chan struct{}, 1)},
+		reorgCtx:     &reorgCtx{notifyCancelReorgJob: make(chan struct{}, 1)},
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		workerVars:   variable.NewSessionVars(),
