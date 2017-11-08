@@ -87,10 +87,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 			return nil, errors.Trace(err)
 		}
 		if cms != nil {
-			err := cms.InsertBytes(value)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			cms.InsertBytes(value)
 		}
 	}
 	hg := statistics.HistogramToProto(statsBuilder.Hist())

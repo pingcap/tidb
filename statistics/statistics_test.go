@@ -169,10 +169,7 @@ func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		err = cms.InsertBytes(bytes)
-		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
-		}
+		cms.InsertBytes(bytes)
 	}
 	return b.Count, b.Hist(), cms, nil
 }

@@ -477,7 +477,7 @@ func (c *Column) String() string {
 
 func (c *Column) equalRowCount(sc *variable.StatementContext, val types.Datum) (float64, error) {
 	if c.CMSketch != nil {
-		count, err := c.CMSketch.queryValue(&val)
+		count, err := c.CMSketch.queryValue(val)
 		return float64(count), errors.Trace(err)
 	}
 	count, err := c.Histogram.equalRowCount(sc, val)
@@ -580,8 +580,7 @@ func (idx *Index) String() string {
 
 func (idx *Index) equalRowCount(sc *variable.StatementContext, b []byte) (float64, error) {
 	if idx.CMSketch != nil {
-		count, err := idx.CMSketch.queryBytes(b)
-		return float64(count), errors.Trace(err)
+		return float64(idx.CMSketch.queryBytes(b)), nil
 	}
 	count, err := idx.Histogram.equalRowCount(sc, types.NewBytesDatum(b))
 	return count, errors.Trace(err)

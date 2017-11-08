@@ -44,25 +44,24 @@ func NewCMSketch(d, w int32) *CMSketch {
 }
 
 // InsertBytes inserts the bytes value into the CM Sketch.
-func (c *CMSketch) InsertBytes(bytes []byte) error {
+func (c *CMSketch) InsertBytes(bytes []byte) {
 	c.count++
 	h1, h2 := murmur3.Sum128(bytes)
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		c.table[i][j]++
 	}
-	return nil
 }
 
-func (c *CMSketch) queryValue(val *types.Datum) (uint32, error) {
-	bytes, err := codec.EncodeValue(nil, *val)
+func (c *CMSketch) queryValue(val types.Datum) (uint32, error) {
+	bytes, err := codec.EncodeValue(nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return c.queryBytes(bytes)
+	return c.queryBytes(bytes), nil
 }
 
-func (c *CMSketch) queryBytes(bytes []byte) (uint32, error) {
+func (c *CMSketch) queryBytes(bytes []byte) uint32 {
 	h1, h2 := murmur3.Sum128(bytes)
 	vals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
@@ -81,9 +80,9 @@ func (c *CMSketch) queryBytes(bytes []byte) (uint32, error) {
 	sort.Sort(sortutil.Uint32Slice(vals))
 	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
 	if res > min {
-		return min, nil
+		return min
 	}
-	return res, nil
+	return res
 }
 
 // MergeCMSketch merges two CM Sketch.

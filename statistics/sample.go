@@ -94,9 +94,7 @@ func (c *SampleCollector) collect(d types.Datum) error {
 			return errors.Trace(err)
 		}
 		if c.CMSketch != nil {
-			if err := c.CMSketch.InsertBytes(d.GetBytes()); err != nil {
-				return errors.Trace(err)
-			}
+			c.CMSketch.InsertBytes(d.GetBytes())
 		}
 	}
 	c.seenValues++

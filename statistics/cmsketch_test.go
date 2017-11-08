@@ -28,7 +28,8 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return c.InsertBytes(bytes)
+	c.InsertBytes(bytes)
+	return nil
 }
 
 func buildCMSketchAndMap(d, w int32, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
@@ -49,8 +50,7 @@ func buildCMSketchAndMap(d, w int32, total, imax uint64, s float64) (*CMSketch, 
 func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
 	var total uint64
 	for num, count := range mp {
-		val := types.NewIntDatum(num)
-		estimate, err := cms.queryValue(&val)
+		estimate, err := cms.queryValue(types.NewIntDatum(num))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
