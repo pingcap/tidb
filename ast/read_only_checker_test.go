@@ -11,11 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package ast
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
 )
 
 var _ = Suite(&testCacheableSuite{})
@@ -25,18 +24,18 @@ type testCacheableSuite struct {
 
 func (s *testCacheableSuite) TestCacheable(c *C) {
 	// test non-SelectStmt
-	var stmt ast.Node = &ast.DeleteStmt{}
+	var stmt Node = &DeleteStmt{}
 	c.Assert(IsReadOnly(stmt), IsFalse)
 
-	stmt = &ast.InsertStmt{}
+	stmt = &InsertStmt{}
 	c.Assert(IsReadOnly(stmt), IsFalse)
 
-	stmt = &ast.UpdateStmt{}
+	stmt = &UpdateStmt{}
 	c.Assert(IsReadOnly(stmt), IsFalse)
 
-	stmt = &ast.ExplainStmt{}
+	stmt = &ExplainStmt{}
 	c.Assert(IsReadOnly(stmt), IsTrue)
 
-	stmt = &ast.ExplainStmt{}
+	stmt = &ExplainStmt{}
 	c.Assert(IsReadOnly(stmt), IsTrue)
 }

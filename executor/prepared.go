@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/tools/go/gcimporter15/testdata"
 )
 
 var (
@@ -287,8 +286,8 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 	}
 
 	readOnly := false
-	if execPlan, ok := execPlan.(*plan.Execute); ok {
-		readOnly = IsReadOnly(execPlan.Stmt)
+	if execute, ok := execPlan.(*plan.Execute); ok {
+		readOnly = ast.IsReadOnly(execute.Stmt)
 	}
 
 	stmt := &ExecStmt{

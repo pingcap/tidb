@@ -726,7 +726,7 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 			Plan:       cacheValue.(*plan.SQLCacheValue).Plan,
 			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
 			Text:       stmtNode.Text(),
-			ReadOnly:   executor.IsReadOnly(stmtNode),
+			ReadOnly:   ast.IsReadOnly(stmtNode),
 		}
 
 		s.PrepareTxnCtx(s.goCtx)

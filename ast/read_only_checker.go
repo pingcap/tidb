@@ -11,17 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
-
-import (
-	"github.com/pingcap/tidb/ast"
-)
+package ast
 
 // IsReadOnly checks whether the input ast is readOnly.
-func IsReadOnly(node ast.Node) bool {
+func IsReadOnly(node Node) bool {
 	switch st := node.(type) {
-	case *ast.SelectStmt:
-		if st.LockTp == ast.SelectLockForUpdate {
+	case *SelectStmt:
+		if st.LockTp == SelectLockForUpdate {
 			return false
 		}
 
@@ -31,7 +27,7 @@ func IsReadOnly(node ast.Node) bool {
 
 		node.Accept(&checker)
 		return checker.readOnly
-	case *ast.ExplainStmt:
+	case *ExplainStmt:
 		return true
 	default:
 		return false
@@ -47,9 +43,9 @@ type readOnlyChecker struct {
 }
 
 // Enter implements Visitor interface.
-func (checker *readOnlyChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (checker *readOnlyChecker) Enter(in Node) (out Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.VariableExpr:
+	case *VariableExpr:
 		// like func rewriteVariable(), this stands for SetVar.
 		if !node.IsSystem && node.Value != nil {
 			checker.readOnly = false
@@ -60,6 +56,6 @@ func (checker *readOnlyChecker) Enter(in ast.Node) (out ast.Node, skipChildren b
 }
 
 // Leave implements Visitor interface.
-func (checker *readOnlyChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (checker *readOnlyChecker) Leave(in Node) (out Node, ok bool) {
 	return in, checker.readOnly
 }
