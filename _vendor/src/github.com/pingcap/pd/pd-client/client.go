@@ -285,6 +285,7 @@ func (c *client) tsLoop() {
 	defer loopCancel()
 
 	var requests []*tsoRequest
+	var opts []opentracing.StartSpanOption
 	var stream pdpb.PD_TsoClient
 	var cancel context.CancelFunc
 
@@ -327,7 +328,8 @@ func (c *client) tsLoop() {
 			case <-loopCtx.Done():
 				return
 			}
-			err = c.processTSORequests(stream, requests)
+			opts = extractSpanReference(requests, opts[:0])
+			err = c.processTSORequests(stream, requests, opts)
 			close(done)
 			requests = requests[:0]
 		case <-loopCtx.Done():
@@ -344,13 +346,17 @@ func (c *client) tsLoop() {
 	}
 }
 
-func (c *client) processTSORequests(stream pdpb.PD_TsoClient, requests []*tsoRequest) error {
-	if len(requests) > 0 && opentracing.SpanFromContext(requests[0].ctx) != nil {
-		opts := make([]opentracing.StartSpanOption, 0, len(requests))
-		for _, req := range requests {
-			span := opentracing.SpanFromContext(req.ctx)
+func extractSpanReference(requests []*tsoRequest, opts []opentracing.StartSpanOption) []opentracing.StartSpanOption {
+	for _, req := range requests {
+		if span := opentracing.SpanFromContext(req.ctx); span != nil {
 			opts = append(opts, opentracing.ChildOf(span.Context()))
 		}
+	}
+	return opts
+}
+
+func (c *client) processTSORequests(stream pdpb.PD_TsoClient, requests []*tsoRequest, opts []opentracing.StartSpanOption) error {
+	if len(opts) > 0 {
 		span := opentracing.StartSpan("pdclient.processTSORequests", opts...)
 		defer span.Finish()
 	}
