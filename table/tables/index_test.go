@@ -22,8 +22,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testIndexSuite{})
@@ -125,7 +126,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
 	it.Close()
 
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	tblInfo = &model.TableInfo{
@@ -175,7 +176,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(h, Equals, int64(1))
 	c.Assert(exist, IsTrue)
 
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	_, err = index.FetchValues(make([]types.Datum, 0))

@@ -38,7 +38,7 @@ For more details, see [How we build TiDB](https://pingcap.github.io/blog/2016/10
 
 ## Roadmap
 
-Read the [Roadmap](./docs/ROADMAP.md).
+Read the [Roadmap](https://github.com/pingcap/docs/blob/master/ROADMAP.md).
 
 ## Quick start
 
@@ -57,17 +57,12 @@ Read the [Quick Start](https://pingcap.com/doc-QUICKSTART).
 Contributions are welcomed and greatly appreciated. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for details on submitting patches and the contribution workflow.
 
-## Follow us
+## Connect with us
 
-### Twitter
-
-[@PingCAP](https://twitter.com/PingCAP)
-
-### Mailing list
-
-tidb-user@googlegroups.com
-
-[Google Group](https://groups.google.com/forum/#!forum/tidb-user)
+- **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
+- **Reddit**: https://www.reddit.com/r/TiDB/
+- **Stack Overflow**: https://stackoverflow.com/questions/tagged/tidb
+- **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
 
 ## License
 TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.

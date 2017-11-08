@@ -1,5 +1,5 @@
-hash: 2f02661c367cf0712f223a57569749eaebaa6c910c45f049e022bb02105ed3dc
-updated: 2017-10-19T20:32:33.517492371+08:00
+hash: 562f87d58eab4d3af8b132f0c8f7beb379d83c57eb3f4b393e305b444f4385dd
+updated: 2017-11-08T14:59:33.459797409+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -11,8 +11,6 @@ imports:
   version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
   subpackages:
   - quantile
-- name: github.com/boltdb/bolt
-  version: d97499360d1ecebc492ea66c7447ea948f417620
 - name: github.com/BurntSushi/toml
   version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - name: github.com/cloudfoundry-incubator/candiedyaml
@@ -25,19 +23,10 @@ imports:
   - auth/authpb
   - clientv3
   - clientv3/concurrency
-  - contrib/recipes
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
-- name: github.com/coreos/go-systemd
-  version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
-  subpackages:
-  - journal
-- name: github.com/coreos/pkg
-  version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
-  subpackages:
-  - capnslog
 - name: github.com/crossdock/crossdock-go
   version: 049aabb0122b03bc9bd30cab8f3f91fb60166361
 - name: github.com/cznic/golex
@@ -85,7 +74,7 @@ imports:
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/go-grpc-middleware
-  version: 6d3547c644afb325c16df96e3c7177ea6e2fdebd
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
   subpackages:
   - tags
   - tracing/opentracing
@@ -124,7 +113,7 @@ imports:
 - name: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - name: github.com/pingcap/goleveldb
-  version: 1c7b975bc41078e959e38e2ecbfd28a9619fc77a
+  version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
   - leveldb
   - leveldb/cache
@@ -153,12 +142,11 @@ imports:
   version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
   repo: git@github.com:pingcap/mysqlx-driver.git
 - name: github.com/pingcap/pd
-  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
+  version: 96db717124a5bd980e8a244af2db8952e04159d6
   subpackages:
   - pd-client
-  - pkg/logutil
 - name: github.com/pingcap/tipb
-  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
+  version: a2a2b2ab2ee4b8cd4349418ac1c1cde289798485
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -200,10 +188,6 @@ imports:
   - assert
   - require
   - suite
-- name: github.com/syndtr/goleveldb
-  version: b89cc31ef7977104127d34c1bd31ebd1a9db2199
-  subpackages:
-  - leveldb/comparer
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: github.com/uber/jaeger-client-go
@@ -223,7 +207,7 @@ imports:
   subpackages:
   - metrics
 - name: github.com/uber/tchannel-go
-  version: a7ad9ecb640b5f10a0395b38d6319175172b3ab2
+  version: cc230a2942d078a8b01f4a79895dad62e6c572f1
   subpackages:
   - atomic
   - thrift

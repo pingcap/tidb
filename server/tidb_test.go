@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/store/tikv"
+	goctx "golang.org/x/net/context"
 )
 
 type TidbTestSuite struct {
@@ -43,7 +45,8 @@ var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	store, err := tidb.NewStore("memory:///tmp/tidb")
+	store, err := tikv.NewMockTikvStore()
+	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -115,13 +118,13 @@ func (ts *TidbTestSuite) TestErrorCode(c *C) {
 func (ts *TidbTestSuite) TestAuth(c *C) {
 	c.Parallel()
 	runTestAuth(c)
+	runTestIssue3682(c)
 }
 
 func (ts *TidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	runTestIssue3662(c)
 	runTestIssue3680(c)
-	runTestIssue3682(c)
 }
 
 func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
@@ -377,7 +380,7 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	// issue #4540
 	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute("use test;")
+	_, err = ctx.Execute(goctx.Background(), "use test;")
 	c.Assert(err, IsNil)
 
 	testSQL := "CREATE TABLE `t1` (" +
@@ -407,9 +410,9 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 		"`x` varchar(250) DEFAULT ''," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = ctx.Execute(testSQL)
+	_, err = ctx.Execute(goctx.Background(), testSQL)
 	c.Assert(err, IsNil)
-	rs, err := ctx.Execute("show create table t1")
+	rs, err := ctx.Execute(goctx.Background(), "show create table t1")
 	row, err := rs[0].Next()
 	c.Assert(err, IsNil)
 	cols, err := rs[0].Columns()

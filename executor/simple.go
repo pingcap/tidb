@@ -21,7 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -160,7 +160,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(e.ctx.GoCtx(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -211,7 +211,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit()
+		err := e.ctx.Txn().Commit(e.ctx.GoCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -242,7 +242,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit()
+		err := e.ctx.Txn().Commit(e.ctx.GoCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -322,6 +322,6 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 		}
 		return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
 	}
-	h.DDLEventCh() <- &ddl.Event{Tp: model.ActionDropTable, TableInfo: s.Table.TableInfo}
+	h.DDLEventCh() <- &util.Event{Tp: model.ActionDropTable, TableInfo: s.Table.TableInfo}
 	return nil
 }

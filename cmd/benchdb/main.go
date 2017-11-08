@@ -23,11 +23,11 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -88,7 +88,7 @@ func main() {
 }
 
 type benchDB struct {
-	store   kv.Storage
+	store   tikv.Storage
 	session tidb.Session
 }
 
@@ -100,17 +100,17 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	session, err := tidb.CreateSession(store)
 	terror.MustNil(err)
-	_, err = session.Execute("use test")
+	_, err = session.Execute(goctx.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
-		store:   store,
+		store:   store.(tikv.Storage),
 		session: session,
 	}
 }
 
 func (ut *benchDB) mustExec(sql string) {
-	rss, err := ut.session.Execute(sql)
+	rss, err := ut.session.Execute(goctx.Background(), sql)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func (ut *benchDB) manualGC(done chan bool) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = tikv.RunGCJob(context.Background(), ut.store, ver.Ver, "benchDB")
+	err = gcworker.RunGCJob(goctx.Background(), ut.store, ver.Ver, "benchDB")
 	if err != nil {
 		log.Fatal(err)
 	}

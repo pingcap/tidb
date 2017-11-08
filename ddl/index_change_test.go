@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -69,7 +69,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	_, err = originTable.AddRecord(ctx, types.MakeDatums(3, 3))
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
@@ -120,7 +120,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	d.SetHook(tc)
 	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	c.Assert(ctx.Txn().Commit(), IsNil)
+	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
 	d.Stop()
 	prevState = model.StateNone
 	var noneTable table.Table
@@ -317,7 +317,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 			return errors.Trace(err)
 		}
 	}
-	return ctx.Txn().Commit()
+	return ctx.Txn().Commit(goctx.Background())
 }
 
 func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, publicTbl, writeTbl table.Table) error {
@@ -357,7 +357,7 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, p
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return ctx.Txn().Commit()
+	return ctx.Txn().Commit(goctx.Background())
 }
 
 func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, writeTbl, delTbl table.Table) error {
@@ -402,5 +402,5 @@ func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return ctx.Txn().Commit()
+	return ctx.Txn().Commit(goctx.Background())
 }

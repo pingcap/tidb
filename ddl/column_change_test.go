@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -68,7 +68,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	row := types.MakeDatums(1, 2)
 	h, err := originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	var mu sync.Mutex
@@ -120,7 +120,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			}
 			mu.Unlock()
 		}
-		err = hookCtx.Txn().Commit()
+		err = hookCtx.Txn().Commit(goctx.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -172,7 +172,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 				checkErr = errors.Trace(err)
 			}
 		}
-		err = hookCtx.Txn().Commit()
+		err = hookCtx.Txn().Commit(ctx.GoCtx())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -339,7 +339,7 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID)
+	alloc := autoid.NewAllocator(d.store, 0, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)

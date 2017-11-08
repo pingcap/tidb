@@ -23,16 +23,13 @@ func newInvalidModeErr(s string) error {
 }
 
 // Version information.
-const (
-	MinProtocolVersion byte = 10
-	MaxPayloadLen      int  = 1<<24 - 1
-	// The version number should be three digits.
-	// See https://dev.mysql.com/doc/refman/5.7/en/which-version.html
-	TiDBReleaseVersion string = "1.0.0"
-)
+var (
+	// TiDBReleaseVersion is initialized by (git describe --tags) in Makefile.
+	TiDBReleaseVersion = "None"
 
-// ServerVersion is the version information of this tidb-server in MySQL's format.
-var ServerVersion = fmt.Sprintf("5.7.1-TiDB-%s", TiDBReleaseVersion)
+	// ServerVersion is the version information of this tidb-server in MySQL's format.
+	ServerVersion = fmt.Sprintf("5.7.1-TiDB-%s", TiDBReleaseVersion)
+)
 
 // Header information.
 const (
@@ -61,13 +58,15 @@ const (
 // Identifier length limitations.
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 const (
+	// MaxPayloadLen is the max packet payload length.
+	MaxPayloadLen int = 1<<24 - 1
 	// MaxTableNameLength is max length of table name identifier.
 	MaxTableNameLength int = 64
 	// MaxDatabaseNameLength is max length of database name identifier.
 	MaxDatabaseNameLength int = 64
 	// MaxColumnNameLength is max length of column name identifier.
 	MaxColumnNameLength int = 64
-	// MaxColumnNameLength is max length of key parts.
+	// MaxKeyParts is max length of key parts.
 	MaxKeyParts int = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
 	MaxIndexIdentifierLen int = 64
@@ -360,6 +359,9 @@ var AllColumnPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv}
 // AllPrivilegeLiteral is the string literal for All Privilege.
 const AllPrivilegeLiteral = "ALL PRIVILEGES"
 
+// DefaultSQLMode for GLOBAL_VARIABLES
+const DefaultSQLMode = "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"
+
 // DefaultLengthOfMysqlTypes is the map for default physical length of MySQL data types.
 // See http://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 var DefaultLengthOfMysqlTypes = map[byte]int{
@@ -415,9 +417,19 @@ func (m SQLMode) HasErrorForDivisionByZeroMode() bool {
 	return m&ModeErrorForDivisionByZero == ModeErrorForDivisionByZero
 }
 
+// HasOnlyFullGroupBy detects if 'ONLY_FULL_GROUP_BY' mode is set in SQLMode
+func (m SQLMode) HasOnlyFullGroupBy() bool {
+	return m&ModeOnlyFullGroupBy == ModeOnlyFullGroupBy
+}
+
 // HasStrictMode detects if 'STRICT_TRANS_TABLES' or 'STRICT_ALL_TABLES' mode is set in SQLMode
 func (m SQLMode) HasStrictMode() bool {
 	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
+}
+
+// HasRealAsFloatMode detects if 'REAL_AS_FLOAT' mode is set in SQLMode
+func (m SQLMode) HasRealAsFloatMode() bool {
+	return m&ModeRealAsFloat == ModeRealAsFloat
 }
 
 // consts for sql modes.

@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -495,6 +495,7 @@ var funcs = map[string]functionClass{
 	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
 	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
+	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 2, -1}},
 	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
 	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
@@ -504,6 +505,7 @@ var funcs = map[string]functionClass{
 	ast.SetVar:     &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
 	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
 	ast.BitCount:   &bitCountFunctionClass{baseFunctionClass{ast.BitCount, 1, 1}},
+	ast.GetParam:   &getParamFunctionClass{baseFunctionClass{ast.GetParam, 1, 1}},
 
 	// encryption and compression functions
 	ast.AesDecrypt:               &aesDecryptFunctionClass{baseFunctionClass{ast.AesDecrypt, 2, 3}},

@@ -20,8 +20,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 // First byte in the encoded value which specifies the encoding type.
@@ -248,9 +248,16 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 			d.SetValue(v)
 		}
 	case jsonFlag:
+		var size int
+		size, err = json.PeekBytesAsJSON(b)
+		if err != nil {
+			return b, d, err
+		}
+
 		var j json.JSON
 		j, err = json.Deserialize(b)
 		if err == nil {
+			b = b[size:]
 			d.SetMysqlJSON(j)
 		}
 	case NilFlag:

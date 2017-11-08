@@ -70,7 +70,7 @@ var MySQLErrName = map[uint16]string{
 	ErrNonUniq:                                  "Column '%-.192s' in %-.192s is ambiguous",
 	ErrServerShutdown:                           "Server shutdown in progress",
 	ErrBadField:                                 "Unknown column '%-.192s' in '%-.192s'",
-	ErrWrongFieldWithGroup:                      "'%-.192s' isn't in GROUP BY",
+	ErrFieldNotInGroupBy:                        "Expression #%d of %s is not in GROUP BY clause and contains nonaggregated column '%s' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by",
 	ErrWrongGroupField:                          "Can't group on '%-.192s'",
 	ErrWrongSumSelect:                           "Statement has sum functions and columns in same statement",
 	ErrWrongValueCount:                          "Column count doesn't match value count",
@@ -893,7 +893,7 @@ var MySQLErrName = map[uint16]string{
 	ErrTiKVServerTimeout:  "TiKV server timeout",
 	ErrTiKVServerBusy:     "TiKV server is busy",
 	ErrResolveLockTimeout: "Resolve lock timeout",
-	ErrRegionUnavaiable:   "Region is unavaiable",
+	ErrRegionUnavailable:  "Region is unavailable",
 	ErrGCTooEarly:         "GC Interval shorter than transaction duration",
 
 	ErrTxnTooLarge: "Transaction is too large",

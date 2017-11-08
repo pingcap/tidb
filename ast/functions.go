@@ -15,7 +15,7 @@ package ast
 
 import (
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -65,6 +65,7 @@ const (
 	GetVar     = "getvar"
 	Values     = "values"
 	BitCount   = "bit_count"
+	GetParam   = "getparam"
 
 	// common functions
 	Coalesce = "coalesce"

@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, added bool) {
@@ -158,7 +159,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
+		d.asyncNotifyEvent(&util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
 	}
@@ -228,12 +229,17 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
+		d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
+
+const (
+	defaultBatchCnt      = 1024
+	defaultSmallBatchCnt = 128
+)
 
 // addTableColumn adds a column to the table.
 // TODO: Use it when updating the column type or remove it.

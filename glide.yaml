@@ -1,7 +1,5 @@
 package: github.com/pingcap/tidb
 import:
-- package: github.com/boltdb/bolt
-  version: d97499360d1ecebc492ea66c7447ea948f417620
 - package: github.com/BurntSushi/toml
   version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - package: github.com/cloudfoundry-incubator/candiedyaml
@@ -16,7 +14,6 @@ import:
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
-  - contrib/recipes
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -51,7 +48,7 @@ import:
 - package: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - package: github.com/pingcap/goleveldb
-  version: 1c7b975bc41078e959e38e2ecbfd28a9619fc77a
+  version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
   - leveldb
   - leveldb/cache
@@ -139,9 +136,11 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
+  version: 96db717124a5bd980e8a244af2db8952e04159d6
+  subpackages:
+  - pd-client
 - package: github.com/pingcap/tipb
-  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
+  version: a2a2b2ab2ee4b8cd4349418ac1c1cde289798485
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -243,3 +242,8 @@ import:
   - utils
 - package: github.com/codahale/hdrhistogram
   version: f8ad88b59a584afeee9d334eff879b104439117b
+- package: github.com/grpc-ecosystem/go-grpc-middleware
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
+  subpackages:
+  - tags
+  - tracing/opentracing

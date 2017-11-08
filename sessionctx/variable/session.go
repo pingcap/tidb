@@ -113,6 +113,8 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
+	// params for prepared statements
+	PreparedParams []interface{}
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -125,6 +127,8 @@ type SessionVars struct {
 	PrevLastInsertID uint64 // PrevLastInsertID is the last insert ID of previous statement.
 	LastInsertID     uint64 // LastInsertID is the auto-generated ID in the current statement.
 	InsertID         uint64 // InsertID is the given insert ID of an auto_increment column.
+	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
+	PrevAffectedRows int64
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32
@@ -228,6 +232,7 @@ func NewSessionVars() *SessionVars {
 		Systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
 		PreparedStmtNameToID:       make(map[string]uint32),
+		PreparedParams:             make([]interface{}, 10),
 		TxnCtx:                     &TransactionContext{},
 		RetryInfo:                  &RetryInfo{},
 		StrictSQLMode:              true,
@@ -306,6 +311,18 @@ func (s *SessionVars) GetTimeZone() *time.Location {
 	return loc
 }
 
+// ResetPrevAffectedRows reset the prev-affected-rows variable.
+func (s *SessionVars) ResetPrevAffectedRows() {
+	s.PrevAffectedRows = 0
+	if s.StmtCtx != nil {
+		if s.StmtCtx.InUpdateOrDeleteStmt || s.StmtCtx.InInsertStmt {
+			s.PrevAffectedRows = int64(s.StmtCtx.AffectedRows())
+		} else if s.StmtCtx.InSelectStmt {
+			s.PrevAffectedRows = -1
+		}
+	}
+}
+
 // special session variables.
 const (
 	SQLModeVar          = "sql_mode"
@@ -336,13 +353,15 @@ type StatementContext struct {
 	TruncateAsWarning      bool
 	OverflowAsWarning      bool
 	InShowWarning          bool
+	UseCache               bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
-		affectedRows uint64
-		foundRows    uint64
-		warnings     []error
+		affectedRows      uint64
+		foundRows         uint64
+		warnings          []error
+		histogramsNotLoad bool
 	}
 
 	// Copied from SessionVars.TimeZone.
@@ -417,6 +436,21 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Unlock()
 }
 
+// SetHistogramsNotLoad sets histogramsNotLoad.
+func (sc *StatementContext) SetHistogramsNotLoad() {
+	sc.mu.Lock()
+	sc.mu.histogramsNotLoad = true
+	sc.mu.Unlock()
+}
+
+// HistogramsNotLoad gets histogramsNotLoad.
+func (sc *StatementContext) HistogramsNotLoad() bool {
+	sc.mu.Lock()
+	notLoad := sc.mu.histogramsNotLoad
+	sc.mu.Unlock()
+	return notLoad
+}
+
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
@@ -454,14 +488,4 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
-}
-
-// MostRestrictStateContext gets a most restrict StatementContext.
-func MostRestrictStateContext() *StatementContext {
-	return &StatementContext{
-		IgnoreTruncate:    false,
-		OverflowAsWarning: false,
-		TruncateAsWarning: false,
-		TimeZone:          time.UTC,
-	}
 }

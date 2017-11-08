@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testutil"
+	goctx "golang.org/x/net/context"
 )
 
 // TestKit is a utility to run sql test.
@@ -68,6 +69,8 @@ func (res *Result) Sort() *Result {
 		for i := range a {
 			if a[i] < b[i] {
 				return true
+			} else if a[i] > b[i] {
+				return false
 			}
 		}
 		return false
@@ -104,7 +107,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 	}
 	if len(args) == 0 {
 		var rss []ast.RecordSet
-		rss, err = tk.Se.Execute(sql)
+		rss, err = tk.Se.Execute(goctx.Background(), sql)
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}
@@ -133,8 +136,11 @@ func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
-	_, err := tk.Exec(sql, args...)
+	res, err := tk.Exec(sql, args...)
 	tk.c.Assert(err, check.IsNil, check.Commentf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err)))
+	if res != nil {
+		tk.c.Assert(res.Close(), check.IsNil)
+	}
 }
 
 // MustQuery query the statements and returns result rows.

@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -29,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const maxPrefixLength = 3072
@@ -394,7 +395,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.State = model.JobStateRollbackDone
 		} else {
 			job.State = model.JobStateDone
-			d.asyncNotifyEvent(&Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
+			d.asyncNotifyEvent(&ddlutil.Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		job.Args = append(job.Args, indexInfo.ID)
@@ -473,8 +474,6 @@ func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType
 }
 
 const (
-	defaultBatchCnt      = 1024
-	defaultSmallBatchCnt = 128
 	defaultTaskHandleCnt = 128
 	defaultWorkers       = 16
 )
@@ -568,10 +567,9 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		wg := sync.WaitGroup{}
 		for i := 0; i < workerCnt; i++ {
 			wg.Add(1)
-			workers[i].setTaskNewRange(baseHandle, baseHandle+taskBatch)
+			workers[i].setTaskNewRange(baseHandle+int64(i)*taskBatch, baseHandle+int64(i+1)*taskBatch)
 			// TODO: Consider one worker to one goroutine.
 			go workers[i].doBackfillIndexTask(t, colMap, &wg)
-			baseHandle += taskBatch
 		}
 		wg.Wait()
 
@@ -586,14 +584,14 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 				return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 			})
-			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v, update handle err %v",
-				addedCount, taskAddedCount, sub, err1)
+			log.Warnf("[ddl] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
+				addedCount, baseHandle, nextHandle, taskAddedCount, err, sub, err1)
 			return errors.Trace(err)
 		}
 		d.setReorgRowCount(addedCount)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
-		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
-			addedCount, taskAddedCount, sub)
+		log.Infof("[ddl] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
+			addedCount, baseHandle, nextHandle, taskAddedCount, sub)
 
 		if isEnd {
 			return nil

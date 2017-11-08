@@ -21,8 +21,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -738,6 +739,36 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 	for i := 0; i < len(decs)-1; i++ {
 		cmp := bytes.Compare(decs[i], decs[i+1])
 		c.Assert(cmp, LessEqual, 0)
+	}
+}
+
+func (s *testCodecSuite) TestJSON(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []string{
+		"1234.00",
+		`{"a": "b"}`,
+	}
+
+	datums := make([]types.Datum, 0, len(tbl))
+	for _, t := range tbl {
+		var d types.Datum
+		j, err := json.ParseFromString(t)
+		c.Assert(err, IsNil)
+		d.SetMysqlJSON(j)
+		datums = append(datums, d)
+	}
+
+	bytes := make([]byte, 0, 4096)
+	bytes, err := encode(bytes, datums, false, false)
+	c.Assert(err, IsNil)
+
+	datums1, err := Decode(bytes, 2)
+	c.Assert(err, IsNil)
+
+	for i := range datums1 {
+		lhs := datums[i].GetMysqlJSON().String()
+		rhs := datums1[i].GetMysqlJSON().String()
+		c.Assert(lhs, Equals, rhs)
 	}
 }
 

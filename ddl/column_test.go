@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -261,7 +261,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer ctx.Txn().Commit()
+	defer ctx.Txn().Commit(goctx.Background())
 	key := t.RecordKey(handle)
 	data, err := ctx.Txn().Get(key)
 	if !isExist {
@@ -751,7 +751,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	handle, err := t.AddRecord(ctx, oldRow)
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	newColName := "c4"
@@ -814,7 +814,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
@@ -839,7 +839,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -888,7 +888,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
