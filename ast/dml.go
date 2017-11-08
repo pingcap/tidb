@@ -43,6 +43,10 @@ var (
 	_ Node = &TableSource{}
 	_ Node = &UnionSelectList{}
 	_ Node = &WildCardField{}
+	_ Node = &WindowClause{}
+	_ Node = &WindowDef{}
+	_ Node = &WindowSpec{}
+	_ Node = &WindowingClause{}
 )
 
 // JoinType is join type, including cross/left/right/full.
@@ -432,6 +436,98 @@ func (n *HavingClause) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// WindowSpec represents the specification of a window.
+type WindowSpec struct {
+	node
+
+	// HasExistingWindowName represents whether the window spec has an existing window name or not.
+	HasExistingWindowName bool
+	// ExistingWindowName represents the existing window name.
+	ExistingWindowName model.CIStr
+	// TODO: Support partition clause, order by clause and frame clause.
+}
+
+// Accept implements Node Accept interface.
+func (n *WindowSpec) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*WindowSpec)
+	return v.Leave(n)
+}
+
+// WindowDef represents a window definition.
+type WindowDef struct {
+	node
+
+	// Name is the name of the window.
+	Name model.CIStr
+	// Spec is the specification of the window.
+	Spec *WindowSpec
+}
+
+// Accept implements Node Accept interface.
+func (n *WindowDef) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*WindowDef)
+	node, ok := n.Spec.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Spec = node.(*WindowSpec)
+	return v.Leave(n)
+}
+
+// WindowClause represents window clause.
+type WindowClause struct {
+	node
+	Defs []*WindowDef
+}
+
+// Accept implements Node Accept interface.
+func (n *WindowClause) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*WindowClause)
+	for i, val := range n.Defs {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Defs[i] = node.(*WindowDef)
+	}
+	return v.Leave(n)
+}
+
+// WindowingClause represents windowing clause (OVER clause in SQL syntax).
+type WindowingClause struct {
+	node
+
+	// Spec is the specification of the window.
+	Spec *WindowSpec
+}
+
+// Accept implements Node Accept interface.
+func (n *WindowingClause) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*WindowingClause)
+	node, ok := n.Spec.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Spec = node.(*WindowSpec)
+	return v.Leave(n)
+}
+
 // OrderByClause represents order by clause.
 type OrderByClause struct {
 	node
@@ -476,6 +572,8 @@ type SelectStmt struct {
 	GroupBy *GroupByClause
 	// Having is the having condition.
 	Having *HavingClause
+	// Window is the window definition list.
+	Window *WindowClause
 	// OrderBy is the ordering expression list.
 	OrderBy *OrderByClause
 	// Limit is the limit clause.
@@ -544,6 +642,14 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Having = node.(*HavingClause)
+	}
+
+	if n.Window != nil {
+		node, ok := n.Window.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Window = node.(*WindowClause)
 	}
 
 	if n.OrderBy != nil {

@@ -22,6 +22,7 @@ var (
 	_ FuncNode = &AggregateFuncExpr{}
 	_ FuncNode = &FuncCallExpr{}
 	_ FuncNode = &FuncCastExpr{}
+	_ FuncNode = &WindowFuncExpr{}
 )
 
 // List scalar function names.
@@ -434,5 +435,29 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 		}
 		n.Args[i] = node.(ExprNode)
 	}
+	return v.Leave(n)
+}
+
+// WindowFuncExpr represents window function expression.
+type WindowFuncExpr struct {
+	funcNode
+	// F is the function name.
+	F string
+	// Window is the windowing clause of the function.
+	Window *WindowingClause
+}
+
+// Accept implements Node Accept interface.
+func (n *WindowFuncExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*WindowFuncExpr)
+	node, ok := n.Window.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Window = node.(*WindowingClause)
 	return v.Leave(n)
 }
