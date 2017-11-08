@@ -160,6 +160,7 @@ const (
 		null_count bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
+		cm_sketch blob,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
 
@@ -227,6 +228,7 @@ const (
 	version13 = 13
 	version14 = 14
 	version15 = 15
+	version16 = 16
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -337,6 +339,10 @@ func upgrade(s Session) {
 
 	if ver < version15 {
 		upgradeToVer15(s)
+	}
+
+	if ver < version16 {
+		upgradeToVer16(s)
 	}
 
 	updateBootstrapVer(s)
@@ -538,6 +544,10 @@ func upgradeToVer15(s Session) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func upgradeToVer16(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `cm_sketch` blob", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
