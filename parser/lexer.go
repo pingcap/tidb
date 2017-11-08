@@ -146,8 +146,8 @@ func (s *Scanner) Lex(v *yySymType) int {
 		tok = identifier
 	}
 
-	if tok == oror && !(s.sqlMode.HasPipesAsConcatMode()) {
-		return or2
+	if tok == pipes && !(s.sqlMode.HasPipesAsConcatMode()) {
+		return pipesAsOr
 	}
 
 	switch tok {

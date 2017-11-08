@@ -57,7 +57,7 @@ import (
 	hintBegin				"hintBegin is a virtual token for optimizer hint grammar"
 	hintEnd					"hintEnd is a virtual token for optimizer hint grammar"
 	andand					"&&"
-	oror					"||"
+	pipes					"||"
 
 	/* The following tokens belong to ReservedKeyword. */
 	add			"ADD"
@@ -434,7 +434,7 @@ import (
 	paramMarker	"?"
 	rsh		">>"
 
-%token<ident> or2
+%token<ident> pipesAsOr
 
 %type	<expr>
 	Expression			"expression"
@@ -783,7 +783,7 @@ import (
 %precedence lowerThanOn
 %precedence on using
 %right   assignmentEq
-%left 	oror or or2
+%left 	pipes or pipesAsOr
 %left 	xor
 %left 	andand and
 %left 	between
@@ -1865,7 +1865,7 @@ Expression:
 				Value:	  $3,
 		}
 	}
-|	Expression logOr Expression %prec oror
+|	Expression logOr Expression %prec pipes
 	{
 		$$ = &ast.BinaryOperationExpr{Op: opcode.LogicOr, L: $1, R: $3}
 	}
@@ -1898,8 +1898,8 @@ Expression:
 
 
 logOr:
-    or2
-|   "OR"
+	pipesAsOr
+|	"OR"
 
 logAnd:
 "&&" | "AND"
@@ -2770,7 +2770,7 @@ SimpleExpr:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: $2}
 	}
-|   SimpleExpr oror	SimpleExpr
+|	SimpleExpr pipes SimpleExpr
     {
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Concat), Args: []ast.ExprNode{$1, $3}}
     }
