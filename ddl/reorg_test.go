@@ -64,7 +64,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rowCount := int64(10)
 	handle := int64(100)
 	f := func() error {
-		d.reorg.setRowCountAndHandle(rowCount, handle)
+		d.reorgCtx.setRowCountAndHandle(rowCount, handle)
 		time.Sleep(20 * testLease)
 		return nil
 	}
@@ -84,7 +84,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		err = d.runReorgJob(m, job, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
-			c.Assert(d.reorg.rowCount, Equals, int64(0))
+			c.Assert(d.reorgCtx.rowCount, Equals, int64(0))
 
 			err = ctx.Txn().Commit(goctx.Background())
 			c.Assert(err, IsNil)
@@ -94,7 +94,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			info, err1 := d.getReorgInfo(m, job)
 			c.Assert(err1, IsNil)
 			c.Assert(info.Handle, Equals, handle)
-			c.Assert(d.reorg.doneHandle, Equals, int64(0))
+			c.Assert(d.reorgCtx.doneHandle, Equals, int64(0))
 			break
 		}
 	}
