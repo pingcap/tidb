@@ -552,16 +552,16 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	return &np
 }
 
-func buildJoinSchema(joinType JoinType, old, outer, inner *expression.Schema) *expression.Schema {
+func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Schema {
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
-		return outer.Clone()
+		return join.Children()[0].Schema().Clone()
 	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := outer.Clone()
-		newSchema.Append(old.Columns[old.Len()-1])
+		newSchema := join.Children()[0].Schema().Clone()
+		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
-	return expression.MergeSchema(outer, inner)
+	return expression.MergeSchema(join.Children()[outerID].Schema(), join.Children()[1-outerID].Schema())
 }
 
 func buildSchema(p PhysicalPlan) {
@@ -569,19 +569,11 @@ func buildSchema(p PhysicalPlan) {
 	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
-		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
-			x.SetSchema(x.children[0].Schema().Clone())
-		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
-			auxCol := x.schema.Columns[x.Schema().Len()-1]
-			x.SetSchema(x.children[0].Schema().Clone())
-			x.schema.Append(auxCol)
-		} else {
-			p.SetSchema(expression.MergeSchema(p.Children()[x.outerIndex].Schema(), p.Children()[1-x.outerIndex].Schema()))
-		}
+		p.SetSchema(buildJoinSchema(x.JoinType, p, x.outerIndex))
 	case *PhysicalHashJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p.Schema(), p.Children()[0].Schema(), p.Children()[1].Schema()))
+		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
 	case *PhysicalMergeJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p.Schema(), p.Children()[0].Schema(), p.Children()[1].Schema()))
+		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
 	case *PhysicalApply:
 		buildSchema(x.PhysicalJoin)
 		x.schema = x.PhysicalJoin.Schema()
