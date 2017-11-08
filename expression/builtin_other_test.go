@@ -208,11 +208,11 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, "Session current insert values is nil")
-	s.ctx.GetSessionVars().CurrInsertValues = types.MakeDatums("1")
+	s.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(types.MakeDatums("1"))
 	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, fmt.Sprintf("Session current insert values len %d and column's offset %v don't match", 1, 1))
 	currInsertValues := types.MakeDatums("1", "2")
-	s.ctx.GetSessionVars().CurrInsertValues = currInsertValues
+	s.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(currInsertValues)
 	ret, err := evalBuiltinFunc(sig, nil)
 	c.Assert(err, IsNil)
 	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])

@@ -682,7 +682,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
 		var filter []expression.Expression
-		conds, filter = ranger.DetachColumnConditions(conds, col.ColName)
+		conds, filter = ranger.DetachCondsForSelectivity(conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)

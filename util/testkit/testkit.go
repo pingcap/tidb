@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testutil"
+	goctx "golang.org/x/net/context"
 )
 
 // TestKit is a utility to run sql test.
@@ -104,7 +105,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 	}
 	if len(args) == 0 {
 		var rss []ast.RecordSet
-		rss, err = tk.Se.Execute(sql)
+		rss, err = tk.Se.Execute(goctx.Background(), sql)
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}

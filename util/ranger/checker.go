@@ -14,32 +14,11 @@
 package ranger
 
 import (
-	"math"
-
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
-
-// fullRange is (-∞, +∞).
-var fullRange = []point{
-	{start: true},
-	{value: types.MaxValueDatum()},
-}
-
-// FullIntRange is (-∞, +∞) for IntColumnRange.
-func FullIntRange() []types.IntColumnRange {
-	return []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
-}
-
-// FullIndexRange is (-∞, +∞) for IndexRange.
-func FullIndexRange() []*types.IndexRange {
-	return []*types.IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
-}
 
 // getEQFunctionOffset judge if the expression is a eq function like A = 1 where a is an index.
 // If so, it will return the offset of A in index columns. e.g. for index(C,B,A), A's offset is 2.
@@ -66,110 +45,6 @@ func getEQFunctionOffset(expr expression.Expression, cols []*model.IndexColumn) 
 		}
 	}
 	return -1
-}
-
-func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
-	for i := len(conditions) - 1; i >= 0; i-- {
-		for _, cond := range accessConds {
-			if cond == conditions[i] {
-				conditions = append(conditions[:i], conditions[i+1:]...)
-				break
-			}
-		}
-	}
-	return conditions
-}
-
-// checkIndexCondition will check whether all columns of condition is index columns or primary key column.
-func checkIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn, pKName model.CIStr) bool {
-	cols := expression.ExtractColumns(condition)
-	for _, col := range cols {
-		if pKName.L == col.ColName.L {
-			continue
-		}
-		isIndexColumn := false
-		for _, indCol := range indexColumns {
-			if col.ColName.L == indCol.Name.L && indCol.Length == types.UnspecifiedLength {
-				isIndexColumn = true
-				break
-			}
-		}
-		if !isIndexColumn {
-			return false
-		}
-	}
-	return true
-}
-
-// DetachIndexFilterConditions will detach the access conditions from other conditions.
-func DetachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
-	var pKName model.CIStr
-	if table.PKIsHandle {
-		for _, colInfo := range table.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				pKName = colInfo.Name
-				break
-			}
-		}
-	}
-	var indexConditions, tableConditions []expression.Expression
-	for _, cond := range conditions {
-		if checkIndexCondition(cond, indexColumns, pKName) {
-			indexConditions = append(indexConditions, cond)
-		} else {
-			tableConditions = append(tableConditions, cond)
-		}
-	}
-	return indexConditions, tableConditions
-}
-
-// DetachColumnConditions distinguishes between access conditions and filter conditions from conditions.
-func DetachColumnConditions(conditions []expression.Expression, colName model.CIStr) ([]expression.Expression, []expression.Expression) {
-	if colName.L == "" {
-		return nil, conditions
-	}
-
-	var accessConditions, filterConditions []expression.Expression
-	checker := conditionChecker{
-		colName: colName,
-		length:  types.UnspecifiedLength,
-	}
-	for _, cond := range conditions {
-		cond = expression.PushDownNot(cond, false, nil)
-		if !checker.check(cond) {
-			filterConditions = append(filterConditions, cond)
-			continue
-		}
-		accessConditions = append(accessConditions, cond)
-		// TODO: it will lead to repeated computation cost.
-		if checker.shouldReserve {
-			filterConditions = append(filterConditions, cond)
-			checker.shouldReserve = false
-		}
-	}
-
-	return accessConditions, filterConditions
-}
-
-// BuildTableRange will build range of pk for PhysicalTableScan
-func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]types.IntColumnRange, error) {
-	if len(accessConditions) == 0 {
-		return FullIntRange(), nil
-	}
-
-	rb := builder{sc: sc}
-	rangePoints := fullRange
-	for _, cond := range accessConditions {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
-		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
-		}
-	}
-	ranges := rb.buildTableRanges(rangePoints)
-	if rb.err != nil {
-		return nil, errors.Trace(rb.err)
-	}
-	return ranges, nil
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.
@@ -284,6 +159,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 	pattern, ok := scalar.GetArgs()[1].(*expression.Constant)
 	if !ok {
 		return false
+
 	}
 	if pattern.Value.IsNull() {
 		return false

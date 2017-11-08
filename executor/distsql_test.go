@@ -51,9 +51,8 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	}
 	tk.MustExec("insert dist values " + strings.Join(values, ","))
 
-	rss, err := tk.Se.Execute("select * from dist where c_idx between 0 and 100")
+	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	rs := rss[0]
 	_, err = rs.Next()
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
@@ -100,9 +99,8 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
 	// Send coprocessor request when the table split.
-	rss, err := tk.Se.Execute("select sum(id) from copclient")
+	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	rs := rss[0]
 	defer rs.Close()
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
@@ -115,18 +113,16 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	s.cluster.Split(region.GetId(), s.cluster.AllocID(), key, []uint64{peerID}, peerID)
 
 	// Check again.
-	rss, err = tk.Se.Execute("select sum(id) from copclient")
+	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	rs = rss[0]
 	row, err = rs.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.
-	rss, err = tk.Se.Execute("select * from copclient order by id")
+	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	rs = rss[0]
 	_, err = rs.Next()
 	c.Assert(err, IsNil)
 	rs.Close()
