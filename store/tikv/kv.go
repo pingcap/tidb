@@ -185,6 +185,8 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
 
+	go store.runSafePointChecker()
+
 	return store, nil
 }
 
@@ -194,13 +196,38 @@ func (s *tikvStore) EtcdAddrs() []string {
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
+	if !s.enableGC || NewGCHandlerFunc == nil {
+		return nil
+	}
+
 	gcWorker, err := NewGCHandlerFunc(s)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	gcWorker.Start(s.enableGC)
+	gcWorker.Start()
 	s.gcWorker = gcWorker
 	return nil
+}
+
+func (s *tikvStore) runSafePointChecker() {
+	d := gcSafePointUpdateInterval
+	for {
+		select {
+		case spCachedTime := <-time.After(d):
+			cachedSafePoint, err := loadSafePoint(s.GetSafePointKV(), GcSavedSafePoint)
+			if err == nil {
+				loadSafepointCounter.WithLabelValues("ok").Inc()
+				s.UpdateSPCache(cachedSafePoint, spCachedTime)
+				d = gcSafePointUpdateInterval
+			} else {
+				loadSafepointCounter.WithLabelValues("fail").Inc()
+				log.Errorf("[tikv] fail to load safepoint: %v", err)
+				d = gcSafePointQuickRepeatInterval
+			}
+		case <-s.Closed():
+			return
+		}
+	}
 }
 
 type mockOptions struct {
@@ -219,14 +246,6 @@ type MockTiKVStoreOption func(*mockOptions)
 func WithHijackClient(wrap func(Client) Client) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.clientHijack = wrap
-	}
-}
-
-// WithHijackPDClient hijacks PD client's behavior, makes it easy to simulate the network
-// problem between TiDB and PD, such as GetTS too slow, GetStore or GetRegion fail.
-func WithHijackPDClient(wrap func(pd.Client) pd.Client) MockTiKVStoreOption {
-	return func(c *mockOptions) {
-		c.pdClientHijack = wrap
 	}
 }
 
@@ -416,12 +435,6 @@ func (s *tikvStore) SetTiKVClient(client Client) {
 
 func (s *tikvStore) GetTiKVClient() (client Client) {
 	return s.client
-}
-
-// ParseEtcdAddr parses path to etcd address list
-func ParseEtcdAddr(path string) (etcdAddrs []string, err error) {
-	etcdAddrs, _, err = parsePath(path)
-	return
 }
 
 func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {

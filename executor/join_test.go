@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testSuite) TestNestedLoopJoin(c *C) {
@@ -89,9 +89,12 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 func (s *testSuite) TestJoinPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
 	tk.MustExec("drop table if exists events")
 	tk.MustExec("create table events (clock int, source int)")
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+	_, err := tk.Exec("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+	c.Check(err, NotNil)
 }
 
 func (s *testSuite) TestJoin(c *C) {
@@ -631,7 +634,7 @@ func (s *testSuite) TestInSubquery(c *C) {
 	result := tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b from t as m2)")
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select m1.a from t as m1 where (3, m1.b) not in (select * from t as m2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)", 1)
 	result.Check(testkit.Rows("2"))
 	tk.MustExec(`prepare stmt1 from 'select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)'`)
@@ -665,18 +668,18 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("insert into t2 values (1),(2)")
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
 	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int, key b (a))")
@@ -704,9 +707,8 @@ func (s *testSuite) TestJoinLeak(c *C) {
 		tk.MustExec("insert t values (1)")
 	}
 	tk.MustExec("commit")
-	rs, err := tk.Se.Execute("select * from t t1 left join (select 1) t2 on 1")
+	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	result := rs[0]
 	result.Next()
 	time.Sleep(100 * time.Millisecond)
 	result.Close()

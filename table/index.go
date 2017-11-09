@@ -16,7 +16,7 @@ package table
 import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // IndexIterator is the interface for iterator of index data on KV store.

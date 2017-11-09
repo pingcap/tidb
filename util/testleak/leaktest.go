@@ -42,6 +42,7 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "check.(*resultTracker).start") ||
 			strings.Contains(stack, "check.(*suiteRunner).runFunc") ||
 			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
+			strings.Contains(stack, "tikv.(*noGCHandler).Start") ||
 			strings.Contains(stack, "ddl.(*ddl).start") ||
 			strings.Contains(stack, "ddl.(*delRange).startEmulator") ||
 			strings.Contains(stack, "domain.NewDomain") ||

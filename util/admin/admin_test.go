@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -274,7 +274,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 
 func (s *testSuite) TestScan(c *C) {
 	defer testleak.AfterTest(c)()
-	alloc := autoid.NewAllocator(s.store, s.dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, s.tbInfo.OldSchemaID, s.dbInfo.ID)
 	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()

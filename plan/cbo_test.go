@@ -240,7 +240,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
@@ -302,7 +302,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(true, t3.a),Table(true, t3.b)}",
+			best: "Analyze{Index(t3.a),Table(t3.b)}",
 		},
 		// Test analyze full table.
 		{

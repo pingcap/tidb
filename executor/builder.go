@@ -23,15 +23,14 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -118,10 +117,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildProjection(v)
 	case *plan.PhysicalMemTable:
 		return b.buildMemTable(v)
-	case *plan.PhysicalTableScan:
-		return b.buildTableScan(v)
-	case *plan.PhysicalIndexScan:
-		return b.buildIndexScan(v)
 	case *plan.TableDual:
 		return b.buildTableDual(v)
 	case *plan.PhysicalApply:
@@ -130,8 +125,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExists(v)
 	case *plan.MaxOneRow:
 		return b.buildMaxOneRow(v)
-	case *plan.Cache:
-		return b.buildCache(v)
 	case *plan.Analyze:
 		return b.buildAnalyze(v)
 	case *plan.PhysicalTableReader:
@@ -432,28 +425,8 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		}
 	}
 	switch x := src.(type) {
-	case *XSelectTableExec:
-		us.desc = x.desc
-		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.conditions = v.Conditions
-		us.columns = x.Columns
-		b.err = us.buildAndSortAddedRows(x.table)
 	case *TableReaderExecutor:
 		us.desc = x.desc
-		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.conditions = v.Conditions
-		us.columns = x.columns
-		b.err = us.buildAndSortAddedRows(x.table)
-	case *XSelectIndexExec:
-		us.desc = x.desc
-		for _, ic := range x.index.Columns {
-			for i, col := range x.schema.Columns {
-				if col.ColName.L == ic.Name.L {
-					us.usedIndex = append(us.usedIndex, i)
-					break
-				}
-			}
-		}
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
@@ -496,32 +469,76 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	return us
 }
 
-// buildMergeJoin builds SortMergeJoin executor.
-// TODO: Refactor against different join strategies by extracting common code base
+// buildMergeJoin builds MergeJoinExec executor.
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
-	joinBuilder := &joinBuilder{
-		context:       b.ctx,
-		leftChild:     b.build(v.Children()[0]),
-		rightChild:    b.build(v.Children()[1]),
-		eqConditions:  v.EqualConditions,
-		leftFilter:    v.LeftConditions,
-		rightFilter:   v.RightConditions,
-		otherFilter:   v.OtherConditions,
-		schema:        v.Schema(),
-		joinType:      v.JoinType,
-		defaultValues: v.DefaultValues,
-	}
-	exec, err := joinBuilder.BuildMergeJoin(v.Desc)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	if exec == nil {
-		b.err = ErrBuildExecutor.GenByArgs("failed to generate merge join executor: ", v.ID())
+	leftExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
-	return exec
+	rightExec := b.build(v.Children()[1])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
+	leftKeys := make([]*expression.Column, 0, len(v.EqualConditions))
+	rightKeys := make([]*expression.Column, 0, len(v.EqualConditions))
+	for _, eqCond := range v.EqualConditions {
+		if len(eqCond.GetArgs()) != 2 {
+			b.err = errors.Annotate(ErrBuildExecutor, "invalid join key for equal condition")
+			return nil
+		}
+		leftKey, ok := eqCond.GetArgs()[0].(*expression.Column)
+		if !ok {
+			b.err = errors.Annotate(ErrBuildExecutor, "left side of join key must be column for merge join")
+			return nil
+		}
+		rightKey, ok := eqCond.GetArgs()[1].(*expression.Column)
+		if !ok {
+			b.err = errors.Annotate(ErrBuildExecutor, "right side of join key must be column for merge join")
+			return nil
+		}
+		leftKeys = append(leftKeys, leftKey)
+		rightKeys = append(rightKeys, rightKey)
+	}
+
+	leftRowBlock := &rowBlockIterator{
+		ctx:      b.ctx,
+		reader:   leftExec,
+		filter:   v.LeftConditions,
+		joinKeys: leftKeys,
+	}
+
+	rightRowBlock := &rowBlockIterator{
+		ctx:      b.ctx,
+		reader:   rightExec,
+		filter:   v.RightConditions,
+		joinKeys: rightKeys,
+	}
+
+	mergeJoinExec := &MergeJoinExec{
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, v.DefaultValues, v.OtherConditions),
+		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
+		// left is the outer side by default.
+		outerKeys: leftKeys,
+		innerKeys: rightKeys,
+		outerIter: leftRowBlock,
+		innerIter: rightRowBlock,
+	}
+	if v.JoinType == plan.RightOuterJoin {
+		mergeJoinExec.outerKeys, mergeJoinExec.innerKeys = mergeJoinExec.innerKeys, mergeJoinExec.outerKeys
+		mergeJoinExec.outerIter, mergeJoinExec.innerIter = mergeJoinExec.innerIter, mergeJoinExec.outerIter
+	}
+
+	if v.JoinType != plan.InnerJoin {
+		mergeJoinExec.outerFilter = mergeJoinExec.outerIter.filter
+		mergeJoinExec.outerIter.filter = nil
+	}
+
+	return mergeJoinExec
 }
 
 func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
@@ -532,49 +549,34 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
 	}
+
+	leftExec := b.build(v.Children()[0])
+	rightExec := b.build(v.Children()[1])
+
+	// for hash join, inner table is always the smaller one.
 	e := &HashJoinExec{
-		schema:        v.Schema(),
-		otherFilter:   v.OtherConditions,
-		prepared:      false,
-		ctx:           b.ctx,
-		concurrency:   v.Concurrency,
-		defaultValues: v.DefaultValues,
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, v.DefaultValues, v.OtherConditions),
+		concurrency:     v.Concurrency,
+		defaultInners:   v.DefaultValues,
 	}
-	if v.SmallTable == 1 {
-		e.smallFilter = v.RightConditions
-		e.bigFilter = v.LeftConditions
-		e.smallHashKey = rightHashKey
-		e.bigHashKey = leftHashKey
-		e.leftSmall = false
+
+	if v.SmallChildIdx == 0 {
+		e.innerlExec = leftExec
+		e.outerExec = rightExec
+		e.innerFilter = v.LeftConditions
+		e.outerFilter = v.RightConditions
+		e.innerKeys = leftHashKey
+		e.outerKeys = rightHashKey
 	} else {
-		e.leftSmall = true
-		e.smallFilter = v.LeftConditions
-		e.bigFilter = v.RightConditions
-		e.smallHashKey = leftHashKey
-		e.bigHashKey = rightHashKey
+		e.innerlExec = rightExec
+		e.outerExec = leftExec
+		e.innerFilter = v.RightConditions
+		e.outerFilter = v.LeftConditions
+		e.innerKeys = rightHashKey
+		e.outerKeys = leftHashKey
 	}
-	if v.JoinType == plan.LeftOuterJoin || v.JoinType == plan.RightOuterJoin {
-		e.outer = true
-	}
-	if e.leftSmall {
-		e.smallExec = b.build(v.Children()[0])
-		e.bigExec = b.build(v.Children()[1])
-	} else {
-		e.smallExec = b.build(v.Children()[1])
-		e.bigExec = b.build(v.Children()[0])
-	}
-	for i := 0; i < e.concurrency; i++ {
-		ctx := &hashJoinCtx{}
-		if e.bigFilter != nil {
-			ctx.bigFilter = e.bigFilter.Clone()
-		}
-		if e.otherFilter != nil {
-			ctx.otherFilter = e.otherFilter.Clone()
-		}
-		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
-		ctx.hashKeyBuffer = make([]byte, 0, 10000)
-		e.hashJoinContexts = append(e.hashJoinContexts, ctx)
-	}
+
 	return e
 }
 
@@ -666,106 +668,6 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	return ts
 }
 
-func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
-	startTS := b.getStartTS()
-	if b.err != nil {
-		return nil
-	}
-	tbl, _ := b.is.TableByID(v.Table.ID)
-	client := b.ctx.GetClient()
-	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
-	var handleCol *expression.Column
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[v.Table.ID][0]
-	}
-	e := &XSelectTableExec{
-		tableInfo:   v.Table,
-		ctx:         b.ctx,
-		startTS:     startTS,
-		supportDesc: supportDesc,
-		table:       tbl,
-		schema:      v.Schema(),
-		Columns:     v.Columns,
-		ranges:      v.Ranges,
-		desc:        v.Desc,
-		limitCount:  v.LimitCount,
-		keepOrder:   v.KeepOrder,
-		where:       v.TableConditionPBExpr,
-		aggregate:   v.Aggregated,
-		aggFuncs:    v.AggFuncsPB,
-		byItems:     v.GbyItemsPB,
-		orderByList: v.SortItemsPB,
-		handleCol:   handleCol,
-		priority:    b.priority,
-	}
-	return e
-}
-
-func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
-	startTS := b.getStartTS()
-	if b.err != nil {
-		return nil
-	}
-	tbl, _ := b.is.TableByID(v.Table.ID)
-	client := b.ctx.GetClient()
-	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
-	var handleCol *expression.Column
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[v.Table.ID][0]
-	}
-	e := &XSelectIndexExec{
-		tableInfo:            v.Table,
-		ctx:                  b.ctx,
-		supportDesc:          supportDesc,
-		table:                tbl,
-		singleReadMode:       !v.DoubleRead,
-		startTS:              startTS,
-		where:                v.TableConditionPBExpr,
-		schema:               v.Schema(),
-		ranges:               v.Ranges,
-		limitCount:           v.LimitCount,
-		sortItemsPB:          v.SortItemsPB,
-		columns:              v.Columns,
-		index:                v.Index,
-		desc:                 v.Desc,
-		outOfOrder:           v.OutOfOrder,
-		indexConditionPBExpr: v.IndexConditionPBExpr,
-		aggregate:            v.Aggregated,
-		aggFuncs:             v.AggFuncsPB,
-		byItems:              v.GbyItemsPB,
-		handleCol:            handleCol,
-		priority:             b.priority,
-	}
-	vars := b.ctx.GetSessionVars()
-	if v.OutOfOrder {
-		e.scanConcurrency = vars.DistSQLScanConcurrency
-	} else {
-		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
-		// which may not have been pushed down, so we set concurrency lower to avoid fetching unnecessary data.
-		e.scanConcurrency = vars.IndexSerialScanConcurrency
-	}
-	if !e.aggregate && e.singleReadMode {
-		// Single read index result has the schema of full index columns.
-		schemaColumns := make([]*expression.Column, len(e.index.Columns))
-		for i, col := range e.index.Columns {
-			colInfo := e.tableInfo.Columns[col.Offset]
-			schemaColumns[i] = &expression.Column{
-				Index:   i,
-				ColName: col.Name,
-				RetType: &colInfo.FieldType,
-			}
-		}
-		if e.handleCol != nil {
-			schemaColumns = append(schemaColumns, &expression.Column{
-				FromID: v.ID(),
-				ID:     model.ExtraHandleID,
-			})
-		}
-		e.idxColsSchema = expression.NewSchema(schemaColumns...)
-	}
-	return e
-}
-
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 	sortExec := SortExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
@@ -798,7 +700,7 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		cond.GetArgs()[0].(*expression.Column).ResolveIndices(v.Schema())
 		cond.GetArgs()[1].(*expression.Column).ResolveIndices(v.Schema())
 	}
-	if v.SmallTable == 1 {
+	if v.SmallChildIdx == 1 {
 		return &NestedLoopJoinExec{
 			SmallExec:     b.build(v.Children()[1]),
 			BigExec:       b.build(v.Children()[0]),
@@ -899,123 +801,6 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	}
 }
 
-func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
-	return &CacheExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-	}
-}
-
-func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk *model.ColumnInfo, cols []*model.ColumnInfo) Executor {
-	startTS := uint64(math.MaxUint64)
-	table, _ := b.is.TableByID(tblInfo.ID)
-	keepOrder := false
-	if pk != nil {
-		keepOrder = true
-		cols = append([]*model.ColumnInfo{pk}, cols...)
-	}
-	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	ranges := []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
-	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
-		e := &TableReaderExecutor{
-			table:     table,
-			tableID:   tblInfo.ID,
-			ranges:    ranges,
-			keepOrder: keepOrder,
-			dagPB: &tipb.DAGRequest{
-				StartTs:        startTS,
-				TimeZoneOffset: timeZoneOffset(b.ctx),
-				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-			},
-			schema:  schema,
-			columns: cols,
-			ctx:     b.ctx,
-		}
-		for i := range schema.Columns {
-			e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
-		}
-		e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{
-			Tp: tipb.ExecType_TypeTableScan,
-			TblScan: &tipb.TableScan{
-				TableId: tblInfo.ID,
-				Columns: distsql.ColumnsToProto(cols, tblInfo.PKIsHandle),
-			},
-		})
-		b.err = setPBColumnsDefaultValue(b.ctx, e.dagPB.Executors[0].TblScan.Columns, cols)
-		return e
-	}
-	e := &XSelectTableExec{
-		tableInfo: tblInfo,
-		ctx:       b.ctx,
-		startTS:   startTS,
-		table:     table,
-		schema:    schema,
-		Columns:   cols,
-		ranges:    ranges,
-		keepOrder: keepOrder,
-		priority:  b.priority,
-	}
-	return e
-}
-
-func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
-	startTS := uint64(math.MaxUint64)
-	table, _ := b.is.TableByID(tblInfo.ID)
-	cols := make([]*model.ColumnInfo, len(idxInfo.Columns))
-	for i, col := range idxInfo.Columns {
-		cols[i] = tblInfo.Columns[col.Offset]
-	}
-	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
-	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
-	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
-		e := &IndexReaderExecutor{
-			table:     table,
-			index:     idxInfo,
-			tableID:   tblInfo.ID,
-			ranges:    []*types.IndexRange{idxRange},
-			keepOrder: true,
-			dagPB: &tipb.DAGRequest{
-				StartTs:        startTS,
-				TimeZoneOffset: timeZoneOffset(b.ctx),
-				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-			},
-			schema:   schema,
-			columns:  cols,
-			ctx:      b.ctx,
-			priority: b.priority,
-		}
-		for i := range schema.Columns {
-			e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
-		}
-		e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{
-			Tp: tipb.ExecType_TypeIndexScan,
-			IdxScan: &tipb.IndexScan{
-				TableId: tblInfo.ID,
-				IndexId: idxInfo.ID,
-				Columns: distsql.ColumnsToProto(cols, tblInfo.PKIsHandle),
-			},
-		})
-		b.err = setPBColumnsDefaultValue(b.ctx, e.dagPB.Executors[0].IdxScan.Columns, cols)
-		return e
-	}
-	e := &XSelectIndexExec{
-		tableInfo:       tblInfo,
-		ctx:             b.ctx,
-		table:           table,
-		singleReadMode:  true,
-		startTS:         startTS,
-		idxColsSchema:   schema,
-		schema:          schema,
-		ranges:          []*types.IndexRange{idxRange},
-		columns:         cols,
-		index:           idxInfo,
-		outOfOrder:      false,
-		scanConcurrency: scanConcurrency,
-		priority:        b.priority,
-	}
-	return e
-}
-
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
@@ -1033,6 +818,12 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: maxBucketSize,
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+	}
+	if !task.IndexInfo.Unique {
+		depth := int32(defaultCMSketchDepth)
+		width := int32(defaultCMSketchWidth)
+		e.analyzePB.IdxReq.CmsketchDepth = &depth
+		e.analyzePB.IdxReq.CmsketchWidth = &width
 	}
 	return e
 }
@@ -1059,11 +850,15 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 			TimeZoneOffset: timeZoneOffset(b.ctx),
 		},
 	}
+	depth := int32(defaultCMSketchDepth)
+	width := int32(defaultCMSketchWidth)
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:  maxBucketSize,
-		SampleSize:  maxRegionSampleSize,
-		SketchSize:  maxSketchSize,
-		ColumnsInfo: distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		BucketSize:    maxBucketSize,
+		SampleSize:    maxRegionSampleSize,
+		SketchSize:    maxSketchSize,
+		ColumnsInfo:   distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		CmsketchDepth: &depth,
+		CmsketchWidth: &width,
 	}
 	b.err = setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	return e
@@ -1075,35 +870,16 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
-		if task.PushDown {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType: colTask,
-				colExec:  b.buildAnalyzeColumnsPushdown(task),
-			})
-		} else {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType:  colTask,
-				src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
-				tableInfo: task.TableInfo,
-				Columns:   task.ColsInfo,
-				PKInfo:    task.PKInfo,
-			})
-		}
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType: colTask,
+			colExec:  b.buildAnalyzeColumnsPushdown(task),
+		})
 	}
 	for _, task := range v.IdxTasks {
-		if task.PushDown {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType: idxTask,
-				idxExec:  b.buildAnalyzeIndexPushdown(task),
-			})
-		} else {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType:  idxTask,
-				src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
-				indexInfo: task.IndexInfo,
-				tableInfo: task.TableInfo,
-			})
-		}
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType: idxTask,
+			idxExec:  b.buildAnalyzeIndexPushdown(task),
+		})
 	}
 	return e
 }
@@ -1170,7 +946,16 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 
 	// for IndexLookUpJoin, left is always the outer side.
 	outerExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
 	innerExec := b.build(v.Children()[1]).(DataReader)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
@@ -1182,8 +967,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerFilter:      v.RightConditions,
 		outerOrderedRows: newKeyRowBlock(batchSize, true),
 		innerOrderedRows: newKeyRowBlock(batchSize, false),
-		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.DefaultValues, v.OtherConditions),
-		batchSize:        batchSize,
+		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, false, v.DefaultValues, v.OtherConditions),
+		maxBatchSize:     batchSize,
 	}
 }
 
