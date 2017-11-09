@@ -270,7 +270,7 @@ func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 
 	for {
 		innerRow, err1 := innerExec.Next()
-		if err != nil {
+		if err1 != nil {
 			return errors.Trace(err1)
 		} else if innerRow == nil {
 			break
