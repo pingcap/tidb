@@ -285,8 +285,8 @@ func (r *builder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) [
 }
 
 func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
-	var rangePoints []point
 	list := expr.GetArgs()[1:]
+	rangePoints := make([]point, 0, len(list)*2)
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -307,31 +307,18 @@ func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 	if sorter.err != nil {
 		r.err = sorter.err
 	}
-	// check duplicates
-	hasDuplicate := false
-	isStart := false
-	for _, v := range rangePoints {
-		if isStart == v.start {
-			hasDuplicate = true
-			break
+	// check and remove duplicates
+	curPos, frontPos := 0, 0
+	for frontPos < len(rangePoints) {
+		if rangePoints[curPos].start == rangePoints[frontPos].start {
+			frontPos++
+		} else {
+			curPos++
+			rangePoints[curPos] = rangePoints[frontPos]
+			frontPos++
 		}
-		isStart = v.start
 	}
-	if !hasDuplicate {
-		return rangePoints
-	}
-	// remove duplicates
-	distinctRangePoints := make([]point, 0, len(rangePoints))
-	isStart = false
-	for i := 0; i < len(rangePoints); i++ {
-		current := rangePoints[i]
-		if isStart == current.start {
-			continue
-		}
-		distinctRangePoints = append(distinctRangePoints, current)
-		isStart = current.start
-	}
-	return distinctRangePoints
+	return rangePoints[:curPos+1]
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
@@ -419,9 +406,20 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
-		// Pattern not in is not supported.
-		r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
-		return fullRange
+		rangePoints := r.newBuildFromIn(expr)
+		retRangePoints := make([]point, 0, len(rangePoints)+2)
+		previousValue := types.Datum{}
+		for i := 0; i < len(rangePoints); i += 2 {
+			retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})
+			retRangePoints = append(retRangePoints, point{value: rangePoints[i].value, excl: true})
+			previousValue = rangePoints[i].value
+		}
+		// The first element is NULL and should not be excluded.
+		retRangePoints[0].excl = false
+		// Append the interval (last element, max value].
+		retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})
+		retRangePoints = append(retRangePoints, point{value: types.MaxValueDatum()})
+		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
 		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")

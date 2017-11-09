@@ -259,6 +259,24 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			filterConds: "[or(or(or(eq(test.t.a, 1), eq(test.t.a, 3)), eq(test.t.a, 4)), and(gt(test.t.b, 1), or(eq(test.t.a, -1), eq(test.t.a, 5))))]",
 			resultStr:   "[[-1,-1] [1,1] [3,3] [4,4] [5,5]]",
 		},
+		{
+			exprStr:     "a in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
+			accessConds: "[in(test.t.a, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
+		},
+		{
+			exprStr:     "a not in (NULL, 1, 2, 3)",
+			accessConds: "[not(in(test.t.a, <nil>, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[[-9223372036854775807,0] [4,+inf)]",
+		},
+		{
+			exprStr:     "a not in (1, 2, 3)",
+			accessConds: "[not(in(test.t.a, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,0] [4,+inf)]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -399,6 +417,27 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			accessConds: "[in(test.t.c, 1.1, 1, 1.1) in(test.t.a, 1, a, <nil>)]",
 			filterConds: "[]",
 			resultStr:   `[[1 <nil>,1 <nil>] [1 1,1 1] [1 a,1 a] [1.1 <nil>,1.1 <nil>] [1.1 1,1.1 1] [1.1 a,1.1 a]]`,
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
+			accessConds: "[in(test.t.c, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c not in (NULL, 1, 2, 3)",
+			accessConds: "[not(in(test.t.c, <nil>, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[(<nil> +inf,1 <nil>) (1 +inf,2 <nil>) (2 +inf,3 <nil>) (3 +inf,+inf +inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c not in (1, 2, 3)",
+			accessConds: "[not(in(test.t.c, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[[<nil> <nil>,1 <nil>) (1 +inf,2 <nil>) (2 +inf,3 <nil>) (3 +inf,+inf +inf]]",
 		},
 	}
 
