@@ -140,10 +140,14 @@ func (s *Scanner) Lex(v *yySymType) int {
 			tok = tok1
 		}
 	}
-	if (s.sqlMode&mysql.ModeANSIQuotes) > 0 &&
+	if s.sqlMode.HasANSIQuotesMode() &&
 		tok == stringLit &&
 		s.r.s[v.offset] == '"' {
 		tok = identifier
+	}
+
+	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
+		return not2
 	}
 
 	switch tok {

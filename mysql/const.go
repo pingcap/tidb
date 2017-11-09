@@ -427,6 +427,16 @@ func (m SQLMode) HasStrictMode() bool {
 	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
 }
 
+// HasHighNotPrecedenceMode detects if 'HIGH_NOT_PRECEDENCE' mode is set in SQLMode
+func (m SQLMode) HasHighNotPrecedenceMode() bool {
+	return m&ModeHighNotPrecedence == ModeHighNotPrecedence
+}
+
+// HasANSIQuotesMode detects if 'ANSI_QUOTES' mode is set in SQLMode
+func (m SQLMode) HasANSIQuotesMode() bool {
+	return m&ModeANSIQuotes == ModeANSIQuotes
+}
+
 // HasRealAsFloatMode detects if 'REAL_AS_FLOAT' mode is set in SQLMode
 func (m SQLMode) HasRealAsFloatMode() bool {
 	return m&ModeRealAsFloat == ModeRealAsFloat
