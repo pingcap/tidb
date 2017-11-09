@@ -1518,7 +1518,6 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 }
 
 func (s *testPlanSuite) TestTopNPushDown(c *C) {
-	c.Skip("Only new plan support it.")
 	defer func() {
 		testleak.AfterTest(c)()
 	}()
@@ -1544,7 +1543,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + Agg + Proj .
 		{
 			sql:  "select a, count(b) from t group by b order by c limit 5",
-			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->TopN([test.t.c],0,5)->Projection->Projection",
+			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->TopN([test.t.c],0,5)->Projection",
 		},
 		// Test TopN + Join + Proj.
 		{
@@ -1574,17 +1573,17 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test Limit + Left Join Apply + Proj.
 		{
 			sql:  "select (select s.a from t s where t.a = s.a) from t limit 5",
-			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection->Projection",
+			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection",
 		},
 		// Test TopN + Left Join Apply + Proj.
 		{
 			sql:  "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
-			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection->Projection->Projection",
+			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection",
 		},
 		// Test TopN + Left Semi Join Apply + Proj.
 		{
 			sql:  "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
-			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection->Projection",
+			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection",
 		},
 		// Test TopN + Semi Join Apply + Proj.
 		{
@@ -1614,7 +1613,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test Limit + UA + Proj + Sort.
 		{
 			sql:  "select * from t union all (select * from t s order by a) limit 5",
-			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection->Projection}->Limit",
+			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection}->Limit",
 		},
 	}
 	for _, tt := range tests {
