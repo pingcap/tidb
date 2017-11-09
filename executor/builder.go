@@ -1092,6 +1092,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		handleCol:         handleCol,
 		priority:          b.priority,
 		tableReaderSchema: tableReaderSchema,
+		builder:           &dataReaderBuilder{executorBuilder: b},
 	}
 	return e
 }
@@ -1124,10 +1125,10 @@ func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context,
 	for _, datum := range datums {
 		handles = append(handles, datum[0].GetInt64())
 	}
-	return doRequestForHandles(goCtx, e, handles)
+	return builder.doRequestForHandles(goCtx, e, handles)
 }
 
-func doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
+func (builder *dataReaderBuilder) doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
 	sort.Sort(int64Slice(handles))
 	var b requestBuilder
 	kvReq, err := b.SetTableHandles(e.tableID, handles).

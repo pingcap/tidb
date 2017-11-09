@@ -618,6 +618,7 @@ type IndexLookUpExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
+	builder  *dataReaderBuilder
 	// All fields above is immutable.
 
 	indexWorker
@@ -797,7 +798,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 
 	var e1 Executor
-	e1, err = doRequestForHandles(goCtx, &TableReaderExecutor{
+	e1, err = e.builder.doRequestForHandles(goCtx, &TableReaderExecutor{
 		table:   e.table,
 		tableID: e.tableID,
 		dagPB:   e.tableRequest,
