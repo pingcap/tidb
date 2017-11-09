@@ -53,7 +53,7 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	defer testleak.AfterTest(c)()
 
-	columns := []*ColumnInfo{&ColumnInfo{
+	columns := []*ColumnInfo{{
 		Type:    mysql.TypeLonglong,
 		Decimal: mysql.NotFixedDec,
 	}}
