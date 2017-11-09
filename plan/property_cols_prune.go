@@ -14,11 +14,15 @@
 package plan
 
 import (
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/expression"
 )
 
 func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
-	indices, includeTS, _ := availableIndices(p.indexHints, p.tableInfo)
+	indices, includeTS, err := availableIndices(p.indexHints, p.tableInfo)
+	if err != nil {
+		log.Error(err)
+	}
 	if includeTS {
 		col := p.getPKIsHandleCol()
 		if col != nil {

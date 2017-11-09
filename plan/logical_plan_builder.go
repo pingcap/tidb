@@ -1562,12 +1562,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		statisticTable = handle.GetTableStats(tableInfo.ID)
 	}
-	if tn.IndexHints != nil && len(tn.IndexHints) > 0 {
-		if _, _, err := availableIndices(tn.IndexHints, tn.TableInfo); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 
 	ds := DataSource{
 		indexHints:     tn.IndexHints,

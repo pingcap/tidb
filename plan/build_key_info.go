@@ -14,6 +14,7 @@
 package plan
 
 import (
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -166,7 +167,10 @@ func (p *LogicalJoin) buildKeyInfo() {
 
 func (p *DataSource) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	indices, _, _ := availableIndices(p.indexHints, p.tableInfo)
+	indices, _, err := availableIndices(p.indexHints, p.tableInfo)
+	if err != nil {
+		log.Error(err)
+	}
 	for _, idx := range indices {
 		if !idx.Unique {
 			continue
