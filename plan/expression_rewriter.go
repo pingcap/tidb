@@ -928,7 +928,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			}
 		}
 	}
-	allSameType, hasNull := true, false
+	allSameType, hasNull, hasNotNull := true, false, false
 	for _, arg := range args[1:] {
 		if arg.GetType().Tp == mysql.TypeNull {
 			hasNull = true
@@ -940,12 +940,13 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 				continue
 			}
 		}
+		hasNotNull = true
 		if expression.GetAccurateCmpType(args[0], arg) != leftEt {
 			allSameType = false
 			break
 		}
 	}
-	if hasNull && not {
+	if (hasNull && not) || !hasNotNull {
 		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
 		return
