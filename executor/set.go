@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -151,7 +150,13 @@ func (e *SetExecutor) executeSet() error {
 				return errors.Trace(err)
 			}
 			valStr, err := value.ToString()
-			terror.Log(errors.Trace(err))
+			if err != nil {
+				log.Warnf(errors.Trace(err).Error())
+				err = nil
+				if value.IsNull() {
+					valStr = "NULL"
+				}
+			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 
