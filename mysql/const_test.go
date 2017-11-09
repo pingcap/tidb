@@ -148,3 +148,20 @@ func (s *testMySQLConstSuite) TestRealAsFloatMode(c *C) {
 	row = result.Rows()[0]
 	c.Assert(row[1], Equals, "float")
 }
+
+func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("insert into t1 values (0),(1),(NULL);")
+	r := tk.MustQuery(`SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;`)
+	r.Check(testkit.Rows("0", "1"))
+	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
+	r.Check(testkit.Rows("0"))
+	tk.MustExec("set sql_mode='high_not_precedence';")
+	r = tk.MustQuery(`SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;`)
+	r.Check(testkit.Rows())
+	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
+	r.Check(testkit.Rows("1"))
+}

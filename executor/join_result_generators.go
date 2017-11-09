@@ -34,49 +34,69 @@ var (
 // joinResultGenerator is used to generate join results according the join type, see every implementor for detailed information.
 type joinResultGenerator interface {
 	// emitMatchedInners should be called when key in outer row is equal to key in every inner row.
-	emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error)
+	// Reutrn true if outer row can be joined with any input inner row.
+	emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error)
 	// emitUnMatchedOuter should be called when outer row is not matched to any inner row.
 	emitUnMatchedOuter(outer Row, resultBuffer []Row) []Row
 	// emitUnMatchedOuters should be called when outer row is not matched to any inner row.
 	emitUnMatchedOuters(outers []Row, resultBuffer []Row) []Row
 }
 
-func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType, defaultInner Row, filter []expression.Expression) joinResultGenerator {
+func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType, outerIsRight bool, defaultInner Row, filter []expression.Expression) joinResultGenerator {
+	baseGenerator := baseJoinResultGenerator{ctx, filter, defaultInner, outerIsRight}
 	switch joinType {
 	case plan.SemiJoin:
-		return &semiJoinResultGenerator{}
+		return &semiJoinResultGenerator{baseGenerator}
 	case plan.AntiSemiJoin:
-		return &antiSemiJoinResultGenerator{}
+		return &antiSemiJoinResultGenerator{baseGenerator}
 	case plan.LeftOuterSemiJoin:
-		return &leftOuterSemiJoinResultGenerator{}
+		return &leftOuterSemiJoinResultGenerator{baseGenerator}
 	case plan.AntiLeftOuterSemiJoin:
-		return &antiLeftOuterSemiJoinResultGenerator{}
+		return &antiLeftOuterSemiJoinResultGenerator{baseGenerator}
 	case plan.LeftOuterJoin:
-		return &leftOuterJoinResultGenerator{
-			ctx:          ctx,
-			defaultInner: defaultInner,
-			filter:       filter,
-		}
+		return &leftOuterJoinResultGenerator{baseGenerator}
 	case plan.RightOuterJoin:
-		return &rightOuterJoinResultGenerator{
-			ctx:          ctx,
-			defaultInner: defaultInner,
-			filter:       filter,
-		}
+		return &rightOuterJoinResultGenerator{baseGenerator}
 	case plan.InnerJoin:
-		return &innerJoinResultGenerator{
-			ctx:    ctx,
-			filter: filter,
-		}
+		return &innerJoinResultGenerator{baseGenerator}
 	}
 	panic("unsupported join type in func newJoinResultGenerator()")
 }
 
-type semiJoinResultGenerator struct{}
+type baseJoinResultGenerator struct {
+	ctx          context.Context
+	filter       []expression.Expression
+	defaultInner Row
+	outerIsRight bool
+}
+
+type semiJoinResultGenerator struct {
+	baseJoinResultGenerator
+}
 
 // emitMatchedInners implements joinResultGenerator interface.
-func (outputer *semiJoinResultGenerator) emitMatchedInners(outer Row, _ []Row, resultBuffer []Row) ([]Row, error) {
-	return append(resultBuffer, outer), nil
+func (outputer *semiJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error) {
+	if outputer.filter == nil {
+		return append(resultBuffer, outer), true, nil
+	}
+
+	for _, inner := range inners {
+		var joinedRow Row
+		if outputer.outerIsRight {
+			joinedRow = makeJoinRow(inner, outer)
+		} else {
+			joinedRow = makeJoinRow(outer, inner)
+		}
+
+		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
+		if err != nil {
+			return resultBuffer, false, errors.Trace(err)
+		}
+		if matched {
+			return append(resultBuffer, outer), true, nil
+		}
+	}
+	return resultBuffer, false, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -89,11 +109,33 @@ func (outputer *semiJoinResultGenerator) emitUnMatchedOuters(outers []Row, resul
 	return resultBuffer
 }
 
-type antiSemiJoinResultGenerator struct{}
+type antiSemiJoinResultGenerator struct {
+	baseJoinResultGenerator
+}
 
 // emitMatchedInners implements joinResultGenerator interface.
-func (outputer *antiSemiJoinResultGenerator) emitMatchedInners(_ Row, _ []Row, resultBuffer []Row) ([]Row, error) {
-	return resultBuffer, nil
+func (outputer *antiSemiJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) (_ []Row, matched bool, err error) {
+	if outputer.filter == nil {
+		return resultBuffer, true, nil
+	}
+
+	for _, inner := range inners {
+		var joinedRow Row
+		if outputer.outerIsRight {
+			joinedRow = makeJoinRow(inner, outer)
+		} else {
+			joinedRow = makeJoinRow(outer, inner)
+		}
+
+		matched, err = expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
+		if err != nil {
+			return resultBuffer, false, errors.Trace(err)
+		}
+		if matched {
+			return resultBuffer, true, nil
+		}
+	}
+	return resultBuffer, false, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -109,12 +151,30 @@ func (outputer *antiSemiJoinResultGenerator) emitUnMatchedOuters(outers []Row, r
 	return resultBuffer
 }
 
-type leftOuterSemiJoinResultGenerator struct{}
+type leftOuterSemiJoinResultGenerator struct {
+	baseJoinResultGenerator
+}
 
 // emitMatchedInners implements joinResultGenerator interface.
-func (outputer *leftOuterSemiJoinResultGenerator) emitMatchedInners(outer Row, _ []Row, resultBuffer []Row) ([]Row, error) {
-	joinedRow := append(outer, types.NewDatum(true))
-	return append(resultBuffer, joinedRow), nil
+func (outputer *leftOuterSemiJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error) {
+	if outputer.filter == nil {
+		joinedRow := append(outer, types.NewDatum(true))
+		return append(resultBuffer, joinedRow), true, nil
+	}
+
+	for _, inner := range inners {
+		joinedRow := makeJoinRow(outer, inner)
+		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
+		if err != nil {
+			return resultBuffer, false, errors.Trace(err)
+		}
+		if matched {
+			joinedRow = joinedRow[:len(outer)]
+			joinedRow = append(outer, types.NewDatum(true))
+			return append(resultBuffer, joinedRow), true, nil
+		}
+	}
+	return resultBuffer, false, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -131,12 +191,30 @@ func (outputer *leftOuterSemiJoinResultGenerator) emitUnMatchedOuters(outers []R
 	return resultBuffer
 }
 
-type antiLeftOuterSemiJoinResultGenerator struct{}
+type antiLeftOuterSemiJoinResultGenerator struct {
+	baseJoinResultGenerator
+}
 
 // emitMatchedInners implements joinResultGenerator interface.
-func (outputer *antiLeftOuterSemiJoinResultGenerator) emitMatchedInners(outer Row, _ []Row, resultBuffer []Row) ([]Row, error) {
-	joinedRow := append(outer, types.NewDatum(false))
-	return append(resultBuffer, joinedRow), nil
+func (outputer *antiLeftOuterSemiJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error) {
+	if outputer.filter == nil {
+		joinedRow := append(outer, types.NewDatum(false))
+		return append(resultBuffer, joinedRow), true, nil
+	}
+
+	for _, inner := range inners {
+		joinedRow := makeJoinRow(outer, inner)
+		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
+		if err != nil {
+			return resultBuffer, false, errors.Trace(err)
+		}
+		if matched {
+			joinedRow = joinedRow[:len(outer)]
+			joinedRow = append(outer, types.NewDatum(false))
+			return append(resultBuffer, joinedRow), true, nil
+		}
+	}
+	return resultBuffer, false, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -154,27 +232,31 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitUnMatchedOuters(outers
 }
 
 type leftOuterJoinResultGenerator struct {
-	ctx          context.Context
-	defaultInner Row
-	filter       []expression.Expression
+	baseJoinResultGenerator
 }
 
 // emitMatchedInners implements joinResultGenerator interface.
-func (outputer *leftOuterJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error) {
+func (outputer *leftOuterJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error) {
+	joinedRows := make([]Row, 0, len(inners))
 	for _, inner := range inners {
-		joinedRow := makeJoinRow(outer, inner)
-		if outputer.filter != nil {
-			matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
-			if err != nil {
-				return resultBuffer, errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
-		}
-		resultBuffer = append(resultBuffer, joinedRow)
+		joinedRows = append(joinedRows, makeJoinRow(outer, inner))
 	}
-	return resultBuffer, nil
+
+	if outputer.filter == nil {
+		return append(resultBuffer, joinedRows...), len(joinedRows) > 0, nil
+	}
+
+	originLen := len(resultBuffer)
+	for _, joinedRow := range joinedRows {
+		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
+		if err != nil {
+			return resultBuffer, false, errors.Trace(err)
+		}
+		if matched {
+			resultBuffer = append(resultBuffer, joinedRow)
+		}
+	}
+	return resultBuffer, len(resultBuffer) > originLen, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -191,27 +273,31 @@ func (outputer *leftOuterJoinResultGenerator) emitUnMatchedOuters(outers []Row, 
 }
 
 type rightOuterJoinResultGenerator struct {
-	ctx          context.Context
-	defaultInner Row
-	filter       []expression.Expression
+	baseJoinResultGenerator
 }
 
 // emitMatchedInners implements joinResultGenerator interface.
-func (outputer *rightOuterJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error) {
+func (outputer *rightOuterJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error) {
+	joinedRows := make([]Row, 0, len(inners))
 	for _, inner := range inners {
-		joinedRow := makeJoinRow(inner, outer)
-		if outputer.filter != nil {
-			matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
-			if err != nil {
-				return resultBuffer, errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
-		}
-		resultBuffer = append(resultBuffer, joinedRow)
+		joinedRows = append(joinedRows, makeJoinRow(inner, outer))
 	}
-	return resultBuffer, nil
+
+	if outputer.filter == nil {
+		return append(resultBuffer, joinedRows...), len(joinedRows) > 0, nil
+	}
+
+	originLen := len(resultBuffer)
+	for _, joinedRow := range joinedRows {
+		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
+		if err != nil {
+			return resultBuffer, false, errors.Trace(err)
+		}
+		if matched {
+			resultBuffer = append(resultBuffer, joinedRow)
+		}
+	}
+	return resultBuffer, len(resultBuffer) > originLen, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -228,26 +314,37 @@ func (outputer *rightOuterJoinResultGenerator) emitUnMatchedOuters(outers []Row,
 }
 
 type innerJoinResultGenerator struct {
-	ctx    context.Context
-	filter []expression.Expression
+	baseJoinResultGenerator
 }
 
 // emitMatchedInners implements joinResultGenerator interface.
-func (outputer *innerJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, error) {
-	for _, inner := range inners {
-		joinedRow := makeJoinRow(outer, inner)
-		if outputer.filter != nil {
-			matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
-			if err != nil {
-				return resultBuffer, errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
+func (outputer *innerJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error) {
+	joinedRows := make([]Row, 0, len(inners))
+	if outputer.outerIsRight {
+		for _, inner := range inners {
+			joinedRows = append(joinedRows, makeJoinRow(inner, outer))
 		}
-		resultBuffer = append(resultBuffer, joinedRow)
+	} else {
+		for _, inner := range inners {
+			joinedRows = append(joinedRows, makeJoinRow(outer, inner))
+		}
 	}
-	return resultBuffer, nil
+
+	if outputer.filter == nil {
+		return append(resultBuffer, joinedRows...), len(joinedRows) > 0, nil
+	}
+
+	originLen := len(resultBuffer)
+	for _, joinedRow := range joinedRows {
+		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
+		if err != nil {
+			return resultBuffer, false, errors.Trace(err)
+		}
+		if matched {
+			resultBuffer = append(resultBuffer, joinedRow)
+		}
+	}
+	return resultBuffer, len(resultBuffer) > originLen, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.

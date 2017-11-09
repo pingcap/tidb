@@ -66,6 +66,10 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		IndexScan:      &tipb.IndexScan{Desc: false},
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0)
+	var cms *statistics.CMSketch
+	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
+		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
+	}
 	for {
 		values, err := e.Next()
 		if err != nil {
@@ -82,9 +86,16 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if cms != nil {
+			cms.InsertBytes(value)
+		}
 	}
 	hg := statistics.HistogramToProto(statsBuilder.Hist())
-	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg})
+	var cm *tipb.CMSketch
+	if cms != nil {
+		cm = statistics.CMSketchToProto(cms)
+	}
+	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -119,15 +130,19 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	}
 	colReq := analyzeReq.ColReq
 	builder := statistics.SampleBuilder{
-		Sc:            sc,
-		RecordSet:     e,
-		ColLen:        numCols,
-		PkID:          pkID,
-		MaxBucketSize: colReq.BucketSize,
-		MaxSketchSize: colReq.SketchSize,
-		MaxSampleSize: colReq.SampleSize,
+		Sc:              sc,
+		RecordSet:       e,
+		ColLen:          numCols,
+		PkID:            pkID,
+		MaxBucketSize:   colReq.BucketSize,
+		MaxFMSketchSize: colReq.SketchSize,
+		MaxSampleSize:   colReq.SampleSize,
 	}
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
+		builder.CMSketchWidth = *colReq.CmsketchWidth
+		builder.CMSketchDepth = *colReq.CmsketchDepth
+	}
+	collectors, pkBuilder, err := builder.CollectColumnStats()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
