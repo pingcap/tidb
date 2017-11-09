@@ -87,9 +87,8 @@ func (s *testSuite) TestPrepared(c *C) {
 		// Drop a column so the prepared statement become invalid.
 		tk.MustExec("alter table prepare_test drop column c2")
 
-		// There should be schema changed error.
 		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
-		c.Assert(err, NotNil)
+		c.Assert(plan.ErrUnknownColumn.Equal(err), IsTrue)
 
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")

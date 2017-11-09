@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 )
 
-// Preprocess resolves table names of the node, and checks whether the node is valid.
+// Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx context.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
 	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare}
 	node.Accept(&v)
@@ -517,38 +517,6 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	tn.TableInfo = table.Meta()
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
 	tn.DBInfo = dbInfo
-
-	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
-	tmp := make([]struct {
-		ast.ValueExpr
-		ast.ResultField
-	}, len(tn.TableInfo.Columns))
-	status := p.ctx.GetSessionVars().StmtCtx
-	for i, v := range tn.TableInfo.Columns {
-		if status.InUpdateOrDeleteStmt {
-			switch v.State {
-			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
-			default:
-				continue
-			}
-		} else {
-			if v.State != model.StatePublic {
-				continue
-			}
-		}
-		expr := &tmp[i].ValueExpr
-		rf := &tmp[i].ResultField
-		expr.SetType(&v.FieldType)
-		*rf = ast.ResultField{
-			Column:    v,
-			Table:     tn.TableInfo,
-			DBName:    tn.Schema,
-			Expr:      expr,
-			TableName: tn,
-		}
-		rfs = append(rfs, rf)
-	}
-	tn.SetResultFields(rfs)
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
@@ -572,16 +540,12 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 	}
 }
 
-// handleTableSource checks name duplication
-// and puts the table source in current resolverContext.
+// handleTableSource checks origin TableSource names duplication.
 // Note:
 // "select * from t as a join (select 1) as a;" is not duplicate.
 // "select * from t as a join t as a;" is duplicate.
 // "select * from (select 1) as a join (select 1) as a;" is duplicate.
 func (p *preprocessor) handleTableSource(ts *ast.TableSource) {
-	for _, v := range ts.GetResultFields() {
-		v.TableAsName = ts.AsName
-	}
 	switch ts.Source.(type) {
 	case *ast.TableName:
 		var name string

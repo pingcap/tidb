@@ -143,9 +143,6 @@ func (e *PrepareExec) DoPrepare() {
 		e.Err = errors.Trace(err)
 		return
 	}
-	if result, ok := stmt.(ast.ResultSetNode); ok {
-		e.Fields = result.GetResultFields()
-	}
 
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to

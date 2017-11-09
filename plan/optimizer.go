@@ -169,30 +169,23 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
-// PrepareStmt prepares a raw statement parsed from parser.
-// The statement must be prepared before it can be passed to optimize function.
-// We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
-func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	return Preprocess(ctx, node, is, true)
-}
-
 // Optimizer error codes.
 const (
 	CodeOperandColumns      terror.ErrCode = 1
-	CodeInvalidWildCard     terror.ErrCode = 3
-	CodeUnsupported         terror.ErrCode = 4
-	CodeInvalidGroupFuncUse terror.ErrCode = 5
-	CodeStmtNotFound        terror.ErrCode = 7
-	CodeWrongParamCount     terror.ErrCode = 8
-	CodeSchemaChanged       terror.ErrCode = 9
+	CodeInvalidWildCard                    = 3
+	CodeUnsupported                        = 4
+	CodeInvalidGroupFuncUse                = 5
+	CodeStmtNotFound                       = 7
+	CodeWrongParamCount                    = 8
+	CodeSchemaChanged                      = 9
 
 	// MySQL error code.
-	CodeIllegalReference     terror.ErrCode = mysql.ErrIllegalReference
-	CodeNoDB                 terror.ErrCode = mysql.ErrNoDB
-	CodeUnknownExplainFormat terror.ErrCode = mysql.ErrUnknownExplainFormat
-	CodeWrongGroupField                     = mysql.ErrWrongGroupField
-	CodeDupFieldName                        = mysql.ErrDupFieldName
-	CodeNonUpdatableTable                   = mysql.ErrNonUpdatableTable
+	CodeIllegalReference     = mysql.ErrIllegalReference
+	CodeNoDB                 = mysql.ErrNoDB
+	CodeUnknownExplainFormat = mysql.ErrUnknownExplainFormat
+	CodeWrongGroupField      = mysql.ErrWrongGroupField
+	CodeDupFieldName         = mysql.ErrDupFieldName
+	CodeNonUpdatableTable    = mysql.ErrNonUpdatableTable
 )
 
 // Optimizer base errors.

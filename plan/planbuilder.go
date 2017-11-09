@@ -124,14 +124,14 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 type clauseCode int
 
 const (
-	unknowClause  clauseCode = 0
-	fieldList                = 1
-	havingClause             = 2
-	onClause                 = 3
-	orderByClause            = 4
-	whereClause              = 5
-	groupByClause            = 6
-	showStatement            = 7
+	unknowClause clauseCode = iota
+	fieldList
+	havingClause
+	onClause
+	orderByClause
+	whereClause
+	groupByClause
+	showStatement
 )
 
 var clauseMsg = map[clauseCode]string{
