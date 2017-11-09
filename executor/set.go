@@ -150,12 +150,10 @@ func (e *SetExecutor) executeSet() error {
 				return errors.Trace(err)
 			}
 			valStr, err := value.ToString()
-			if err != nil {
+			if value.IsNull() {
+				valStr = "NULL"
+			} else if err != nil {
 				log.Warnf(errors.Trace(err).Error())
-				err = nil
-				if value.IsNull() {
-					valStr = "NULL"
-				}
 			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
