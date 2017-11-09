@@ -234,7 +234,7 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
-	SmallTable      int
+	SmallChildIdx   int
 	Concurrency     int
 
 	DefaultValues []types.Datum
@@ -552,32 +552,28 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	return &np
 }
 
+func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Schema {
+	switch joinType {
+	case SemiJoin, AntiSemiJoin:
+		return join.Children()[0].Schema().Clone()
+	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		newSchema := join.Children()[0].Schema().Clone()
+		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
+		return newSchema
+	}
+	return expression.MergeSchema(join.Children()[outerID].Schema(), join.Children()[1-outerID].Schema())
+}
+
 func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
 	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
-	case *PhysicalHashJoin:
-		p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
 	case *PhysicalIndexJoin:
-		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
-			x.SetSchema(x.children[0].Schema().Clone())
-		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
-			auxCol := x.schema.Columns[x.Schema().Len()-1]
-			x.SetSchema(x.children[0].Schema().Clone())
-			x.schema.Append(auxCol)
-		} else {
-			p.SetSchema(expression.MergeSchema(p.Children()[x.outerIndex].Schema(), p.Children()[1-x.outerIndex].Schema()))
-		}
+		p.SetSchema(buildJoinSchema(x.JoinType, p, x.outerIndex))
+	case *PhysicalHashJoin:
+		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
 	case *PhysicalMergeJoin:
-		if x.JoinType == SemiJoin || x.JoinType == AntiSemiJoin {
-			x.SetSchema(x.children[0].Schema().Clone())
-		} else if x.JoinType == LeftOuterSemiJoin || x.JoinType == AntiLeftOuterSemiJoin {
-			auxCol := x.schema.Columns[x.Schema().Len()-1]
-			x.SetSchema(x.children[0].Schema().Clone())
-			x.schema.Append(auxCol)
-		} else {
-			p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
-		}
+		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
 	case *PhysicalApply:
 		buildSchema(x.PhysicalJoin)
 		x.schema = x.PhysicalJoin.Schema()

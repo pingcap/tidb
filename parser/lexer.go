@@ -140,7 +140,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 			tok = tok1
 		}
 	}
-	if (s.sqlMode&mysql.ModeANSIQuotes) > 0 &&
+	if s.sqlMode.HasANSIQuotesMode() &&
 		tok == stringLit &&
 		s.r.s[v.offset] == '"' {
 		tok = identifier
@@ -148,6 +148,10 @@ func (s *Scanner) Lex(v *yySymType) int {
 
 	if tok == pipes && !(s.sqlMode.HasPipesAsConcatMode()) {
 		return pipesAsOr
+	}
+
+	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
+		return not2
 	}
 
 	switch tok {

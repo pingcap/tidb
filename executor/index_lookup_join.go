@@ -324,12 +324,12 @@ func (e *IndexLookUpJoin) doMergeJoin() (err error) {
 			outerNextCursor := e.outerOrderedRows.nextBatch(outerCursor)
 			innerNextCursor := e.innerOrderedRows.nextBatch(innerCursor)
 			for _, outerRow := range e.outerOrderedRows.rows[outerCursor:outerNextCursor] {
-				initLen := len(e.resultBuffer)
-				e.resultBuffer, err = e.resultGenerator.emitMatchedInners(outerRow, e.innerOrderedRows.rows[innerCursor:innerNextCursor], e.resultBuffer)
+				matched := true
+				e.resultBuffer, matched, err = e.resultGenerator.emitMatchedInners(outerRow, e.innerOrderedRows.rows[innerCursor:innerNextCursor], e.resultBuffer)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if initLen == len(e.resultBuffer) {
+				if !matched {
 					e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outerRow, e.resultBuffer)
 				}
 			}

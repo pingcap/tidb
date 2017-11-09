@@ -435,6 +435,8 @@ import (
 	paramMarker	"?"
 	rsh		">>"
 
+%token not2
+
 %type	<expr>
 	Expression			"expression"
 	BoolPri				"boolean primary expression"
@@ -795,7 +797,7 @@ import (
 %left 	'*' '/' '%' div mod
 %left 	'^'
 %left 	'~' neg
-%right 	not
+%right 	not not2
 %right	collate
 
 %precedence '('
@@ -2772,6 +2774,10 @@ SimpleExpr:
 |	SimpleExpr pipes SimpleExpr
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Concat), Args: []ast.ExprNode{$1, $3}}
+	}
+|	not2 SimpleExpr %prec neg
+	{
+		$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2}
 	}
 |	SubSelect
 |	'(' Expression ')' {
