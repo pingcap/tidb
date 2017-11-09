@@ -18,6 +18,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/cznic/sortutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -954,6 +955,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 
 	// for IndexLookUpJoin, left is always the outer side.
 	outerExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	innerExecBuilder := &dataReaderBuilder{v.Children()[1], b}
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
@@ -1092,12 +1097,12 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		handleCol:         handleCol,
 		priority:          b.priority,
 		tableReaderSchema: tableReaderSchema,
-		builder:           &dataReaderBuilder{executorBuilder: b},
+		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 	}
 	return e
 }
 
-// dataReaderBuilder build a executor.
+// dataReaderBuilder build an executor.
 // The executor can be used to read data in the ranges which are constructed by datums.
 // Differences from executorBuilder:
 // 1. dataReaderBuilder calculate data range from argument, rather than plan.
@@ -1107,7 +1112,7 @@ type dataReaderBuilder struct {
 	*executorBuilder
 }
 
-func (builder *dataReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
+func (builder *dataReaderBuilder) buildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalIndexReader:
 		return builder.buildIndexReaderForDatums(goCtx, v, datums)
@@ -1116,20 +1121,23 @@ func (builder *dataReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context, da
 	case *plan.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForDatums(goCtx, v, datums)
 	}
-	return nil, errors.New("should never run here")
+	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
 	e := builder.executorBuilder.buildTableReader(v)
+	if err := builder.executorBuilder.err; err != nil {
+		return nil, errors.Trace(err)
+	}
 	handles := make([]int64, 0, len(datums))
 	for _, datum := range datums {
 		handles = append(handles, datum[0].GetInt64())
 	}
-	return builder.doRequestForHandles(goCtx, e, handles)
+	return builder.buildTableReaderFromHandles(goCtx, e, handles)
 }
 
-func (builder *dataReaderBuilder) doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
-	sort.Sort(int64Slice(handles))
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
+	sort.Sort(sortutil.Int64Slice(handles))
 	var b requestBuilder
 	kvReq, err := b.SetTableHandles(e.tableID, handles).
 		SetDAGRequest(e.dagPB).
@@ -1151,6 +1159,9 @@ func (builder *dataReaderBuilder) doRequestForHandles(goCtx goctx.Context, e *Ta
 
 func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexReader, values [][]types.Datum) (Executor, error) {
 	e := builder.executorBuilder.buildIndexReader(v)
+	if err := builder.executorBuilder.err; err != nil {
+		return nil, errors.Trace(err)
+	}
 	var b requestBuilder
 	kvReq, err := b.SetIndexValues(e.tableID, e.index.ID, values).
 		SetDAGRequest(e.dagPB).
@@ -1172,6 +1183,9 @@ func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context,
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader, values [][]types.Datum) (Executor, error) {
 	e := builder.executorBuilder.buildIndexLookUpReader(v)
+	if err := builder.executorBuilder.err; err != nil {
+		return nil, errors.Trace(err)
+	}
 	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
 	if err != nil {
 		return nil, errors.Trace(err)

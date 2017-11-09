@@ -298,12 +298,6 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.PartialResult) ([]int
 	return handles, nil
 }
 
-type int64Slice []int64
-
-func (p int64Slice) Len() int           { return len(p) }
-func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
-func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-
 // Closeable is a interface for closeable structures.
 type Closeable interface {
 	// Close closes the object.
@@ -618,7 +612,7 @@ type IndexLookUpExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
-	builder  *dataReaderBuilder
+	*dataReaderBuilder
 	// All fields above is immutable.
 
 	indexWorker
@@ -797,8 +791,8 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		schema = e.schema
 	}
 
-	var e1 Executor
-	e1, err = e.builder.doRequestForHandles(goCtx, &TableReaderExecutor{
+	var tableReader Executor
+	tableReader, err = e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
 		table:   e.table,
 		tableID: e.tableID,
 		dagPB:   e.tableRequest,
@@ -806,13 +800,14 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		ctx:     e.ctx,
 	}, task.handles)
 	if err != nil {
+		log.Error(err)
 		return
 	}
-	defer terror.Call(e1.Close)
+	defer terror.Call(tableReader.Close)
 
 	for {
 		var row Row
-		row, err = e1.Next()
+		row, err = tableReader.Next()
 		if err != nil || row == nil {
 			break
 		}

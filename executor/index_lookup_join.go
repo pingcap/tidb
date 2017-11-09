@@ -262,14 +262,14 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
-	e1, err := e.innerExecBuilder.BuildExecutorForDatums(e.ctx.GoCtx(), requestRows)
+	innerExec, err := e.innerExecBuilder.buildExecutorForDatums(e.ctx.GoCtx(), requestRows)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer terror.Call(e1.Close)
+	defer terror.Call(innerExec.Close)
 
 	for {
-		innerRow, err1 := e1.Next()
+		innerRow, err1 := innerExec.Next()
 		if err != nil {
 			return errors.Trace(err1)
 		} else if innerRow == nil {
