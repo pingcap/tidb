@@ -206,6 +206,9 @@ func GetGlobalConfig() *Config {
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	_, err := toml.DecodeFile(confFile, c)
+	if c.TokenLimit <= 0 {
+		c.TokenLimit = 1000
+	}
 	return errors.Trace(err)
 }
 
