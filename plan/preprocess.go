@@ -473,13 +473,6 @@ func isIncorrectName(name string) bool {
 	return false
 }
 
-func (p *preprocessor) tableUniqueName(schema, table model.CIStr) string {
-	if schema.L != "" && schema.L != p.ctx.GetSessionVars().CurrentDB {
-		return schema.L + "." + table.L
-	}
-	return table.L
-}
-
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		currentDB := p.ctx.GetSessionVars().CurrentDB
