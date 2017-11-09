@@ -51,7 +51,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
-	cfg = config.NewConfig()
+	cfg := config.NewConfig()
 	cfg.Port = 4001
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 10090
