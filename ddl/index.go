@@ -275,7 +275,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, errors.Trace(err)
 		}
 
-		err = d.runReorgJob(job, func() error {
+		err = d.runReorgJob(t, job, func() error {
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
 		if err != nil {
@@ -288,11 +288,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			cleanNotify(d.notifyCancelReorgJob)
+			cleanNotify(d.reorgCtx.notifyCancelReorgJob)
 			return ver, errors.Trace(err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		cleanNotify(d.notifyCancelReorgJob)
+		cleanNotify(d.reorgCtx.notifyCancelReorgJob)
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
@@ -587,7 +587,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 				addedCount, baseHandle, nextHandle, taskAddedCount, err, sub, err1)
 			return errors.Trace(err)
 		}
-		d.setReorgRowCount(addedCount)
+		d.reorgCtx.setRowCountAndHandle(addedCount, nextHandle)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
 		log.Infof("[ddl] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
 			addedCount, baseHandle, nextHandle, taskAddedCount, sub)
