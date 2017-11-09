@@ -501,38 +501,6 @@ func startSpanFollowsContext(goCtx goctx.Context, operationName string) (opentra
 	return span, opentracing.ContextWithSpan(goCtx, span)
 }
 
-// doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
-func doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) error {
-	sort.Sort(int64Slice(handles))
-	var builder requestBuilder
-	kvReq, err := builder.SetTableHandles(e.tableID, handles).
-		SetDAGRequest(e.dagPB).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		Build()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result.Fetch(goCtx)
-	return nil
-}
-
-// doRequestForDatums constructs kv ranges by Datums. It is used by index look up join.
-// Every lens for `datums` will always be one and must be type of int64.
-func (e *TableReaderExecutor) doRequestForDatums(goCtx goctx.Context, datums [][]types.Datum) error {
-	handles := make([]int64, 0, len(datums))
-	for _, datum := range datums {
-		handles = append(handles, datum[0].GetInt64())
-	}
-	return errors.Trace(doRequestForHandles(goCtx, e, handles))
-}
-
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
 	table     table.Table

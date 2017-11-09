@@ -114,10 +114,12 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 	c.Assert(len(a.Columns), Equals, len(b.Columns))
 	for i := range a.Columns {
 		assertHistogramEqual(c, a.Columns[i].Histogram, b.Columns[i].Histogram)
+		c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
 		assertHistogramEqual(c, a.Indices[i].Histogram, b.Indices[i].Histogram)
+		c.Assert(a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch), IsTrue)
 	}
 }
 
@@ -338,7 +340,7 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	c.Assert(newStatsTbl2.Columns[int64(3)].LastUpdateVersion, Greater, newStatsTbl2.Columns[int64(1)].LastUpdateVersion)
 }
 
-func (s *testStatsUpdateSuite) TestLoadHistogram(c *C) {
+func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	store, do, err := newStoreWithBootstrap(10 * time.Millisecond)
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -358,10 +360,16 @@ func (s *testStatsUpdateSuite) TestLoadHistogram(c *C) {
 	stat := h.GetTableStats(tableInfo.ID)
 	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
 	c.Assert(len(hg.Buckets), Greater, 0)
+	cms := stat.Columns[tableInfo.Columns[0].ID].CMSketch
+	c.Assert(cms, IsNil)
 	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
 	c.Assert(len(hg.Buckets), Greater, 0)
+	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
+	c.Assert(cms.TotalCount(), Greater, uint64(0))
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(len(hg.Buckets), Equals, 0)
+	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch
+	c.Assert(cms, IsNil)
 	_, err = stat.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo.Columns[2].ID)
 	c.Assert(err, IsNil)
 	time.Sleep(1 * time.Second)

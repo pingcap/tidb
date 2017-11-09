@@ -114,6 +114,22 @@ func (r *pointSorter) Swap(i, j int) {
 	r.points[i], r.points[j] = r.points[j], r.points[i]
 }
 
+// fullRange is (-∞, +∞).
+var fullRange = []point{
+	{start: true},
+	{value: types.MaxValueDatum()},
+}
+
+// FullIntRange is (-∞, +∞) for IntColumnRange.
+func FullIntRange() []types.IntColumnRange {
+	return []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+}
+
+// FullIndexRange is (-∞, +∞) for IndexRange.
+func FullIndexRange() []*types.IndexRange {
+	return []*types.IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+}
+
 // builder is the range builder struct.
 type builder struct {
 	err error
@@ -486,217 +502,4 @@ func (r *builder) merge(a, b []point, union bool) []point {
 		}
 	}
 	return merged
-}
-
-// points2IndexRanges build index ranges from range points.
-// Only the first column in the index is built, extra column ranges will be appended by
-// appendPoints2IndexRanges.
-func points2IndexRanges(sc *variable.StatementContext, rangePoints []point, tp *types.FieldType) ([]*types.IndexRange, error) {
-	indexRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint, err := convertPoint(sc, rangePoints[i], tp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		endPoint, err := convertPoint(sc, rangePoints[i+1], tp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !less {
-			continue
-		}
-		ir := &types.IndexRange{
-			LowVal:      []types.Datum{startPoint.value},
-			LowExclude:  startPoint.excl,
-			HighVal:     []types.Datum{endPoint.value},
-			HighExclude: endPoint.excl,
-		}
-		indexRanges = append(indexRanges, ir)
-	}
-	return indexRanges, nil
-}
-
-func convertPoint(sc *variable.StatementContext, point point, tp *types.FieldType) (point, error) {
-	switch point.value.Kind() {
-	case types.KindMaxValue, types.KindMinNotNull:
-		return point, nil
-	}
-	casted, err := point.value.ConvertTo(sc, tp)
-	if err != nil {
-		return point, errors.Trace(err)
-	}
-	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
-	if err != nil {
-		return point, errors.Trace(err)
-	}
-	point.value = casted
-	if valCmpCasted == 0 {
-		return point, nil
-	}
-	if point.start {
-		if point.excl {
-			if valCmpCasted < 0 {
-				// e.g. "a > 1.9" convert to "a >= 2".
-				point.excl = false
-			}
-		} else {
-			if valCmpCasted > 0 {
-				// e.g. "a >= 1.1 convert to "a > 1"
-				point.excl = true
-			}
-		}
-	} else {
-		if point.excl {
-			if valCmpCasted > 0 {
-				// e.g. "a < 1.1" convert to "a <= 1"
-				point.excl = false
-			}
-		} else {
-			if valCmpCasted < 0 {
-				// e.g. "a <= 1.9" convert to "a < 2"
-				point.excl = true
-			}
-		}
-	}
-	return point, nil
-}
-
-// appendPoints2IndexRanges appends additional column ranges for multi-column index.
-// The additional column ranges can only be appended to point ranges.
-// for example we have an index (a, b), if the condition is (a > 1 and b = 2)
-// then we can not build a conjunctive ranges for this index.
-func appendPoints2IndexRanges(sc *variable.StatementContext, origin []*types.IndexRange, rangePoints []point,
-	ft *types.FieldType) ([]*types.IndexRange, error) {
-	var newIndexRanges []*types.IndexRange
-	for i := 0; i < len(origin); i++ {
-		oRange := origin[i]
-		if !oRange.IsPoint(sc) {
-			newIndexRanges = append(newIndexRanges, oRange)
-		} else {
-			newRanges, err := appendPoints2IndexRange(sc, oRange, rangePoints, ft)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			newIndexRanges = append(newIndexRanges, newRanges...)
-		}
-	}
-	return newIndexRanges, nil
-}
-
-func appendPoints2IndexRange(sc *variable.StatementContext, origin *types.IndexRange, rangePoints []point,
-	ft *types.FieldType) ([]*types.IndexRange, error) {
-	newRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint, err := convertPoint(sc, rangePoints[i], ft)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		endPoint, err := convertPoint(sc, rangePoints[i+1], ft)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !less {
-			continue
-		}
-
-		lowVal := make([]types.Datum, len(origin.LowVal)+1)
-		copy(lowVal, origin.LowVal)
-		lowVal[len(origin.LowVal)] = startPoint.value
-
-		highVal := make([]types.Datum, len(origin.HighVal)+1)
-		copy(highVal, origin.HighVal)
-		highVal[len(origin.HighVal)] = endPoint.value
-
-		ir := &types.IndexRange{
-			LowVal:      lowVal,
-			LowExclude:  startPoint.excl,
-			HighVal:     highVal,
-			HighExclude: endPoint.excl,
-		}
-		newRanges = append(newRanges, ir)
-	}
-	return newRanges, nil
-}
-
-// points2TableRanges will construct the range slice with the given range points
-func points2TableRanges(sc *variable.StatementContext, rangePoints []point) ([]types.IntColumnRange, error) {
-	tableRanges := make([]types.IntColumnRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint := rangePoints[i]
-		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
-			startPoint.value.SetInt64(math.MinInt64)
-		}
-		startInt, err := startPoint.value.ToInt64(sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		startDatum := types.NewDatum(startInt)
-		cmp, err := startDatum.CompareDatum(sc, &startPoint.value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cmp < 0 || (cmp == 0 && startPoint.excl) {
-			startInt++
-		}
-		endPoint := rangePoints[i+1]
-		if endPoint.value.IsNull() {
-			endPoint.value.SetInt64(math.MinInt64)
-		} else if endPoint.value.Kind() == types.KindMaxValue {
-			endPoint.value.SetInt64(math.MaxInt64)
-		}
-		endInt, err := endPoint.value.ToInt64(sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		endDatum := types.NewDatum(endInt)
-		cmp, err = endDatum.CompareDatum(sc, &endPoint.value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cmp > 0 || (cmp == 0 && endPoint.excl) {
-			endInt--
-		}
-		if startInt > endInt {
-			continue
-		}
-		tableRanges = append(tableRanges, types.IntColumnRange{LowVal: startInt, HighVal: endInt})
-	}
-	return tableRanges, nil
-}
-
-func points2ColumnRanges(sc *variable.StatementContext, points []point, tp *types.FieldType) ([]*types.ColumnRange, error) {
-	columnRanges := make([]*types.ColumnRange, 0, len(points)/2)
-	for i := 0; i < len(points); i += 2 {
-		startPoint, err := convertPoint(sc, points[i], tp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		endPoint, err := convertPoint(sc, points[i+1], tp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !less {
-			continue
-		}
-		cr := &types.ColumnRange{
-			Low:      startPoint.value,
-			LowExcl:  startPoint.excl,
-			High:     endPoint.value,
-			HighExcl: endPoint.excl,
-		}
-		columnRanges = append(columnRanges, cr)
-	}
-	return columnRanges, nil
 }

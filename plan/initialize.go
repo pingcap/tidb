@@ -227,7 +227,7 @@ func (p PhysicalMemTable) init(allocator *idAllocator, ctx context.Context) *Phy
 
 func (p PhysicalHashJoin) init(allocator *idAllocator, ctx context.Context) *PhysicalHashJoin {
 	tp := TypeHashRightJoin
-	if p.SmallTable == 1 {
+	if p.SmallChildIdx == 1 {
 		tp = TypeHashLeftJoin
 	}
 	p.basePlan = newBasePlan(tp, allocator, ctx, &p)
