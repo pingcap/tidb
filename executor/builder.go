@@ -834,6 +834,12 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 		BucketSize: maxBucketSize,
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 	}
+	if !task.IndexInfo.Unique {
+		depth := int32(defaultCMSketchDepth)
+		width := int32(defaultCMSketchWidth)
+		e.analyzePB.IdxReq.CmsketchDepth = &depth
+		e.analyzePB.IdxReq.CmsketchWidth = &width
+	}
 	return e
 }
 
@@ -859,11 +865,15 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 			TimeZoneOffset: timeZoneOffset(b.ctx),
 		},
 	}
+	depth := int32(defaultCMSketchDepth)
+	width := int32(defaultCMSketchWidth)
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:  maxBucketSize,
-		SampleSize:  maxRegionSampleSize,
-		SketchSize:  maxSketchSize,
-		ColumnsInfo: distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		BucketSize:    maxBucketSize,
+		SampleSize:    maxRegionSampleSize,
+		SketchSize:    maxSketchSize,
+		ColumnsInfo:   distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		CmsketchDepth: &depth,
+		CmsketchWidth: &width,
 	}
 	b.err = setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	return e

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 // Histogram represents statistics for a column or index.
@@ -62,27 +63,36 @@ type Bucket struct {
 	commonPfxLen int // when the bucket value type is KindString or KindBytes, commonPfxLen is the common prefix length of the lower bound and upper bound.
 }
 
-// SaveToStorage saves the histogram to storage.
-func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int64, isIndex int) error {
+// SaveStatsToStorage saves the stats to storage.
+func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
 	exec := ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute("begin")
+	_, err := exec.Execute(goCtx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	txn := ctx.Txn()
 	version := txn.StartTS()
 	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = exec.Execute(replaceSQL)
+	_, err = exec.Execute(goCtx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count) values (%d, %d, %d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount)
-	_, err = exec.Execute(replaceSQL)
+	data, err := encodeCMSketch(cms)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch) values (%d, %d, %d, %d, %d, %d, X'%X')",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data)
+	_, err = exec.Execute(goCtx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(deleteSQL)
+	_, err = exec.Execute(goCtx, deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -104,12 +114,12 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 			return errors.Trace(err)
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, bucket.Repeats, lowerBound.GetBytes(), upperBound.GetBytes())
-		_, err = exec.Execute(insertSQL)
+		_, err = exec.Execute(goCtx, insertSQL)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = exec.Execute("commit")
+	_, err = exec.Execute(goCtx, "commit")
 	return errors.Trace(err)
 }
 
@@ -456,12 +466,22 @@ func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram
 // Column represents a column histogram.
 type Column struct {
 	Histogram
+	*CMSketch
 	Count int64
 	Info  *model.ColumnInfo
 }
 
 func (c *Column) String() string {
 	return c.Histogram.toString(false)
+}
+
+func (c *Column) equalRowCount(sc *variable.StatementContext, val types.Datum) (float64, error) {
+	if c.CMSketch != nil {
+		count, err := c.CMSketch.queryValue(val)
+		return float64(count), errors.Trace(err)
+	}
+	count, err := c.Histogram.equalRowCount(sc, val)
+	return count, errors.Trace(err)
 }
 
 // getIntColumnRowCount estimates the row count by a slice of IntColumnRange.
@@ -550,11 +570,20 @@ func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*type
 // Index represents an index histogram.
 type Index struct {
 	Histogram
+	*CMSketch
 	Info *model.IndexInfo
 }
 
 func (idx *Index) String() string {
 	return idx.Histogram.toString(true)
+}
+
+func (idx *Index) equalRowCount(sc *variable.StatementContext, b []byte) (float64, error) {
+	if idx.CMSketch != nil {
+		return float64(idx.CMSketch.queryBytes(b)), nil
+	}
+	count, err := idx.Histogram.equalRowCount(sc, types.NewBytesDatum(b))
+	return count, errors.Trace(err)
 }
 
 func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange) (float64, error) {
@@ -571,7 +600,7 @@ func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*type
 		}
 		if bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
-				rowCount, err1 := idx.equalRowCount(sc, types.NewBytesDatum(lb))
+				rowCount, err1 := idx.equalRowCount(sc, lb)
 				if err1 != nil {
 					return 0, errors.Trace(err1)
 				}

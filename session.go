@@ -61,11 +61,11 @@ import (
 // Session context
 type Session interface {
 	context.Context
-	Status() uint16                              // Flag of current status, such as autocommit.
-	LastInsertID() uint64                        // LastInsertID is the last inserted auto_increment ID.
-	AffectedRows() uint64                        // Affected rows by latest executed stmt.
-	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement.
-	String() string                              // String is used to debug.
+	Status() uint16                                         // Flag of current status, such as autocommit.
+	LastInsertID() uint64                                   // LastInsertID is the last inserted auto_increment ID.
+	AffectedRows() uint64                                   // Affected rows by latest executed stmt.
+	Execute(goctx.Context, string) ([]ast.RecordSet, error) // Execute a sql statement.
+	String() string                                         // String is used to debug.
 	CommitTxn(goctx.Context) error
 	RollbackTxn(goctx.Context) error
 	// PrepareStmt executes prepare statement in binary protocol.
@@ -427,6 +427,9 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
+			if st.IsReadOnly() {
+				continue
+			}
 			txt := st.OriginText()
 			if infoSchemaChanged {
 				st, err = updateStatement(st, s, txt)
@@ -510,6 +513,14 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
+	var span opentracing.Span
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
+	span, goCtx = opentracing.StartSpanFromContext(goCtx, "session.ExecRestrictedSQL")
+	defer span.Finish()
+
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
@@ -518,7 +529,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 	se := tmp.(*session)
 	defer s.sysSessionPool().Put(tmp)
 
-	recordSets, err := se.Execute(sql)
+	recordSets, err := se.Execute(goCtx, sql)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -694,12 +705,11 @@ func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt as
 	return recordSets, nil
 }
 
-func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
-	span := opentracing.StartSpan("session.Execute")
+func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.RecordSet, err error) {
+	span, goCtx1 := opentracing.StartSpanFromContext(goCtx, "session.Execute")
 	defer span.Finish()
-	goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
-	s.goCtx, s.cancelFunc = goctx.WithCancel(goCtx)
 
+	s.goCtx, s.cancelFunc = goctx.WithCancel(goCtx1)
 	s.PrepareTxnCtx(s.goCtx)
 	var (
 		cacheKey      kvcache.Key
@@ -723,6 +733,7 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 			Plan:       cacheValue.(*plan.SQLCacheValue).Plan,
 			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
 			Text:       stmtNode.Text(),
+			ReadOnly:   ast.IsReadOnly(stmtNode),
 		}
 
 		s.PrepareTxnCtx(s.goCtx)
@@ -1114,7 +1125,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 15
+	currentBootstrapVersion = 16
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
