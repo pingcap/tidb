@@ -90,6 +90,10 @@ func (s *testSuite) TestPrepared(c *C) {
 		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
 		c.Assert(plan.ErrUnknownColumn.Equal(err), IsTrue)
 
+		tk.MustExec("drop table prepare_test")
+		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
+		c.Assert(plan.ErrSchemaChanged.Equal(err), IsTrue)
+
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")
 		tk.MustExec("create table prepare3 (a decimal(1))")

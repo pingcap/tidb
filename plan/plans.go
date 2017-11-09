@@ -119,6 +119,8 @@ func (e *Execute) optimizePreparedPlan(ctx context.Context, is infoschema.InfoSc
 		vars.PreparedParams[i] = val
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		// If the schema version has changed we need to preprocess it again,
+		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(ctx, prepared.Stmt, is, true)
 		if err != nil {
 			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())

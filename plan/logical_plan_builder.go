@@ -151,7 +151,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 				col.DBName = model.NewCIStr("")
 			}
 		}
-		// duplicate column name in one table is not allowed.
+		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
 		dupNames := make(map[string]struct{}, len(p.Schema().Columns))
 		for _, col := range p.Schema().Columns {
@@ -1386,7 +1386,6 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 						Table:  col.TblName,
 						Name:   col.ColName,
 					}}
-				ast.SetFlag(colName)
 				colName.SetType(col.GetType())
 				field := &ast.SelectField{Expr: colName}
 				field.SetText(col.ColName.O)

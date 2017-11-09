@@ -45,13 +45,6 @@ type preprocessor struct {
 	inPrepare bool
 	// When visiting create/drop table statement.
 	inCreateOrDropTable bool
-	/* For Select Statement. */
-	// table map to lookup and check table name conflict.
-	tableMap map[string]int
-	// table map to lookup and check derived-table(subselect) name conflict.
-	derivedTableMap map[string]int
-	// tables indicates tableSources collected in from clause.
-	tables []*ast.TableSource
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -75,10 +68,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.SelectStmt, *ast.InsertStmt, *ast.UpdateStmt, *ast.UnionStmt, *ast.DeleteStmt:
-		p.tableMap = map[string]int{}
-		p.derivedTableMap = map[string]int{}
-		p.tables = make([]*ast.TableSource, 0)
 	case *ast.DeleteTableList:
 		return in, true
 	}
@@ -111,12 +100,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if !valid {
 			p.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
 		}
-	case *ast.SelectStmt, *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
-		p.tableMap = map[string]int{}
 	case *ast.TableName:
 		p.handleTableName(x)
-	case *ast.TableSource:
-		p.handleTableSource(x)
 	}
 
 	return in, p.err == nil
@@ -538,35 +523,4 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			break
 		}
 	}
-}
-
-// handleTableSource checks origin TableSource names duplication.
-// Note:
-// "select * from t as a join (select 1) as a;" is not duplicate.
-// "select * from t as a join t as a;" is duplicate.
-// "select * from (select 1) as a join (select 1) as a;" is duplicate.
-func (p *preprocessor) handleTableSource(ts *ast.TableSource) {
-	switch ts.Source.(type) {
-	case *ast.TableName:
-		var name string
-		if ts.AsName.L != "" {
-			name = ts.AsName.L
-		} else {
-			tableName := ts.Source.(*ast.TableName)
-			name = p.tableUniqueName(tableName.Schema, tableName.Name)
-		}
-		if _, ok := p.tableMap[name]; ok {
-			p.err = errors.Errorf("duplicated table/alias name %s", name)
-			return
-		}
-		p.tableMap[name] = len(p.tables)
-	case *ast.SelectStmt:
-		name := ts.AsName.L
-		if _, ok := p.derivedTableMap[name]; ok {
-			p.err = errors.Errorf("duplicated table/alias name %s", name)
-			return
-		}
-		p.derivedTableMap[name] = len(p.tables)
-	}
-	p.tables = append(p.tables, ts)
 }

@@ -1659,6 +1659,8 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"select a from t having t11.c1 < t.a", true, false, "[plan:1054]Unknown column 't11.c1' in 'having clause'"},
 		{"select a from t where t.a < t.a order by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'order clause'"},
 		{"select a from t group by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'group statement'"},
+		{"delete a from (select * from t ) as a, t", true, false, "[optimizer:1288]The target table a of the DELETE is not updatable"},
+		{"delete b from (select * from t ) as a, t", true, false, "[plan:1109]Unknown table 'b' in MULTI DELETE"},
 	}
 
 	for _, t := range tests {
