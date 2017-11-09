@@ -149,11 +149,15 @@ func (e *SetExecutor) executeSet() error {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return errors.Trace(err)
 			}
-			valStr, err := value.ToString()
+			var valStr string
 			if value.IsNull() {
 				valStr = "NULL"
-			} else if err != nil {
-				log.Warnf("[CAN BE IGNORED]The value of set system variable cannot be converted to string, details: [%s]", errors.Trace(err).Error())
+			} else {
+				var err error
+				valStr, err = value.ToString()
+				if err != nil {
+					log.Warnf("[CAN BE IGNORED]The value of set system variable cannot be converted to string, details: [%s]", errors.Trace(err).Error())
+				}
 			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
