@@ -32,45 +32,56 @@ type Chunk struct {
 	columns []*column
 }
 
-// AddFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
-func (c *Chunk) AddFixedLenColumn(elemLen, initCap int) {
+const initialCapacity = 32
+
+// NewChunk creates a new chunk with field types.
+func NewChunk(fields []*types.FieldType) *Chunk {
+	chk := new(Chunk)
+	for _, f := range fields {
+		chk.addColumnByFieldType(f, initialCapacity)
+	}
+	return chk
+}
+
+// addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
+func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
 	c.columns = append(c.columns, &column{
 		elemBuf: make([]byte, elemLen),
 		data:    make([]byte, 0, initCap),
 	})
 }
 
-// AddVarLenColumn adds a variable length column with initial data capacity.
-func (c *Chunk) AddVarLenColumn(initCap int) {
+// addVarLenColumn adds a variable length column with initial data capacity.
+func (c *Chunk) addVarLenColumn(initCap int) {
 	c.columns = append(c.columns, &column{
 		offsets: []int32{0},
 		data:    make([]byte, 0, initCap),
 	})
 }
 
-// AddInterfaceColumn adds an interface column which holds element as interface.
-func (c *Chunk) AddInterfaceColumn() {
+// addInterfaceColumn adds an interface column which holds element as interface.
+func (c *Chunk) addInterfaceColumn() {
 	c.columns = append(c.columns, &column{
 		ifaces: []interface{}{},
 	})
 }
 
-// AddColumnByFieldType adds a column by field type.
-func (c *Chunk) AddColumnByFieldType(fieldTp byte, initCap int) {
-	switch fieldTp {
+// addColumnByFieldType adds a column by field type.
+func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
+	switch fieldTp.Tp {
 	case mysql.TypeFloat:
-		c.AddFixedLenColumn(4, initCap)
+		c.addFixedLenColumn(4, initCap)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeDouble:
-		c.AddFixedLenColumn(8, initCap)
+		c.addFixedLenColumn(8, initCap)
 	case mysql.TypeDuration:
-		c.AddFixedLenColumn(16, initCap)
+		c.addFixedLenColumn(16, initCap)
 	case mysql.TypeNewDecimal:
-		c.AddFixedLenColumn(types.MyDecimalStructSize, initCap)
+		c.addFixedLenColumn(types.MyDecimalStructSize, initCap)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeJSON:
-		c.AddInterfaceColumn()
+		c.addInterfaceColumn()
 	default:
-		c.AddVarLenColumn(initCap)
+		c.addVarLenColumn(initCap)
 	}
 }
 

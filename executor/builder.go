@@ -990,6 +990,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		columns:      ts.Columns,
 		priority:     b.priority,
 	}
+	e.baseExecutor.supportChk = true
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
@@ -1183,7 +1184,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.ToFieldTypes(), builder.ctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1207,7 +1208,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.ToFieldTypes(), builder.ctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

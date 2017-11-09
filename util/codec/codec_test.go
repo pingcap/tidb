@@ -907,7 +907,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 	chk := new(chunk.Chunk)
 	var datums []types.Datum
 	for _, t := range table {
-		chk.AddColumnByFieldType(t.tp.Tp, 0)
+		chk.addColumnByFieldType(t.tp, 0)
 		datums = append(datums, types.NewDatum(t.value))
 	}
 

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -454,6 +455,11 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// Read implements the Executor Read interface.
+func (e *TableReaderExecutor) Read(chk *chunk.Chunk) error {
+	return e.result.Read(chk)
+}
+
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
 	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
@@ -470,7 +476,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.ToFieldTypes(), e.ctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -553,6 +559,11 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// Read implements the Executor Read interface.
+func (e *IndexReaderExecutor) Read(chk *chunk.Chunk) error {
+	return e.result.Read(chk)
+}
+
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open() error {
 	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader.Open")
@@ -573,7 +584,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.ToFieldTypes(), e.ctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -635,7 +646,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, 1)
+	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.ctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return errors.Trace(err)
 	}
