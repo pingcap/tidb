@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -155,9 +156,7 @@ func (e *SetExecutor) executeSet() error {
 			} else {
 				var err error
 				valStr, err = value.ToString()
-				if err != nil {
-					log.Warnf("[CAN BE IGNORED]The value of set system variable cannot be converted to string, details: [%s]", errors.Trace(err).Error())
-				}
+				terror.Log(errors.Trace(err))
 			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
