@@ -71,60 +71,68 @@ func (s *testSampleSuite) SetUpSuite(c *C) {
 	s.rs = rs
 }
 
-func (s *testSampleSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
+func (s *testSampleSuite) TestCollectColumnStats(c *C) {
 	builder := statistics.SampleBuilder{
-		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
-		RecordSet:     s.rs,
-		ColLen:        1,
-		PkID:          1,
-		MaxSampleSize: 10000,
-		MaxBucketSize: 256,
-		MaxSketchSize: 1000,
+		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+		RecordSet:       s.rs,
+		ColLen:          1,
+		PkID:            1,
+		MaxSampleSize:   10000,
+		MaxBucketSize:   256,
+		MaxFMSketchSize: 1000,
+		CMSketchWidth:   2048,
+		CMSketchDepth:   8,
 	}
 	s.rs.Close()
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(s.count))
-	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(6232))
+	c.Assert(collectors[0].FMSketch.NDV(), Equals, int64(6232))
+	c.Assert(collectors[0].CMSketch.TotalCount(), Equals, uint64(collectors[0].Count))
 	c.Assert(int64(pkBuilder.Count), Equals, int64(s.count))
 	c.Assert(pkBuilder.Hist().NDV, Equals, int64(s.count))
 }
 
 func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 	builder := statistics.SampleBuilder{
-		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
-		RecordSet:     s.rs,
-		ColLen:        2,
-		PkID:          -1,
-		MaxSampleSize: 1000,
-		MaxBucketSize: 256,
-		MaxSketchSize: 1000,
+		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+		RecordSet:       s.rs,
+		ColLen:          2,
+		PkID:            -1,
+		MaxSampleSize:   1000,
+		MaxBucketSize:   256,
+		MaxFMSketchSize: 1000,
+		CMSketchWidth:   2048,
+		CMSketchDepth:   8,
 	}
 	s.rs.Close()
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)
 	c.Assert(len(collectors), Equals, 2)
 	collectors[0].IsMerger = true
 	collectors[0].MergeSampleCollector(collectors[1])
-	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(9280))
+	c.Assert(collectors[0].FMSketch.NDV(), Equals, int64(9280))
 	c.Assert(len(collectors[0].Samples), Equals, 1000)
 	c.Assert(collectors[0].NullCount, Equals, int64(1000))
 	c.Assert(collectors[0].Count, Equals, int64(19000))
+	c.Assert(collectors[0].CMSketch.TotalCount(), Equals, uint64(collectors[0].Count))
 }
 
 func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 	builder := statistics.SampleBuilder{
-		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
-		RecordSet:     s.rs,
-		ColLen:        2,
-		PkID:          -1,
-		MaxSampleSize: 10000,
-		MaxBucketSize: 256,
-		MaxSketchSize: 1000,
+		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+		RecordSet:       s.rs,
+		ColLen:          2,
+		PkID:            -1,
+		MaxSampleSize:   10000,
+		MaxBucketSize:   256,
+		MaxFMSketchSize: 1000,
+		CMSketchWidth:   2048,
+		CMSketchDepth:   8,
 	}
 	s.rs.Close()
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)
 	for _, collector := range collectors {
@@ -132,7 +140,8 @@ func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 		s := statistics.SampleCollectorFromProto(p)
 		c.Assert(collector.Count, Equals, s.Count)
 		c.Assert(collector.NullCount, Equals, s.NullCount)
-		c.Assert(collector.Sketch.NDV(), Equals, s.Sketch.NDV())
+		c.Assert(collector.CMSketch.TotalCount(), Equals, s.CMSketch.TotalCount())
+		c.Assert(collector.FMSketch.NDV(), Equals, s.FMSketch.NDV())
 		c.Assert(len(collector.Samples), Equals, len(s.Samples))
 	}
 }
