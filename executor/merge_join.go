@@ -183,13 +183,12 @@ func (e *MergeJoinExec) doJoin() (err error) {
 			}
 		}
 
-		initLen := len(e.resultBuffer)
-		e.resultBuffer, err = e.resultGenerator.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
+		matched := false
+		e.resultBuffer, matched, err = e.resultGenerator.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if initLen == len(e.resultBuffer) {
+		if !matched {
 			e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)
 		}
 	}
