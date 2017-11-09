@@ -1096,6 +1096,9 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 
 // dataReaderBuilder build a executor.
 // The executor can be used to read data in the ranges which are constructed by datums.
+// Differences from executorBuilder:
+// 1. dataReaderBuilder calculate data range from argument, rather than plan.
+// 2. the result executor is already opened.
 type dataReaderBuilder struct {
 	plan.Plan
 	*executorBuilder
@@ -1104,30 +1107,28 @@ type dataReaderBuilder struct {
 func (builder *dataReaderBuilder) BuildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalIndexReader:
-		e := builder.executorBuilder.buildIndexReader(v)
-		return buildIndexReaderForDatums(goCtx, e, datums)
+		return builder.buildIndexReaderForDatums(goCtx, v, datums)
 	case *plan.PhysicalTableReader:
-		e := builder.executorBuilder.buildTableReader(v)
-		return buildTableReaderForDatums(goCtx, e, datums)
+		return builder.buildTableReaderForDatums(goCtx, v, datums)
 	case *plan.PhysicalIndexLookUpReader:
-		e := builder.executorBuilder.buildIndexLookUpReader(v)
-		return buildIndexLookUpReaderForDatums(goCtx, e, datums)
+		return builder.buildIndexLookUpReaderForDatums(goCtx, v, datums)
 	}
 	return nil, errors.New("should never run here")
 }
 
-func buildTableReaderForDatums(goCtx goctx.Context, e *TableReaderExecutor, datums [][]types.Datum) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
+	e := builder.executorBuilder.buildTableReader(v)
 	handles := make([]int64, 0, len(datums))
 	for _, datum := range datums {
 		handles = append(handles, datum[0].GetInt64())
 	}
-	return doRequestForHandles(goCtx, e, handles)
+	return builder.doRequestForHandles(goCtx, e, handles)
 }
 
-func doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
+func (builder *dataReaderBuilder) doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
 	sort.Sort(int64Slice(handles))
-	var builder requestBuilder
-	kvReq, err := builder.SetTableHandles(e.tableID, handles).
+	var b requestBuilder
+	kvReq, err := b.SetTableHandles(e.tableID, handles).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
@@ -1145,9 +1146,10 @@ func doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []
 	return e, nil
 }
 
-func buildIndexReaderForDatums(goCtx goctx.Context, e *IndexReaderExecutor, values [][]types.Datum) (Executor, error) {
-	var builder requestBuilder
-	kvReq, err := builder.SetIndexValues(e.tableID, e.index.ID, values).
+func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexReader, values [][]types.Datum) (Executor, error) {
+	e := builder.executorBuilder.buildIndexReader(v)
+	var b requestBuilder
+	kvReq, err := b.SetIndexValues(e.tableID, e.index.ID, values).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
@@ -1165,7 +1167,8 @@ func buildIndexReaderForDatums(goCtx goctx.Context, e *IndexReaderExecutor, valu
 	return e, nil
 }
 
-func buildIndexLookUpReaderForDatums(goCtx goctx.Context, e *IndexLookUpExecutor, values [][]types.Datum) (Executor, error) {
+func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader, values [][]types.Datum) (Executor, error) {
+	e := builder.executorBuilder.buildIndexLookUpReader(v)
 	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
 	if err != nil {
 		return nil, errors.Trace(err)

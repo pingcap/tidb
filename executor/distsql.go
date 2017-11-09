@@ -502,7 +502,7 @@ func startSpanFollowsContext(goCtx goctx.Context, operationName string) (opentra
 }
 
 // doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
-func (e *TableReaderExecutor) doRequestForHandles(goCtx goctx.Context, handles []int64) error {
+func doRequestForHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) error {
 	sort.Sort(int64Slice(handles))
 	var builder requestBuilder
 	kvReq, err := builder.SetTableHandles(e.tableID, handles).
@@ -530,7 +530,7 @@ func (e *TableReaderExecutor) doRequestForDatums(goCtx goctx.Context, datums [][
 	for _, datum := range datums {
 		handles = append(handles, datum[0].GetInt64())
 	}
-	return errors.Trace(e.doRequestForHandles(goCtx, handles))
+	return errors.Trace(doRequestForHandles(goCtx, e, handles))
 }
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
@@ -840,6 +840,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		return
 	}
 	defer terror.Call(e1.Close)
+
 	for {
 		var row Row
 		row, err = e1.Next()
