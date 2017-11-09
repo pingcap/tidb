@@ -2031,10 +2031,12 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 						tblName = tn.Schema.L + "." + tblName
 					}
 					if asName == tblName {
+						// check sql like: `delete a from (select * from t) as a, t`
 						b.err = ErrNonUpdatableTable.GenByArgs(tn.Name.O, "DELETE")
 						return nil
 					}
 				}
+				// check sql like: `delete b from (select * from t) as a, t`
 				b.err = ErrUnknownTable.GenByArgs(tn.Name.O, "MULTI DELETE")
 				return nil
 			}
