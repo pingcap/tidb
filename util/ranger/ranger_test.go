@@ -164,7 +164,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a in (1, 3, NULL, 2)",
 			accessConds: "[in(test.t.a, 1, 3, <nil>, 2)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-inf) [1,1] [2,2] [3,3]]",
+			resultStr:   "[[1,1] [2,2] [3,3]]",
 		},
 		{
 			exprStr:     `a IN (8,8,81,45)`,
@@ -266,16 +266,10 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
 		},
 		{
-			exprStr:     "a not in (NULL, 1, 2, 3)",
-			accessConds: "[not(in(test.t.a, <nil>, 1, 2, 3))]",
-			filterConds: "[]",
-			resultStr:   "[[-9223372036854775807,0] [4,+inf)]",
-		},
-		{
 			exprStr:     "a not in (1, 2, 3)",
 			accessConds: "[not(in(test.t.a, 1, 2, 3))]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,0] [4,+inf)]",
+			resultStr:   "[[-9223372036854775807,0] [4,+inf)]",
 		},
 	}
 
@@ -409,14 +403,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			exprStr:     `a in ('a') and b in ('1', 2.0, NULL)`,
 			accessConds: "[in(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
 			filterConds: "[]",
-			resultStr:   `[[a <nil>,a <nil>] [a 1,a 1] [a 2,a 2]]`,
+			resultStr:   `[[a 1,a 1] [a 2,a 2]]`,
 		},
 		{
 			indexPos:    1,
 			exprStr:     `c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)`,
 			accessConds: "[in(test.t.c, 1.1, 1, 1.1) in(test.t.a, 1, a, <nil>)]",
 			filterConds: "[]",
-			resultStr:   `[[1 <nil>,1 <nil>] [1 1,1 1] [1 a,1 a] [1.1 <nil>,1.1 <nil>] [1.1 1,1.1 1] [1.1 a,1.1 a]]`,
+			resultStr:   `[[1 1,1 1] [1 a,1 a] [1.1 1,1.1 1] [1.1 a,1.1 a]]`,
 		},
 		{
 			indexPos:    1,
@@ -427,17 +421,10 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			indexPos:    1,
-			exprStr:     "c not in (NULL, 1, 2, 3)",
-			accessConds: "[not(in(test.t.c, <nil>, 1, 2, 3))]",
-			filterConds: "[]",
-			resultStr:   "[(<nil> +inf,1 <nil>) (1 +inf,2 <nil>) (2 +inf,3 <nil>) (3 +inf,+inf +inf]]",
-		},
-		{
-			indexPos:    1,
 			exprStr:     "c not in (1, 2, 3)",
 			accessConds: "[not(in(test.t.c, 1, 2, 3))]",
 			filterConds: "[]",
-			resultStr:   "[[<nil> <nil>,1 <nil>) (1 +inf,2 <nil>) (2 +inf,3 <nil>) (3 +inf,+inf +inf]]",
+			resultStr:   "[(<nil> +inf,1 <nil>) (1 +inf,2 <nil>) (2 +inf,3 <nil>) (3 +inf,+inf +inf]]",
 		},
 	}
 
@@ -599,7 +586,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			exprStr:     "a in (1, 3, NULL, 2)",
 			accessConds: "[in(test.t.a, 1, 3, <nil>, 2)]",
 			filterConds: "[]",
-			resultStr:   "[[<nil>,<nil>] [1,1] [2,2] [3,3]]",
+			resultStr:   "[[1,1] [2,2] [3,3]]",
 		},
 		{
 			colPos:      0,

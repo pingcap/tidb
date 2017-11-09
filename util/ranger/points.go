@@ -298,6 +298,9 @@ func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 			r.err = ErrUnsupportedType.Gen("expr:%v is not evaluated", e)
 			return fullRange
 		}
+		if dt.IsNull() {
+			continue
+		}
 		startPoint := point{value: types.NewDatum(dt.GetValue()), start: true}
 		endPoint := point{value: types.NewDatum(dt.GetValue())}
 		rangePoints = append(rangePoints, startPoint, endPoint)
@@ -414,8 +417,6 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 			retRangePoints = append(retRangePoints, point{value: rangePoints[i].value, excl: true})
 			previousValue = rangePoints[i].value
 		}
-		// The first element is NULL and should not be excluded.
-		retRangePoints[0].excl = false
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})
 		retRangePoints = append(retRangePoints, point{value: types.MaxValueDatum()})

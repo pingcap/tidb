@@ -904,6 +904,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
 // a in (b, c, d) will be rewritten as `(a = b) or (a = c) or (a = d)`.
+// a not in (cast(NULL as signed), b, c) will convert to NULL for simplification.
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := getRowLen(er.ctxStack[stkLen-lLen-1])
@@ -927,12 +928,27 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			}
 		}
 	}
-	allSameType := true
+	allSameType, hasNull := true, false
 	for _, arg := range args[1:] {
-		if arg.GetType().Tp != mysql.TypeNull && expression.GetAccurateCmpType(args[0], arg) != leftEt {
+		if arg.GetType().Tp == mysql.TypeNull {
+			hasNull = true
+			continue
+		} else if c, ok := arg.(*expression.Constant); ok {
+			d, err := c.Eval(nil)
+			if err == nil && d.IsNull() {
+				hasNull = true
+				continue
+			}
+		}
+		if expression.GetAccurateCmpType(args[0], arg) != leftEt {
 			allSameType = false
 			break
 		}
+	}
+	if hasNull && not {
+		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
+		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
+		return
 	}
 	var function expression.Expression
 	if allSameType && l == 1 {
