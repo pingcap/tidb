@@ -432,6 +432,11 @@ func (m SQLMode) HasPipesAsConcatMode() bool {
 	return m&ModePipesAsConcat == ModePipesAsConcat
 }
 
+// HasNoUnsignedSubtractionMode detects if 'NO_UNSIGNED_SUBTRACTION' mode is set in SQLMode
+func (m SQLMode) HasNoUnsignedSubtractionMode() bool {
+	return m&ModeNoUnsignedSubtraction == ModeNoUnsignedSubtraction
+}
+
 // HasHighNotPrecedenceMode detects if 'HIGH_NOT_PRECEDENCE' mode is set in SQLMode
 func (m SQLMode) HasHighNotPrecedenceMode() bool {
 	return m&ModeHighNotPrecedence == ModeHighNotPrecedence
