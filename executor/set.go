@@ -153,7 +153,7 @@ func (e *SetExecutor) executeSet() error {
 			if value.IsNull() {
 				valStr = "NULL"
 			} else if err != nil {
-				log.Warnf(errors.Trace(err).Error())
+				log.Warnf("[CAN BE IGNORED]The value of set system variable cannot be converted to string, details: [%s]", errors.Trace(err).Error())
 			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
