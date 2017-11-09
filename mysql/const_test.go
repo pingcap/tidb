@@ -149,6 +149,25 @@ func (s *testMySQLConstSuite) TestRealAsFloatMode(c *C) {
 	c.Assert(row[1], Equals, "float")
 }
 
+func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
+	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
+	r.Check(testkit.Rows("-1"))
+	rs, _ := tk.Exec("SELECT CAST(18446744073709551615 as UNSIGNED) - 1;")
+	_, err := tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	rs, _ = tk.Exec("SELECT CAST(-1 as UNSIGNED) - 1")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	rs, _ = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 1")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+}
+
 func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
