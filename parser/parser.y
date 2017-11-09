@@ -323,6 +323,7 @@ import (
 	only		"ONLY"
 	password	"PASSWORD"
 	partitions	"PARTITIONS"
+	pipesAsOr
 	plugins		"PLUGINS"
 	prepare		"PREPARE"
 	privileges	"PRIVILEGES"
@@ -433,8 +434,6 @@ import (
 	nulleq		"<=>"
 	paramMarker	"?"
 	rsh		">>"
-
-%token<ident> pipesAsOr
 
 %type	<expr>
 	Expression			"expression"
