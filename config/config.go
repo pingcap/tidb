@@ -136,12 +136,12 @@ type OpenTracingReporter struct {
 }
 
 var defaultConf = Config{
-	Host:   "0.0.0.0",
-	Port:   4000,
-	Store:  "mocktikv",
-	Path:   "/tmp/tidb",
-	RunDDL: true,
-	Lease:  "10s",
+	Host:       "0.0.0.0",
+	Port:       4000,
+	Store:      "mocktikv",
+	Path:       "/tmp/tidb",
+	RunDDL:     true,
+	Lease:      "10s",
 	TokenLimit: 1000,
 	Log: Log{
 		Level:  "info",
