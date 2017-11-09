@@ -86,6 +86,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(job.RowCount, Equals, rowCount)
 			c.Assert(d.reorgCtx.rowCount, Equals, int64(0))
 
+			// Test whether reorgInfo's Handle is update.
 			err = ctx.Txn().Commit(goctx.Background())
 			c.Assert(err, IsNil)
 			err = ctx.NewTxn()

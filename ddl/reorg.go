@@ -38,7 +38,7 @@ type reorgCtx struct {
 	rowCount int64
 	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
 	notifyCancelReorgJob chan struct{}
-	// doneHandle is used to simulate the handle that is processed.
+	// doneHandle is used to simulate the handle that has been processed.
 	doneHandle int64
 }
 
