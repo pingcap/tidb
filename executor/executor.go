@@ -684,6 +684,7 @@ func (e *UnionExec) waitAllFinished() {
 }
 
 func (e *UnionExec) fetchData(idx int) {
+	batchSize := 128
 	defer e.wg.Done()
 	for {
 		result := &execResult{

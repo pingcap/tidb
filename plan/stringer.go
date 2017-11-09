@@ -48,7 +48,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		if x.SmallTable == 0 {
+		if x.SmallChildIdx == 0 {
 			str = "RightHashJoin{" + strings.Join(children, "->") + "}"
 		} else {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
