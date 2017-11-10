@@ -59,6 +59,9 @@ type Row interface {
 	// GetDatum returns a Datum with the colIdx and field type.
 	// This method is provided for convenience, direct type methods are preferred for better performance.
 	GetDatum(colIdx int, tp *FieldType) Datum
+
+	// IsNull returns if the value is null with the colIdx.
+	IsNull(colIdx int) bool
 }
 
 var _ Row = DatumRow{}
@@ -182,4 +185,9 @@ func (dr DatumRow) GetJSON(colIdx int) (json.JSON, bool) {
 // GetDatum implements Row interface.
 func (dr DatumRow) GetDatum(colIdx int, tp *FieldType) Datum {
 	return dr[colIdx]
+}
+
+// IsNull implements Row interface.
+func (dr DatumRow) IsNull(colIdx int) bool {
+	return dr[colIdx].IsNull()
 }
