@@ -86,7 +86,7 @@ type IndexLookUpJoin struct {
 	baseExecutor
 
 	outerExec        Executor
-	innerExec        DataReader
+	innerExecBuilder *dataReaderBuilder
 	outerKeys        []*expression.Column
 	innerKeys        []*expression.Column
 	outerFilter      expression.CNFExprs
@@ -129,7 +129,7 @@ func (e *IndexLookUpJoin) Close() error {
 
 	// release all resource references.
 	e.outerExec = nil
-	e.innerExec = nil
+	e.innerExecBuilder = nil
 	e.outerKeys = nil
 	e.innerKeys = nil
 	e.outerFilter = nil
@@ -262,16 +262,16 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
-	if err := e.innerExec.doRequestForDatums(e.ctx.GoCtx(), requestRows); err != nil {
+	innerExec, err := e.innerExecBuilder.buildExecutorForDatums(e.ctx.GoCtx(), requestRows)
+	if err != nil {
 		return errors.Trace(err)
 	}
-
-	defer terror.Call(e.innerExec.Close)
+	defer terror.Call(innerExec.Close)
 
 	for {
-		innerRow, err := e.innerExec.Next()
-		if err != nil {
-			return errors.Trace(err)
+		innerRow, err1 := innerExec.Next()
+		if err1 != nil {
+			return errors.Trace(err1)
 		} else if innerRow == nil {
 			break
 		}
@@ -298,7 +298,6 @@ func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 		innerJoinKey = innerJoinKey[len(innerJoinKey):]
 	}
 
-	var err error
 	e.innerOrderedRows.keys, err = e.constructJoinKeys(innerJoinKeys)
 	if err != nil {
 		return errors.Trace(err)
