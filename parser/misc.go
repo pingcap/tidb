@@ -103,7 +103,7 @@ func init() {
 	initTokenByte('?', paramMarker)
 	initTokenByte('=', eq)
 
-	initTokenString("||", oror)
+	initTokenString("||", pipes)
 	initTokenString("&&", andand)
 	initTokenString("&^", andnot)
 	initTokenString(":=", assignmentEq)

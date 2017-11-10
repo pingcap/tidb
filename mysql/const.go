@@ -427,6 +427,11 @@ func (m SQLMode) HasStrictMode() bool {
 	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
 }
 
+// HasPipesAsConcatMode detects if 'PIPES_AS_CONCAT' mode is set in SQLMode
+func (m SQLMode) HasPipesAsConcatMode() bool {
+	return m&ModePipesAsConcat == ModePipesAsConcat
+}
+
 // HasNoUnsignedSubtractionMode detects if 'NO_UNSIGNED_SUBTRACTION' mode is set in SQLMode
 func (m SQLMode) HasNoUnsignedSubtractionMode() bool {
 	return m&ModeNoUnsignedSubtraction == ModeNoUnsignedSubtraction
