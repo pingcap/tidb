@@ -67,10 +67,12 @@ type IndexLookUpJoin struct {
 	defaultValues   []types.Datum
 	outer           bool
 	batchSize       int
+	curBatchSize    int
 }
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpJoin) Open() error {
+	e.curBatchSize = 32
 	e.cursor = 0
 	e.exhausted = false
 	return errors.Trace(e.children[0].Open())
@@ -92,11 +94,15 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 		if e.exhausted {
 			return nil, nil
 		}
+		e.curBatchSize *= 2
+		if e.curBatchSize > e.batchSize {
+			e.curBatchSize = e.batchSize
+		}
 		e.outerRows = e.outerRows[:0]
 		e.innerRows = e.innerRows[:0]
 		e.resultRows = e.resultRows[:0]
 		e.innerDatums = e.innerDatums[:0]
-		for i := 0; i < e.batchSize; i++ {
+		for i := 0; i < e.curBatchSize; i++ {
 			outerRow, err := e.children[0].Next()
 			if err != nil {
 				return nil, errors.Trace(err)
