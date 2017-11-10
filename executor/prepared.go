@@ -138,13 +138,10 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.ResolveName(stmt, e.IS, e.Ctx)
+	err = plan.Preprocess(e.Ctx, stmt, e.IS, true)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
-	}
-	if result, ok := stmt.(ast.ResultSetNode); ok {
-		e.Fields = result.GetResultFields()
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -163,7 +160,7 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
-	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
+	err = plan.Preprocess(e.Ctx, stmt, e.IS, true)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return

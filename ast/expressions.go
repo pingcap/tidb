@@ -281,16 +281,6 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SetResultFields implements ResultSetNode interface.
-func (n *SubqueryExpr) SetResultFields(rfs []*ResultField) {
-	n.Query.SetResultFields(rfs)
-}
-
-// GetResultFields implements ResultSetNode interface.
-func (n *SubqueryExpr) GetResultFields() []*ResultField {
-	return n.Query.GetResultFields()
-}
-
 // CompareSubqueryExpr is the expression for "expr cmp (select ...)".
 // See https://dev.mysql.com/doc/refman/5.7/en/comparisons-using-subqueries.html
 // See https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
@@ -355,6 +345,20 @@ func (n *ColumnName) String() string {
 		result = n.Schema.L + "." + result
 	}
 	return result
+}
+
+// OrigColName returns the full original column name.
+func (n *ColumnName) OrigColName() (ret string) {
+	ret = n.Name.O
+	if n.Table.O == "" {
+		return
+	}
+	ret = n.Table.O + "." + ret
+	if n.Schema.O == "" {
+		return
+	}
+	ret = n.Schema.O + "." + ret
+	return
 }
 
 // ColumnNameExpr represents a column name expression.

@@ -165,8 +165,8 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
-		err = plan.ResolveName(stmts[0], is, ctx)
-
+		err = plan.Preprocess(ctx, stmts[0], is, false)
+		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 		var sel *plan.Selection
