@@ -457,3 +457,8 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	}
 	return d
 }
+
+// IsNull implements the types.Row interface.
+func (r Row) IsNull(colIdx int) bool {
+	return r.c.columns[colIdx].isNull(r.idx)
+}
