@@ -385,7 +385,7 @@ func peekUvarint(b []byte) (int, error) {
 	return n, nil
 }
 
-// DeocodeOneToChunk decodes one value to chunk and returns the remained bytes.
+// DecodeOneToChunk decodes one value to chunk and returns the remained bytes.
 func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) (remain []byte, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
