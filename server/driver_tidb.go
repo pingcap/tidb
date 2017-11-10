@@ -292,13 +292,13 @@ type tidbResultSet struct {
 	recordSet ast.RecordSet
 }
 
-func (trs *tidbResultSet) Next() ([]types.Datum, error) {
+func (trs *tidbResultSet) Next() (types.Row, error) {
 	row, err := trs.recordSet.Next()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if row != nil {
-		return row.Data, nil
+		return types.DatumRow(row.Data), nil
 	}
 	return nil, nil
 }

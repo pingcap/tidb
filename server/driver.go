@@ -121,6 +121,6 @@ type PreparedStatement interface {
 // ResultSet is the result set of an query.
 type ResultSet interface {
 	Columns() ([]*ColumnInfo, error)
-	Next() ([]types.Datum, error)
+	Next() (types.Row, error)
 	Close() error
 }
