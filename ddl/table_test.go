@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -177,7 +177,7 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID)
+	alloc := autoid.NewAllocator(d.store, tblInfo.OldSchemaID, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)

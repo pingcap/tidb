@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -37,8 +37,8 @@ type task interface {
 	invalid() bool
 }
 
-// TODO: In future, we should split copTask to indexTask and tableTask.
 // copTask is a task that runs in a distributed kv store.
+// TODO: In future, we should split copTask to indexTask and tableTask.
 type copTask struct {
 	indexPlan PhysicalPlan
 	tablePlan PhysicalPlan
@@ -168,7 +168,7 @@ func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 
 func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 	smallTableCnt := lCnt
-	if p.SmallTable == 1 {
+	if p.SmallChildIdx == 1 {
 		smallTableCnt = rCnt
 	}
 	if smallTableCnt <= 1 {

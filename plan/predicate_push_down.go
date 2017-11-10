@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 type ppdSolver struct{}
@@ -55,9 +55,7 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]exp
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if UseDAGPlanBuilder(p.ctx) {
-		_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
-	}
+	_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
 	return predicates, p, nil
 }
 
@@ -325,22 +323,9 @@ func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	retPlan = p
-	var push []expression.Expression
+	var push = make([]expression.Expression, 0, p.Schema().Len())
 	for _, cond := range predicates {
-		canSubstitute := true
-		extractedCols := expression.ExtractColumns(cond)
-		for _, col := range extractedCols {
-			id := p.Schema().ColumnIndex(col)
-			if _, ok := p.Exprs[id].(*expression.ScalarFunction); ok {
-				canSubstitute = false
-				break
-			}
-		}
-		if canSubstitute {
-			push = append(push, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
-		} else {
-			ret = append(ret, cond)
-		}
+		push = append(push, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
 	}
 	child := p.children[0].(LogicalPlan)
 	restConds, _, err1 := child.PredicatePushDown(push)

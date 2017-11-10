@@ -113,6 +113,9 @@ type ExecStmt struct {
 	ctx            context.Context
 	startTime      time.Time
 	isPreparedStmt bool
+
+	// ReadOnly represents the statement is read-only.
+	ReadOnly bool
 }
 
 // OriginText implements ast.Statement interface.
@@ -123,6 +126,11 @@ func (a *ExecStmt) OriginText() string {
 // IsPrepared implements ast.Statement interface.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
+}
+
+// IsReadOnly implements ast.Statement interface.
+func (a *ExecStmt) IsReadOnly() bool {
+	return a.ReadOnly
 }
 
 // Exec implements the ast.Statement Exec interface.

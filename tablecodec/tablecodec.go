@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -336,46 +336,6 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 	return row, nil
 }
 
-// CutRow cuts encoded row into byte slices and return interested columns' byte slice.
-// Row layout: colID1, value1, colID2, value2, .....
-func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, error) {
-	if data == nil {
-		return nil, nil
-	}
-	if len(data) == 1 && data[0] == codec.NilFlag {
-		return nil, nil
-	}
-	row := make(map[int64][]byte, len(cols))
-	cnt := 0
-	var (
-		b   []byte
-		err error
-	)
-	for len(data) > 0 && cnt < len(cols) {
-		// Get col id.
-		b, data, err = codec.CutOne(data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		_, cid, err := codec.DecodeOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		// Get col value.
-		b, data, err = codec.CutOne(data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		id := cid.GetInt64()
-		_, ok := cols[id]
-		if ok {
-			row[id] = b
-			cnt++
-		}
-	}
-	return row, nil
-}
-
 // unflatten converts a raw datum to a column datum.
 func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	if datum.IsNull() {
@@ -441,12 +401,6 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 	key = codec.EncodeInt(key, idxID)
 	key = append(key, encodedValue...)
 	return key
-}
-
-// DecodeIndexKey decodes datums from an index key.
-func DecodeIndexKey(key kv.Key) ([]types.Datum, error) {
-	b := key[prefixLen+idLen:]
-	return codec.Decode(b, 1)
 }
 
 // CutIndexKey cuts encoded index key into colIDs to bytes slices map.

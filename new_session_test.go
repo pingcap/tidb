@@ -36,11 +36,11 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -290,7 +290,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.Execute("create table retrytxn (a int unique, b int)")
+	tk.MustExec("create table retrytxn (a int unique, b int)")
 	tk.MustExec("insert retrytxn values (1, 1)")
 	tk.MustExec("begin")
 	tk.MustExec("update retrytxn set b = b + 1 where a = 1")
@@ -671,9 +671,8 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(id TEXT)")
 	tk.MustExec(`INSERT INTO t VALUES ("id");`)
-	id, ps, fields, err := tk.Se.PrepareStmt("select id+? from t")
+	id, ps, _, err := tk.Se.PrepareStmt("select id+? from t")
 	c.Assert(err, IsNil)
-	c.Assert(fields, HasLen, 1)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)
@@ -857,9 +856,8 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		{"select /*!32301 1 + 1, */ +1;", "1 + 1"},
 	}
 	for _, tt := range tests {
-		results, err := tk.Se.Execute(tt.sql)
+		result, err := tk.Exec(tt.sql)
 		c.Assert(err, IsNil)
-		result := results[0]
 		fields, err := result.Fields()
 		c.Assert(err, IsNil)
 		c.Assert(fields[0].ColumnAsName.O, Equals, tt.field)

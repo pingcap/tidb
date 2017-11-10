@@ -138,13 +138,10 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.ResolveName(stmt, e.IS, e.Ctx)
+	err = plan.Preprocess(e.Ctx, stmt, e.IS, true)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
-	}
-	if result, ok := stmt.(ast.ResultSetNode); ok {
-		e.Fields = result.GetResultFields()
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -163,7 +160,7 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
-	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
+	err = plan.Preprocess(e.Ctx, stmt, e.IS, true)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -284,9 +281,16 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	readOnly := false
+	if execute, ok := execPlan.(*plan.Execute); ok {
+		readOnly = ast.IsReadOnly(execute.Stmt)
+	}
+
 	stmt := &ExecStmt{
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
+		ReadOnly:   readOnly,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
 		stmt.Text = prepared.Stmt.Text()

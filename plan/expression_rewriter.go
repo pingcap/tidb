@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -219,6 +220,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		if !ok {
 			er.err = errors.New("Can't appear aggrFunctions")
+			if er.b.curClause == groupByClause {
+				er.err = ErrInvalidGroupFuncUse
+			}
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
@@ -262,7 +266,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = errors.Trace(err)
 			return inNode, false
 		}
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, col.RetType, er.ctx))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(col.Index, col.RetType, er.ctx))
 		return inNode, true
 	default:
 		er.asScalar = true
@@ -882,7 +886,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 	if v.N > 0 && v.N <= er.schema.Len() {
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[v.N-1])
 	} else {
-		er.err = errors.Errorf("Position %d is out of range", v.N)
+		er.err = ErrUnknownColumn.GenByArgs(strconv.Itoa(v.N), clauseMsg[er.b.curClause])
 	}
 }
 
@@ -913,16 +917,23 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			return
 		}
 	}
-	leftArg := er.ctxStack[stkLen-lLen-1]
-	leftEt, leftIsNull := leftArg.GetType().EvalType(), leftArg.GetType().Tp == mysql.TypeNull
+	args := er.ctxStack[stkLen-lLen-1:]
+	leftEt, leftIsNull := args[0].GetType().EvalType(), args[0].GetType().Tp == mysql.TypeNull
 	if leftIsNull {
 		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
 		return
 	}
+	if leftEt == types.ETInt {
+		for i := 1; i < len(args); i++ {
+			if c, ok := args[i].(*expression.Constant); ok {
+				args[i] = expression.RefineConstantArg(er.ctx, c, opcode.EQ)
+			}
+		}
+	}
 	allSameType := true
-	for i := stkLen - lLen; i < stkLen; i++ {
-		if er.ctxStack[i].GetType().Tp != mysql.TypeNull && er.ctxStack[i].GetType().EvalType() != leftEt {
+	for _, arg := range args[1:] {
+		if arg.GetType().Tp != mysql.TypeNull && expression.GetAccurateCmpType(args[0], arg) != leftEt {
 			allSameType = false
 			break
 		}
@@ -933,7 +944,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	} else {
 		eqFunctions := make([]expression.Expression, 0, lLen)
 		for i := stkLen - lLen; i < stkLen; i++ {
-			expr, err := er.constructBinaryOpFunction(leftArg, er.ctxStack[i], ast.EQ)
+			expr, err := er.constructBinaryOpFunction(args[0], er.ctxStack[i], ast.EQ)
 			if err != nil {
 				er.err = err
 				return
@@ -1177,5 +1188,5 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	er.err = ErrUnknownColumn.GenByArgs(v.String(), "field list")
+	er.err = ErrUnknownColumn.GenByArgs(v.String(), clauseMsg[er.b.curClause])
 }

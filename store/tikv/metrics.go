@@ -164,6 +164,14 @@ var (
 			Help:      "Number of regions in a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
 		}, []string{"type"})
+
+	loadSafepointCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "load_safepoint_total",
+			Help:      "Counter of load safepoint.",
+		}, []string{"type"})
 )
 
 func reportRegionError(e *errorpb.Error) {
@@ -204,4 +212,5 @@ func init() {
 	prometheus.MustRegister(rawkvCmdHistogram)
 	prometheus.MustRegister(rawkvSizeHistogram)
 	prometheus.MustRegister(txnRegionsNumHistogram)
+	prometheus.MustRegister(loadSafepointCounter)
 }

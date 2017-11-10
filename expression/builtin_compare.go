@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -99,7 +99,7 @@ var (
 	_ builtinFunc = &builtinNullEQDurationSig{}
 )
 
-// Coalesce returns the first non-NULL value in the list,
+// coalesceFunctionClass returns the first non-NULL value in the list,
 // or NULL if there are no non-NULL values.
 type coalesceFunctionClass struct {
 	baseFunctionClass
@@ -201,6 +201,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	return sig, nil
 }
 
+// builtinCoalesceIntSig is buitin function coalesce signature which return type int
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
 	baseBuiltinFunc
@@ -217,6 +218,7 @@ func (b *builtinCoalesceIntSig) evalInt(row types.Row) (res int64, isNull bool, 
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceRealSig is buitin function coalesce signature which return type real
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
 	baseBuiltinFunc
@@ -233,6 +235,7 @@ func (b *builtinCoalesceRealSig) evalReal(row types.Row) (res float64, isNull bo
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceDecimalSig is buitin function coalesce signature which return type Decimal
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseBuiltinFunc
@@ -249,6 +252,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row types.Row) (res *types.MyDec
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceStringSig is buitin function coalesce signature which return type string
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
 	baseBuiltinFunc
@@ -265,6 +269,7 @@ func (b *builtinCoalesceStringSig) evalString(row types.Row) (res string, isNull
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceTimeSig is buitin function coalesce signature which return type time
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
 	baseBuiltinFunc
@@ -281,6 +286,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row types.Row) (res types.Time, isNull
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceDurationSig is buitin function coalesce signature which return type duration
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
 	baseBuiltinFunc
@@ -312,7 +318,7 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
-// getCmp4MinMax gets compare type for GREATEST and LEAST.
+// getCmpTp4MinMax gets compare type for GREATEST and LEAST.
 func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
 	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
@@ -744,6 +750,7 @@ func (b *builtinIntervalIntSig) evalInt(row types.Row) (int64, bool, error) {
 	return int64(idx), err != nil, errors.Trace(err)
 }
 
+// binSearch is a binary search method.
 // All arguments are treated as integers.
 // It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
 // This is because a binary search is used (very fast).
@@ -847,9 +854,9 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	return types.ETReal
 }
 
-// getAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
+// GetAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
 // getBaseCmpType does.
-func getAccurateCmpType(lhs, rhs Expression) types.EvalType {
+func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
@@ -939,8 +946,8 @@ func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 	}
 }
 
-// refineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func refineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
+// RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
+func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
 	sc := ctx.GetSessionVars().StmtCtx
 	dt, err := con.Eval(nil)
 	if err != nil {
@@ -987,12 +994,12 @@ func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression
 	arg1, arg1IsCon := args[1].(*Constant)
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1 = refineConstantArg(ctx, arg1, c.op)
+		arg1 = RefineConstantArg(ctx, arg1, c.op)
 		return []Expression{args[0], arg1}
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0 = refineConstantArg(ctx, arg0, symmetricOp[c.op])
+		arg0 = RefineConstantArg(ctx, arg0, symmetricOp[c.op])
 		return []Expression{arg0, args[1]}
 	}
 	return args
@@ -1004,12 +1011,12 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 		return nil, errors.Trace(err)
 	}
 	args := c.refineArgs(ctx, rawArgs)
-	cmpType := getAccurateCmpType(args[0], args[1])
+	cmpType := GetAccurateCmpType(args[0], args[1])
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
 	return sig, errors.Trace(err)
 }
 
-// genCmpSigs generates compare function signatures.
+// generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
 	bf.tp.Flen = 1

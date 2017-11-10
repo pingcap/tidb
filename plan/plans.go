@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // ShowDDL is for showing DDL information.
@@ -119,9 +119,9 @@ func (e *Execute) optimizePreparedPlan(ctx context.Context, is infoschema.InfoSc
 		vars.PreparedParams[i] = val
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
-		// If the schema version has changed we need to prepare it again,
+		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := PrepareStmt(is, ctx, prepared.Stmt)
+		err := Preprocess(ctx, prepared.Stmt, is, true)
 		if err != nil {
 			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
 		}
@@ -231,14 +231,12 @@ type AnalyzeColumnsTask struct {
 	TableInfo *model.TableInfo
 	PKInfo    *model.ColumnInfo
 	ColsInfo  []*model.ColumnInfo
-	PushDown  bool
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	TableInfo *model.TableInfo
 	IndexInfo *model.IndexInfo
-	PushDown  bool
 }
 
 // Analyze represents an analyze plan

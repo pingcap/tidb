@@ -16,10 +16,12 @@ package util
 import (
 	"encoding/hex"
 	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -42,7 +44,11 @@ func (t DelRangeTask) Range() ([]byte, []byte) {
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
 func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	sql := fmt.Sprintf(loadDeleteRangeSQL, safePoint)
-	rss, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
+	rss, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -78,7 +84,11 @@ func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeT
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx context.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	return errors.Trace(err)
 }
 
@@ -87,6 +97,10 @@ func UpdateDeleteRange(ctx context.Context, dr DelRangeTask, newStartKey, oldSta
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	goCtx := ctx.GoCtx()
+	if goCtx == nil {
+		goCtx = goctx.Background()
+	}
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	return errors.Trace(err)
 }

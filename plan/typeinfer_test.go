@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type typeInferTestCase struct {
@@ -123,7 +123,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		c.Assert(err, IsNil)
 
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmt, is, ctx)
+		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmt, is)
 		c.Assert(err, IsNil, comment)

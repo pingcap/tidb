@@ -18,7 +18,7 @@ package ast
 import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // Node is the basic element of the AST.
@@ -149,10 +149,6 @@ type RecordSet interface {
 // Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node
-	// GetResultFields gets result fields.
-	GetResultFields() []*ResultField
-	// SetResultFields sets result fields.
-	SetResultFields(fields []*ResultField)
 }
 
 // SensitiveStmtNode overloads StmtNode and provides a SecureText method.
@@ -176,6 +172,9 @@ type Statement interface {
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool
+
+	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
+	IsReadOnly() bool
 }
 
 // Visitor visits a Node.

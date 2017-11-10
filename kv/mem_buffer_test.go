@@ -118,14 +118,6 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 	iter.Close()
 }
 
-func mustNotGet(c *C, buffer MemBuffer) {
-	for i := startIndex; i < testCount; i++ {
-		s := encodeInt(i * indexStep)
-		_, err := buffer.Get(s)
-		c.Assert(err, NotNil)
-	}
-}
-
 func mustGet(c *C, buffer MemBuffer) {
 	for i := startIndex; i < testCount; i++ {
 		s := encodeInt(i * indexStep)

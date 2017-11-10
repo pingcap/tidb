@@ -171,7 +171,11 @@ func (h *Handle) LoadNeededHistograms() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, Count: int64(hg.totalRowCount())}
+		cms, err := h.cmSketchFromStorage(col.tableID, 0, col.columnID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, CMSketch: cms, Count: int64(hg.totalRowCount())}
 		h.UpdateTableStats([]*Table{tbl}, nil)
 		histogramNeededColumns.delete(col)
 	}
