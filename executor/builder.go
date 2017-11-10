@@ -893,25 +893,24 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRequest {
+func constructDAGReq(plans []plan.PhysicalPlan, startTS uint64, ctx context.Context) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
-	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.StartTs = startTS
+	dagReq.TimeZoneOffset = timeZoneOffset(ctx)
+	sc := ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	for _, p := range plans {
-		execPB, err := p.ToPB(b.ctx)
+		execPB, err := p.ToPB(ctx)
 		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
+			return nil, errors.Trace(err)
 		}
 		dagReq.Executors = append(dagReq.Executors, execPB)
 	}
-	return dagReq
+	return dagReq, nil
 }
 
-func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []types.IntColumnRange) {
-	sc := b.ctx.GetSessionVars().StmtCtx
+func constructTableRanges(ts *plan.PhysicalTableScan, ctx context.Context) (newRanges []types.IntColumnRange, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
 	newRanges = ranger.FullIntRange()
 	var pkCol *expression.Column
@@ -922,29 +921,29 @@ func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newR
 	}
 	if pkCol != nil {
 		var ranges []types.Range
-		ranges, b.err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
-		if b.err != nil {
-			return nil
+		ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		newRanges = ranger.Ranges2IntRanges(ranges)
 	}
-	return newRanges
+	return newRanges, nil
 }
 
-func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newRanges []*types.IndexRange) {
-	sc := b.ctx.GetSessionVars().StmtCtx
+func constructIndexRanges(is *plan.PhysicalIndexScan, ctx context.Context) (newRanges []*types.IndexRange, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
 	newRanges = ranger.FullIndexRange()
 	if len(idxCols) > 0 {
 		var ranges []types.Range
-		ranges, b.err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
-		if b.err != nil {
-			return nil
+		ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		newRanges = ranger.Ranges2IndexRanges(ranges)
 	}
-	return newRanges
+	return newRanges, nil
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
@@ -975,16 +974,16 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	}
 }
 
-func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
-	dagReq := b.constructDAGReq(v.TablePlans)
-	if b.err != nil {
-		return nil
+func buildTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
+	dagReq, err := constructDAGReq(v.TablePlans, b.getStartTS(), b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
-	newRanges := b.constructTableRanges(ts)
-	if b.err != nil {
-		return nil
+	newRanges, err := constructTableRanges(ts, b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
@@ -1003,18 +1002,26 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
-	return e
+	return e, nil
 }
 
-func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexReaderExecutor {
-	dagReq := b.constructDAGReq(v.IndexPlans)
-	if b.err != nil {
-		return nil
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
+	ret, err := buildTableReader(b, v)
+	if err != nil {
+		b.err = errors.Trace(err)
+	}
+	return ret
+}
+
+func buildIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexReaderExecutor, error) {
+	dagReq, err := constructDAGReq(v.IndexPlans, b.getStartTS(), b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	newRanges := b.constructIndexRanges(is)
-	if b.err != nil {
-		return nil
+	newRanges, err := constructIndexRanges(is, b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
@@ -1035,17 +1042,25 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
-	return e
+	return e, nil
 }
 
-func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
-	indexReq := b.constructDAGReq(v.IndexPlans)
-	if b.err != nil {
-		return nil
+func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexReaderExecutor {
+	ret, err := buildIndexReader(b, v)
+	if err != nil {
+		b.err = errors.Trace(err)
 	}
-	tableReq := b.constructDAGReq(v.TablePlans)
-	if b.err != nil {
-		return nil
+	return ret
+}
+
+func buildIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
+	indexReq, err := constructDAGReq(v.IndexPlans, b.getStartTS(), b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tableReq, err := constructDAGReq(v.TablePlans, b.getStartTS(), b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
@@ -1073,9 +1088,9 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
-	newRanges := b.constructIndexRanges(is)
-	if b.err != nil {
-		return nil
+	newRanges, err := constructIndexRanges(is, b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	ranges := make([]*types.IndexRange, 0, len(newRanges))
 	for _, rangeInPlan := range newRanges {
@@ -1099,7 +1114,15 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableReaderSchema: tableReaderSchema,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 	}
-	return e
+	return e, nil
+}
+
+func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
+	ret, err := buildIndexLookUpReader(b, v)
+	if err != nil {
+		b.err = err
+	}
+	return ret
 }
 
 // dataReaderBuilder build an executor.
@@ -1125,8 +1148,8 @@ func (builder *dataReaderBuilder) buildExecutorForDatums(goCtx goctx.Context, da
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
-	e := builder.executorBuilder.buildTableReader(v)
-	if err := builder.executorBuilder.err; err != nil {
+	e, err := buildTableReader(builder.executorBuilder, v)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	handles := make([]int64, 0, len(datums))
@@ -1158,8 +1181,8 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexReader, values [][]types.Datum) (Executor, error) {
-	e := builder.executorBuilder.buildIndexReader(v)
-	if err := builder.executorBuilder.err; err != nil {
+	e, err := buildIndexReader(builder.executorBuilder, v)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var b requestBuilder
@@ -1182,8 +1205,8 @@ func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context,
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader, values [][]types.Datum) (Executor, error) {
-	e := builder.executorBuilder.buildIndexLookUpReader(v)
-	if err := builder.executorBuilder.err; err != nil {
+	e, err := buildIndexLookUpReader(builder.executorBuilder, v)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
