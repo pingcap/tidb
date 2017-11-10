@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -219,6 +220,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		if !ok {
 			er.err = errors.New("Can't appear aggrFunctions")
+			if er.b.curClause == groupByClause {
+				er.err = ErrInvalidGroupFuncUse
+			}
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
@@ -262,7 +266,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = errors.Trace(err)
 			return inNode, false
 		}
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, col.RetType, er.ctx))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(col.Index, col.RetType, er.ctx))
 		return inNode, true
 	default:
 		er.asScalar = true
@@ -882,7 +886,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 	if v.N > 0 && v.N <= er.schema.Len() {
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[v.N-1])
 	} else {
-		er.err = errors.Errorf("Position %d is out of range", v.N)
+		er.err = ErrUnknownColumn.GenByArgs(strconv.Itoa(v.N), clauseMsg[er.b.curClause])
 	}
 }
 
@@ -1184,5 +1188,5 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	er.err = ErrUnknownColumn.GenByArgs(v.String(), "field list")
+	er.err = ErrUnknownColumn.GenByArgs(v.String(), clauseMsg[er.b.curClause])
 }
