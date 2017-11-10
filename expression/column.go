@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"strings"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -75,6 +76,10 @@ func (col *CorrelatedColumn) EvalString(row types.Row, sc *variable.StatementCon
 		return "", true, nil
 	}
 	res, err := col.Data.ToString()
+	resLen := len([]rune(res))
+	if resLen < col.RetType.Flen && sc.PadCharToFullLength {
+		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+	}
 	return res, err != nil, errors.Trace(err)
 }
 
@@ -238,9 +243,19 @@ func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (str
 			return "", true, nil
 		}
 		res, err := val.ToString()
+		resLen := len([]rune(res))
+		if resLen < col.RetType.Flen && sc.PadCharToFullLength {
+			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+		}
 		return res, err != nil, errors.Trace(err)
 	}
 	val, isNull := row.GetString(col.Index)
+	if !isNull && sc.PadCharToFullLength {
+		valLen := len([]rune(val))
+		if valLen < col.RetType.Flen && sc.PadCharToFullLength {
+			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
+		}
+	}
 	return val, isNull, nil
 }
 

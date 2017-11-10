@@ -191,3 +191,22 @@ func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
 	r.Check(testkit.Rows("1"))
 }
+
+func (s *testMySQLConstSuite) TestPadCharToFullLengthMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a char(10));")
+	tk.MustExec("insert into t1 values ('xy');")
+	tk.MustExec("set sql_mode='';")
+	r := tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
+	r.Check(testkit.Rows("0 2"))
+	r = tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
+	r.Check(testkit.Rows("0"))
+	tk.MustExec("set sql_mode='PAD_CHAR_TO_FULL_LENGTH';")
+	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
+	r.Check(testkit.Rows("1 10"))
+	//TODO: FIXME
+	// r := tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
+	// r.Check(testkit.Rows("0"))
+}
