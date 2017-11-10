@@ -87,7 +87,7 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	case types.KindFloat64:
 		x = new(types.MyDecimal)
 		err := x.FromFloat64(ctx.Value.GetFloat64())
-		terror.Log(err)
+		terror.Log(errors.Trace(err))
 	case types.KindMysqlDecimal:
 		x = ctx.Value.GetMysqlDecimal()
 	default:
