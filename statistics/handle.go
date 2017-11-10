@@ -21,7 +21,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -41,7 +41,7 @@ type Handle struct {
 	statsCache      atomic.Value
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
-	ddlEventCh chan *ddl.Event
+	ddlEventCh chan *util.Event
 	// analyzeResultCh is a channel to notify an analyze index or column operation has ended.
 	// We need this to avoid updating the stats simultaneously.
 	analyzeResultCh chan *AnalyzeResult
@@ -72,7 +72,7 @@ func (h *Handle) Clear() {
 func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ctx:             ctx,
-		ddlEventCh:      make(chan *ddl.Event, 100),
+		ddlEventCh:      make(chan *util.Event, 100),
 		analyzeResultCh: make(chan *AnalyzeResult, 100),
 		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:       make(tableDeltaMap),
@@ -171,7 +171,11 @@ func (h *Handle) LoadNeededHistograms() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, Count: int64(hg.totalRowCount())}
+		cms, err := h.cmSketchFromStorage(col.tableID, 0, col.columnID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, CMSketch: cms, Count: int64(hg.totalRowCount())}
 		h.UpdateTableStats([]*Table{tbl}, nil)
 		histogramNeededColumns.delete(col)
 	}

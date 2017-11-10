@@ -140,10 +140,18 @@ func (s *Scanner) Lex(v *yySymType) int {
 			tok = tok1
 		}
 	}
-	if (s.sqlMode&mysql.ModeANSIQuotes) > 0 &&
+	if s.sqlMode.HasANSIQuotesMode() &&
 		tok == stringLit &&
 		s.r.s[v.offset] == '"' {
 		tok = identifier
+	}
+
+	if tok == pipes && !(s.sqlMode.HasPipesAsConcatMode()) {
+		return pipesAsOr
+	}
+
+	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
+		return not2
 	}
 
 	switch tok {
@@ -174,6 +182,11 @@ func (s *Scanner) Lex(v *yySymType) int {
 // SetSQLMode sets the SQL mode for scanner.
 func (s *Scanner) SetSQLMode(mode mysql.SQLMode) {
 	s.sqlMode = mode
+}
+
+// GetSQLMode return the SQL mode of scanner.
+func (s *Scanner) GetSQLMode() mysql.SQLMode {
+	return s.sqlMode
 }
 
 // NewScanner returns a new scanner object.

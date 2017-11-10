@@ -22,13 +22,12 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // Error instances.
@@ -36,13 +35,15 @@ var (
 	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
-	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadTable])
+	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
 	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
 	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 	ErrViewSelectVariable   = terror.ClassDDL.New(codeViewSelectVariable, mysql.MySQLErrName[mysql.ErrViewSelectVariable])
+	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
+	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
 )
 
 // Error codes.
@@ -53,10 +54,12 @@ const (
 	CodeAnalyzeMissIndex                  = 4
 	CodeAmbiguous                         = 1052
 	CodeUnknownColumn                     = mysql.ErrBadField
-	CodeUnknownTable                      = mysql.ErrBadTable
+	CodeUnknownTable                      = mysql.ErrUnknownTable
 	CodeWrongArguments                    = 1210
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 	codeViewSelectVariable                = mysql.ErrViewSelectVariable
+	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
+	CodeBadTable                          = mysql.ErrBadTable
 )
 
 func init() {
@@ -67,6 +70,8 @@ func init() {
 		CodeWrongArguments:     mysql.ErrWrongArguments,
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
 		codeViewSelectVariable: mysql.ErrViewSelectVariable,
+		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
+		CodeBadTable:           mysql.ErrBadTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
@@ -118,6 +123,31 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 	return false
 }
 
+// clauseCode indicates in which clause the column is currently.
+type clauseCode int
+
+const (
+	unknowClause clauseCode = iota
+	fieldList
+	havingClause
+	onClause
+	orderByClause
+	whereClause
+	groupByClause
+	showStatement
+)
+
+var clauseMsg = map[clauseCode]string{
+	unknowClause:  "",
+	fieldList:     "field list",
+	havingClause:  "having clause",
+	onClause:      "on clause",
+	orderByClause: "order clause",
+	whereClause:   "where clause",
+	groupByClause: "group statement",
+	showStatement: "show statement",
+}
+
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
@@ -134,6 +164,8 @@ type planBuilder struct {
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
+
+	curClause clauseCode
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -252,7 +284,7 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
 	}
-	for _, f := range sel.GetResultFields() {
+	for _, f := range sel.Fields.Fields {
 		if ast.HasAggFlag(f.Expr) {
 			return true
 		}
@@ -430,15 +462,13 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
-	pushdownIdx := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx)
-	pushdownCol := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeCol)
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		for _, idx := range idxInfo {
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx, PushDown: pushdownIdx})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo, PushDown: pushdownCol})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
 		}
 	}
 	p.SetSchema(&expression.Schema{})
@@ -448,14 +478,13 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	tblInfo := as.TableNames[0].TableInfo
-	pushdown := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx)
 	for _, idxName := range as.IndexNames {
 		idx := findIndexByName(tblInfo.Indices, idxName)
 		if idx == nil || idx.State != model.StatePublic {
 			b.err = ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
 			break
 		}
-		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx, PushDown: pushdown})
+		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
 	}
 	p.SetSchema(&expression.Schema{})
 	return p
@@ -1027,40 +1056,27 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	}
 	setParents4FinalPlan(targetPlan.(PhysicalPlan))
 	p := &Explain{StmtPlan: targetPlan}
-	if UseDAGPlanBuilder(b.ctx) {
-		switch strings.ToLower(explain.Format) {
-		case ast.ExplainFormatROW:
-			retFields := []string{"id", "parents", "children", "task", "operator info"}
-			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-			for _, fieldName := range retFields {
-				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-			}
-			schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
-			p.SetSchema(schema)
-			p.explainedPlans = map[int]bool{}
-			p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
-		case ast.ExplainFormatDOT:
-			retFields := []string{"dot contents"}
-			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-			for _, fieldName := range retFields {
-				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-			}
-			p.SetSchema(schema)
-			p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
-		default:
-			b.err = errors.Errorf("explain format '%s' is not supported now", explain.Format)
+	switch strings.ToLower(explain.Format) {
+	case ast.ExplainFormatROW:
+		retFields := []string{"id", "parents", "children", "task", "operator info"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		for _, fieldName := range retFields {
+			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
 		}
-	} else {
-		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
-		schema.Append(buildColumn("", "ID", mysql.TypeString, mysql.MaxBlobWidth))
-		schema.Append(buildColumn("", "Json", mysql.TypeString, mysql.MaxBlobWidth))
-		schema.Append(buildColumn("", "ParentID", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
 		p.SetSchema(schema)
-		err := p.prepareExplainInfo(p.StmtPlan, nil)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
+		p.explainedPlans = map[int]bool{}
+		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+	case ast.ExplainFormatDOT:
+		retFields := []string{"dot contents"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		for _, fieldName := range retFields {
+			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
 		}
+		p.SetSchema(schema)
+		p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
+	default:
+		b.err = errors.Errorf("explain format '%s' is not supported now", explain.Format)
 	}
 	return p
 }

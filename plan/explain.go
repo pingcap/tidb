@@ -206,6 +206,7 @@ func (p *PhysicalApply) ExplainInfo() string {
 func (p *PhysicalIndexJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("outer:%s",
 		p.Children()[p.outerIndex].ExplainID()))
+	buffer.WriteString(fmt.Sprintf(", %s", p.JoinType))
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(fmt.Sprintf(", outer key:%s",
 			expression.ExplainColumnList(p.OuterJoinKeys)))
@@ -232,7 +233,7 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
-	buffer.WriteString(fmt.Sprintf(", small:%s", p.Children()[p.SmallTable].ExplainID()))
+	buffer.WriteString(fmt.Sprintf(", small:%s", p.Children()[p.SmallChildIdx].ExplainID()))
 	if len(p.EqualConditions) > 0 {
 		buffer.WriteString(fmt.Sprintf(", equal:%s", p.EqualConditions))
 	}
@@ -292,11 +293,6 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(fmt.Sprintf(", other cond:%s",
 			expression.ExplainExpressionList(p.OtherConditions)))
-	}
-	if p.Desc {
-		buffer.WriteString(", desc")
-	} else {
-		buffer.WriteString(", asc")
 	}
 	if len(p.leftKeys) > 0 {
 		buffer.WriteString(fmt.Sprintf(", left key:%s",

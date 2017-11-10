@@ -96,7 +96,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
 		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version", "replication", "slave", "client",
-		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections",
+		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -222,6 +222,11 @@ func (s *testParserSuite) TestSimple(c *C) {
 	for _, col := range ct.Cols {
 		c.Assert(col.Tp.Flag&mysql.UnsignedFlag, Equals, uint(0))
 	}
+
+	// for issue #4006
+	src = `insert into tb(v) (select v from tb);`
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 }
 
 type testCase struct {
@@ -1457,10 +1462,13 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (a timestamp default now())", true},
 		{"create table t (a timestamp default now() on update now)", false},
 		{"create table t (a timestamp default now() on update now())", true},
+		{"CREATE TABLE t (c TEXT) default CHARACTER SET utf8, default COLLATE utf8_general_ci;", true},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
 
 		// for alter table
+		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED)", true},
+		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED FIRST)", false},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
@@ -1499,6 +1507,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENGINE = ''", true},
 		{"ALTER TABLE t ENGINE = 'innodb'", true},
 		{"ALTER TABLE t ENGINE = innodb", true},
+		{"ALTER TABLE `db`.`t` ENGINE = ``", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, ADD COLUMN a SMALLINT", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT, ENGINE = '', default COLLATE = utf8_general_ci", true},
+		{"ALTER TABLE t ENGINE = '', COMMENT='', default COLLATE = utf8_general_ci", true},
+		{"ALTER TABLE t ENGINE = '', ADD COLUMN a SMALLINT", true},
+		{"ALTER TABLE t default COLLATE = utf8_general_ci, ENGINE = '', ADD COLUMN a SMALLINT", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -1656,6 +1670,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
 		{"GRANT SELECT ON test.* to 'test'", true},                                                                                                            // For issue 2654.
 		{"grant PROCESS,usage, REPLICATION SLAVE, REPLICATION CLIENT on *.* to 'xxxxxxxxxx'@'%' identified by password 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx'", true}, // For issue 4865
+		{"/* rds internal mark */ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, RELOAD, PROCESS, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES,      EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT,      TRIGGER on *.* to 'root2'@'%' identified by password '*sdsadsdsadssadsadsadsadsada' with grant option", true},
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},

@@ -72,9 +72,9 @@ type twoPhaseCommitter struct {
 	commitTS  uint64
 	mu        struct {
 		sync.RWMutex
-		writtenKeys  [][]byte
-		committed    bool
-		undetermined bool
+		writtenKeys     [][]byte
+		committed       bool
+		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
 	}
 	priority pb.CommandPri
 	syncLog  bool
@@ -345,7 +345,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -354,7 +354,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		prewriteResp := resp.Prewrite
 		if prewriteResp == nil {
-			return errors.Trace(errBodyMissing)
+			return errors.Trace(ErrBodyMissing)
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
@@ -386,7 +386,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			return errors.Trace(err)
 		}
 		if !ok {
-			err = bo.Backoff(boTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
+			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -418,6 +418,18 @@ func kvPriorityToCommandPri(pri int) pb.CommandPri {
 	return pb.CommandPri_Normal
 }
 
+func (c *twoPhaseCommitter) setUndeterminedErr(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mu.undeterminedErr = err
+}
+
+func (c *twoPhaseCommitter) getUndeterminedErr() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.mu.undeterminedErr
+}
+
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdCommit,
@@ -433,19 +445,20 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	}
 	req.Context.Priority = c.priority
 
+	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
+	resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+
 	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
 	// transaction has been successfully committed.
 	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
 	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
 	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
 	isPrimary := bytes.Equal(batch.keys[0], c.primary())
+	if isPrimary && sender.rpcError != nil {
+		c.setUndeterminedErr(errors.Trace(sender.rpcError))
+	}
 
-	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
-		if isPrimary {
-			// change the Cause of the error to be returned
-			return errors.Trace(errors.Wrap(err, terror.ErrResultUndetermined))
-		}
 		return errors.Trace(err)
 	}
 	regionErr, err := resp.GetRegionError()
@@ -453,7 +466,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -463,7 +476,12 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	}
 	commitResp := resp.Commit
 	if commitResp == nil {
-		return errors.Trace(errBodyMissing)
+		return errors.Trace(ErrBodyMissing)
+	}
+	// Here we can make sure tikv has processed the commit primary key request. So
+	// we can clean undetermined error.
+	if isPrimary {
+		c.setUndeterminedErr(nil)
 	}
 	if keyErr := commitResp.GetError(); keyErr != nil {
 		c.mu.RLock()
@@ -509,7 +527,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -548,7 +566,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		c.mu.RLock()
 		writtenKeys := c.mu.writtenKeys
 		committed := c.mu.committed
-		undetermined := c.mu.undetermined
+		undetermined := c.mu.undeterminedErr != nil
 		c.mu.RUnlock()
 		if !committed && !undetermined {
 			twoPhaseCommitGP.Go(func() {
@@ -615,8 +633,9 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 
 	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
 	if err != nil {
-		if errors.Cause(err) == terror.ErrResultUndetermined {
-			c.mu.undetermined = true
+		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
+			log.Warnf("2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", err, undeterminedErr, c.startTS)
+			err = errors.Wrap(err, terror.ErrResultUndetermined)
 		}
 		if !c.mu.committed {
 			log.Debugf("2PC failed on commit: %v, tid: %d", err, c.startTS)

@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // SchemaState is the state for schema elements.

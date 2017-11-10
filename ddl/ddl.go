@@ -28,6 +28,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -171,7 +172,7 @@ type DDL interface {
 	// Stop stops DDL worker.
 	Stop() error
 	// RegisterEventCh registers event channel for ddl.
-	RegisterEventCh(chan<- *Event)
+	RegisterEventCh(chan<- *util.Event)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager, and it's used for testing.
@@ -182,29 +183,6 @@ type DDL interface {
 	SetHook(h Callback)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
-}
-
-// Event is an event that a ddl operation happened.
-type Event struct {
-	Tp         model.ActionType
-	TableInfo  *model.TableInfo
-	ColumnInfo *model.ColumnInfo
-	IndexInfo  *model.IndexInfo
-}
-
-// String implements fmt.Stringer interface.
-func (e *Event) String() string {
-	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
-	if e.TableInfo != nil {
-		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
-	}
-	if e.ColumnInfo != nil {
-		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfo.ID, e.ColumnInfo.Name)
-	}
-	if e.IndexInfo != nil {
-		ret += fmt.Sprintf(", Index ID: %d, Index Name %s", e.IndexInfo.ID, e.IndexInfo.Name)
-	}
-	return ret
 }
 
 // ddl represents the statements which are used to define the database structure or schema.
@@ -222,34 +200,25 @@ type ddl struct {
 	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *Event
-
-	// reorgDoneCh is for reorganization, if the reorganization job is done,
-	// we will use this channel to notify outer.
-	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
-	// use a persistent job list.
-	reorgDoneCh chan error
-	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
-	reorgRowCount int64
-	// notifyCancelReorgJob is for reorganization, it used to notify the backfilling goroutine if the DDL job is cancelled.
-	notifyCancelReorgJob chan struct{}
+	ddlEventCh   chan<- *util.Event
+	// reorgCtx is for reorganization.
+	reorgCtx *reorgCtx
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
 
-	workerVars *variable.SessionVars
-
+	workerVars      *variable.SessionVars
 	delRangeManager delRangeManager
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
-func (d *ddl) RegisterEventCh(ch chan<- *Event) {
+func (d *ddl) RegisterEventCh(ch chan<- *util.Event) {
 	d.ddlEventCh = ch
 }
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func (d *ddl) asyncNotifyEvent(e *Event) {
+func (d *ddl) asyncNotifyEvent(e *util.Event) {
 	if d.ddlEventCh != nil {
 		if d.lease == 0 {
 			// If lease is 0, it's always used in test.
@@ -297,17 +266,17 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
-		infoHandle:           infoHandle,
-		hook:                 hook,
-		store:                store,
-		uuid:                 id,
-		lease:                lease,
-		ddlJobCh:             make(chan struct{}, 1),
-		ddlJobDoneCh:         make(chan struct{}, 1),
-		notifyCancelReorgJob: make(chan struct{}, 1),
-		ownerManager:         manager,
-		schemaSyncer:         syncer,
-		workerVars:           variable.NewSessionVars(),
+		infoHandle:   infoHandle,
+		hook:         hook,
+		store:        store,
+		uuid:         id,
+		lease:        lease,
+		ddlJobCh:     make(chan struct{}, 1),
+		ddlJobDoneCh: make(chan struct{}, 1),
+		reorgCtx:     &reorgCtx{notifyCancelReorgJob: make(chan struct{}, 1)},
+		ownerManager: manager,
+		schemaSyncer: syncer,
+		workerVars:   variable.NewSessionVars(),
 	}
 	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
@@ -520,13 +489,6 @@ func (d *ddl) GetHook() Callback {
 
 func (d *ddl) WorkerVars() *variable.SessionVars {
 	return d.workerVars
-}
-
-func filterError(err, exceptErr error) error {
-	if terror.ErrorEqual(err, exceptErr) {
-		return nil
-	}
-	return errors.Trace(err)
 }
 
 // DDL error codes.

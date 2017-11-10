@@ -46,6 +46,7 @@ type RegionRequestSender struct {
 	regionCache *RegionCache
 	client      Client
 	storeAddr   string
+	rpcError    error
 }
 
 // NewRegionRequestSender creates a new sender.
@@ -107,6 +108,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	defer cancel()
 	resp, err = s.client.SendReq(context, ctx.Addr, req)
 	if err != nil {
+		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}
@@ -149,7 +151,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		log.Debugf("tikv reports `NotLeader`: %s, ctx: %v, retry later", notLeader, ctx)
 		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
 		if notLeader.GetLeader() == nil {
-			err = bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx))
+			err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx))
 			if err != nil {
 				return false, errors.Trace(err)
 			}

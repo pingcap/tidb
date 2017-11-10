@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 %}
@@ -57,7 +57,7 @@ import (
 	hintBegin				"hintBegin is a virtual token for optimizer hint grammar"
 	hintEnd					"hintEnd is a virtual token for optimizer hint grammar"
 	andand					"&&"
-	oror					"||"
+	pipes					"||"
 
 	/* The following tokens belong to ReservedKeyword. */
 	add			"ADD"
@@ -281,6 +281,7 @@ import (
 	engine		"ENGINE"
 	engines		"ENGINES"
 	enum 		"ENUM"
+	event		"EVENT"
 	events		"EVENTS"
 	escape 		"ESCAPE"
 	exclusive       "EXCLUSIVE"
@@ -322,6 +323,7 @@ import (
 	only		"ONLY"
 	password	"PASSWORD"
 	partitions	"PARTITIONS"
+	pipesAsOr
 	plugins		"PLUGINS"
 	prepare		"PREPARE"
 	privileges	"PRIVILEGES"
@@ -332,10 +334,12 @@ import (
 	query		"QUERY"
 	quick		"QUICK"
 	redundant	"REDUNDANT"
+	reload		"RELOAD"
 	repeatable	"REPEATABLE"
 	replication	"REPLICATION"
 	reverse		"REVERSE"
 	rollback	"ROLLBACK"
+	routine		"ROUTINE"
 	row 		"ROW"
 	rowCount	"ROW_COUNT"
 	rowFormat	"ROW_FORMAT"
@@ -356,6 +360,7 @@ import (
 	some 		"SOME"
 	global		"GLOBAL"
 	tables		"TABLES"
+	temporary	"TEMPORARY"
 	textType	"TEXT"
 	than		"THAN"
 	timeType	"TIME"
@@ -430,6 +435,8 @@ import (
 	paramMarker	"?"
 	rsh		">>"
 
+%token not2
+
 %type	<expr>
 	Expression			"expression"
 	BoolPri				"boolean primary expression"
@@ -502,6 +509,7 @@ import (
 	UseStmt				"USE statement"
 
 %type   <item>
+	AlterTableOptionListOpt		"alter table option list opt"
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
 	AnyOrAll			"Any or All for subquery"
@@ -530,6 +538,7 @@ import (
 	ConstraintElem			"table constraint element"
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
 	CreateIndexStmtUnique		"CREATE INDEX optional UNIQUE clause"
+	CreateTableOptionListOpt	"create table option list opt"
 	DatabaseOption			"CREATE Database specification"
 	DatabaseOptionList		"CREATE Database specification list"
 	DatabaseOptionListOpt		"CREATE Database specification list opt"
@@ -650,7 +659,6 @@ import (
 	TableNameListOpt		"Table name list opt"
 	TableOption			"create table option"
 	TableOptionList			"create table option list"
-	TableOptionListOpt		"create table option list opt"
 	TableRef 			"table reference"
 	TableRefs 			"table references"
 	TableToTable 			"rename table to table"
@@ -781,7 +789,7 @@ import (
 %precedence lowerThanOn
 %precedence on using
 %right   assignmentEq
-%left 	oror or
+%left 	pipes or pipesAsOr
 %left 	xor
 %left 	andand and
 %left 	between
@@ -794,7 +802,7 @@ import (
 %left 	'*' '/' '%' div mod
 %left 	'^'
 %left 	'~' neg
-%right 	not
+%right 	not not2
 %right	collate
 
 %precedence '('
@@ -802,6 +810,7 @@ import (
 %precedence escape
 %precedence lowerThanComma
 %precedence ','
+%precedence higherThanComma
 
 %start	Start
 
@@ -823,7 +832,7 @@ AlterTableStmt:
 	}
 
 AlterTableSpec:
-	TableOptionListOpt
+	AlterTableOptionListOpt
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:	ast.AlterTableOption,
@@ -836,6 +845,13 @@ AlterTableSpec:
 			Tp: 		ast.AlterTableAddColumn,
 			NewColumn:	$3.(*ast.ColumnDef),
 			Position:	$4.(*ast.ColumnPosition),
+		}
+	}
+|	"ADD" ColumnKeywordOpt '(' ColumnDef ')'
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: 		ast.AlterTableAddColumn,
+			NewColumn:	$4.(*ast.ColumnDef),
 		}
 	}
 |	"ADD" Constraint
@@ -1577,7 +1593,7 @@ DatabaseOptionList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' TableOptionListOpt PartitionOpt
+	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' CreateTableOptionListOpt PartitionOpt
 	{
 		tes := $6.([]interface {})
 		var columnDefs []*ast.ColumnDef
@@ -1905,7 +1921,7 @@ Expression:
 				Value:	  $3,
 		}
 	}
-|	Expression logOr Expression %prec oror
+|	Expression logOr Expression %prec pipes
 	{
 		$$ = &ast.BinaryOperationExpr{Op: opcode.LogicOr, L: $1, R: $3}
 	}
@@ -1938,7 +1954,8 @@ Expression:
 
 
 logOr:
-"||" | "OR"
+	pipesAsOr
+|	"OR"
 
 logAnd:
 "&&" | "AND"
@@ -2375,7 +2392,7 @@ UnReservedKeyword:
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
-| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT"
 
 TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
@@ -2420,6 +2437,10 @@ InsertValues:
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
 		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.SelectStmt)}
+	}
+|	'(' ColumnNameListOpt ')' '(' SelectStmt ')'
+	{
+		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $5.(*ast.SelectStmt)}
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
@@ -2819,6 +2840,14 @@ SimpleExpr:
 |	'+' SimpleExpr %prec neg
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: $2}
+	}
+|	SimpleExpr pipes SimpleExpr
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Concat), Args: []ast.ExprNode{$1, $3}}
+	}
+|	not2 SimpleExpr %prec neg
+	{
+		$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2}
 	}
 |	SubSelect
 |	'(' Expression ')' {
@@ -5101,7 +5130,13 @@ StatsPersistentVal:
 |	LengthNum
 	{}
 
-TableOptionListOpt:
+AlterTableOptionListOpt:
+	{
+		$$ = []*ast.TableOption{}
+	}
+|	TableOptionList %prec higherThanComma
+
+CreateTableOptionListOpt:
 	{
 		$$ = []*ast.TableOption{}
 	}
@@ -5313,7 +5348,11 @@ FloatingPointType:
 	}
 |	"REAL"
 	{
-		$$ = mysql.TypeDouble
+	    if parser.lexer.GetSQLMode().HasRealAsFloatMode() {
+		    $$ = mysql.TypeFloat
+	    } else {
+		    $$ = mysql.TypeDouble
+	    }
 	}
 |	"DOUBLE"
 	{
@@ -5936,6 +5975,38 @@ PrivType:
 		$$ = mysql.PrivilegeType(0)
 	}
 |	"USAGE"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"RELOAD"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"CREATE" "TEMPORARY" "TABLES"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"LOCK" "TABLES"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"CREATE" "VIEW"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"SHOW" "VIEW"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"CREATE" "ROUTINE"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"ALTER" "ROUTINE"
+	{
+		$$ = mysql.PrivilegeType(0)
+	}
+|	"EVENT"
 	{
 		$$ = mysql.PrivilegeType(0)
 	}
