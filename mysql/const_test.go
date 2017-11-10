@@ -149,6 +149,13 @@ func (s *testMySQLConstSuite) TestRealAsFloatMode(c *C) {
 	c.Assert(row[1], Equals, "float")
 }
 
+func (s *testMySQLConstSuite) TestPipesAsConcatMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("SET sql_mode='PIPES_AS_CONCAT';")
+	r := tk.MustQuery(`SELECT 'hello' || 'world';`)
+	r.Check(testkit.Rows("helloworld"))
+}
+
 func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
