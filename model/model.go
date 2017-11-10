@@ -104,7 +104,7 @@ type TableInfo struct {
 	MaxColumnID     int64         `json:"max_col_id"`
 	MaxIndexID      int64         `json:"max_idx_id"`
 	ViewSelectStmt  string        `json:"view_select_stmt"`
-	ViewSelectField []string      `json:"view_select_field"`
+	ViewSelectField []CIStr       `json:"view_select_field"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged

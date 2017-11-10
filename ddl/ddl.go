@@ -149,7 +149,7 @@ type DDL interface {
 	DropSchema(ctx context.Context, schema model.CIStr) error
 	CreateTable(ctx context.Context, ident ast.Ident, cols []*ast.ColumnDef,
 		constrs []*ast.Constraint, options []*ast.TableOption) error
-	CreateView(ctx context.Context, ident ast.Ident, colNames []string, selectFields []string, selectText string) error
+	CreateView(ctx context.Context, ident ast.Ident, colNames []model.CIStr, selectFields []model.CIStr, selectText string) error
 	CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error
 	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,

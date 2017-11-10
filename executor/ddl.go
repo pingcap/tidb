@@ -160,10 +160,10 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 
 	// SelectFields represents the field expression or field AsName in SelectStmt
 	// and saves it as a string to establish the mapping relationship of ColList
-	var selectFields []string
+	var selectFields []model.CIStr
 	cols := e.schema.Columns
 	for _, col := range cols {
-		selectFields = append(selectFields, col.ColName.L)
+		selectFields = append(selectFields, col.ColName)
 	}
 
 	// The column_list in Create View statement could be null, so if Cols is nil,

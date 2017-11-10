@@ -289,7 +289,7 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 		return
 	}
 	for _, col := range stmt.Cols {
-		if isIncorrectName(col) {
+		if isIncorrectName(col.String()) {
 			p.err = ddl.ErrWrongColumnName.GenByArgs(col)
 			return
 		}

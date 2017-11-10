@@ -935,7 +935,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 }
 
 func (s *testColumnSuite) TestFieldCase(c *C) {
-	var fields = []string{"field", "Field"}
+	var fields = []model.CIStr{model.NewCIStr("field"), model.NewCIStr("Field")}
 
 	c.Assert(checkDuplicateColumn(fields), NotNil)
 }

@@ -1679,7 +1679,7 @@ CreateViewStmt:
             Select:        selstmt,
         }
         if $5 != nil{
-            x.Cols = $5.([]string)
+            x.Cols = $5.([]model.CIStr)
         }
         $$ = x
     }
@@ -1697,18 +1697,19 @@ ViewFieldList:
     }
 |   '(' ColumnList ')'
     {
-        $$ = $2.([]string)
+        $$ = $2.([]model.CIStr)
     }
 
 ColumnList:
     Identifier
-	{
-		$$ = []string{$1}
-	}
-|	ColumnList ',' Identifier
-	{
-		$$ = append($1.([]string), $3)
-	}
+    {
+        col := model.NewCIStr($1)
+        $$ = []model.CIStr{col}
+    }
+|   ColumnList ',' Identifier
+    {
+	$$ = append($1.([]model.CIStr), model.NewCIStr($3))
+    }
 
 /******************************************************************
  * Do statement

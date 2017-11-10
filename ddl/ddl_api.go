@@ -178,12 +178,12 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 	return cols, constraints, nil
 }
 
-func buildColumns(colNames []string) []*table.Column {
+func buildColumns(colNames []model.CIStr) []*table.Column {
 	var cols []*table.Column
 	for i, colName := range colNames {
 		col := table.ToColumn(&model.ColumnInfo{
 			Offset: i,
-			Name:   model.NewCIStr(colName),
+			Name:   colName,
 		})
 		col.State = model.StatePublic
 		cols = append(cols, col)
@@ -475,13 +475,13 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	return nil
 }
 
-func checkDuplicateColumn(cols []string) error {
+func checkDuplicateColumn(cols []model.CIStr) error {
 	colNames := map[string]bool{}
 	for _, col := range cols {
-		if colNames[strings.ToLower(col)] {
-			return infoschema.ErrColumnExists.GenByArgs(model.NewCIStr(col))
+		if colNames[col.L] {
+			return infoschema.ErrColumnExists.GenByArgs(col)
 		}
-		colNames[strings.ToLower(col)] = true
+		colNames[col.L] = true
 	}
 	return nil
 }
@@ -512,16 +512,16 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkTooLongColumn(cols []string) error {
+func checkTooLongColumn(cols []model.CIStr) error {
 	for _, col := range cols {
-		if len(col) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.Gen("too long column %s", model.NewCIStr(col))
+		if len(col.O) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.Gen("too long column %s", col)
 		}
 	}
 	return nil
 }
 
-func checkTooManyColumns(cols []string) error {
+func checkTooManyColumns(cols []model.CIStr) error {
 	if len(cols) > TableColumnCountLimit {
 		return errTooManyFields
 	}
@@ -543,7 +543,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	return nil
 }
 
-func checkSchemaInfo(ident ast.Ident, colNames []string) (err error) {
+func checkSchemaInfo(ident ast.Ident, colNames []model.CIStr) (err error) {
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
 	}
@@ -719,7 +719,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 	return
 }
 
-func (d *ddl) buildViewTableInfo(tableName model.CIStr, cols []*table.Column, selectFields []string, selectText string) (tbInfo *model.TableInfo, err error) {
+func (d *ddl) buildViewTableInfo(tableName model.CIStr, cols []*table.Column, selectFields []model.CIStr, selectText string) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name:            tableName,
 		ViewSelectStmt:  selectText,
@@ -786,9 +786,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
 
-	var colNames []string
+	var colNames []model.CIStr
 	for _, col := range colDefs {
-		colNames = append(colNames, col.Name.Name.L)
+		colNames = append(colNames, col.Name.Name)
 	}
 	if err = checkSchemaInfo(ident, colNames); err != nil {
 		return errors.Trace(err)
@@ -833,7 +833,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []string, selectFields []string, selectText string) (err error) {
+func (d *ddl) CreateView(ctx context.Context, ident ast.Ident, colNames []model.CIStr, selectFields []model.CIStr, selectText string) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {

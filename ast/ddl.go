@@ -538,7 +538,7 @@ type CreateViewStmt struct {
 
 	OrReplace bool
 	ViewName  *TableName
-	Cols      []string
+	Cols      []model.CIStr
 	Select    StmtNode
 }
 
