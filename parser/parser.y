@@ -842,12 +842,11 @@ AlterTableSpec:
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
-|	"ADD" ColumnKeywordOpt '(' ColumnDef ColumnPosition ')'
+|	"ADD" ColumnKeywordOpt '(' ColumnDef ')'
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: 		ast.AlterTableAddColumn,
 			NewColumn:	$4.(*ast.ColumnDef),
-			Position:	$5.(*ast.ColumnPosition),
 		}
 	}
 |	"ADD" Constraint
