@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 )
 
-// Preprocess resolves names of the node, and checks whether the node is valid.
+// Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx context.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
 	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare}
 	node.Accept(&v)
@@ -45,11 +45,6 @@ type preprocessor struct {
 	inPrepare bool
 	// When visiting create/drop table statement.
 	inCreateOrDropTable bool
-	/* For Select Statement. */
-	// table map to lookup and check table name conflict.
-	tableMap map[string]int
-	// tables indicates tableSources collected in from clause.
-	tables []*ast.TableSource
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -73,7 +68,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.DeleteStmt:
+	case *ast.DeleteTableList:
 		return in, true
 	}
 	return in, p.err != nil
@@ -478,13 +473,6 @@ func isIncorrectName(name string) bool {
 	return false
 }
 
-func (p *preprocessor) tableUniqueName(schema, table model.CIStr) string {
-	if schema.L != "" && schema.L != p.ctx.GetSessionVars().CurrentDB {
-		return schema.L + "." + table.L
-	}
-	return table.L
-}
-
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		currentDB := p.ctx.GetSessionVars().CurrentDB
@@ -507,38 +495,6 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	tn.TableInfo = table.Meta()
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
 	tn.DBInfo = dbInfo
-
-	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
-	tmp := make([]struct {
-		ast.ValueExpr
-		ast.ResultField
-	}, len(tn.TableInfo.Columns))
-	status := p.ctx.GetSessionVars().StmtCtx
-	for i, v := range tn.TableInfo.Columns {
-		if status.InUpdateOrDeleteStmt {
-			switch v.State {
-			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
-			default:
-				continue
-			}
-		} else {
-			if v.State != model.StatePublic {
-				continue
-			}
-		}
-		expr := &tmp[i].ValueExpr
-		rf := &tmp[i].ResultField
-		expr.SetType(&v.FieldType)
-		*rf = ast.ResultField{
-			Column:    v,
-			Table:     tn.TableInfo,
-			DBName:    tn.Schema,
-			Expr:      expr,
-			TableName: tn,
-		}
-		rfs = append(rfs, rf)
-	}
-	tn.SetResultFields(rfs)
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {

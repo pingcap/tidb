@@ -37,10 +37,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	infoSchema := GetInfoSchema(ctx)
-	if err := plan.ResolveName(stmtNode, infoSchema, ctx); err != nil {
-		return nil, errors.Trace(err)
-	}
-	// Preprocess should be after NameResolve.
 	if err := plan.Preprocess(ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
 	}

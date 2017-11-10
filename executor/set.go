@@ -150,8 +150,14 @@ func (e *SetExecutor) executeSet() error {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return errors.Trace(err)
 			}
-			valStr, err := value.ToString()
-			terror.Log(errors.Trace(err))
+			var valStr string
+			if value.IsNull() {
+				valStr = "NULL"
+			} else {
+				var err error
+				valStr, err = value.ToString()
+				terror.Log(errors.Trace(err))
+			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 

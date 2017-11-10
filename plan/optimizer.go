@@ -169,33 +169,23 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
-// PrepareStmt prepares a raw statement parsed from parser.
-// The statement must be prepared before it can be passed to optimize function.
-// We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
-func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	if err := ResolveName(node, is, ctx); err != nil {
-		return errors.Trace(err)
-	}
-	if err := Preprocess(ctx, node, is, true); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 // Optimizer error codes.
 const (
 	CodeOperandColumns      terror.ErrCode = 1
-	CodeInvalidWildCard     terror.ErrCode = 3
-	CodeUnsupported         terror.ErrCode = 4
-	CodeInvalidGroupFuncUse terror.ErrCode = 5
-	CodeIllegalReference    terror.ErrCode = 6
-	CodeStmtNotFound        terror.ErrCode = 7
-	CodeWrongParamCount     terror.ErrCode = 8
-	CodeSchemaChanged       terror.ErrCode = 9
+	CodeInvalidWildCard                    = 3
+	CodeUnsupported                        = 4
+	CodeInvalidGroupFuncUse                = 5
+	CodeStmtNotFound                       = 7
+	CodeWrongParamCount                    = 8
+	CodeSchemaChanged                      = 9
 
 	// MySQL error code.
-	CodeNoDB                 terror.ErrCode = mysql.ErrNoDB
-	CodeUnknownExplainFormat terror.ErrCode = mysql.ErrUnknownExplainFormat
+	CodeIllegalReference     = mysql.ErrIllegalReference
+	CodeNoDB                 = mysql.ErrNoDB
+	CodeUnknownExplainFormat = mysql.ErrUnknownExplainFormat
+	CodeWrongGroupField      = mysql.ErrWrongGroupField
+	CodeDupFieldName         = mysql.ErrDupFieldName
+	CodeNonUpdatableTable    = mysql.ErrNonUpdatableTable
 )
 
 // Optimizer base errors.
@@ -204,12 +194,15 @@ var (
 	ErrInvalidWildCard             = terror.ClassOptimizer.New(CodeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
-	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
+	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, mysql.MySQLErrName[mysql.ErrIllegalReference])
 	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
 	ErrUnknownExplainFormat        = terror.ClassOptimizer.New(CodeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
 	ErrStmtNotFound                = terror.ClassOptimizer.New(CodeStmtNotFound, "Prepared statement not found")
 	ErrWrongParamCount             = terror.ClassOptimizer.New(CodeWrongParamCount, "Wrong parameter count")
 	ErrSchemaChanged               = terror.ClassOptimizer.New(CodeSchemaChanged, "Schema has changed")
+	ErrWrongGroupField             = terror.ClassOptimizer.New(CodeWrongGroupField, mysql.MySQLErrName[mysql.ErrWrongGroupField])
+	ErrDupFieldName                = terror.ClassOptimizer.New(CodeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
+	ErrNonUpdatableTable           = terror.ClassOptimizer.New(CodeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 )
 
 func init() {
@@ -220,6 +213,9 @@ func init() {
 		CodeIllegalReference:     mysql.ErrIllegalReference,
 		CodeNoDB:                 mysql.ErrNoDB,
 		CodeUnknownExplainFormat: mysql.ErrUnknownExplainFormat,
+		CodeWrongGroupField:      mysql.ErrWrongGroupField,
+		CodeDupFieldName:         mysql.ErrDupFieldName,
+		CodeNonUpdatableTable:    mysql.ErrUnknownTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 	expression.EvalAstExpr = evalAstExpr

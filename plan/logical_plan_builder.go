@@ -151,6 +151,17 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 				col.DBName = model.NewCIStr("")
 			}
 		}
+		// Duplicate column name in one table is not allowed.
+		// "select * from (select 1, 1) as a;" is duplicate
+		dupNames := make(map[string]struct{}, len(p.Schema().Columns))
+		for _, col := range p.Schema().Columns {
+			name := col.ColName.O
+			if _, ok := dupNames[name]; ok {
+				b.err = ErrDupFieldName.GenByArgs(name)
+				return nil
+			}
+			dupNames[name] = struct{}{}
+		}
 		return p
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
@@ -287,6 +298,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 			return nil
 		}
 	} else if join.On != nil {
+		b.curClause = onClause
 		onExpr, _, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
 		if err != nil {
 			b.err = err
@@ -405,6 +417,9 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
+	if b.curClause != havingClause {
+		b.curClause = whereClause
+	}
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := Selection{}.init(b.allocator, b.ctx)
@@ -528,6 +543,7 @@ func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
+	b.curClause = fieldList
 	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
@@ -663,6 +679,7 @@ func (by *ByItems) Clone() *ByItems {
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
+	b.curClause = orderByClause
 	sort := Sort{}.init(b.allocator, b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
@@ -794,6 +811,7 @@ type havingAndOrderbyExprResolver struct {
 	colMapper    map[*ast.ColumnNameExpr]int
 	gbyItems     []*ast.ByItem
 	outerSchemas []*expression.Schema
+	curClause    clauseCode
 }
 
 // Enter implements Visitor interface.
@@ -902,7 +920,7 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 					return n, true
 				}
 			}
-			a.err = errors.Errorf("Unknown Column %s", v.Name.Name.L)
+			a.err = ErrUnknownColumn.GenByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
 			return node, false
 		}
 		if a.inAggFunc {
@@ -930,6 +948,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	}
 	// Extract agg funcs from having clause.
 	if sel.Having != nil {
+		extractor.curClause = havingClause
 		n, ok := sel.Having.Expr.Accept(extractor)
 		if !ok {
 			b.err = errors.Trace(extractor.err)
@@ -943,6 +962,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	extractor.inExpr = false
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
+		extractor.curClause = orderByClause
 		for _, item := range sel.OrderBy.Items {
 			n, ok := item.Expr.Accept(extractor)
 			if !ok {
@@ -991,6 +1011,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
+	extractor := &AggregateFuncExtractor{}
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		col, err := g.schema.FindColumn(v.Name)
@@ -1004,7 +1025,13 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				return inNode, true
 			}
 			if index != -1 {
-				return g.fields[index].Expr, true
+				ret := g.fields[index].Expr
+				ret.Accept(extractor)
+				if len(extractor.AggFuncs) != 0 {
+					err = ErrIllegalReference.GenByArgs(v.Name.OrigColName(), "reference to group function")
+				} else {
+					return ret, true
+				}
 			}
 			g.err = errors.Trace(err)
 			return inNode, false
@@ -1014,24 +1041,29 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
 			return inNode, false
 		}
-		return g.fields[v.N-1].Expr, true
+		ret := g.fields[v.N-1].Expr
+		ret.Accept(extractor)
+		if len(extractor.AggFuncs) != 0 {
+			g.err = ErrWrongGroupField.GenByArgs(g.fields[v.N-1].Text())
+			return inNode, false
+		}
+		return ret, true
 	}
 	return inNode, true
 }
 
 func tblInfoFromCol(from ast.ResultSetNode, col *expression.Column) *model.TableInfo {
-	for _, field := range from.GetResultFields() {
-		if field.Column.Name.L != col.ColName.L {
+	var tableList []*ast.TableName
+	tableList = extractTableList(from, tableList)
+	for _, field := range tableList {
+		if field.Name.L == col.TblName.L {
+			return field.TableInfo
+		}
+		if field.Name.L != col.TblName.L {
 			continue
 		}
-		if field.TableAsName.L == col.TblName.L {
-			return field.Table
-		}
-		if field.TableName.Name.L != col.TblName.L {
-			continue
-		}
-		if field.DBName.L == col.DBName.L {
-			return field.Table
+		if field.Schema.L == col.DBName.L {
+			return field.TableInfo
 		}
 	}
 	return nil
@@ -1305,6 +1337,7 @@ func allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*expression.Column]s
 }
 
 func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression) {
+	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{
 		fields: fields,
@@ -1341,10 +1374,12 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		}
 		dbName := field.WildCard.Schema
 		tblName := field.WildCard.Table
+		findTblNameInSchema := false
 		for _, col := range p.Schema().Columns {
 			if (dbName.L == "" || dbName.L == col.DBName.L) &&
 				(tblName.L == "" || tblName.L == col.TblName.L) &&
 				col.ID != model.ExtraHandleID {
+				findTblNameInSchema = true
 				colName := &ast.ColumnNameExpr{
 					Name: &ast.ColumnName{
 						Schema: col.DBName,
@@ -1356,6 +1391,9 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 				field.SetText(col.ColName.O)
 				resultList = append(resultList, field)
 			}
+		}
+		if !findTblNameInSchema {
+			b.err = ErrBadTable.GenByArgs(tblName)
 		}
 	}
 	return
@@ -1407,7 +1445,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		b.needColHandle++
 	}
 
-	hasAgg := b.detectSelectAgg(sel)
 	var (
 		p                             LogicalPlan
 		aggFuncs                      []*ast.AggregateFuncExpr
@@ -1449,6 +1486,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.LockTp != ast.SelectLockNone {
 		p = b.buildSelectLock(p, sel.LockTp)
 	}
+	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if b.err != nil {
@@ -1469,6 +1507,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		return nil
 	}
 	if sel.Having != nil {
+		b.curClause = havingClause
 		p = b.buildSelection(p, sel.Having.Expr, havingMap)
 		if b.err != nil {
 			return nil
@@ -1812,6 +1851,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+	b.curClause = fieldList
 	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
@@ -1960,16 +2000,49 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	setParentAndChildren(del, p)
 	del.SetSchema(expression.NewSchema())
 
+	var tableList []*ast.TableName
+	tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
+
 	// Collect visitInfo.
 	if delete.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
-		for _, table := range delete.Tables.Tables {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, table.Schema.L, table.TableInfo.Name.L, "")
+		for _, tn := range delete.Tables.Tables {
+			foundMatch := false
+			for _, v := range tableList {
+				dbName := v.Schema.L
+				if dbName == "" {
+					dbName = b.ctx.GetSessionVars().CurrentDB
+				}
+				if (tn.Schema.L == "" || tn.Schema.L == dbName) && tn.Name.L == v.Name.L {
+					tn.Schema.L = dbName
+					tn.DBInfo = v.DBInfo
+					tn.TableInfo = v.TableInfo
+					foundMatch = true
+					break
+				}
+			}
+			if !foundMatch {
+				var asNameList []string
+				asNameList = extractTableSourceAsNames(delete.TableRefs.TableRefs, asNameList)
+				for _, asName := range asNameList {
+					tblName := tn.Name.L
+					if tn.Schema.L != "" {
+						tblName = tn.Schema.L + "." + tblName
+					}
+					if asName == tblName {
+						// check sql like: `delete a from (select * from t) as a, t`
+						b.err = ErrNonUpdatableTable.GenByArgs(tn.Name.O, "DELETE")
+						return nil
+					}
+				}
+				// check sql like: `delete b from (select * from t) as a, t`
+				b.err = ErrUnknownTable.GenByArgs(tn.Name.O, "MULTI DELETE")
+				return nil
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "")
 		}
 	} else {
 		// Delete from a, b, c, d.
-		var tableList []*ast.TableName
-		tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
 		for _, v := range tableList {
 			dbName := v.Schema.L
 			if dbName == "" {
@@ -1982,6 +2055,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	return del
 }
 
+// extractTableList extracts all the TableNames from node.
 func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.Join:
@@ -1989,8 +2063,33 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.Tab
 		input = extractTableList(x.Right, input)
 	case *ast.TableSource:
 		if s, ok := x.Source.(*ast.TableName); ok {
-			input = append(input, s)
+			if x.AsName.L != "" {
+				newTableName := *s
+				newTableName.Name = x.AsName
+				s.Name = x.AsName
+				input = append(input, &newTableName)
+			} else {
+				input = append(input, s)
+			}
 		}
+	}
+	return input
+}
+
+// extractTableSourceAsNames extracts all the TableSource.AsNames from node.
+func extractTableSourceAsNames(node ast.ResultSetNode, input []string) []string {
+	switch x := node.(type) {
+	case *ast.Join:
+		input = extractTableSourceAsNames(x.Left, input)
+		input = extractTableSourceAsNames(x.Right, input)
+	case *ast.TableSource:
+		if s, ok := x.Source.(*ast.TableName); ok {
+			if x.AsName.L == "" {
+				input = append(input, s.Name.L)
+				break
+			}
+		}
+		input = append(input, x.AsName.L)
 	}
 	return input
 }
@@ -2002,4 +2101,11 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 		table:     tbl,
 		column:    col,
 	})
+}
+
+func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
+		return getInnerFromParentheses(pexpr.Expr)
+	}
+	return expr
 }
