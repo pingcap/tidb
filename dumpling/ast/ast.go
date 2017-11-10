@@ -149,10 +149,6 @@ type RecordSet interface {
 // Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node
-	// GetResultFields gets result fields.
-	GetResultFields() []*ResultField
-	// SetResultFields sets result fields.
-	SetResultFields(fields []*ResultField)
 }
 
 // SensitiveStmtNode overloads StmtNode and provides a SecureText method.

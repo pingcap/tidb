@@ -208,7 +208,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmt, is, ctx)
+		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -258,7 +258,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmt, is, ctx)
+		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -346,8 +346,6 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		err = plan.ResolveName(stmt, is, ctx)
-		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
@@ -384,7 +382,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		stmt := stmts[0]
 
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmt, is, ctx)
+		err = plan.Preprocess(ctx, stmt, is, true)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)

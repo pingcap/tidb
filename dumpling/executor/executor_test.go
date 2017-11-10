@@ -1566,9 +1566,6 @@ func (s *testSuite) TestPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plan.ResolveName(stmtNode, infoSchema, ctx)
-		c.Check(err, IsNil)
-		// Preprocess should be after NameResolve.
 		err = plan.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
 		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
