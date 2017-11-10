@@ -726,3 +726,17 @@ func (s *testSuite) TestHashJoinExecEncodeDecodeRow(c *C) {
 	result := tk.MustQuery("select ts from t1 inner join t2 where t2.name = 'xxx'")
 	result.Check(testkit.Rows("2003-06-09 10:51:26"))
 }
+
+func (s *testSuite) TestSubqueryInJoinOn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+
+	_, err := tk.Exec("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
+	c.Check(err, NotNil)
+}
