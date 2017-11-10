@@ -419,5 +419,11 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(row[1].GetString())*tmysql.MaxBytesOfCharacter)
+	str, _ := row.GetString(1)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(str)*tmysql.MaxBytesOfCharacter)
+}
+
+func (ts *TidbTestSuite) TestSumAvg(c *C) {
+	c.Parallel()
+	runTestSumAvg(c)
 }
