@@ -15,8 +15,10 @@ package executor
 
 import (
 	"math"
+	"sort"
 	"time"
 
+	"github.com/cznic/sortutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -41,6 +43,7 @@ type executorBuilder struct {
 	ctx      context.Context
 	is       infoschema.InfoSchema
 	priority int
+	startTS  uint64 // cached when the first time getStartTS() is called
 	// err is set when there is error happened during Executor building process.
 	err error
 }
@@ -647,10 +650,16 @@ func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
+	if b.startTS != 0 {
+		// Return the cached value.
+		return b.startTS
+	}
+
 	startTS := b.ctx.GetSessionVars().SnapshotTS
 	if startTS == 0 {
 		startTS = b.ctx.Txn().StartTS()
 	}
+	b.startTS = startTS
 	return startTS
 }
 
@@ -950,17 +959,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-
-	innerExec := b.build(v.Children()[1]).(DataReader)
-	if b.err != nil {
-		b.err = errors.Trace(b.err)
-		return nil
-	}
-
+	innerExecBuilder := &dataReaderBuilder{v.Children()[1], b}
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
-		innerExec:        innerExec,
+		innerExecBuilder: innerExecBuilder,
 		outerKeys:        v.OuterJoinKeys,
 		innerKeys:        v.InnerJoinKeys,
 		outerFilter:      v.LeftConditions,
@@ -972,7 +975,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	}
 }
 
-func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
 	dagReq := b.constructDAGReq(v.TablePlans)
 	if b.err != nil {
 		return nil
@@ -1003,7 +1006,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	return e
 }
 
-func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor {
+func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexReaderExecutor {
 	dagReq := b.constructDAGReq(v.IndexPlans)
 	if b.err != nil {
 		return nil
@@ -1035,7 +1038,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	return e
 }
 
-func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) Executor {
+func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
 	indexReq := b.constructDAGReq(v.IndexPlans)
 	if b.err != nil {
 		return nil
@@ -1094,6 +1097,99 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		handleCol:         handleCol,
 		priority:          b.priority,
 		tableReaderSchema: tableReaderSchema,
+		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 	}
 	return e
+}
+
+// dataReaderBuilder build an executor.
+// The executor can be used to read data in the ranges which are constructed by datums.
+// Differences from executorBuilder:
+// 1. dataReaderBuilder calculate data range from argument, rather than plan.
+// 2. the result executor is already opened.
+type dataReaderBuilder struct {
+	plan.Plan
+	*executorBuilder
+}
+
+func (builder *dataReaderBuilder) buildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
+	switch v := builder.Plan.(type) {
+	case *plan.PhysicalIndexReader:
+		return builder.buildIndexReaderForDatums(goCtx, v, datums)
+	case *plan.PhysicalTableReader:
+		return builder.buildTableReaderForDatums(goCtx, v, datums)
+	case *plan.PhysicalIndexLookUpReader:
+		return builder.buildIndexLookUpReaderForDatums(goCtx, v, datums)
+	}
+	return nil, errors.New("Wrong plan type for dataReaderBuilder")
+}
+
+func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
+	e := builder.executorBuilder.buildTableReader(v)
+	if err := builder.executorBuilder.err; err != nil {
+		return nil, errors.Trace(err)
+	}
+	handles := make([]int64, 0, len(datums))
+	for _, datum := range datums {
+		handles = append(handles, datum[0].GetInt64())
+	}
+	return builder.buildTableReaderFromHandles(goCtx, e, handles)
+}
+
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
+	sort.Sort(sortutil.Int64Slice(handles))
+	var b requestBuilder
+	kvReq, err := b.SetTableHandles(e.tableID, handles).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.result.Fetch(goCtx)
+	return e, nil
+}
+
+func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexReader, values [][]types.Datum) (Executor, error) {
+	e := builder.executorBuilder.buildIndexReader(v)
+	if err := builder.executorBuilder.err; err != nil {
+		return nil, errors.Trace(err)
+	}
+	var b requestBuilder
+	kvReq, err := b.SetIndexValues(e.tableID, e.index.ID, values).
+		SetDAGRequest(e.dagPB).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetPriority(e.priority).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.result.Fetch(goCtx)
+	return e, nil
+}
+
+func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader, values [][]types.Datum) (Executor, error) {
+	e := builder.executorBuilder.buildIndexLookUpReader(v)
+	if err := builder.executorBuilder.err; err != nil {
+		return nil, errors.Trace(err)
+	}
+	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = e.open(kvRanges)
+	return e, errors.Trace(err)
 }

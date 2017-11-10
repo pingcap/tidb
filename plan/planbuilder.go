@@ -35,13 +35,14 @@ var (
 	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
-	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadTable])
+	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
 	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
 	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
+	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
 )
 
 // Error codes.
@@ -52,10 +53,11 @@ const (
 	CodeAnalyzeMissIndex                  = 4
 	CodeAmbiguous                         = 1052
 	CodeUnknownColumn                     = mysql.ErrBadField
-	CodeUnknownTable                      = mysql.ErrBadTable
+	CodeUnknownTable                      = mysql.ErrUnknownTable
 	CodeWrongArguments                    = 1210
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
+	CodeBadTable                          = mysql.ErrBadTable
 )
 
 func init() {
@@ -66,6 +68,7 @@ func init() {
 		CodeWrongArguments:     mysql.ErrWrongArguments,
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
 		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
+		CodeBadTable:           mysql.ErrBadTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
@@ -117,6 +120,31 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 	return false
 }
 
+// clauseCode indicates in which clause the column is currently.
+type clauseCode int
+
+const (
+	unknowClause clauseCode = iota
+	fieldList
+	havingClause
+	onClause
+	orderByClause
+	whereClause
+	groupByClause
+	showStatement
+)
+
+var clauseMsg = map[clauseCode]string{
+	unknowClause:  "",
+	fieldList:     "field list",
+	havingClause:  "having clause",
+	onClause:      "on clause",
+	orderByClause: "order clause",
+	whereClause:   "where clause",
+	groupByClause: "group statement",
+	showStatement: "show statement",
+}
+
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
@@ -133,6 +161,8 @@ type planBuilder struct {
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
+
+	curClause clauseCode
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -251,7 +281,7 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
 	}
-	for _, f := range sel.GetResultFields() {
+	for _, f := range sel.Fields.Fields {
 		if ast.HasAggFlag(f.Expr) {
 			return true
 		}

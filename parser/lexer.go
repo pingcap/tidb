@@ -146,6 +146,10 @@ func (s *Scanner) Lex(v *yySymType) int {
 		tok = identifier
 	}
 
+	if tok == pipes && !(s.sqlMode.HasPipesAsConcatMode()) {
+		return pipesAsOr
+	}
+
 	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
 		return not2
 	}
