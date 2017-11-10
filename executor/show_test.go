@@ -493,8 +493,7 @@ func (s *testSuite) TestCollation(c *C) {
 
 	rs, err := tk.Exec("show collation;")
 	c.Assert(err, IsNil)
-	fields, err := rs.Fields()
-	c.Assert(err, IsNil)
+	fields := rs.Fields()
 	c.Assert(fields[0].Column.Tp, Equals, mysql.TypeVarchar)
 	c.Assert(fields[1].Column.Tp, Equals, mysql.TypeVarchar)
 	c.Assert(fields[2].Column.Tp, Equals, mysql.TypeLonglong)
