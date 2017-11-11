@@ -981,10 +981,6 @@ func buildTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableRe
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
-	newRanges, err := constructTableRanges(ts, b.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -993,7 +989,6 @@ func buildTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableRe
 		table:     table,
 		keepOrder: ts.KeepOrder,
 		desc:      ts.Desc,
-		ranges:    newRanges,
 		columns:   ts.Columns,
 		priority:  b.priority,
 	}
@@ -1009,7 +1004,16 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 	ret, err := buildTableReader(b, v)
 	if err != nil {
 		b.err = errors.Trace(err)
+		return nil
 	}
+
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
+	newRanges, err1 := constructTableRanges(ts, b.ctx)
+	if err1 != nil {
+		b.err = errors.Trace(err1)
+		return nil
+	}
+	ret.ranges = newRanges
 	return ret
 }
 
@@ -1019,10 +1023,6 @@ func buildIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexRe
 		return nil, errors.Trace(err)
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	newRanges, err := constructIndexRanges(is, b.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
 		ctx:       b.ctx,
@@ -1033,7 +1033,6 @@ func buildIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexRe
 		index:     is.Index,
 		keepOrder: !is.OutOfOrder,
 		desc:      is.Desc,
-		ranges:    newRanges,
 		columns:   is.Columns,
 		priority:  b.priority,
 	}
@@ -1049,7 +1048,16 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 	ret, err := buildIndexReader(b, v)
 	if err != nil {
 		b.err = errors.Trace(err)
+		return nil
 	}
+
+	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	newRanges, err1 := constructIndexRanges(is, b.ctx)
+	if err1 != nil {
+		b.err = errors.Trace(err1)
+		return nil
+	}
+	ret.ranges = newRanges
 	return ret
 }
 
@@ -1088,15 +1096,6 @@ func buildIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReade
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
-	newRanges, err := constructIndexRanges(is, b.ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ranges := make([]*types.IndexRange, 0, len(newRanges))
-	for _, rangeInPlan := range newRanges {
-		ranges = append(ranges, rangeInPlan.Clone())
-	}
-
 	e := &IndexLookUpExecutor{
 		ctx:               b.ctx,
 		schema:            v.Schema(),
@@ -1106,7 +1105,6 @@ func buildIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReade
 		index:             is.Index,
 		keepOrder:         !is.OutOfOrder,
 		desc:              is.Desc,
-		ranges:            ranges,
 		tableRequest:      tableReq,
 		columns:           is.Columns,
 		handleCol:         handleCol,
@@ -1121,7 +1119,20 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	ret, err := buildIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
+		return nil
 	}
+
+	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	newRanges, err1 := constructIndexRanges(is, b.ctx)
+	if err1 != nil {
+		b.err = errors.Trace(err1)
+		return nil
+	}
+	ranges := make([]*types.IndexRange, 0, len(newRanges))
+	for _, rangeInPlan := range newRanges {
+		ranges = append(ranges, rangeInPlan.Clone())
+	}
+	ret.ranges = ranges
 	return ret
 }
 
