@@ -470,6 +470,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		if !isNull {
 			d.SetMysqlSet(val)
 		}
+	case mysql.TypeBit:
+		val, isNull := r.GetBytes(colIdx)
+		if !isNull {
+			d.SetMysqlBit(val)
+		}
 	case mysql.TypeJSON:
 		val, isNull := r.GetJSON(colIdx)
 		if !isNull {

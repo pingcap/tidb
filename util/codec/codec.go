@@ -522,6 +522,9 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 			return errors.Trace(err)
 		}
 		chk.AppendSet(colIdx, set)
+	case mysql.TypeBit:
+		byteSize := (ft.Flen + 7) >> 3
+		chk.AppendBytes(colIdx, types.NewBinaryLiteralFromUint(val, byteSize))
 	default:
 		chk.AppendUint64(colIdx, val)
 	}
