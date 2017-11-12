@@ -893,7 +893,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-func constructDAGReq(plans []plan.PhysicalPlan, startTS uint64, ctx context.Context) (*tipb.DAGRequest, error) {
+func constructDAGReq(ctx context.Context, plans []plan.PhysicalPlan, startTS uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = startTS
 	dagReq.TimeZoneOffset = timeZoneOffset(ctx)
@@ -909,7 +909,7 @@ func constructDAGReq(plans []plan.PhysicalPlan, startTS uint64, ctx context.Cont
 	return dagReq, nil
 }
 
-func constructTableRanges(ts *plan.PhysicalTableScan, ctx context.Context) (newRanges []types.IntColumnRange, err error) {
+func constructTableRanges(ctx context.Context, ts *plan.PhysicalTableScan) (newRanges []types.IntColumnRange, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
 	newRanges = ranger.FullIntRange()
@@ -975,7 +975,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 }
 
 func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
-	dagReq, err := constructDAGReq(v.TablePlans, b.getStartTS(), b.ctx)
+	dagReq, err := constructDAGReq(b.ctx, v.TablePlans, b.getStartTS())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1008,7 +1008,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 	}
 
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
-	newRanges, err1 := constructTableRanges(ts, b.ctx)
+	newRanges, err1 := constructTableRanges(b.ctx, ts)
 	if err1 != nil {
 		b.err = errors.Trace(err1)
 		return nil
@@ -1018,7 +1018,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, err := constructDAGReq(v.IndexPlans, b.getStartTS(), b.ctx)
+	dagReq, err := constructDAGReq(b.ctx, v.IndexPlans, b.getStartTS())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1062,11 +1062,11 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
-	indexReq, err := constructDAGReq(v.IndexPlans, b.getStartTS(), b.ctx)
+	indexReq, err := constructDAGReq(b.ctx, v.IndexPlans, b.getStartTS())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tableReq, err := constructDAGReq(v.TablePlans, b.getStartTS(), b.ctx)
+	tableReq, err := constructDAGReq(b.ctx, v.TablePlans, b.getStartTS())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
