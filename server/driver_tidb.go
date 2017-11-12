@@ -308,10 +308,7 @@ func (trs *tidbResultSet) Close() error {
 }
 
 func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
-	fields, err := trs.recordSet.Fields()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	fields := trs.recordSet.Fields()
 	var columns []*ColumnInfo
 	for _, v := range fields {
 		columns = append(columns, convertColumnInfo(v))
