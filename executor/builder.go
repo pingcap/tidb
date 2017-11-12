@@ -893,14 +893,14 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-func constructDAGReq(ctx context.Context, plans []plan.PhysicalPlan, startTS uint64) (*tipb.DAGRequest, error) {
+func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = startTS
-	dagReq.TimeZoneOffset = timeZoneOffset(ctx)
-	sc := ctx.GetSessionVars().StmtCtx
+	dagReq.StartTs = b.getStartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
+	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	for _, p := range plans {
-		execPB, err := p.ToPB(ctx)
+		execPB, err := p.ToPB(b.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -909,8 +909,8 @@ func constructDAGReq(ctx context.Context, plans []plan.PhysicalPlan, startTS uin
 	return dagReq, nil
 }
 
-func constructTableRanges(ctx context.Context, ts *plan.PhysicalTableScan) (newRanges []types.IntColumnRange, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []types.IntColumnRange, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
 	newRanges = ranger.FullIntRange()
 	var pkCol *expression.Column
@@ -930,8 +930,8 @@ func constructTableRanges(ctx context.Context, ts *plan.PhysicalTableScan) (newR
 	return newRanges, nil
 }
 
-func constructIndexRanges(is *plan.PhysicalIndexScan, ctx context.Context) (newRanges []*types.IndexRange, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newRanges []*types.IndexRange, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
 	newRanges = ranger.FullIndexRange()
@@ -975,7 +975,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 }
 
 func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
-	dagReq, err := constructDAGReq(b.ctx, v.TablePlans, b.getStartTS())
+	dagReq, err := b.constructDAGReq(v.TablePlans)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1008,7 +1008,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 	}
 
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
-	newRanges, err1 := constructTableRanges(b.ctx, ts)
+	newRanges, err1 := b.constructTableRanges(ts)
 	if err1 != nil {
 		b.err = errors.Trace(err1)
 		return nil
@@ -1018,7 +1018,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, err := constructDAGReq(b.ctx, v.IndexPlans, b.getStartTS())
+	dagReq, err := b.constructDAGReq(v.IndexPlans)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1052,7 +1052,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 	}
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	newRanges, err1 := constructIndexRanges(is, b.ctx)
+	newRanges, err1 := b.constructIndexRanges(is)
 	if err1 != nil {
 		b.err = errors.Trace(err1)
 		return nil
@@ -1062,11 +1062,11 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
-	indexReq, err := constructDAGReq(b.ctx, v.IndexPlans, b.getStartTS())
+	indexReq, err := b.constructDAGReq(v.IndexPlans)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tableReq, err := constructDAGReq(b.ctx, v.TablePlans, b.getStartTS())
+	tableReq, err := b.constructDAGReq(v.TablePlans)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1123,7 +1123,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	newRanges, err1 := constructIndexRanges(is, b.ctx)
+	newRanges, err1 := b.constructIndexRanges(is)
 	if err1 != nil {
 		b.err = errors.Trace(err1)
 		return nil
