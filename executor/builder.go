@@ -1118,7 +1118,7 @@ func buildIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReade
 func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
 	ret, err := buildIndexLookUpReader(b, v)
 	if err != nil {
-		b.err = err
+		b.err = errors.Trace(err)
 		return nil
 	}
 
