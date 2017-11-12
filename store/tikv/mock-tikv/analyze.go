@@ -161,8 +161,8 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 }
 
 // Fields implements the ast.RecordSet Fields interface.
-func (e *analyzeColumnsExec) Fields() (fields []*ast.ResultField, err error) {
-	return nil, nil
+func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
+	return nil
 }
 
 // Next implements the ast.RecordSet Next interface.

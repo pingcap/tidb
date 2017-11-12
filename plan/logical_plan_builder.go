@@ -299,12 +299,12 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 	} else if join.On != nil {
 		b.curClause = onClause
-		onExpr, _, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
+		onExpr, newPlan, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
 		if err != nil {
 			b.err = err
 			return nil
 		}
-		if onExpr.IsCorrelated() {
+		if newPlan != joinPlan {
 			b.err = errors.New("ON condition doesn't support subqueries yet")
 			return nil
 		}

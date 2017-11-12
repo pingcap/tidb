@@ -550,10 +550,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 
 		if i == 0 {
 			rows = tmp
-			fields, err = rs.Fields()
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
+			fields = rs.Fields()
 		}
 	}
 	return rows, fields, nil
