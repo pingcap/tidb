@@ -2193,11 +2193,6 @@ Field:
 	{
 		expr := $1
 		asName := $2.(string)
-		if asName != "" {
-        		    startOffset := parser.startOffset(&yyS[yypt-1])
-        		    endOffset := parser.endOffset(&yyS[yypt])
-        		    expr.SetText(parser.src[startOffset:endOffset])
-        	}
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
 
@@ -2244,7 +2239,6 @@ FieldList:
 		if last.Expr != nil && last.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-1])
 			last.SetText(parser.src[last.Offset:lastEnd])
-			last.Expr.SetText(parser.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
 		newField.Offset = parser.startOffset(&yyS[yypt])
@@ -3764,7 +3758,6 @@ SelectStmt:
 				}
 			}
 			lastField.SetText(src[lastField.Offset:lastEnd])
-			lastField.Expr.SetText(src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Limit = $4.(*ast.Limit)
@@ -3783,7 +3776,6 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-3].offset-1
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
-			lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 		if $5 != nil {
 			st.Where = $5.(ast.ExprNode)
@@ -3813,7 +3805,6 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-7])
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
-			lastField.Expr.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 
 		if $6 != nil {
