@@ -974,7 +974,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	}
 }
 
-func buildTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
+func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
 	dagReq, err := constructDAGReq(v.TablePlans, b.getStartTS(), b.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1001,7 +1001,7 @@ func buildTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableRe
 }
 
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
-	ret, err := buildTableReader(b, v)
+	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -1017,7 +1017,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 	return ret
 }
 
-func buildIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexReaderExecutor, error) {
+func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexReaderExecutor, error) {
 	dagReq, err := constructDAGReq(v.IndexPlans, b.getStartTS(), b.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1045,7 +1045,7 @@ func buildIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexRe
 }
 
 func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexReaderExecutor {
-	ret, err := buildIndexReader(b, v)
+	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -1061,7 +1061,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 	return ret
 }
 
-func buildIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
+func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	indexReq, err := constructDAGReq(v.IndexPlans, b.getStartTS(), b.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1116,7 +1116,7 @@ func buildIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReade
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
-	ret, err := buildIndexLookUpReader(b, v)
+	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -1159,7 +1159,7 @@ func (builder *dataReaderBuilder) buildExecutorForDatums(goCtx goctx.Context, da
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
-	e, err := buildTableReader(builder.executorBuilder, v)
+	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1192,7 +1192,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexReader, values [][]types.Datum) (Executor, error) {
-	e, err := buildIndexReader(builder.executorBuilder, v)
+	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1216,7 +1216,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context,
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader, values [][]types.Datum) (Executor, error) {
-	e, err := buildIndexLookUpReader(builder.executorBuilder, v)
+	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
