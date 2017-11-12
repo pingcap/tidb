@@ -104,7 +104,7 @@ func (e *HashJoinExec) Open() error {
 
 	e.outerBufferChs = make([]chan *execResult, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.outerBufferChs[i] = make(chan *execResult, e.concurrency)
+		e.outerBufferChs[i] = make(chan *execResult)
 	}
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
@@ -278,7 +278,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 
 // runJoinWorker does join job in one goroutine.
 func (e *HashJoinExec) runJoinWorker(workerID int) {
-	bufferCapacity := 1024
+	bufferCapacity := 1
 	resultBuffer := &execResult{rows: make([]Row, 0, bufferCapacity)}
 
 	var outerBuffer *execResult
