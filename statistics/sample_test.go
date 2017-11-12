@@ -34,8 +34,8 @@ type recordSet struct {
 	cursor int
 }
 
-func (r *recordSet) Fields() ([]*ast.ResultField, error) {
-	return nil, nil
+func (r *recordSet) Fields() []*ast.ResultField {
+	return nil
 }
 
 func (r *recordSet) Next() (*ast.Row, error) {
