@@ -29,11 +29,22 @@ func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) 
 	return p, errors.Trace(err)
 }
 
-func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
+func replaceChild(p, child, replace Plan) {
+	for i, ch := range p.Children() {
+		if ch.ID() == child.ID() {
+			p.Children()[i] = replace
+		}
+	}
+}
+
+func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) {
 	conditions = expression.PropagateConstant(p.context(), conditions)
 	selection := Selection{Conditions: conditions}.init(allocator, p.context())
 	selection.SetSchema(child.Schema().Clone())
-	return InsertPlan(p, child, selection)
+	replaceChild(p, child, selection)
+	selection.SetChildren(child)
+	child.SetParents(selection)
+	selection.SetParents(p)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
@@ -78,10 +89,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		if len(p.parents) > 0 {
 			parent := p.parents[0]
 			newJoin.SetParents(parent)
-			err = parent.ReplaceChild(p, newJoin)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
+			replaceChild(parent, p, newJoin)
 		}
 		return newJoin.PredicatePushDown(predicates)
 	}
@@ -140,16 +148,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		return nil, nil, errors.Trace(err2)
 	}
 	if len(leftRet) > 0 {
-		err2 = addSelection(p, leftPlan, leftRet, p.allocator)
-		if err2 != nil {
-			return nil, nil, errors.Trace(err2)
-		}
+		addSelection(p, leftPlan, leftRet, p.allocator)
 	}
 	if len(rightRet) > 0 {
-		err2 = addSelection(p, rightPlan, rightRet, p.allocator)
-		if err2 != nil {
-			return nil, nil, errors.Trace(err2)
-		}
+		addSelection(p, rightPlan, rightRet, p.allocator)
 	}
 	p.updateEQCond()
 	for _, eqCond := range p.EqualConditions {
@@ -321,22 +323,19 @@ func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
+func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, _ error) {
 	retPlan = p
 	var push = make([]expression.Expression, 0, p.Schema().Len())
 	for _, cond := range predicates {
 		push = append(push, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
 	}
 	child := p.children[0].(LogicalPlan)
-	restConds, _, err1 := child.PredicatePushDown(push)
-	if err1 != nil {
-		return nil, nil, errors.Trace(err1)
+	restConds, _, err := child.PredicatePushDown(push)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	if len(restConds) > 0 {
-		err1 = addSelection(p, child, restConds, p.allocator)
-		if err1 != nil {
-			return nil, nil, errors.Trace(err1)
-		}
+		addSelection(p, child, restConds, p.allocator)
 	}
 	return
 }
@@ -355,10 +354,7 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 			return nil, nil, errors.Trace(err)
 		}
 		if len(retCond) != 0 {
-			err = addSelection(p, proj.(LogicalPlan), retCond, p.allocator)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
+			addSelection(p, proj.(LogicalPlan), retCond, p.allocator)
 		}
 	}
 	return

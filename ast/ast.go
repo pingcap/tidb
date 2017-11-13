@@ -135,7 +135,7 @@ type Row struct {
 type RecordSet interface {
 
 	// Fields gets result fields.
-	Fields() (fields []*ResultField, err error)
+	Fields() []*ResultField
 
 	// Next returns the next row, nil row means there is no more to return.
 	Next() (row *Row, err error)

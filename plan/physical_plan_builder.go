@@ -691,7 +691,8 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 		}
 		isIndexColumn := false
 		for _, indexCol := range indexColumns {
-			if colInfo.Name.L == indexCol.Name.L && indexCol.Length == types.UnspecifiedLength {
+			isFullLen := indexCol.Length == types.UnspecifiedLength || indexCol.Length == colInfo.Flen
+			if colInfo.Name.L == indexCol.Name.L && isFullLen {
 				isIndexColumn = true
 				break
 			}
