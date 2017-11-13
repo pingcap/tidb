@@ -358,7 +358,11 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 			return retCols, lengths
 		}
 		retCols = append(retCols, col)
-		lengths = append(lengths, c.Length)
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
+			lengths = append(lengths, types.UnspecifiedLength)
+		} else {
+			lengths = append(lengths, c.Length)
+		}
 	}
 	return retCols, lengths
 }
