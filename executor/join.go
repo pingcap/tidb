@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -414,6 +413,8 @@ type joinExec interface {
 
 // NestedLoopJoinExec implements nested-loop algorithm for join.
 type NestedLoopJoinExec struct {
+	baseExecutor
+
 	innerRows     []Row
 	cursor        int
 	resultRows    []Row
@@ -421,18 +422,11 @@ type NestedLoopJoinExec struct {
 	BigExec       Executor
 	leftSmall     bool
 	prepared      bool
-	Ctx           context.Context
 	SmallFilter   expression.CNFExprs
 	BigFilter     expression.CNFExprs
 	OtherFilter   expression.CNFExprs
-	schema        *expression.Schema
 	outer         bool
 	defaultValues []types.Datum
-}
-
-// Schema implements Executor interface.
-func (e *NestedLoopJoinExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Close implements Executor interface.
@@ -461,7 +455,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (Row, bool, error) {
 			return nil, false, e.BigExec.Close()
 		}
 
-		matched, err := expression.EvalBool(e.BigFilter, bigRow, e.Ctx)
+		matched, err := expression.EvalBool(e.BigFilter, bigRow, e.ctx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -492,7 +486,7 @@ func (e *NestedLoopJoinExec) prepare() error {
 			return nil
 		}
 
-		matched, err := expression.EvalBool(e.SmallFilter, row, e.Ctx)
+		matched, err := expression.EvalBool(e.SmallFilter, row, e.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -527,7 +521,7 @@ func (e *NestedLoopJoinExec) doJoin(bigRow Row, match bool) ([]Row, error) {
 		} else {
 			mergedRow = makeJoinRow(bigRow, row)
 		}
-		matched, err := expression.EvalBool(e.OtherFilter, mergedRow, e.Ctx)
+		matched, err := expression.EvalBool(e.OtherFilter, mergedRow, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -570,17 +564,17 @@ func (e *NestedLoopJoinExec) Next() (Row, error) {
 
 // HashSemiJoinExec implements the hash join algorithm for semi join.
 type HashSemiJoinExec struct {
+	baseExecutor
+
 	hashTable    map[string][]Row
 	smallHashKey []*expression.Column
 	bigHashKey   []*expression.Column
 	smallExec    Executor
 	bigExec      Executor
 	prepared     bool
-	ctx          context.Context
 	smallFilter  expression.CNFExprs
 	bigFilter    expression.CNFExprs
 	otherFilter  expression.CNFExprs
-	schema       *expression.Schema
 	resultRows   []Row
 	// auxMode is a mode that the result row always returns with an extra column which stores a boolean
 	// or NULL value to indicate if this row is matched.
@@ -604,11 +598,6 @@ func (e *HashSemiJoinExec) Open() error {
 	e.hashTable = make(map[string][]Row)
 	e.resultRows = make([]Row, 1)
 	return errors.Trace(e.bigExec.Open())
-}
-
-// Schema implements the Executor Schema interface.
-func (e *HashSemiJoinExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
@@ -760,21 +749,17 @@ func (e *HashSemiJoinExec) Next() (Row, error) {
 
 // ApplyJoinExec is the new logic of apply.
 type ApplyJoinExec struct {
+	baseExecutor
+
 	join        joinExec
 	outerSchema []*expression.CorrelatedColumn
 	cursor      int
 	resultRows  []Row
-	schema      *expression.Schema
-}
-
-// Schema implements the Executor interface.
-func (e *ApplyJoinExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Close implements the Executor interface.
 func (e *ApplyJoinExec) Close() error {
-	return nil
+	return e.join.Close()
 }
 
 // Open implements the Executor interface.
