@@ -419,21 +419,6 @@ func setParentAndChildren(parent Plan, children ...Plan) {
 	parent.SetChildren(children...)
 }
 
-// InsertPlan means inserting plan between two plans.
-func InsertPlan(parent Plan, child Plan, insert Plan) error {
-	err := child.ReplaceParent(parent, insert)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = parent.ReplaceChild(child, insert)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insert.AddChild(child)
-	insert.AddParent(parent)
-	return nil
-}
-
 // RemovePlan means removing a plan.
 func RemovePlan(p Plan) error {
 	parents := p.Parents()
