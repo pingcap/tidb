@@ -585,8 +585,8 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 }
 
 func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJoinExec {
-	leftHashKey := make(*expression.Column, 0, len(v.EqualConditions))
-	rightHashKey := make(*expression.Column, 0, len(v.EqualConditions))
+	leftHashKey := make([]*expression.Column, 0, len(v.EqualConditions))
+	rightHashKey := make([]*expression.Column, 0, len(v.EqualConditions))
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
 		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
