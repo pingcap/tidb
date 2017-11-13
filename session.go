@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -1268,7 +1269,7 @@ func (s *session) RefreshTxnCtx() error {
 
 // ActivePendingTxn implements Context.ActivePendingTxn interface.
 func (s *session) ActivePendingTxn() error {
-	if s.txn != nil && s.txn.Valid() {
+	if s.txn != nil && s.txn.Valid() && s.txn.StartTS() != math.MaxUint64 {
 		return nil
 	}
 	if s.txnFuture == nil {
@@ -1301,7 +1302,9 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return errors.New("transaction channel is not set")
 	}
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	s.txnFuture = nil
+	if startTS != math.MaxUint64 {
+		s.txnFuture = nil
+	}
 	var err error
 	s.txn, err = s.store.BeginWithStartTS(startTS)
 	if err != nil {

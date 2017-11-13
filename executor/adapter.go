@@ -234,8 +234,9 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
 		var err error
+		isRCGet := isReadCommittedGet(ctx, a.Plan)
 		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
-		if isPointGet {
+		if isPointGet || isRCGet {
 			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
@@ -341,6 +342,39 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 	case *plan.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
+	default:
+		return false
+	}
+}
+
+// isReadCommittedGet returns true when it's not write operation and in READ COMMITTED isolation level.
+func isReadCommittedGet(ctx context.Context, p plan.Plan) bool {
+	if ctx.GetSessionVars().Systems[variable.TxnIsolation] != ast.ReadCommitted {
+		return false
+	}
+
+	// check plan
+	if proj, ok := p.(*plan.Projection); ok {
+		if len(proj.Children()) != 1 {
+			return false
+		}
+		p = proj.Children()[0]
+	}
+	switch v := p.(type) {
+	case *plan.Simple:
+		// This would delay ActivePendingTxn() for begin statement.
+		_, ok := v.Statement.(*ast.BeginStmt)
+		return ok
+	case *plan.PhysicalIndexScan:
+		return true
+	case *plan.PhysicalIndexReader:
+		return true
+	case *plan.PhysicalIndexLookUpReader:
+		return true
+	case *plan.PhysicalTableScan:
+		return true
+	case *plan.PhysicalTableReader:
+		return true
 	default:
 		return false
 	}
