@@ -380,6 +380,7 @@ func (m *mockStore) SupportDeleteRange() bool {
 
 func mockContext() context.Context {
 	ctx := mock.NewContext()
+	resetAllocator(ctx)
 	ctx.Store = &mockStore{
 		client: &mockClient{},
 	}
@@ -543,7 +544,6 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -551,7 +551,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil, comment)
 		c.Assert(builder.optFlag&flagPredicatePushDown, Greater, uint64(0))
-		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -665,14 +665,13 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
 		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, builder.ctx, builder.allocator)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, builder.ctx)
 			c.Assert(err, IsNil)
 		}
 		c.Assert(builder.err, IsNil)
@@ -720,14 +719,13 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -825,7 +823,6 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
@@ -833,8 +830,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
-		p.ResolveIndices()
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -965,14 +961,13 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		checkDataSourceCols(p, c, tt.ans, comment)
 	}
@@ -980,9 +975,10 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 func (s *testPlanSuite) TestAllocID(c *C) {
 	ctx := mockContext()
-	pA := DataSource{}.init(new(idAllocator), ctx)
-	pB := DataSource{}.init(new(idAllocator), ctx)
-	c.Assert(pA.id, Equals, pB.id)
+	resetAllocator(ctx)
+	pA := DataSource{}.init(ctx)
+	pB := DataSource{}.init(ctx)
+	c.Assert(pA.id+1, Equals, pB.id)
 }
 
 func checkDataSourceCols(p Plan, c *C, ans map[int][]string, comment CommentInterface) {
@@ -1127,7 +1123,6 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil, comment)
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
@@ -1233,14 +1228,13 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		checkUniqueKeys(p, c, tt.ans, tt.sql)
 	}
@@ -1282,14 +1276,13 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			is:        is,
+			ctx: mockContext(),
+			is:  is,
 		}
 		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
@@ -1447,7 +1440,6 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
@@ -1617,14 +1609,13 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
@@ -1674,7 +1665,6 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		}
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
