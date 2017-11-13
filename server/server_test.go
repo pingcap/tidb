@@ -723,6 +723,28 @@ func runTestTLSConnection(t *C, overrider configOverrider) error {
 	return err
 }
 
+func runTestSumAvg(c *C) {
+	runTests(c, nil, func(dbt *DBTest) {
+		dbt.mustExec("create table sumavg (a int, b decimal, c double)")
+		dbt.mustExec("insert sumavg values (1, 1, 1)")
+		rows := dbt.mustQuery("select sum(a), sum(b), sum(c) from sumavg")
+		c.Assert(rows.Next(), IsTrue)
+		var outA, outB, outC float64
+		err := rows.Scan(&outA, &outB, &outC)
+		c.Assert(err, IsNil)
+		c.Assert(outA, Equals, 1.0)
+		c.Assert(outB, Equals, 1.0)
+		c.Assert(outC, Equals, 1.0)
+		rows = dbt.mustQuery("select avg(a), avg(b), avg(c) from sumavg")
+		c.Assert(rows.Next(), IsTrue)
+		err = rows.Scan(&outA, &outB, &outC)
+		c.Assert(err, IsNil)
+		c.Assert(outA, Equals, 1.0)
+		c.Assert(outB, Equals, 1.0)
+		c.Assert(outC, Equals, 1.0)
+	})
+}
+
 func getMetrics(t *C) []byte {
 	resp, err := http.Get("http://127.0.0.1:10090/metrics")
 	t.Assert(err, IsNil)

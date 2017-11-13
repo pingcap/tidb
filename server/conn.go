@@ -48,6 +48,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
+	goctx "golang.org/x/net/context"
 )
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -100,7 +102,7 @@ func (cc *clientConn) handshake() error {
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
+		data = dumpUint16(data, mysql.ServerStatusAutocommit)
 		data = append(data, 0, 0)
 	}
 
@@ -151,7 +153,7 @@ func (cc *clientConn) writeInitialHandshake() error {
 	}
 	data = append(data, cc.collation)
 	// status
-	data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
+	data = dumpUint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
@@ -365,7 +367,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		}
 	}
 	if cc.dbname != "" {
-		err = cc.useDB(cc.dbname)
+		err = cc.useDB(goctx.Background(), cc.dbname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -492,12 +494,15 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(data []byte) error {
+	span := opentracing.StartSpan("server.dispatch")
+	goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
 		cc.server.releaseToken(token)
+		span.Finish()
 	}()
 
 	switch cmd {
@@ -516,11 +521,11 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		return cc.handleQuery(hack.String(data))
+		return cc.handleQuery(goCtx, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(hack.String(data)); err != nil {
+		if err := cc.useDB(goCtx, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
@@ -543,10 +548,10 @@ func (cc *clientConn) dispatch(data []byte) error {
 	}
 }
 
-func (cc *clientConn) useDB(db string) (err error) {
+func (cc *clientConn) useDB(goCtx goctx.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute("use `" + db + "`")
+	_, err = cc.ctx.Execute(goCtx, "use `"+db+"`")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -561,11 +566,11 @@ func (cc *clientConn) flush() error {
 func (cc *clientConn) writeOK() error {
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
-	data = append(data, dumpLengthEncodedInt(cc.ctx.AffectedRows())...)
-	data = append(data, dumpLengthEncodedInt(cc.ctx.LastInsertID())...)
+	data = dumpLengthEncodedInt(data, cc.ctx.AffectedRows())
+	data = dumpLengthEncodedInt(data, cc.ctx.LastInsertID())
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = append(data, dumpUint16(cc.ctx.Status())...)
-		data = append(data, dumpUint16(cc.ctx.WarningCount())...)
+		data = dumpUint16(data, cc.ctx.Status())
+		data = dumpUint16(data, cc.ctx.WarningCount())
 	}
 
 	err := cc.writePacket(data)
@@ -616,12 +621,12 @@ func (cc *clientConn) writeEOF(more bool) error {
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = append(data, dumpUint16(cc.ctx.WarningCount())...)
+		data = dumpUint16(data, cc.ctx.WarningCount())
 		status := cc.ctx.Status()
 		if more {
 			status |= mysql.ServerMoreResultsExists
 		}
-		data = append(data, dumpUint16(status)...)
+		data = dumpUint16(data, status)
 	}
 
 	err := cc.writePacket(data)
@@ -726,8 +731,8 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
-func (cc *clientConn) handleQuery(sql string) (err error) {
-	rs, err := cc.ctx.Execute(sql)
+func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
+	rs, err := cc.ctx.Execute(goCtx, sql)
 	if err != nil {
 		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
 		return errors.Trace(err)
@@ -762,7 +767,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	data := make([]byte, 4, 1024)
 	for _, v := range columns {
 		data = data[0:4]
-		data = append(data, v.Dump(cc.alloc)...)
+		data = v.Dump(data)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
@@ -791,16 +796,15 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		return errors.Trace(err)
 	}
 
-	columnLen := dumpLengthEncodedInt(uint64(len(columns)))
 	data := cc.alloc.AllocWithLen(4, 1024)
-	data = append(data, columnLen...)
+	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err = cc.writePacket(data); err != nil {
 		return errors.Trace(err)
 	}
 
 	for _, v := range columns {
 		data = data[0:4]
-		data = append(data, v.Dump(cc.alloc)...)
+		data = v.Dump(data)
 		if err = cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
@@ -809,7 +813,6 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	if err = cc.writeEOF(false); err != nil {
 		return errors.Trace(err)
 	}
-
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -819,24 +822,14 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		}
 		data = data[0:4]
 		if binary {
-			var rowData []byte
-			rowData, err = dumpRowValuesBinary(cc.alloc, columns, row)
+			data, err = dumpBinaryRow(data, columns, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			data = append(data, rowData...)
 		} else {
-			for i, value := range row {
-				if value.IsNull() {
-					data = append(data, 0xfb)
-					continue
-				}
-				var valData []byte
-				valData, err = dumpTextValue(columns[i], value)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				data = append(data, dumpLengthEncodedString(valData, cc.alloc)...)
+			data, err = dumpTextRow(data, columns, row)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 

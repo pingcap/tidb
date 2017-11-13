@@ -19,9 +19,9 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -95,13 +95,6 @@ func (e *HashAggExec) Next() (Row, error) {
 }
 
 func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
-	if e.aggType == plan.FinalAgg && !plan.UseDAGPlanBuilder(e.ctx) {
-		val, err := e.GroupByItems[0].Eval(row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return val.GetBytes(), nil
-	}
 	if !e.hasGby {
 		return []byte{}, nil
 	}

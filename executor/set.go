@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // SetExecutor executes set statement.
@@ -150,8 +150,14 @@ func (e *SetExecutor) executeSet() error {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return errors.Trace(err)
 			}
-			valStr, err := value.ToString()
-			terror.Log(errors.Trace(err))
+			var valStr string
+			if value.IsNull() {
+				valStr = "NULL"
+			} else {
+				var err error
+				valStr, err = value.ToString()
+				terror.Log(errors.Trace(err))
+			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 

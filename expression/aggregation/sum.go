@@ -15,11 +15,13 @@ package aggregation
 
 import (
 	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 )
 
 type sumFunction struct {
@@ -42,6 +44,13 @@ func (sf *sumFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementCon
 
 // GetResult implements Aggregation interface.
 func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
+	if ctx.Value.Kind() == types.KindFloat64 {
+		dec := new(types.MyDecimal)
+		err := dec.FromFloat64(ctx.Value.GetFloat64())
+		terror.Log(errors.Trace(err))
+		d.SetMysqlDecimal(dec)
+		return
+	}
 	return ctx.Value
 }
 

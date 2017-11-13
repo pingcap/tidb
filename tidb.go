@@ -32,18 +32,10 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/engine"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/types"
 	"google.golang.org/grpc"
-)
-
-// Engine prefix name
-const (
-	EngineGoLevelDBMemory = "memory://"
 )
 
 type domainMap struct {
@@ -62,10 +54,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(0)
 	statisticLease := time.Duration(0)
-	if !localstore.IsLocalStore(store) {
-		ddlLease = schemaLease
-		statisticLease = statsLease
-	}
+	ddlLease = schemaLease
+	statisticLease = statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
@@ -155,12 +145,14 @@ func Compile(ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	span, ctx1 := opentracing.StartSpanFromContext(ctx.GoCtx(), "runStmt")
+	span.LogKV("sql", s.OriginText())
 	defer span.Finish()
 
 	var err error
 	var rs ast.RecordSet
 	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
+	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
@@ -217,12 +209,6 @@ func RegisterStore(name string, driver kv.Driver) error {
 
 	stores[name] = driver
 	return nil
-}
-
-// RegisterLocalStore registers a local kv storage with unique name and its associated engine Driver.
-func RegisterLocalStore(name string, driver engine.Driver) error {
-	d := localstore.Driver{Driver: driver}
-	return RegisterStore(name, d)
 }
 
 // NewStore creates a kv Storage with path.
@@ -309,9 +295,4 @@ func IsQuery(sql string) bool {
 }
 
 func init() {
-	// Register default memory and goleveldb storage
-	err := RegisterLocalStore("memory", goleveldb.MemoryDriver{})
-	terror.Log(errors.Trace(err))
-	err = RegisterLocalStore("goleveldb", goleveldb.Driver{})
-	terror.Log(errors.Trace(err))
 }

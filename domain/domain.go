@@ -594,8 +594,8 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 				log.Error("[stats] handle ddl event fail: ", errors.ErrorStack(err))
 			}
 		case t := <-statsHandle.AnalyzeResultCh():
-			for _, hg := range t.Hist {
-				err := hg.SaveToStorage(ctx, t.TableID, t.Count, t.IsIndex)
+			for i, hg := range t.Hist {
+				err := statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
 				if err != nil {
 					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
