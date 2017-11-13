@@ -27,24 +27,32 @@ type aggEliminater struct {
 func (a *aggEliminater) optimize(p LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
 	a.ctx = ctx
 	a.allocator = alloc
-	a.eliminateAgg(p)
-	return p, nil
+	return a.eliminateAgg(p), nil
 }
 
 func (a *aggEliminater) eliminateAgg(p LogicalPlan) LogicalPlan {
 	if agg, ok := p.(*LogicalAggregation); ok {
+		if len(agg.AggFuncs) != 1 {
+			return p
+		}
 		desc := false
 		f := agg.AggFuncs[0]
 		if f.GetName() == ast.AggFuncMax {
 			desc = true
 		}
-		// Add a TopN operator.
-		topn := TopN{Count: 1}.init(a.allocator, a.ctx)
-		topn.ByItems = append(topn.ByItems, &ByItems{f.GetArgs()[0], desc})
-
-		topn.SetSchema(p.Schema().Clone())
-		topn.setChild(p.Children()[0].(LogicalPlan), false)
-		return topn
+		// Add Sort and Limit operators.
+		// Compose Sort operator.
+		sort := Sort{}.init(a.allocator, a.ctx)
+		sort.ByItems = append(sort.ByItems, &ByItems{f.GetArgs()[0], desc})
+		sort.SetSchema(p.Schema().Clone())
+		sort.SetChildren(p.Children()...)
+		// Compose Limit operator.
+		li := Limit{Count: 1}.init(a.allocator, a.ctx)
+		li.SetSchema(p.Schema().Clone())
+		setParentAndChildren(li, sort)
+		fmt.Printf("AggElimiate: %s |||| %s\n", li.Schema(), p.Schema())
+		fmt.Printf("AggParent: %s\n", p.Parents()[0].Schema())
+		return li
 	}
 
 	newChildren := make([]Plan, 0, len(p.Children()))

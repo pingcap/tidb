@@ -121,6 +121,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	agg.collectGroupByColumns()
 	if eliminateAgg {
 		b.optFlag = b.optFlag | flagAggEliminate
+		b.optFlag = b.optFlag | flagPushDownTopN
 	}
 	return agg, aggIndexMap
 }
@@ -1706,6 +1707,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
+	fmt.Println("Apply")
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
