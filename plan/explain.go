@@ -48,7 +48,7 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 	planMark[plan.ID()] = false
 	for pID := 0; pID < len(allPlans); pID++ {
 		for _, p := range allPlans[pID].Children() {
-			p.AddParent(allPlans[pID])
+			p.SetParents(allPlans[pID])
 			if planMark[p.ID()] {
 				planMark[p.ID()] = false
 				allPlans = append(allPlans, p.(PhysicalPlan))
