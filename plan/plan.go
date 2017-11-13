@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -52,9 +50,6 @@ type Plan interface {
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() context.Context
-
-	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
 
 	// findColumn finds the column in basePlan's schema.
 	// If the column is not in the schema, returns error.
@@ -204,6 +199,9 @@ type PhysicalPlan interface {
 
 	// statsProfile will return the stats for this plan.
 	statsProfile() *statsProfile
+
+	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
+	ResolveIndices()
 }
 
 type baseLogicalPlan struct {
@@ -316,22 +314,6 @@ func (p *basePlan) copy() *basePlan {
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
-}
-
-// MarshalJSON implements json.Marshaler interface.
-func (p *basePlan) MarshalJSON() ([]byte, error) {
-	children := make([]int, 0, len(p.children))
-	for _, child := range p.children {
-		children = append(children, child.ID())
-	}
-	childrenStrs, err := json.Marshal(children)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"children\": %s", childrenStrs))
-	buffer.WriteString("}")
-	return buffer.Bytes(), nil
 }
 
 // ID implements Plan ID interface.
