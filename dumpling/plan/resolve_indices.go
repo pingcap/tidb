@@ -27,26 +27,6 @@ func (p *Projection) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *LogicalJoin) ResolveIndices() {
-	p.basePlan.ResolveIndices()
-	lSchema := p.children[0].Schema()
-	rSchema := p.children[1].Schema()
-	for _, fun := range p.EqualConditions {
-		fun.GetArgs()[0].ResolveIndices(lSchema)
-		fun.GetArgs()[1].ResolveIndices(rSchema)
-	}
-	for _, expr := range p.LeftConditions {
-		expr.ResolveIndices(lSchema)
-	}
-	for _, expr := range p.RightConditions {
-		expr.ResolveIndices(rSchema)
-	}
-	for _, expr := range p.OtherConditions {
-		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
-	}
-}
-
-// ResolveIndices implements Plan interface.
 func (p *PhysicalHashJoin) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	lSchema := p.children[0].Schema()
@@ -168,19 +148,6 @@ func (p *Selection) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *LogicalAggregation) ResolveIndices() {
-	p.basePlan.ResolveIndices()
-	for _, aggFun := range p.AggFuncs {
-		for _, arg := range aggFun.GetArgs() {
-			arg.ResolveIndices(p.children[0].Schema())
-		}
-	}
-	for _, item := range p.GroupByItems {
-		item.ResolveIndices(p.children[0].Schema())
-	}
-}
-
-// ResolveIndices implements Plan interface.
 func (p *PhysicalAggregation) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, aggFun := range p.AggFuncs {
@@ -206,14 +173,6 @@ func (p *TopN) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, item := range p.ByItems {
 		item.Expr.ResolveIndices(p.children[0].Schema())
-	}
-}
-
-// ResolveIndices implements Plan interface.
-func (p *LogicalApply) ResolveIndices() {
-	p.LogicalJoin.ResolveIndices()
-	for _, col := range p.corCols {
-		col.Column.ResolveIndices(p.children[0].Schema())
 	}
 }
 
@@ -263,6 +222,6 @@ func (p *basePlan) ResolveIndices() {
 		}
 	}
 	for _, child := range p.children {
-		child.ResolveIndices()
+		child.(PhysicalPlan).ResolveIndices()
 	}
 }
