@@ -215,35 +215,25 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) (Expression, error) {
+func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		var err error
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i], err = EvaluateExprWithNull(ctx, schema, arg)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		newFunc, err := NewFunction(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return newFunc, nil
+		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 	case *Column:
 		if !schema.Contains(x) {
-			return x, nil
+			return x
 		}
-		constant := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
-		return constant, nil
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:
 		if x.DeferredExpr != nil {
-			newConst := FoldConstant(x)
-			return newConst, nil
+			return FoldConstant(x)
 		}
 	}
-	return expr.Clone(), nil
+	return expr.Clone()
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.

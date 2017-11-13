@@ -70,10 +70,7 @@ func (a *LogicalAggregation) canPullUp() bool {
 	}
 	for _, f := range a.AggFuncs {
 		for _, arg := range f.GetArgs() {
-			expr, err := expression.EvaluateExprWithNull(a.ctx, a.children[0].Schema(), arg)
-			if err != nil {
-				return false
-			}
+			expr := expression.EvaluateExprWithNull(a.ctx, a.children[0].Schema(), arg)
 			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
 				return false
 			}

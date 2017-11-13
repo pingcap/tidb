@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -406,36 +405,4 @@ type Delete struct {
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
-}
-
-// setParentAndChildren sets parent and children relationship.
-func setParentAndChildren(parent Plan, children ...Plan) {
-	if children == nil || parent == nil {
-		return
-	}
-	for _, child := range children {
-		child.SetParents(parent)
-	}
-	parent.SetChildren(children...)
-}
-
-// RemovePlan means removing a plan.
-func RemovePlan(p Plan) error {
-	parents := p.Parents()
-	children := p.Children()
-	if len(parents) > 1 || len(children) != 1 {
-		return SystemInternalErrorType.Gen("can't remove this plan")
-	}
-	if len(parents) == 0 {
-		child := children[0]
-		child.SetParents()
-		return nil
-	}
-	parent, child := parents[0], children[0]
-	err := parent.ReplaceChild(p, child)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = child.ReplaceParent(p, parent)
-	return errors.Trace(err)
 }
