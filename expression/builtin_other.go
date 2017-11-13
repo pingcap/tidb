@@ -69,7 +69,7 @@ func (c *inFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
-		argTps[i] = args[i].GetType().EvalType()
+		argTps[i] = args[0].GetType().EvalType()
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
 	bf.tp.Flen = 1

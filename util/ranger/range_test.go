@@ -132,11 +132,10 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:   "(a)",
 			resultStr: "[(-inf,-1] [1,+inf)]",
 		},
-		// TODO: cast will change the extraction behavior of accessCondition.
-		//{
-		//	exprStr:   "a in (1, 3, NULL, 2)",
-		//	resultStr: "[(-inf,-inf) [1,1] [2,2] [3,3]]",
-		//},
+		{
+			exprStr:   "a in (1, 3, NULL, 2)",
+			resultStr: "[(-inf,-inf) [1,1] [2,2] [3,3]]",
+		},
 		{
 			exprStr:   `a IN (8,8,81,45)`,
 			resultStr: `[[8,8] [45,45] [81,81]]`,
@@ -230,62 +229,98 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a varchar(50), b int, index idx_ab(a, b))")
+	testKit.MustExec("create table t(a varchar(50), b int, c double, index idx_ab(a(50), b), index idx_cb(c, a))")
 
 	tests := []struct {
-		exprStr    string
-		resultStr  string
-		inAndEqCnt int
+		indexPos    int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
 	}{
 		{
-			exprStr:    "a LIKE 'abc%'",
-			resultStr:  "[[abc <nil>,abd <nil>)]",
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     "a LIKE 'abc%'",
+			accessConds: "[like(test.t.a, abc%, 92)]",
+			filterConds: "[]",
+			resultStr:   "[[abc <nil>,abd <nil>)]",
 		},
 		{
-			exprStr:    "a LIKE 'abc_'",
-			resultStr:  "[(abc +inf,abd <nil>)]",
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     "a LIKE 'abc_'",
+			accessConds: "[like(test.t.a, abc_, 92)]",
+			filterConds: "[like(test.t.a, abc_, 92)]",
+			resultStr:   "[(abc +inf,abd <nil>)]",
 		},
 		{
-			exprStr:    "a LIKE 'abc'",
-			resultStr:  "[[abc,abc]]",
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     "a LIKE 'abc'",
+			accessConds: "[like(test.t.a, abc, 92)]",
+			filterConds: "[]",
+			resultStr:   "[[abc,abc]]",
 		},
 		{
-			exprStr:    `a LIKE "ab\_c"`,
-			resultStr:  "[[ab_c,ab_c]]",
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     `a LIKE "ab\_c"`,
+			accessConds: "[like(test.t.a, ab\\_c, 92)]",
+			filterConds: "[]",
+			resultStr:   "[[ab_c,ab_c]]",
 		},
 		{
-			exprStr:    "a LIKE '%'",
-			resultStr:  "[[<nil>,+inf]]",
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     "a LIKE '%'",
+			accessConds: "[]",
+			filterConds: "[like(test.t.a, %, 92)]",
+			resultStr:   "[[<nil>,+inf]]",
 		},
 		{
-			exprStr:    `a LIKE '\%a'`,
-			resultStr:  `[[%a,%a]]`,
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     `a LIKE '\%a'`,
+			accessConds: "[like(test.t.a, \\%a, 92)]",
+			filterConds: "[]",
+			resultStr:   `[[%a,%a]]`,
 		},
 		{
-			exprStr:    `a LIKE "\\"`,
-			resultStr:  `[[\,\]]`,
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     `a LIKE "\\"`,
+			accessConds: "[like(test.t.a, \\, 92)]",
+			filterConds: "[]",
+			resultStr:   `[[\,\]]`,
 		},
 		{
-			exprStr:    `a LIKE "\\\\a%"`,
-			resultStr:  `[[\a <nil>,\b <nil>)]`,
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     `a LIKE "\\\\a%"`,
+			accessConds: "[like(test.t.a, \\\\a%, 92)]",
+			filterConds: "[]",
+			resultStr:   `[[\a <nil>,\b <nil>)]`,
 		},
 		{
-			exprStr:    `a > NULL`,
-			resultStr:  `[]`,
-			inAndEqCnt: 0,
+			indexPos:    0,
+			exprStr:     `a > NULL`,
+			accessConds: "[gt(test.t.a, <nil>)]",
+			filterConds: "[]",
+			resultStr:   `[]`,
 		},
 		{
-			exprStr:    `a = 'a' and b in (1, 2, 3)`,
-			resultStr:  `[[a 1,a 1] [a 2,a 2] [a 3,a 3]]`,
-			inAndEqCnt: 2,
+			indexPos:    0,
+			exprStr:     `a = 'a' and b in (1, 2, 3)`,
+			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]",
+			filterConds: "[]",
+			resultStr:   `[[a 1,a 1] [a 2,a 2] [a 3,a 3]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a in ('a') and b in ('1', 2.0, NULL)`,
+			accessConds: "[in(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
+			filterConds: "[]",
+			resultStr:   `[[a <nil>,a <nil>] [a 1,a 1] [a 2,a 2]]`,
+		},
+		{
+			indexPos:    1,
+			exprStr:     `c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)`,
+			accessConds: "[in(test.t.c, 1.1, 1, 1.1) in(test.t.a, 1, a, <nil>)]",
+			filterConds: "[]",
+			resultStr:   `[[1 <nil>,1 <nil>] [1 1,1 1] [1 a,1 a] [1.1 <nil>,1.1 <nil>] [1.1 1,1.1 1] [1.1 a,1.1 a]]`,
 		},
 	}
 
@@ -314,9 +349,12 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[0])
+		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		conds, _ = ranger.DetachIndexConditions(conds, cols, lengths)
+		var filter []expression.Expression
+		conds, filter = ranger.DetachIndexConditions(conds, cols, lengths)
+		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
@@ -332,84 +370,140 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int)")
+	testKit.MustExec("create table t(a int, b double)")
 
 	tests := []struct {
-		exprStr   string
-		resultStr string
+		colPos      int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
 	}{
 		{
-			exprStr:   "a = 1 and b > 1",
-			resultStr: "[[1,1]]",
+			colPos:      0,
+			exprStr:     "a = 1 and b > 1",
+			accessConds: "[eq(test.t.a, 1)]",
+			filterConds: "[gt(test.t.b, 1)]",
+			resultStr:   "[[1,1]]",
 		},
 		{
-			exprStr:   "b > 1",
-			resultStr: "[[<nil>,+inf]]",
+			colPos:      1,
+			exprStr:     "b > 1",
+			accessConds: "[gt(test.t.b, 1)]",
+			filterConds: "[]",
+			resultStr:   "[(1,+inf]]",
 		},
 		{
-			exprStr:   "1 = a",
-			resultStr: "[[1,1]]",
+			colPos:      0,
+			exprStr:     "1 = a",
+			accessConds: "[eq(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1]]",
 		},
 		{
-			exprStr:   "a != 1",
-			resultStr: "[[-inf,1) (1,+inf]]",
+			colPos:      0,
+			exprStr:     "a != 1",
+			accessConds: "[ne(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1) (1,+inf]]",
 		},
 		{
-			exprStr:   "1 != a",
-			resultStr: "[[-inf,1) (1,+inf]]",
+			colPos:      0,
+			exprStr:     "1 != a",
+			accessConds: "[ne(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1) (1,+inf]]",
 		},
 		{
-			exprStr:   "a > 1",
-			resultStr: "[(1,+inf]]",
+			colPos:      0,
+			exprStr:     "a > 1",
+			accessConds: "[gt(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[(1,+inf]]",
 		},
 		{
-			exprStr:   "1 < a",
-			resultStr: "[(1,+inf]]",
+			colPos:      0,
+			exprStr:     "1 < a",
+			accessConds: "[lt(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[(1,+inf]]",
 		},
 		{
-			exprStr:   "a >= 1",
-			resultStr: "[[1,+inf]]",
+			colPos:      0,
+			exprStr:     "a >= 1",
+			accessConds: "[ge(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[1,+inf]]",
 		},
 		{
-			exprStr:   "1 <= a",
-			resultStr: "[[1,+inf]]",
+			colPos:      0,
+			exprStr:     "1 <= a",
+			accessConds: "[le(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[1,+inf]]",
 		},
 		{
-			exprStr:   "a < 1",
-			resultStr: "[[-inf,1)]",
+			colPos:      0,
+			exprStr:     "a < 1",
+			accessConds: "[lt(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1)]",
 		},
 		{
-			exprStr:   "1 > a",
-			resultStr: "[[-inf,1)]",
+			colPos:      0,
+			exprStr:     "1 > a",
+			accessConds: "[gt(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1)]",
 		},
 		{
-			exprStr:   "a <= 1",
-			resultStr: "[[-inf,1]]",
+			colPos:      0,
+			exprStr:     "a <= 1",
+			accessConds: "[le(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1]]",
 		},
 		{
-			exprStr:   "1 >= a",
-			resultStr: "[[-inf,1]]",
+			colPos:      0,
+			exprStr:     "1 >= a",
+			accessConds: "[ge(1, test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1]]",
 		},
 		{
-			exprStr:   "(a)",
-			resultStr: "[[-inf,0) (0,+inf]]",
-		},
-		// TODO: cast will change the extraction behavior of accessCondition.
-		//{
-		//	exprStr:   "a in (1, 3, NULL, 2)",
-		//	resultStr: "[[<nil>,<nil>] [1,1] [2,2] [3,3]]",
-		//},
-		{
-			exprStr:   `a IN (8,8,81,45)`,
-			resultStr: `[[8,8] [45,45] [81,81]]`,
+			colPos:      0,
+			exprStr:     "(a)",
+			accessConds: "[test.t.a]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,0) (0,+inf]]",
 		},
 		{
-			exprStr:   "a between 1 and 2",
-			resultStr: "[[1,2]]",
+			colPos:      0,
+			exprStr:     "a in (1, 3, NULL, 2)",
+			accessConds: "[in(test.t.a, 1, 3, <nil>, 2)]",
+			filterConds: "[]",
+			resultStr:   "[[<nil>,<nil>] [1,1] [2,2] [3,3]]",
 		},
 		{
-			exprStr:   "a not between 1 and 2",
-			resultStr: "[[-inf,1) (2,+inf]]",
+			colPos:      0,
+			exprStr:     `a IN (8,8,81,45)`,
+			accessConds: "[in(test.t.a, 8, 8, 81, 45)]",
+			filterConds: "[]",
+			resultStr:   `[[8,8] [45,45] [81,81]]`,
+		},
+		{
+			colPos:      0,
+			exprStr:     "a between 1 and 2",
+			accessConds: "[ge(test.t.a, 1) le(test.t.a, 2)]",
+			filterConds: "[]",
+			resultStr:   "[[1,2]]",
+		},
+		{
+			colPos:      0,
+			exprStr:     "a not between 1 and 2",
+			accessConds: "[or(lt(test.t.a, 1), gt(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1) (2,+inf]]",
 		},
 		//{
 		// `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
@@ -417,36 +511,67 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		//	resultStr[(0,+inf]]
 		//},
 		{
-			exprStr:   "a between 2 and 1",
-			resultStr: "[]",
+			colPos:      0,
+			exprStr:     "a between 2 and 1",
+			accessConds: "[ge(test.t.a, 2) le(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   "[]",
 		},
 		{
-			exprStr:   "a not between 2 and 1",
-			resultStr: "[[-inf,+inf]]",
+			colPos:      0,
+			exprStr:     "a not between 2 and 1",
+			accessConds: "[or(lt(test.t.a, 2), gt(test.t.a, 1))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
 		},
 		{
-			exprStr:   "a IS NULL",
-			resultStr: "[[<nil>,<nil>]]",
+			colPos:      0,
+			exprStr:     "a IS NULL",
+			accessConds: "[isnull(test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[<nil>,<nil>]]",
 		},
 		{
-			exprStr:   "a IS NOT NULL",
-			resultStr: "[[-inf,+inf]]",
+			colPos:      0,
+			exprStr:     "a IS NOT NULL",
+			accessConds: "[not(isnull(test.t.a))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
 		},
 		{
-			exprStr:   "a IS TRUE",
-			resultStr: "[[-inf,0) (0,+inf]]",
+			colPos:      0,
+			exprStr:     "a IS TRUE",
+			accessConds: "[istrue(test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,0) (0,+inf]]",
 		},
 		{
-			exprStr:   "a IS NOT TRUE",
-			resultStr: "[[<nil>,<nil>] [0,0]]",
+			colPos:      0,
+			exprStr:     "a IS NOT TRUE",
+			accessConds: "[not(istrue(test.t.a))]",
+			filterConds: "[]",
+			resultStr:   "[[<nil>,<nil>] [0,0]]",
 		},
 		{
-			exprStr:   "a IS FALSE",
-			resultStr: "[[0,0]]",
+			colPos:      0,
+			exprStr:     "a IS FALSE",
+			accessConds: "[isfalse(test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[0,0]]",
 		},
 		{
-			exprStr:   "a IS NOT FALSE",
-			resultStr: "[[<nil>,0) (0,+inf]]",
+			colPos:      0,
+			exprStr:     "a IS NOT FALSE",
+			accessConds: "[not(isfalse(test.t.a))]",
+			filterConds: "[]",
+			resultStr:   "[[<nil>,0) (0,+inf]]",
+		},
+		{
+			colPos:      1,
+			exprStr:     `b in (1, '2.1')`,
+			accessConds: "[in(test.t.b, 1, 2.1)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1] [2.1,2.1]]",
 		},
 	}
 
@@ -476,12 +601,15 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		for _, cond := range sel.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[0])
+		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
-		conds, _ = ranger.DetachColumnConditions(conds, col.ColName)
+		var filter []expression.Expression
+		conds, filter = ranger.DetachColumnConditions(conds, col.ColName)
+		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%s", result)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
 	}
 }
