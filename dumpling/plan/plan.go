@@ -30,10 +30,6 @@ import (
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
-	// AddParent means appending a parent for plan.
-	AddParent(parent Plan)
-	// AddChild means appending a child for plan.
-	AddChild(children Plan)
 	// ReplaceParent means replacing a parent with another one.
 	ReplaceParent(parent, newPar Plan) error
 	// ReplaceChild means replacing a child with another one.
@@ -67,15 +63,6 @@ type Plan interface {
 	// findColumn finds the column in basePlan's schema.
 	// If the column is not in the schema, returns error.
 	findColumn(*ast.ColumnName) (*expression.Column, int, error)
-}
-
-type columnProp struct {
-	col  *expression.Column
-	desc bool
-}
-
-func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
-	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
 }
 
 // taskType is the type of execution task.
@@ -299,10 +286,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		err = addSelection(p.basePlan.self, child, rest, p.basePlan.allocator)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
+		addSelection(p.basePlan.self, child, rest, p.basePlan.allocator)
 	}
 	return nil, p.basePlan.self.(LogicalPlan), nil
 }
@@ -387,16 +371,6 @@ func (p *basePlan) SetSchema(schema *expression.Schema) {
 // Schema implements Plan Schema interface.
 func (p *basePlan) Schema() *expression.Schema {
 	return p.schema
-}
-
-// AddParent implements Plan AddParent interface.
-func (p *basePlan) AddParent(parent Plan) {
-	p.parents = append(p.parents, parent)
-}
-
-// AddChild implements Plan AddChild interface.
-func (p *basePlan) AddChild(child Plan) {
-	p.children = append(p.children, child)
 }
 
 // ReplaceParent means replace a parent for another one.
