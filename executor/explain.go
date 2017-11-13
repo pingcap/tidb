@@ -13,21 +13,12 @@
 
 package executor
 
-import (
-	"github.com/pingcap/tidb/expression"
-)
-
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
 	baseExecutor
 
 	rows   []Row
 	cursor int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ExplainExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Next implements Execution Next interface.

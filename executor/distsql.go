@@ -394,14 +394,14 @@ func handleIsExtra(col *expression.Column) bool {
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
+	baseExecutor
+
 	table     table.Table
 	tableID   int64
 	keepOrder bool
 	desc      bool
 	ranges    []types.IntColumnRange
 	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
@@ -409,11 +409,6 @@ type TableReaderExecutor struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	priority      int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *TableReaderExecutor) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Close implements the Executor Close interface.
@@ -497,6 +492,8 @@ func startSpanFollowsContext(goCtx goctx.Context, operationName string) (opentra
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
+	baseExecutor
+
 	table     table.Table
 	index     *model.IndexInfo
 	tableID   int64
@@ -504,8 +501,6 @@ type IndexReaderExecutor struct {
 	desc      bool
 	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -513,11 +508,6 @@ type IndexReaderExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *IndexReaderExecutor) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Close implements the Executor Close interface.
@@ -593,6 +583,8 @@ func (e *IndexReaderExecutor) Open() error {
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
+	baseExecutor
+
 	table     table.Table
 	index     *model.IndexInfo
 	tableID   int64
@@ -600,8 +592,6 @@ type IndexLookUpExecutor struct {
 	desc      bool
 	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol    *expression.Column
 	tableRequest *tipb.DAGRequest
@@ -793,11 +783,10 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 
 	var tableReader Executor
 	tableReader, err = e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
-		table:   e.table,
-		tableID: e.tableID,
-		dagPB:   e.tableRequest,
-		schema:  schema,
-		ctx:     e.ctx,
+		baseExecutor: newBaseExecutor(schema, e.ctx),
+		table:        e.table,
+		tableID:      e.tableID,
+		dagPB:        e.tableRequest,
 	}, task.handles)
 	if err != nil {
 		log.Error(err)
@@ -858,11 +847,6 @@ func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTas
 		tasks[i] = task
 	}
 	return tasks
-}
-
-// Schema implements Exec Schema interface.
-func (e *IndexLookUpExecutor) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Close implements Exec Close interface.
