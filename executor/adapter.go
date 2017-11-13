@@ -211,7 +211,6 @@ func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi pro
 			pi.SetProcessInfo("")
 		}
 		terror.Log(errors.Trace(e.Close()))
-
 		a.logSlowQuery(ctx.Txn().StartTS(), err == nil)
 	}()
 	for {
