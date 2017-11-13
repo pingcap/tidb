@@ -289,10 +289,12 @@ func (a *ExecStmt) logSlowQuery(succ bool) {
 		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
+	currentDB := a.ctx.GetSessionVars().CurrentDB
 	logEntry := log.NewEntry(logutil.SlowQueryLogger)
 	logEntry.Data = log.Fields{
 		"connectionId": connID,
 		"costTime":     costTime,
+		"database":     currentDB,
 		"sql":          sql,
 	}
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
