@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // First byte in the encoded value which specifies the encoding type.
@@ -382,4 +383,158 @@ func peekUvarint(b []byte) (int, error) {
 		return 0, errors.New("value larger than 64 bits")
 	}
 	return n, nil
+}
+
+// DecodeOneToChunk decodes one value to chunk and returns the remained bytes.
+func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) (remain []byte, err error) {
+	if len(b) < 1 {
+		return nil, errors.New("invalid encoded key")
+	}
+	flag := b[0]
+	b = b[1:]
+	switch flag {
+	case intFlag:
+		var v int64
+		b, v, err = DecodeInt(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		appendIntToChunk(v, chk, colIdx, ft)
+	case uintFlag:
+		var v uint64
+		b, v, err = DecodeUint(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = appendUintToChunk(v, chk, colIdx, ft, loc)
+	case varintFlag:
+		var v int64
+		b, v, err = DecodeVarint(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		appendIntToChunk(v, chk, colIdx, ft)
+	case uvarintFlag:
+		var v uint64
+		b, v, err = DecodeUvarint(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = appendUintToChunk(v, chk, colIdx, ft, loc)
+	case floatFlag:
+		var v float64
+		b, v, err = DecodeFloat(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		appendFloatToChunk(v, chk, colIdx, ft)
+	case bytesFlag:
+		var v []byte
+		b, v, err = DecodeBytes(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chk.AppendBytes(colIdx, v)
+	case compactBytesFlag:
+		var v []byte
+		b, v, err = DecodeCompactBytes(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chk.AppendBytes(colIdx, v)
+	case decimalFlag:
+		var d types.Datum
+		b, d, err = DecodeDecimal(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chk.AppendMyDecimal(colIdx, d.GetMysqlDecimal())
+	case durationFlag:
+		var r int64
+		b, r, err = DecodeInt(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		v := types.Duration{Duration: time.Duration(r), Fsp: ft.Decimal}
+		chk.AppendDuration(colIdx, v)
+	case jsonFlag:
+		var size int
+		size, err = json.PeekBytesAsJSON(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var j json.JSON
+		j, err = json.Deserialize(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		b = b[size:]
+		chk.AppendJSON(colIdx, j)
+	case NilFlag:
+		chk.AppendNull(colIdx)
+	default:
+		return nil, errors.Errorf("invalid encoded key flag %v", flag)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return b, nil
+}
+
+func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
+	switch ft.Tp {
+	case mysql.TypeDuration:
+		v := types.Duration{Duration: time.Duration(val), Fsp: ft.Decimal}
+		chk.AppendDuration(colIdx, v)
+	default:
+		chk.AppendInt64(colIdx, val)
+	}
+}
+
+func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) error {
+	switch ft.Tp {
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		var t types.Time
+		t.Type = ft.Tp
+		t.Fsp = ft.Decimal
+		var err error
+		err = t.FromPackedUint(val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+			err = t.ConvertTimeZone(time.UTC, loc)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		chk.AppendTime(colIdx, t)
+	case mysql.TypeEnum:
+		// ignore error deliberately, to read empty enum value.
+		enum, err := types.ParseEnumValue(ft.Elems, val)
+		if err != nil {
+			enum = types.Enum{}
+		}
+		chk.AppendEnum(colIdx, enum)
+	case mysql.TypeSet:
+		set, err := types.ParseSetValue(ft.Elems, val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		chk.AppendSet(colIdx, set)
+	case mysql.TypeBit:
+		byteSize := (ft.Flen + 7) >> 3
+		chk.AppendBytes(colIdx, types.NewBinaryLiteralFromUint(val, byteSize))
+	default:
+		chk.AppendUint64(colIdx, val)
+	}
+	return nil
+}
+
+func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
+	if ft.Tp == mysql.TypeFloat {
+		chk.AppendFloat32(colIdx, float32(val))
+	} else {
+		chk.AppendFloat64(colIdx, val)
+	}
 }
