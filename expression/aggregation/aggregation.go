@@ -96,6 +96,8 @@ func NewAggFunction(funcType string, funcArgs []expression.Expression, distinct 
 		return &maxMinFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), isMax: false}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+	case ast.AggFuncBitXor:
+		return &firstRowFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	}
 	return nil
 }
