@@ -17,11 +17,6 @@ import (
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type aggEliminater struct {
@@ -36,10 +31,20 @@ func (a *aggEliminater) optimize(p LogicalPlan, ctx context.Context, alloc *idAl
 	return p, nil
 }
 
-func (a *aggEliminater) eliminateAgg(p LogicalPlan) {
+func (a *aggEliminater) eliminateAgg(p LogicalPlan) LogicalPlan {
 	if agg, ok := p.(*LogicalAggregation); ok {
+		desc := false
+		f := agg.AggFuncs[0]
+		if f.GetName() == ast.AggFuncMax {
+			desc = true
+		}
 		// Add a TopN operator.
-		topn := TopN{Count: 1}.init(p.allocator, p.ctx)
+		topn := TopN{Count: 1}.init(a.allocator, a.ctx)
+		topn.ByItems = append(topn.ByItems, &ByItems{f.GetArgs()[0], desc})
+
+		topn.SetSchema(p.Schema().Clone())
+		topn.setChild(p.Children()[0].(LogicalPlan), false)
+		return topn
 	}
 
 	newChildren := make([]Plan, 0, len(p.Children()))

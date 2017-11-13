@@ -76,7 +76,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
 			if eliminateAgg {
-				c, ok := agg.Args[0].(*ast.ColumnNameExpr)
+				_, ok := arg.(*ast.ColumnNameExpr)
 				if !ok {
 					eliminateAgg = false
 				}
@@ -1504,7 +1504,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-		if b.optFlag | flagAggEliminate {
+		if b.optFlag&flagAggEliminate == flagAggEliminate {
 			b.optFlag = b.optFlag &^ flagAggregationOptimize
 		}
 	}
