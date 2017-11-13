@@ -46,6 +46,7 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
+// replaceChild replaces p's child with some plan else.
 func replaceChild(p, child, replace Plan) {
 	for i, ch := range p.Children() {
 		if ch.ID() == child.ID() {
