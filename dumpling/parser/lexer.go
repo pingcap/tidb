@@ -522,7 +522,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 			}
 			str := mb.r.data(&pos)
 			mb.setUseBuf(str[1 : len(str)-1])
-		} else if ch0 == '\\' {
+		} else if ch0 == '\\' && !s.sqlMode.HasNoBackslashEscapesMode() {
 			mb.setUseBuf(mb.r.data(&pos)[1:])
 			ch0 = handleEscape(s)
 		}
