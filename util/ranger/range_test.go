@@ -230,7 +230,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a varchar(50), b int, index idx_ab(a, b))")
+	testKit.MustExec("create table t(a varchar(50), b int, index idx_ab(a(50), b))")
 
 	tests := []struct {
 		exprStr    string
