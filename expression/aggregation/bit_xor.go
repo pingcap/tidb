@@ -45,6 +45,9 @@ func (bf *bitXorFunction) CalculateDefaultValue(schema *expression.Schema, ctx c
 		return d, false
 	}
 	if con, ok := result.(*expression.Constant); ok {
+		if con.Value.IsNull() {
+			return types.NewDatum(0), true
+		}
 		return con.Value, true
 	}
 	return types.NewDatum(0), true
@@ -60,27 +63,36 @@ func (bf *bitXorFunction) GetType() *types.FieldType {
 
 // Update implements Aggregation interface.
 func (bf *bitXorFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
-	if len(bf.Args) != 1 {
-		return errors.New("Wrong number of args for AggFuncBitXor")
+	if bf.mode == CompleteMode {
+		if len(bf.Args) == 0 {
+			return nil
+		} else if len(bf.Args) != 1 {
+			return errors.New("Wrong number of args for AggFuncBitXor")
+		}
+		a := bf.Args[0]
+		value, err := a.Eval(row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ctx.Value.IsNull() {
+			ctx.Value.SetInt64(0)
+		}
+		if !value.IsNull() {
+			ctx.Value.SetInt64(ctx.Value.GetInt64() ^ value.GetInt64())
+		}
+	} else {
+		if ctx.Value.IsNull() {
+			ctx.Value.SetInt64(0)
+		}
+		v, _ := row.GetInt64(0)
+		ctx.Value.SetInt64(ctx.Value.GetInt64() ^ v)
 	}
-	a := bf.Args[0]
-	value, err := a.Eval(row)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if ctx.Value.IsNull() {
-		ctx.Value = value
-	}
-	if value.IsNull() {
-		return nil
-	}
-    ctx.Value.SetInt64(ctx.Value.GetInt64() ^ value.GetInt64())
 	return nil
 }
 
 // GetResult implements Aggregation interface.
 func (bf *bitXorFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	d.SetInt64(ctx.Count)
+	d.SetInt64(ctx.Value.GetInt64())
 	return d
 }
 

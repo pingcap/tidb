@@ -89,10 +89,10 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			newArgList = append(newArgList, newArg)
 		}
 		newFunc := aggregation.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
-				combined := false
-				for j, oldFunc := range agg.AggFuncs {
-					if oldFunc.Equal(newFunc, b.ctx) {
-						aggIndexMap[i] = j
+		combined := false
+		for j, oldFunc := range agg.AggFuncs {
+			if oldFunc.Equal(newFunc, b.ctx) {
+				aggIndexMap[i] = j
 				combined = true
 				break
 			}
