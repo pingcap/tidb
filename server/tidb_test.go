@@ -48,16 +48,11 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
-	cfg := &config.Config{
-		Port: 4001,
-		Status: config.Status{
-			ReportStatus: true,
-			StatusPort:   10090,
-		},
-		Performance: config.Performance{
-			TCPKeepAlive: true,
-		},
-	}
+	cfg := config.NewConfig()
+	cfg.Port = 4001
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10090
+	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -145,12 +140,9 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 }
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
-	cfg := &config.Config{
-		Socket: "/tmp/tidbtest.sock",
-		Status: config.Status{
-			StatusPort: 10091,
-		},
-	}
+	cfg := config.NewConfig()
+	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Status.StatusPort = 10091
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -280,13 +272,10 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.TLSConfig = "skip-verify"
 		config.Addr = "localhost:4002"
 	}
-	cfg := &config.Config{
-		Port: 4002,
-		Status: config.Status{
-			ReportStatus: true,
-			StatusPort:   10091,
-		},
-	}
+	cfg := config.NewConfig()
+	cfg.Port = 4002
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10091
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
@@ -301,16 +290,13 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.TLSConfig = "skip-verify"
 		config.Addr = "localhost:4003"
 	}
-	cfg = &config.Config{
-		Port: 4003,
-		Status: config.Status{
-			ReportStatus: true,
-			StatusPort:   10091,
-		},
-		Security: config.Security{
-			SSLCert: "/tmp/server-cert.pem",
-			SSLKey:  "/tmp/server-key.pem",
-		},
+	cfg = config.NewConfig()
+	cfg.Port = 4003
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10091
+	cfg.Security = config.Security{
+		SSLCert: "/tmp/server-cert.pem",
+		SSLKey:  "/tmp/server-key.pem",
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -334,17 +320,14 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.TLSConfig = "client-certificate"
 		config.Addr = "localhost:4004"
 	}
-	cfg = &config.Config{
-		Port: 4004,
-		Status: config.Status{
-			ReportStatus: true,
-			StatusPort:   10091,
-		},
-		Security: config.Security{
-			SSLCA:   "/tmp/ca-cert.pem",
-			SSLCert: "/tmp/server-cert.pem",
-			SSLKey:  "/tmp/server-key.pem",
-		},
+	cfg = config.NewConfig()
+	cfg.Port = 4004
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10091
+	cfg.Security = config.Security{
+		SSLCA:   "/tmp/ca-cert.pem",
+		SSLCert: "/tmp/server-cert.pem",
+		SSLKey:  "/tmp/server-key.pem",
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
