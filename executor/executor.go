@@ -125,6 +125,10 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
+func (e *baseExecutor) supportChunk() bool {
+	return false
+}
+
 func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
 	return baseExecutor{
 		children: children,
@@ -139,6 +143,7 @@ type Executor interface {
 	Close() error
 	Open() error
 	Schema() *expression.Schema
+	supportChunk() bool
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -466,22 +471,15 @@ type TableScanExec struct {
 
 	t          table.Table
 	asName     *model.CIStr
-	ctx        context.Context
 	ranges     []types.IntColumnRange
 	seekHandle int64
 	iter       kv.Iterator
 	cursor     int
-	schema     *expression.Schema
 	columns    []*model.ColumnInfo
 
 	isVirtualTable     bool
 	virtualTableRows   [][]types.Datum
 	virtualTableCursor int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *TableScanExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Next implements the Executor interface.
@@ -589,6 +587,10 @@ func (e *TableScanExec) Open() error {
 	return nil
 }
 
+func (e *TableScanExec) supportChunk() bool {
+	return false
+}
+
 // ExistsExec represents exists executor.
 type ExistsExec struct {
 	baseExecutor
@@ -670,11 +672,6 @@ type UnionExec struct {
 type execResult struct {
 	rows []Row
 	err  error
-}
-
-// Schema implements the Executor Schema interface.
-func (e *UnionExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 func (e *UnionExec) waitAllFinished() {
