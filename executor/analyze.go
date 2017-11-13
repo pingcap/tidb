@@ -22,7 +22,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -38,7 +37,7 @@ var _ Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	ctx   context.Context
+	baseExecutor
 	tasks []*analyzeTask
 }
 
@@ -50,11 +49,6 @@ const (
 	defaultCMSketchDepth = 8
 	defaultCMSketchWidth = 2048
 )
-
-// Schema implements the Executor Schema interface.
-func (e *AnalyzeExec) Schema() *expression.Schema {
-	return expression.NewSchema()
-}
 
 // Open implements the Executor Open interface.
 func (e *AnalyzeExec) Open() error {

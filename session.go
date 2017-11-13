@@ -791,11 +791,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = sessionctx.GetDomain(s).InfoSchema()
 	}
-	prepareExec := &executor.PrepareExec{
-		IS:      executor.GetInfoSchema(s),
-		Ctx:     s,
-		SQLText: sql,
-	}
+	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	prepareExec.DoPrepare()
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, prepareExec.Err
 }

@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -30,14 +28,6 @@ import (
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
-	// AddParent means appending a parent for plan.
-	AddParent(parent Plan)
-	// AddChild means appending a child for plan.
-	AddChild(children Plan)
-	// ReplaceParent means replacing a parent with another one.
-	ReplaceParent(parent, newPar Plan) error
-	// ReplaceChild means replacing a child with another one.
-	ReplaceChild(children, newChild Plan) error
 	// Get all the parents.
 	Parents() []Plan
 	// Get all the children.
@@ -61,21 +51,9 @@ type Plan interface {
 
 	context() context.Context
 
-	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
-
 	// findColumn finds the column in basePlan's schema.
 	// If the column is not in the schema, returns error.
 	findColumn(*ast.ColumnName) (*expression.Column, int, error)
-}
-
-type columnProp struct {
-	col  *expression.Column
-	desc bool
-}
-
-func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
-	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
 }
 
 // taskType is the type of execution task.
@@ -169,7 +147,7 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
+	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
@@ -221,6 +199,9 @@ type PhysicalPlan interface {
 
 	// statsProfile will return the stats for this plan.
 	statsProfile() *statsProfile
+
+	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
+	ResolveIndices()
 }
 
 type baseLogicalPlan struct {
@@ -288,25 +269,6 @@ func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
 	}
 }
 
-// PredicatePushDown implements LogicalPlan interface.
-func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if len(p.basePlan.children) == 0 {
-		return predicates, p.basePlan.self.(LogicalPlan), nil
-	}
-	child := p.basePlan.children[0].(LogicalPlan)
-	rest, _, err := child.PredicatePushDown(predicates)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	if len(rest) > 0 {
-		err = addSelection(p.basePlan.self, child, rest, p.basePlan.allocator)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-	}
-	return nil, p.basePlan.self.(LogicalPlan), nil
-}
-
 func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	var corCols []*expression.CorrelatedColumn
 	for _, child := range p.basePlan.children {
@@ -354,22 +316,6 @@ func (p *basePlan) copy() *basePlan {
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (p *basePlan) MarshalJSON() ([]byte, error) {
-	children := make([]int, 0, len(p.children))
-	for _, child := range p.children {
-		children = append(children, child.ID())
-	}
-	childrenStrs, err := json.Marshal(children)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf("\"children\": %s", childrenStrs))
-	buffer.WriteString("}")
-	return buffer.Bytes(), nil
-}
-
 // ID implements Plan ID interface.
 func (p *basePlan) ID() int {
 	return p.id
@@ -387,38 +333,6 @@ func (p *basePlan) SetSchema(schema *expression.Schema) {
 // Schema implements Plan Schema interface.
 func (p *basePlan) Schema() *expression.Schema {
 	return p.schema
-}
-
-// AddParent implements Plan AddParent interface.
-func (p *basePlan) AddParent(parent Plan) {
-	p.parents = append(p.parents, parent)
-}
-
-// AddChild implements Plan AddChild interface.
-func (p *basePlan) AddChild(child Plan) {
-	p.children = append(p.children, child)
-}
-
-// ReplaceParent means replace a parent for another one.
-func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
-	for i, par := range p.parents {
-		if par.ID() == parent.ID() {
-			p.parents[i] = newPar
-			return nil
-		}
-	}
-	return SystemInternalErrorType.Gen("ReplaceParent Failed: parent \"%s\" not found", parent.ExplainID())
-}
-
-// ReplaceChild means replace a child with another one.
-func (p *basePlan) ReplaceChild(child, newChild Plan) error {
-	for i, ch := range p.children {
-		if ch.ID() == child.ID() {
-			p.children[i] = newChild
-			return nil
-		}
-	}
-	return SystemInternalErrorType.Gen("ReplaceChildren Failed: child \"%s\" not found", child.ExplainID())
 }
 
 // Parents implements Plan Parents interface.

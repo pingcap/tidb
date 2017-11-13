@@ -14,10 +14,8 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/terror"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated, returns true if
@@ -83,8 +81,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		return p
 	}
 	child := p.Children()[0]
-	err := RemovePlan(p)
-	terror.Log(errors.Trace(err))
+	removePlan(p)
 	return child.(PhysicalPlan)
 }
 
@@ -166,8 +163,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
-	err := RemovePlan(p)
-	terror.Log(errors.Trace(err))
+	removePlan(p)
 	return child.(LogicalPlan)
 }
 

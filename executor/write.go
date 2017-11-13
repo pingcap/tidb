@@ -165,11 +165,6 @@ type DeleteExec struct {
 	finished bool
 }
 
-// Schema implements the Executor Schema interface.
-func (e *DeleteExec) Schema() *expression.Schema {
-	return expression.NewSchema()
-}
-
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next() (Row, error) {
 	if e.finished {
@@ -327,7 +322,7 @@ func (e *DeleteExec) Open() error {
 func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
 	return &LoadDataInfo{
 		row:       row,
-		insertVal: &InsertValues{ctx: ctx, Table: tbl},
+		insertVal: &InsertValues{baseExecutor: newBaseExecutor(nil, ctx), Table: tbl},
 		Table:     tbl,
 		Ctx:       ctx,
 		columns:   cols,
@@ -602,6 +597,8 @@ func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
 
 // LoadData represents a load data executor.
 type LoadData struct {
+	baseExecutor
+
 	IsLocal      bool
 	loadDataInfo *LoadDataInfo
 }
@@ -642,11 +639,6 @@ func (e *LoadData) Next() (Row, error) {
 	return nil, nil
 }
 
-// Schema implements the Executor Schema interface.
-func (e *LoadData) Schema() *expression.Schema {
-	return expression.NewSchema()
-}
-
 // Close implements the Executor Close interface.
 func (e *LoadData) Close() error {
 	return nil
@@ -659,10 +651,11 @@ func (e *LoadData) Open() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
+	baseExecutor
+
 	currRow               int64
 	batchRows             int64
 	lastInsertID          uint64
-	ctx                   context.Context
 	needFillDefaultValues bool
 
 	SelectExec Executor
@@ -687,11 +680,6 @@ type InsertExec struct {
 	IgnoreErr bool
 
 	finished bool
-}
-
-// Schema implements the Executor Schema interface.
-func (e *InsertExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // BatchInsertSize is the batch size of auto-splitted insert data.
@@ -1176,11 +1164,6 @@ type ReplaceExec struct {
 	*InsertValues
 	Priority int
 	finished bool
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ReplaceExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // Close implements the Executor Close interface.
