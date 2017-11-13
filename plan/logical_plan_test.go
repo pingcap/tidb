@@ -380,7 +380,6 @@ func (m *mockStore) SupportDeleteRange() bool {
 
 func mockContext() context.Context {
 	ctx := mock.NewContext()
-	resetAllocator(ctx)
 	ctx.Store = &mockStore{
 		client: &mockClient{},
 	}
@@ -975,7 +974,6 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 func (s *testPlanSuite) TestAllocID(c *C) {
 	ctx := mockContext()
-	resetAllocator(ctx)
 	pA := DataSource{}.init(ctx)
 	pB := DataSource{}.init(ctx)
 	c.Assert(pA.id+1, Equals, pB.id)

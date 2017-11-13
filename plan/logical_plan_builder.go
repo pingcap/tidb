@@ -1713,7 +1713,6 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = TypeApply
-	ap.id = getID(b.ctx)
 	ap.self = ap
 	ap.children[0].SetParents(ap)
 	ap.children[1].SetParents(ap)

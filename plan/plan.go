@@ -247,9 +247,11 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 }
 
 func newBasePlan(tp string, ctx context.Context, p Plan) *basePlan {
+	ctx.GetSessionVars().PlanID++
+	id := ctx.GetSessionVars().PlanID
 	return &basePlan{
 		tp:   tp,
-		id:   getID(ctx),
+		id:   id,
 		ctx:  ctx,
 		self: p,
 	}
