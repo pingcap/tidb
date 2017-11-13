@@ -62,12 +62,9 @@ func (sf *sumFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
 // CalculateDefaultValue implements Aggregation interface.
 func (sf *sumFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := sf.Args[0]
-	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if err != nil {
-		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", sf, err.Error())
-		return d, false
-	}
+	result := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if con, ok := result.(*expression.Constant); ok {
+		var err error
 		d, err = calculateSum(ctx.GetSessionVars().StmtCtx, d, con.Value)
 		if err != nil {
 			log.Warnf("CalculateSum failed in function %s, err msg is %s", sf, err.Error())
