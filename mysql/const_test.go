@@ -191,3 +191,13 @@ func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
 	r.Check(testkit.Rows("1"))
 }
+
+func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode=''")
+	r := tk.MustQuery("SELECT '\\\\'")
+	r.Check(testkit.Rows("\\"))
+	tk.MustExec("set sql_mode='NO_BACKSLASH_ESCAPES'")
+	r = tk.MustQuery("SELECT '\\\\'")
+	r.Check(testkit.Rows("\\\\"))
+}
