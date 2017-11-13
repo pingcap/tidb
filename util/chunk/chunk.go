@@ -55,6 +55,25 @@ func (c *Chunk) AddInterfaceColumn() {
 	})
 }
 
+// AddColumnByFieldType adds a column by field type.
+func (c *Chunk) AddColumnByFieldType(fieldTp byte, initCap int) {
+	switch fieldTp {
+	case mysql.TypeFloat:
+		c.AddFixedLenColumn(4, initCap)
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble:
+		c.AddFixedLenColumn(8, initCap)
+	case mysql.TypeDuration:
+		c.AddFixedLenColumn(16, initCap)
+	case mysql.TypeNewDecimal:
+		c.AddFixedLenColumn(types.MyDecimalStructSize, initCap)
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeJSON:
+		c.AddInterfaceColumn()
+	default:
+		c.AddVarLenColumn(initCap)
+	}
+}
+
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
@@ -193,7 +212,10 @@ func (c *column) reset() {
 	c.length = 0
 	c.nullCount = 0
 	c.nullBitmap = c.nullBitmap[:0]
-	c.offsets = c.offsets[:0]
+	if len(c.offsets) > 0 {
+		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
+		c.offsets = c.offsets[:1]
+	}
 	c.data = c.data[:0]
 	c.ifaces = c.ifaces[:0]
 }
@@ -320,7 +342,7 @@ func (r Row) GetUint64(colIdx int) (uint64, bool) {
 // GetFloat32 returns the float64 value and isNull with the colIdx.
 func (r Row) GetFloat32(colIdx int) (float32, bool) {
 	col := r.c.columns[colIdx]
-	return *(*float32)(unsafe.Pointer(&col.data[r.idx*8])), col.isNull(r.idx)
+	return *(*float32)(unsafe.Pointer(&col.data[r.idx*4])), col.isNull(r.idx)
 }
 
 // GetFloat64 returns the float64 value and isNull with the colIdx.
@@ -448,6 +470,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		val, isNull := r.GetSet(colIdx)
 		if !isNull {
 			d.SetMysqlSet(val)
+		}
+	case mysql.TypeBit:
+		val, isNull := r.GetBytes(colIdx)
+		if !isNull {
+			d.SetMysqlBit(val)
 		}
 	case mysql.TypeJSON:
 		val, isNull := r.GetJSON(colIdx)

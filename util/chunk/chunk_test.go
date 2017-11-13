@@ -121,6 +121,22 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	iVal, _ = chk.GetRow(0).GetInt64(1)
 	c.Assert(iVal, Equals, int64(1))
 	c.Assert(chk.NumRows(), Equals, 1)
+
+	// Test Reset.
+	chk = newChunk(0)
+	chk.AppendString(0, "abcd")
+	chk.Reset()
+	chk.AppendString(0, "def")
+	strVal, _ := chk.GetRow(0).GetString(0)
+	c.Assert(strVal, Equals, "def")
+
+	// Test float32
+	chk = newChunk(4)
+	chk.AppendFloat32(0, 1)
+	chk.AppendFloat32(0, 1)
+	chk.AppendFloat32(0, 1)
+	f32, _ = chk.GetRow(2).GetFloat32(0)
+	c.Assert(f32, Equals, float32(1))
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
