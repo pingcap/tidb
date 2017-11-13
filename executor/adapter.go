@@ -90,7 +90,7 @@ func (a *recordSet) Next() (*ast.Row, error) {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.logSlowQuery(a.lastErr == nil)
+	a.stmt.logSlowQuery(nil, a.lastErr == nil)
 	if a.processinfo != nil {
 		a.processinfo.SetProcessInfo("")
 	}
@@ -209,7 +209,7 @@ func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi pro
 			pi.SetProcessInfo("")
 		}
 		terror.Log(errors.Trace(e.Close()))
-		a.logSlowQuery(err == nil)
+		a.logSlowQuery(ctx.Txn(), err == nil)
 	}()
 	for {
 		var row Row
@@ -281,7 +281,11 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 	return e, nil
 }
 
-func (a *ExecStmt) logSlowQuery(succ bool) {
+func (a *ExecStmt) logSlowQuery(txn kv.Transaction, succ bool) {
+	txnTS := uint64(0)
+	if txn != nil {
+		txnTS = txn.StartTS()
+	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
 	sql := a.Text
@@ -296,6 +300,7 @@ func (a *ExecStmt) logSlowQuery(succ bool) {
 		"costTime":     costTime,
 		"database":     currentDB,
 		"sql":          sql,
+		"txnTS":        txnTS,
 	}
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
 		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")

@@ -213,6 +213,7 @@ func (t *Table) FirstKey() kv.Key {
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	txn := ctx.Txn()
 	bs := kv.NewBufferStore(txn)
+	log.Debugf("update record, txn %d, handle %d", txn.StartTS(), h)
 
 	// rebuild index
 	err := t.rebuildIndices(bs, h, touched, oldData, newData)
@@ -444,6 +445,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
+		log.Debugf("add index, txn %d, handle %d, vals %v", txn.StartTS(), recordID, colVals)
 		if dupHandle, err := v.Create(bs, colVals, recordID); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, errors.Trace(dupKeyErr)
@@ -590,6 +592,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec)
+		log.Debugf("remove indices, txn %d, handle %d, vals %v, err %v", ctx.Txn().StartTS(), h, vals, err)
 		if vals == nil {
 			// TODO: check this
 			continue
@@ -608,6 +611,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
+	log.Debugf("remove index, handle %d, vals %v", h, vals)
 	if err := idx.Delete(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
@@ -616,6 +620,7 @@ func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Dat
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
+	log.Debugf("add index, handle %d, vals %v", h, vals)
 	if _, err := idx.Create(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
