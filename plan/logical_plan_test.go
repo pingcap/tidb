@@ -834,7 +834,6 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
-		p.ResolveIndices()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
