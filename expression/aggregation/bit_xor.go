@@ -14,7 +14,6 @@
 package aggregation
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -39,11 +38,7 @@ func (bf *bitXorFunction) Clone() Aggregation {
 // CalculateDefaultValue implements Aggregation interface.
 func (bf *bitXorFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := bf.Args[0]
-	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if err != nil {
-		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", bf, err.Error())
-		return d, false
-	}
+	result := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if con, ok := result.(*expression.Constant); ok {
 		if con.Value.IsNull() {
 			return types.NewDatum(0), true
