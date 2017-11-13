@@ -213,6 +213,7 @@ func (c *column) reset() {
 	c.nullCount = 0
 	c.nullBitmap = c.nullBitmap[:0]
 	if len(c.offsets) > 0 {
+		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
 		c.offsets = c.offsets[:1]
 	}
 	c.data = c.data[:0]
