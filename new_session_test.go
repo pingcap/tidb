@@ -814,7 +814,7 @@ func (s *testSessionSuite) TestResultField(c *C) {
 	tk.MustExec(`INSERT INTO t VALUES (2);`)
 	r, err := tk.Exec(`SELECT count(*) from t;`)
 	c.Assert(err, IsNil)
-	fields, err := r.Fields()
+	fields := r.Fields()
 	c.Assert(err, IsNil)
 	c.Assert(len(fields), Equals, 1)
 	field := fields[0].Column
@@ -830,9 +830,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[0].GetValue(), IsNil)
-	fs, err := rs.Fields()
-	c.Assert(err, IsNil)
-	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
+	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 
 func (s *testSessionSuite) TestFieldText(c *C) {
@@ -858,9 +856,7 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 	for _, tt := range tests {
 		result, err := tk.Exec(tt.sql)
 		c.Assert(err, IsNil)
-		fields, err := result.Fields()
-		c.Assert(err, IsNil)
-		c.Assert(fields[0].ColumnAsName.O, Equals, tt.field)
+		c.Assert(result.Fields()[0].ColumnAsName.O, Equals, tt.field)
 	}
 }
 
@@ -1263,18 +1259,15 @@ func (s *testSessionSuite) TestCaseInsensitive(c *C) {
 	tk.MustExec("create table T (a text, B int)")
 	tk.MustExec("insert t (A, b) values ('aaa', 1)")
 	rs, _ := tk.Exec("select * from t")
-	fields, err := rs.Fields()
-	c.Assert(err, IsNil)
+	fields := rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "a")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "B")
 	rs, _ = tk.Exec("select A, b from t")
-	fields, err = rs.Fields()
-	c.Assert(err, IsNil)
+	fields = rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
 	rs, _ = tk.Exec("select a as A from t where A > 0")
-	fields, err = rs.Fields()
-	c.Assert(err, IsNil)
+	fields = rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
 	tk.MustExec("update T set b = B + 1")
 	tk.MustExec("update T set B = b + 1")
