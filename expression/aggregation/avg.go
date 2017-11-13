@@ -82,20 +82,24 @@ func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementCon
 
 // GetResult implements Aggregation interface.
 func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
+	var x *types.MyDecimal
 	switch ctx.Value.Kind() {
 	case types.KindFloat64:
-		t := ctx.Value.GetFloat64() / float64(ctx.Count)
-		d.SetValue(t)
+		x = new(types.MyDecimal)
+		err := x.FromFloat64(ctx.Value.GetFloat64())
+		terror.Log(errors.Trace(err))
 	case types.KindMysqlDecimal:
-		x := ctx.Value.GetMysqlDecimal()
-		y := types.NewDecFromInt(ctx.Count)
-		to := new(types.MyDecimal)
-		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
-		terror.Log(errors.Trace(err))
-		err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
-		terror.Log(errors.Trace(err))
-		d.SetMysqlDecimal(to)
+		x = ctx.Value.GetMysqlDecimal()
+	default:
+		return
 	}
+	y := types.NewDecFromInt(ctx.Count)
+	to := new(types.MyDecimal)
+	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
+	terror.Log(errors.Trace(err))
+	err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
+	terror.Log(errors.Trace(err))
+	d.SetMysqlDecimal(to)
 	return
 }
 

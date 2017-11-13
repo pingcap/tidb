@@ -46,7 +46,7 @@ type recordSet struct {
 	lastErr     error
 }
 
-func (a *recordSet) Fields() ([]*ast.ResultField, error) {
+func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
 		for _, col := range a.executor.Schema().Columns {
 			dbName := col.DBName.O
@@ -66,7 +66,7 @@ func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 			a.fields = append(a.fields, rf)
 		}
 	}
-	return a.fields, nil
+	return a.fields
 }
 
 func (a *recordSet) Next() (*ast.Row, error) {

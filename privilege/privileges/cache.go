@@ -184,10 +184,7 @@ func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 	rs := tmp[0]
 	defer terror.Call(rs.Close)
 
-	fs, err := rs.Fields()
-	if err != nil {
-		return errors.Trace(err)
-	}
+	fs := rs.Fields()
 	for {
 		row, err := rs.Next()
 		if err != nil {
