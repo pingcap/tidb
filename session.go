@@ -647,9 +647,11 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 func (s *session) SetGlobalSysVar(name string, value string) error {
 	if name == variable.SQLModeVar {
 		value = mysql.FormatSQLModeStr(value)
-		if _, err := mysql.GetSQLMode(value); err != nil {
+		sqlMode, err := mysql.GetSQLMode(value)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		s.GetSessionVars().SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
 	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
