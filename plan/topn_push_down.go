@@ -22,7 +22,7 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
-func (s *pushDownTopNOptimizer) optimize(p LogicalPlan, ctx context.Context, allocator *idAllocator) (LogicalPlan, error) {
+func (s *pushDownTopNOptimizer) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
 	return p.pushDownTopN(nil), nil
 }
 
@@ -48,7 +48,7 @@ func (s *TopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
 			Count:   s.Count,
 			Offset:  s.Offset,
 			partial: s.partial,
-		}.init(s.allocator, s.ctx)
+		}.init(s.ctx)
 		setParentAndChildren(limit, p)
 		limit.SetSchema(p.Schema().Clone())
 		return limit
@@ -72,7 +72,7 @@ func (s *Sort) pushDownTopN(topN *TopN) LogicalPlan {
 }
 
 func (p *Limit) convertToTopN() *TopN {
-	return TopN{Offset: p.Offset, Count: p.Count}.init(p.allocator, p.ctx)
+	return TopN{Offset: p.Offset, Count: p.Count}.init(p.ctx)
 }
 
 func (p *Limit) pushDownTopN(topN *TopN) LogicalPlan {
@@ -87,7 +87,7 @@ func (p *Union) pushDownTopN(topN *TopN) LogicalPlan {
 	for i, child := range p.children {
 		var newTopN *TopN
 		if topN != nil {
-			newTopN = TopN{Count: topN.Count + topN.Offset, partial: true}.init(p.allocator, p.ctx)
+			newTopN = TopN{Count: topN.Count + topN.Offset, partial: true}.init(p.ctx)
 			for _, by := range topN.ByItems {
 				newExpr := expression.ColumnSubstitute(by.Expr, p.schema, expression.Column2Exprs(child.Schema().Columns))
 				newTopN.ByItems = append(newTopN.ByItems, &ByItems{newExpr, by.Desc})
@@ -130,7 +130,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *TopN, idx int) LogicalPlan {
 				Count:   topN.Count + topN.Offset,
 				ByItems: make([]*ByItems, len(topN.ByItems)),
 				partial: true,
-			}.init(topN.allocator, topN.ctx)
+			}.init(topN.ctx)
 			copy(newTopN.ByItems, topN.ByItems)
 		}
 	}
