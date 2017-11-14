@@ -27,3 +27,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 18), // 5us ~ 128 ms
 		})
 )
+
+func init() {
+	prometheus.MustRegister(tsFutureWaitDuration)
+}
