@@ -20,38 +20,8 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// getEQFunctionOffset judge if the expression is a eq function like A = 1 where a is an index.
-// If so, it will return the offset of A in index columns. e.g. for index(C,B,A), A's offset is 2.
-func getEQFunctionOffset(expr expression.Expression, cols []*model.IndexColumn) int {
-	f, ok := expr.(*expression.ScalarFunction)
-	if !ok || f.FuncName.L != ast.EQ {
-		return -1
-	}
-	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
-			for i, col := range cols {
-				if col.Name.L == c.ColName.L {
-					return i
-				}
-			}
-		}
-	} else if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
-		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-			for i, col := range cols {
-				if col.Name.L == c.ColName.L {
-					return i
-				}
-			}
-		}
-	}
-	return -1
-}
-
 // conditionChecker checks if this condition can be pushed to index plan.
 type conditionChecker struct {
-	idx           *model.IndexInfo
-	cols          []*expression.Column
-	columnOffset  int // the offset of the indexed column to be checked.
 	colName       model.CIStr
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 	length        int
@@ -67,43 +37,6 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 		return true
 	}
 	return false
-}
-
-func (c *conditionChecker) extractAccessAndFilterConds(conditions, accessConds, filterConds []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	for _, cond := range conditions {
-		if !c.check(cond) {
-			filterConds = append(filterConds, cond)
-			continue
-		}
-		accessConds = append(accessConds, cond)
-		// TODO: It will lead to repeated computation cost.
-		if c.length != types.UnspecifiedLength || c.shouldReserve {
-			filterConds = append(filterConds, cond)
-			c.shouldReserve = false
-		}
-	}
-	return accessConds, filterConds
-}
-
-func (c *conditionChecker) findEqOrInFunc(conditions []expression.Expression) int {
-	for i, cond := range conditions {
-		var offset int
-		if c.idx != nil {
-			offset = getEQFunctionOffset(cond, c.idx.Columns)
-		} else {
-			offset = getEQColOffset(cond, c.cols)
-		}
-		if c.columnOffset == offset {
-			return i
-		}
-	}
-	for i, cond := range conditions {
-		if in, ok := cond.(*expression.ScalarFunction); ok &&
-			in.FuncName.L == ast.In && c.checkScalarFunction(in) {
-			return i
-		}
-	}
-	return -1
 }
 
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
@@ -204,12 +137,6 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	}
 	if c.colName.L != "" {
 		return c.colName.L == col.ColName.L
-	}
-	if c.idx != nil {
-		return col.ColName.L == c.idx.Columns[c.columnOffset].Name.L
-	}
-	if len(c.cols) > 0 {
-		return col.Equal(c.cols[c.columnOffset], nil)
 	}
 	return true
 }
