@@ -284,21 +284,23 @@ func (r *builder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) [
 	return []point{startPoint, endPoint}
 }
 
-func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
+func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]point, 0, len(list)*2)
+	hasNull := false
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
 			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
-			return fullRange
+			return fullRange, hasNull
 		}
 		dt, err := v.Eval(nil)
 		if err != nil {
 			r.err = ErrUnsupportedType.Gen("expr:%v is not evaluated", e)
-			return fullRange
+			return fullRange, hasNull
 		}
 		if dt.IsNull() {
+			hasNull = true
 			continue
 		}
 		startPoint := point{value: types.NewDatum(dt.GetValue()), start: true}
@@ -321,7 +323,10 @@ func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 			frontPos++
 		}
 	}
-	return rangePoints[:curPos+1]
+	if curPos > 0 {
+		curPos++
+	}
+	return rangePoints[:curPos], hasNull
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
@@ -409,7 +414,10 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
-		rangePoints := r.newBuildFromIn(expr)
+		rangePoints, hasNull := r.newBuildFromIn(expr)
+		if hasNull {
+			return nil
+		}
 		retRangePoints := make([]point, 0, len(rangePoints)+2)
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
@@ -446,7 +454,8 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
-		return r.newBuildFromIn(expr)
+		retPoints, _ := r.newBuildFromIn(expr)
+		return retPoints
 	case ast.Like:
 		return r.newBuildFromPatternLike(expr)
 	case ast.IsNull:

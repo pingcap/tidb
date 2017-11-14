@@ -659,18 +659,6 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select * from t t1, t t2 where 1 = 0",
 			plan: "Dual->Projection",
 		},
-		{
-			sql:  "select * from t where a not in (NULL, 1, 2)",
-			plan: "Dual->Projection",
-		},
-		{
-			sql:  "select * from t where a not in (cast(NULL as signed), 1, 2)",
-			plan: "Dual->Projection",
-		},
-		{
-			sql:  "select * from t where a in (NULL, NULL, NULL)",
-			plan: "Dual->Projection",
-		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
