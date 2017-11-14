@@ -474,7 +474,9 @@ func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType
 }
 
 const (
+	minTaskHandledCnt    = 16 // minTaskHandledCnt is the least number of handles per batch.
 	defaultTaskHandleCnt = 128
+	maxTaskHandleCnt     = 2048
 	defaultWorkers       = 16
 )
 
@@ -501,6 +503,7 @@ type worker struct {
 	idxRecords  []*indexRecord // It's used to reduce the number of new slice.
 	taskRange   handleInfo     // Every task's handle range.
 	taskRet     *taskResult
+	batchSize   int
 	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
 }
 
@@ -508,6 +511,7 @@ func newWorker(ctx context.Context, id, batch, colsLen, indexColsLen int) *worke
 	return &worker{
 		id:          id,
 		ctx:         ctx,
+		batchSize:   batch,
 		idxRecords:  make([]*indexRecord, 0, batch),
 		defaultVals: make([]types.Datum, colsLen),
 		rowMap:      make(map[int64]types.Datum, indexColsLen),
@@ -551,14 +555,13 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		colMap[col.ID] = &col.FieldType
 	}
 	workerCnt := defaultWorkers
-	taskBatch := int64(defaultTaskHandleCnt)
 	addedCount := job.GetRowCount()
 	baseHandle := reorgInfo.Handle
 
 	workers := make([]*worker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
 		ctx := d.newContext()
-		workers[i] = newWorker(ctx, i, int(taskBatch), len(cols), len(colMap))
+		workers[i] = newWorker(ctx, i, defaultTaskHandleCnt, len(cols), len(colMap))
 		// Make sure every worker has its own index buffer.
 		workers[i].index = tables.NewIndexWithBuffer(t.Meta(), indexInfo)
 	}
@@ -567,7 +570,8 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		wg := sync.WaitGroup{}
 		for i := 0; i < workerCnt; i++ {
 			wg.Add(1)
-			workers[i].setTaskNewRange(baseHandle+int64(i)*taskBatch, baseHandle+int64(i+1)*taskBatch)
+			batch := int64(workers[i].batchSize)
+			workers[i].setTaskNewRange(baseHandle+int64(i)*batch, baseHandle+int64(i+1)*batch)
 			// TODO: Consider one worker to one goroutine.
 			go workers[i].doBackfillIndexTask(t, colMap, &wg)
 		}
@@ -604,6 +608,7 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 	taskAddedCount, nextHandle := int64(0), workers[0].taskRange.startHandle
 	var err error
 	var isEnd bool
+	lessExpectedWorkers := 0
 	for _, worker := range workers {
 		ret := worker.taskRet
 		if ret.err != nil {
@@ -611,8 +616,17 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 			break
 		}
 		taskAddedCount += int64(ret.count)
+		if ret.count < minTaskHandledCnt {
+			lessExpectedWorkers++
+		}
 		nextHandle = ret.outOfRangeHandle
 		isEnd = ret.isAllDone
+	}
+	// Adjust the worker's batch size.
+	if lessExpectedWorkers >= len(workers)/2 && workers[0].batchSize < maxTaskHandleCnt {
+		for _, worker := range workers {
+			worker.batchSize *= 2
+		}
 	}
 	return taskAddedCount, nextHandle, isEnd, errors.Trace(err)
 }
