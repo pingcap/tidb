@@ -83,7 +83,7 @@ func (a *LogicalAggregation) canPullUp() bool {
 type decorrelateSolver struct{}
 
 // optimize implements logicalOptRule interface.
-func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalPlan, error) {
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1].(LogicalPlan)
@@ -105,12 +105,12 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			apply.attachOnConds(newConds)
 			innerPlan = sel.children[0].(LogicalPlan)
 			setParentAndChildren(apply, outerPlan, innerPlan)
-			return s.optimize(p, nil, nil)
+			return s.optimize(p, nil)
 		} else if m, ok := innerPlan.(*MaxOneRow); ok {
 			if m.children[0].Schema().MaxOneRow {
 				innerPlan = m.children[0].(LogicalPlan)
 				setParentAndChildren(apply, outerPlan, innerPlan)
-				return s.optimize(p, nil, nil)
+				return s.optimize(p, nil)
 			}
 		} else if proj, ok := innerPlan.(*Projection); ok {
 			for i, expr := range proj.Exprs {
@@ -124,14 +124,14 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				proj.SetParents(apply.Parents()...)
-				np, err := s.optimize(p, nil, nil)
+				np, err := s.optimize(p, nil)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				setParentAndChildren(proj, np)
 				return proj, nil
 			}
-			return s.optimize(p, nil, nil)
+			return s.optimize(p, nil)
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0].(LogicalPlan)
@@ -148,7 +148,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				agg.SetParents(apply.Parents()...)
-				np, err := s.optimize(p, nil, nil)
+				np, err := s.optimize(p, nil)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -160,7 +160,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, err := s.optimize(child.(LogicalPlan), nil, nil)
+		np, err := s.optimize(child.(LogicalPlan), nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

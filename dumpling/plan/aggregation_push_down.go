@@ -25,8 +25,7 @@ import (
 )
 
 type aggregationOptimizer struct {
-	allocator *idAllocator
-	ctx       context.Context
+	ctx context.Context
 }
 
 // isDecomposable checks if an aggregate function is decomposable. An aggregation function $F$ is decomposable
@@ -259,7 +258,7 @@ func (a *aggregationOptimizer) makeNewAgg(aggFuncs []aggregation.Aggregation, gb
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		groupByCols:  gbyCols,
-	}.init(a.allocator, a.ctx)
+	}.init(a.ctx)
 	var newAggFuncs []aggregation.Aggregation
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)+len(gbyCols))...)
 	for _, aggFunc := range aggFuncs {
@@ -283,7 +282,7 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionS
 	newAgg := LogicalAggregation{
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(agg.AggFuncs)),
 		GroupByItems: make([]expression.Expression, 0, len(agg.GroupByItems)),
-	}.init(a.allocator, a.ctx)
+	}.init(a.ctx)
 	newAgg.SetSchema(agg.schema.Clone())
 	for _, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()
@@ -305,7 +304,7 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionS
 	// this will cause error during executor phase.
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			proj := a.convertAggToProj(newAgg, a.ctx, a.allocator)
+			proj := a.convertAggToProj(newAgg, a.ctx)
 			setParentAndChildren(proj, unionChild)
 			return proj
 		}
@@ -314,12 +313,11 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionS
 	return newAgg
 }
 
-func (a *aggregationOptimizer) optimize(p LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
+func (a *aggregationOptimizer) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
 	if !ctx.GetSessionVars().AllowAggPushDown {
 		return p, nil
 	}
 	a.ctx = ctx
-	a.allocator = alloc
 	a.aggPushDown(p)
 	return p, nil
 }
@@ -413,17 +411,17 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation
 	}
 	if coveredByUniqueKey {
 		// GroupByCols has unique key, so this aggregation can be removed.
-		proj := a.convertAggToProj(agg, a.ctx, a.allocator)
+		proj := a.convertAggToProj(agg, a.ctx)
 		setParentAndChildren(proj, agg.children[0])
 		return proj
 	}
 	return nil
 }
 
-func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation, ctx context.Context, allocator *idAllocator) *Projection {
+func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation, ctx context.Context) *Projection {
 	proj := Projection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.init(a.allocator, a.ctx)
+	}.init(a.ctx)
 	for _, fun := range agg.AggFuncs {
 		expr := a.rewriteExpr(fun)
 		proj.Exprs = append(proj.Exprs, expr)
