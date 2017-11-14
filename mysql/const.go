@@ -452,11 +452,6 @@ func (m SQLMode) HasRealAsFloatMode() bool {
 	return m&ModeRealAsFloat == ModeRealAsFloat
 }
 
-// HasNoBackslashEscapesMode detects if 'NO_BACKSLASH_ESCAPES' mode is set in SQLMode
-func (m SQLMode) HasNoBackslashEscapesMode() bool {
-	return m&ModeNoBackslashEscapes == ModeNoBackslashEscapes
-}
-
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
