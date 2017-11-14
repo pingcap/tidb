@@ -18,13 +18,11 @@ import (
 )
 
 type aggEliminater struct {
-	allocator *idAllocator
-	ctx       context.Context
+	ctx context.Context
 }
 
-func (a *aggEliminater) optimize(p LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
+func (a *aggEliminater) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
 	a.ctx = ctx
-	a.allocator = alloc
 	return a.eliminateAgg(p), nil
 }
 
@@ -40,17 +38,17 @@ func (a *aggEliminater) eliminateAgg(p LogicalPlan) LogicalPlan {
 		}
 		// Add Sort and Limit operators.
 		// Compose Sort operator.
-		sort := Sort{}.init(a.allocator, a.ctx)
+		sort := Sort{}.init(a.ctx)
 		sort.ByItems = append(sort.ByItems, &ByItems{f.GetArgs()[0], desc})
 		sort.SetSchema(p.Schema().Clone())
 		sort.SetChildren(p.Children()...)
 		// Compose Limit operator.
-		li := Limit{Count: 1}.init(a.allocator, a.ctx)
+		li := Limit{Count: 1}.init(a.ctx)
 		li.SetSchema(p.Schema().Clone())
 		setParentAndChildren(li, sort)
 
 		// Add a prjection operator here.
-		proj := Projection{}.init(a.allocator, a.ctx)
+		proj := Projection{}.init(a.ctx)
 		proj.Exprs = append(proj.Exprs, f.GetArgs()[0])
 		proj.SetSchema(p.Schema().Clone())
 		setParentAndChildren(proj, li)
