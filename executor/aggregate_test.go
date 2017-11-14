@@ -15,47 +15,10 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 )
-
-type MockExec struct {
-	fields    []*ast.ResultField
-	Rows      []executor.Row
-	curRowIdx int
-}
-
-func (m *MockExec) Schema() *expression.Schema {
-	return expression.NewSchema()
-}
-
-func (m *MockExec) Next() (executor.Row, error) {
-	if m.curRowIdx >= len(m.Rows) {
-		return nil, nil
-	}
-	r := m.Rows[m.curRowIdx]
-	m.curRowIdx++
-	if len(m.fields) > 0 {
-		for i, d := range r {
-			m.fields[i].Expr.SetValue(d.GetValue())
-		}
-	}
-	return r, nil
-}
-
-func (m *MockExec) Close() error {
-	m.curRowIdx = 0
-	return nil
-}
-
-func (m *MockExec) Open() error {
-	m.curRowIdx = 0
-	return nil
-}
 
 func (s *testSuite) TestAggregation(c *C) {
 	plan.JoinConcurrency = 1

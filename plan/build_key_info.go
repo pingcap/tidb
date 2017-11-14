@@ -22,7 +22,7 @@ import (
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
 	lp.buildKeyInfo()
 	return lp, nil
 }

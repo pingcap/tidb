@@ -14,77 +14,14 @@
 package executor_test
 
 import (
-	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
-
-func (s *testSuite) TestNestedLoopJoin(c *C) {
-	bigExec := &MockExec{Rows: []executor.Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	smallExec := &MockExec{Rows: []executor.Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
-	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
-	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
-	bigFilter := expression.NewFunctionInternal(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
-	smallFilter := bigFilter.Clone()
-	otherFilter := expression.NewFunctionInternal(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	join := &executor.NestedLoopJoinExec{
-		BigExec:     bigExec,
-		SmallExec:   smallExec,
-		Ctx:         mock.NewContext(),
-		BigFilter:   []expression.Expression{bigFilter},
-		SmallFilter: []expression.Expression{smallFilter},
-		OtherFilter: []expression.Expression{otherFilter},
-	}
-	row, err := join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, IsNil)
-}
 
 func (s *testSuite) TestJoinPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

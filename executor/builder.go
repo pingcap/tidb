@@ -213,8 +213,8 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 
 func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 	return &DeallocateExec{
-		ctx:  b.ctx,
-		Name: v.Name,
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		Name:         v.Name,
 	}
 }
 
@@ -245,22 +245,22 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
 	return &PrepareExec{
-		Ctx:     b.ctx,
-		IS:      b.is,
-		Name:    v.Name,
-		SQLText: v.SQLText,
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		IS:           b.is,
+		Name:         v.Name,
+		SQLText:      v.SQLText,
 	}
 }
 
 func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 	return &ExecuteExec{
-		Ctx:       b.ctx,
-		IS:        b.is,
-		Name:      v.Name,
-		UsingVars: v.UsingVars,
-		ID:        v.ExecID,
-		Stmt:      v.Stmt,
-		Plan:      v.Plan,
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		IS:           b.is,
+		Name:         v.Name,
+		UsingVars:    v.UsingVars,
+		ID:           v.ExecID,
+		Stmt:         v.Stmt,
+		Plan:         v.Plan,
 	}
 }
 
@@ -306,7 +306,7 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:                   b.ctx,
+		baseExecutor:          newBaseExecutor(nil, b.ctx),
 		Columns:               v.Columns,
 		Lists:                 v.Lists,
 		Setlist:               v.Setlist,
@@ -337,11 +337,11 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{
-		ctx:        b.ctx,
-		Table:      tbl,
-		Columns:    v.Columns,
-		GenColumns: v.GenCols.Columns,
-		GenExprs:   v.GenCols.Exprs,
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		Table:        tbl,
+		Columns:      v.Columns,
+		GenColumns:   v.GenCols.Columns,
+		GenExprs:     v.GenCols.Exprs,
 	}
 	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
@@ -351,7 +351,8 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 	}
 
 	return &LoadData{
-		IsLocal: v.IsLocal,
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
 			row:        make([]types.Datum, len(columns)),
 			insertVal:  insertVal,
@@ -373,13 +374,13 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 	return &GrantExec{
-		ctx:        b.ctx,
-		Privs:      grant.Privs,
-		ObjectType: grant.ObjectType,
-		Level:      grant.Level,
-		Users:      grant.Users,
-		WithGrant:  grant.WithGrant,
-		is:         b.is,
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		Privs:        grant.Privs,
+		ObjectType:   grant.ObjectType,
+		Level:        grant.Level,
+		Users:        grant.Users,
+		WithGrant:    grant.WithGrant,
+		is:           b.is,
 	}
 }
 
@@ -395,7 +396,7 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
-	return &DDLExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
+	return &DDLExec{baseExecutor: newBaseExecutor(nil, b.ctx), Statement: v.Statement, is: b.is}
 }
 
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
@@ -594,14 +595,13 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 		rightHashKey = append(rightHashKey, rn)
 	}
 	e := &HashSemiJoinExec{
-		schema:       v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		otherFilter:  v.OtherConditions,
 		bigFilter:    v.LeftConditions,
 		smallFilter:  v.RightConditions,
 		bigExec:      b.build(v.Children()[0]),
 		smallExec:    b.build(v.Children()[1]),
 		prepared:     false,
-		ctx:          b.ctx,
 		bigHashKey:   leftHashKey,
 		smallHashKey: rightHashKey,
 		auxMode:      v.WithAux,
@@ -668,10 +668,9 @@ func (b *executorBuilder) getStartTS() uint64 {
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	tb, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
+		baseExecutor:   newBaseExecutor(v.Schema(), b.ctx),
 		t:              tb,
-		ctx:            b.ctx,
 		columns:        v.Columns,
-		schema:         v.Schema(),
 		seekHandle:     math.MinInt64,
 		ranges:         v.Ranges,
 		isVirtualTable: tb.Type() == table.VirtualTable,
@@ -713,26 +712,24 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 	}
 	if v.SmallChildIdx == 1 {
 		return &NestedLoopJoinExec{
+			baseExecutor:  newBaseExecutor(v.Schema(), b.ctx),
 			SmallExec:     b.build(v.Children()[1]),
 			BigExec:       b.build(v.Children()[0]),
-			Ctx:           b.ctx,
 			BigFilter:     v.LeftConditions,
 			SmallFilter:   v.RightConditions,
 			OtherFilter:   append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...),
-			schema:        v.Schema(),
 			outer:         v.JoinType != plan.InnerJoin,
 			defaultValues: v.DefaultValues,
 		}
 	}
 	return &NestedLoopJoinExec{
+		baseExecutor:  newBaseExecutor(v.Schema(), b.ctx),
 		SmallExec:     b.build(v.Children()[0]),
 		BigExec:       b.build(v.Children()[1]),
 		leftSmall:     true,
-		Ctx:           b.ctx,
 		BigFilter:     v.RightConditions,
 		SmallFilter:   v.LeftConditions,
 		OtherFilter:   append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...),
-		schema:        v.Schema(),
 		outer:         v.JoinType != plan.InnerJoin,
 		defaultValues: v.DefaultValues,
 	}
@@ -753,9 +750,9 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
 	}
 	apply := &ApplyJoinExec{
-		join:        join,
-		outerSchema: v.OuterSchema,
-		schema:      v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		join:         join,
+		outerSchema:  v.OuterSchema,
 	}
 	return apply
 }
@@ -877,8 +874,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
-		ctx:   b.ctx,
-		tasks: make([]*analyzeTask, 0, len(v.Children())),
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		tasks:        make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
@@ -984,15 +981,14 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
 	e := &TableReaderExecutor{
-		ctx:       b.ctx,
-		schema:    v.Schema(),
-		dagPB:     dagReq,
-		tableID:   ts.Table.ID,
-		table:     table,
-		keepOrder: ts.KeepOrder,
-		desc:      ts.Desc,
-		columns:   ts.Columns,
-		priority:  b.priority,
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		dagPB:        dagReq,
+		tableID:      ts.Table.ID,
+		table:        table,
+		keepOrder:    ts.KeepOrder,
+		desc:         ts.Desc,
+		columns:      ts.Columns,
+		priority:     b.priority,
 	}
 
 	for i := range v.Schema().Columns {
@@ -1027,16 +1023,15 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
-		ctx:       b.ctx,
-		schema:    v.Schema(),
-		dagPB:     dagReq,
-		tableID:   is.Table.ID,
-		table:     table,
-		index:     is.Index,
-		keepOrder: !is.OutOfOrder,
-		desc:      is.Desc,
-		columns:   is.Columns,
-		priority:  b.priority,
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		dagPB:        dagReq,
+		tableID:      is.Table.ID,
+		table:        table,
+		index:        is.Index,
+		keepOrder:    !is.OutOfOrder,
+		desc:         is.Desc,
+		columns:      is.Columns,
+		priority:     b.priority,
 	}
 
 	for _, col := range v.OutputColumns {
@@ -1099,8 +1094,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 	}
 
 	e := &IndexLookUpExecutor{
-		ctx:               b.ctx,
-		schema:            v.Schema(),
+		baseExecutor:      newBaseExecutor(v.Schema(), b.ctx),
 		dagPB:             indexReq,
 		tableID:           is.Table.ID,
 		table:             table,
