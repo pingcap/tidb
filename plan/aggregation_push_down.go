@@ -260,7 +260,8 @@ func (a *aggregationOptimizer) makeNewAgg(aggFuncs []aggregation.Aggregation, gb
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		groupByCols:  gbyCols,
 	}.init(a.allocator, a.ctx)
-	var newAggFuncs []aggregation.Aggregation
+
+	newAggFuncs := make([]aggregation.Aggregation, 0, len(aggFuncs)+len(gbyCols))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)+len(gbyCols))...)
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []aggregation.Aggregation
