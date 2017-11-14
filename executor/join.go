@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -45,6 +44,7 @@ type HashJoinExec struct {
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
 
+	innerRowBuffer  []Row
 	prepared        bool
 	concurrency     int // concurrency is number of concurrent channels and join workers.
 	hashTable       *mvmap.MVMap
@@ -79,6 +79,7 @@ func (e *HashJoinExec) Close() error {
 		<-e.closeCh
 	}
 
+	e.innerRowBuffer = nil
 	e.resultBuffer = nil
 
 	return nil
@@ -91,6 +92,7 @@ func (e *HashJoinExec) Open() error {
 	}
 
 	e.prepared = false
+	e.innerRowBuffer = make([]Row, 0, 1024)
 
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
@@ -152,9 +154,9 @@ func (e *HashJoinExec) fetchOuterRows() {
 	}()
 
 	bufferCapacity, maxBufferCapacity := 1, 128
-	outerBuffer := &execResult{rows: make([]Row, 0, bufferCapacity)}
-
 	for i, noMoreData := 0, false; !noMoreData; i = (i + 1) % e.concurrency {
+		outerBuffer := &execResult{rows: make([]Row, 0, bufferCapacity)}
+
 		for !noMoreData && len(outerBuffer.rows) < bufferCapacity {
 			if e.finished.Load().(bool) {
 				return
@@ -178,11 +180,8 @@ func (e *HashJoinExec) fetchOuterRows() {
 		case <-e.ctx.GoCtx().Done():
 			return
 		case e.outerBufferChs[i] <- outerBuffer:
-			if !noMoreData {
-				if bufferCapacity < maxBufferCapacity {
-					bufferCapacity <<= 1
-				}
-				outerBuffer = &execResult{rows: make([]Row, 0, bufferCapacity)}
+			if !noMoreData && bufferCapacity < maxBufferCapacity {
+				bufferCapacity <<= 1
 			}
 		}
 	}
@@ -198,6 +197,7 @@ func (e *HashJoinExec) prepare() error {
 	e.hashTable = mvmap.NewMVMap()
 	e.resultCursor = 0
 	var buffer []byte
+	sequentialDatums := make([]types.Datum, 0, e.innerlExec.Schema().Len()*1024)
 	for {
 		innerRow, err := e.innerlExec.Next()
 		if err != nil {
@@ -223,11 +223,12 @@ func (e *HashJoinExec) prepare() error {
 			continue
 		}
 
+		sequentialDatums = append(sequentialDatums, innerRow...)
+		e.innerRowBuffer = append(e.innerRowBuffer, sequentialDatums)
+		sequentialDatums = sequentialDatums[len(sequentialDatums):]
+
 		buffer = buffer[:0]
-		buffer, err = e.encodeRow(buffer, innerRow)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		buffer = codec.EncodeInt(buffer, int64(len(e.innerRowBuffer)-1))
 
 		e.hashTable.Put(joinKey, buffer)
 	}
@@ -244,31 +245,6 @@ func (e *HashJoinExec) prepare() error {
 	return nil
 }
 
-func (e *HashJoinExec) encodeRow(b []byte, row Row) ([]byte, error) {
-	loc := e.ctx.GetSessionVars().GetTimeZone()
-	for _, datum := range row {
-		tmp, err := tablecodec.EncodeValue(datum, loc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		b = append(b, tmp...)
-	}
-	return b, nil
-}
-
-func (e *HashJoinExec) decodeRow(data []byte) (Row, error) {
-	values := make([]types.Datum, e.innerlExec.Schema().Len())
-	err := codec.SetRawValues(data, values)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = decodeRawValues(values, e.innerlExec.Schema(), e.ctx.GetSessionVars().GetTimeZone())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return values, nil
-}
-
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.workerWaitGroup.Wait()
 	close(e.resultBufferCh)
@@ -279,6 +255,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 func (e *HashJoinExec) runJoinWorker(workerID int) {
 	bufferCapacity := 1024
 	resultBuffer := &execResult{rows: make([]Row, 0, bufferCapacity)}
+	outerFilterResult := make([]bool, 0, bufferCapacity)
 
 	var outerBuffer *execResult
 	for ok := true; ok; {
@@ -296,7 +273,41 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 			break
 		}
 
-		for _, outerRow := range outerBuffer.rows {
+		numMatchedOuters, numOuters := 0, len(outerFilterResult)
+		if e.outerFilter != nil {
+			outerFilterResult := outerFilterResult[:0]
+			for _, outerRow := range outerBuffer.rows {
+				matched, err := expression.EvalBool(e.outerFilter, outerRow, e.ctx)
+				if err != nil {
+					resultBuffer.err = errors.Trace(err)
+					break
+				}
+				outerFilterResult = append(outerFilterResult, matched)
+			}
+
+			for i, j := 0, len(outerFilterResult)-1; i < j; {
+				for i < j && outerFilterResult[i] == true {
+					i++
+				}
+				for i < j && outerFilterResult[j] == false {
+					j--
+				}
+				if i < j && outerFilterResult[i] == false && outerFilterResult[j] == true {
+					outerFilterResult[i], outerFilterResult[j] = outerFilterResult[j], outerFilterResult[i]
+					outerBuffer.rows[i], outerBuffer.rows[j] = outerBuffer.rows[j], outerBuffer.rows[i]
+					i++
+					j--
+				}
+			}
+			for numMatchedOuters < numOuters && outerFilterResult[numMatchedOuters] == true {
+				numMatchedOuters++
+			}
+		} else {
+			numMatchedOuters = numOuters
+		}
+
+		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuters(outerBuffer.rows[numMatchedOuters:], resultBuffer.rows)
+		for _, outerRow := range outerBuffer.rows[:numMatchedOuters] {
 			ok = e.joinOuterRow(workerID, outerRow, resultBuffer)
 			if !ok {
 				break
@@ -318,16 +329,6 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 // Every matching row generates a result row.
 // If there are no matching rows and it is outer join, a null filled result row is created.
 func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *execResult) bool {
-	matched, err := expression.EvalBool(e.outerFilter, outerRow, e.ctx)
-	if err != nil {
-		resultBuffer.err = errors.Trace(err)
-		return false
-	}
-	if !matched {
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuter(outerRow, resultBuffer.rows)
-		return true
-	}
-
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := getJoinKey(e.outerKeys, outerRow, buffer.data, buffer.bytes[:0:cap(buffer.bytes)])
 	if err != nil {
@@ -348,14 +349,15 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 
 	innerRows := make([]Row, 0, len(values))
 	for _, value := range values {
-		innerRow, err := e.decodeRow(value)
+		_, innerID, err := codec.DecodeInt(value)
 		if err != nil {
 			resultBuffer.err = errors.Trace(err)
 			return false
 		}
-		innerRows = append(innerRows, innerRow)
+		innerRows = append(innerRows, e.innerRowBuffer[innerID])
 	}
 
+	matched := false
 	resultBuffer.rows, matched, err = e.resultGenerator.emitMatchedInners(outerRow, innerRows, resultBuffer.rows)
 	if err != nil {
 		resultBuffer.err = errors.Trace(err)

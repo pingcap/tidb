@@ -317,34 +317,55 @@ type innerJoinResultGenerator struct {
 	baseJoinResultGenerator
 }
 
+func makeJoinRowToBuffer(buffer []types.Datum, lhs, rhs Row) ([]types.Datum, Row) {
+	buffer = append(buffer, lhs...)
+	buffer = append(buffer, rhs...)
+	return buffer[len(buffer):], buffer[:len(buffer)]
+}
+
 // emitMatchedInners implements joinResultGenerator interface.
 func (outputer *innerJoinResultGenerator) emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error) {
-	joinedRows := make([]Row, 0, len(inners))
+	if len(inners) == 0 {
+		return resultBuffer, false, nil
+	}
+
+	buffer := make([]types.Datum, 0, (len(outer)+len(inners[0]))*len(inners))
+	if cap(resultBuffer)-len(resultBuffer) < len(inners) {
+		newBuffer := make([]Row, len(resultBuffer), len(resultBuffer)+len(inners))
+		copy(newBuffer, resultBuffer)
+		resultBuffer = newBuffer
+	}
+	originLen := len(resultBuffer)
 	if outputer.outerIsRight {
+		var joinedRow Row
 		for _, inner := range inners {
-			joinedRows = append(joinedRows, makeJoinRow(inner, outer))
+			buffer, joinedRow = makeJoinRowToBuffer(buffer, inner, outer)
+			resultBuffer = append(resultBuffer, joinedRow)
 		}
 	} else {
+		var joinedRow Row
 		for _, inner := range inners {
-			joinedRows = append(joinedRows, makeJoinRow(outer, inner))
+			buffer, joinedRow = makeJoinRowToBuffer(buffer, outer, inner)
+			resultBuffer = append(resultBuffer, joinedRow)
 		}
 	}
 
 	if outputer.filter == nil {
-		return append(resultBuffer, joinedRows...), len(joinedRows) > 0, nil
+		return resultBuffer, len(resultBuffer) > originLen, nil
 	}
 
-	originLen := len(resultBuffer)
-	for _, joinedRow := range joinedRows {
+	curLen := originLen
+	for _, joinedRow := range resultBuffer[originLen:] {
 		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
 		if err != nil {
-			return resultBuffer, false, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		if matched {
-			resultBuffer = append(resultBuffer, joinedRow)
+			resultBuffer[curLen] = joinedRow
+			curLen++
 		}
 	}
-	return resultBuffer, len(resultBuffer) > originLen, nil
+	return resultBuffer[:curLen], curLen > originLen, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
