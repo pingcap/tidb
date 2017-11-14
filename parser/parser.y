@@ -413,6 +413,36 @@ import (
 	tidbSMJ		"TIDB_SMJ"
 	tidbINLJ	"TIDB_INLJ"
 
+	builtinAddDate
+	builtinBitAnd
+	builtinBitOr
+	builtinBitXor
+	builtinCast
+	builtinCount
+	builtinCurDate
+	builtinCurTime
+	builtinDateAdd
+	builtinDateSub
+	builtinExtract
+	builtinGroupConcat
+	builtinMax
+	builtinMin
+	builtinNow
+	builtinPosition
+	builtinStd
+	builtinStddev
+	builtinStddevPop
+	builtinStddevSamp
+	builtinSubDate
+	builtinSubstring
+	builtinSum
+	builtinSysDate
+	builtinTrim
+	builtinUser
+	builtinVariance
+	builtinVarPop
+	builtinVarSamp
+
 %token	<item>
 
 	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
@@ -1441,7 +1471,7 @@ NowSymOptionFraction:
 * TODO: Process other three keywords
 */
 NowSymFunc:
-	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" | "NOW"
+	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" | builtinNow
 NowSym:
 	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP"
 
@@ -2814,7 +2844,7 @@ SimpleExpr:
 			FunctionType: ast.CastBinaryOperator,
 		}
 	}
-|	"CAST" '(' Expression "AS" CastType ')'
+|	builtinCast '(' Expression "AS" CastType ')'
  	{
  		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
  		tp := $5.(*types.FieldType)
@@ -2938,7 +2968,7 @@ FunctionNameConflict:
 |	"MICROSECOND"
 |	"MINUTE"
 |	"MONTH"
-|	"NOW"
+|	builtinNow
 |	"QUARTER"
 |	"REPEAT"
 |	"REPLACE"
@@ -2974,10 +3004,18 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|   builtinUser '('	ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 |	FunctionNameOptionalBraces OptionalBraces
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
+|   builtinCurDate '(' ')'
+    {
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+    }
 |	FunctionNameDatetimePrecision FuncDatetimePrec
 	{
 		args := []ast.ExprNode{}
@@ -3033,7 +3071,11 @@ FunctionCallKeyword:
 	}
 
 FunctionCallNonKeyword:
-	"CURTIME" '(' FuncDatetimePrecListOpt ')'
+	builtinCurTime '(' FuncDatetimePrecListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+| builtinSysDate '(' FuncDatetimePrecListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
@@ -3070,7 +3112,7 @@ FunctionCallNonKeyword:
 			},
 		}
 	}
-|	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
+|	builtinExtract '(' TimeUnit "FROM" Expression ')'
 	{
 		timeUnit := ast.NewValueExpr($3)
 		$$ = &ast.FuncCallExpr{
@@ -3085,32 +3127,32 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{ast.NewValueExpr($3), $5},
 		}
 	}
-|	"POSITION" '(' BitExpr "IN" Expression ')'
+|	builtinPosition '(' BitExpr "IN" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3, $5}}
 	}
-|	"SUBSTRING" '(' Expression ',' Expression ')'
+|	builtinSubstring '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3, $5},
 		}
 	}
-|	"SUBSTRING" '(' Expression "FROM" Expression ')'
+|	builtinSubstring '(' Expression "FROM" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3, $5},
 		}
 	}
-|	"SUBSTRING" '(' Expression ',' Expression ',' Expression ')'
+|	builtinSubstring '(' Expression ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3, $5, $7},
 		}
 	}
-|	"SUBSTRING" '(' Expression "FROM" Expression "FOR" Expression ')'
+|	builtinSubstring '(' Expression "FROM" Expression "FOR" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -3131,21 +3173,21 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{ast.NewValueExpr($3), $5, $7},
 		}
 	}
-|	"TRIM" '(' Expression ')'
+|	builtinTrim '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3},
 		}
 	}
-|	"TRIM" '(' Expression "FROM" Expression ')'
+|	builtinTrim '(' Expression "FROM" Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$5, $3},
 		}
 	}
-|	"TRIM" '(' TrimDirection "FROM" Expression ')'
+|	builtinTrim '(' TrimDirection "FROM" Expression ')'
 	{
 		nilVal := ast.NewValueExpr(nil)
 		direction := ast.NewValueExpr(int($3.(ast.TrimDirectionType)))
@@ -3154,7 +3196,7 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$5, nilVal, direction},
 		}
 	}
-|	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
+|	builtinTrim '(' TrimDirection Expression "FROM" Expression ')'
 	{
 		direction := ast.NewValueExpr(int($3.(ast.TrimDirectionType)))
 		$$ = &ast.FuncCallExpr{
@@ -3183,13 +3225,13 @@ GetFormatSelector:
 
 
 FunctionNameDateArith:
-	"DATE_ADD"
-|	"DATE_SUB"
+	builtinDateAdd
+|	builtinDateSub
 
 
 FunctionNameDateArithMultiForms:
-	"ADDDATE"
-|	"SUBDATE"
+	builtinAddDate
+|	builtinSubDate
 
 
 TrimDirection:
@@ -3215,36 +3257,36 @@ SumExpr:
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
-|	"COUNT" '(' DistinctKwd ExpressionList ')'
+|	builtinCount '(' DistinctKwd ExpressionList ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: true}
 	}
-|	"COUNT" '(' "ALL" Expression ')'
+|	builtinCount '(' "ALL" Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 	}
-|	"COUNT" '(' Expression ')'
+|	builtinCount '(' Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
-|	"COUNT" '(' '*' ')'
+|	builtinCount '(' '*' ')'
 	{
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 	}
-|	"GROUP_CONCAT" '(' BuggyDefaultFalseDistinctOpt ExpressionList ')'
+|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
-|	"MAX" '(' BuggyDefaultFalseDistinctOpt Expression ')'
+|	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
-|	"MIN" '(' BuggyDefaultFalseDistinctOpt Expression ')'
+|	builtinMin '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
-|	"SUM" '(' BuggyDefaultFalseDistinctOpt Expression ')'
+|	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}

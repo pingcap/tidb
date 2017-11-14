@@ -201,3 +201,23 @@ func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
 	r = tk.MustQuery("SELECT '\\\\'")
 	r.Check(testkit.Rows("\\\\"))
 }
+
+func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("CREATE TABLE COUNT (a bigint);")
+	tk.MustExec("DROP TABLE COUNT;")
+	tk.MustExec("CREATE TABLE `COUNT` (a bigint);")
+	tk.MustExec("DROP TABLE COUNT;")
+	_, err := tk.Exec("CREATE TABLE COUNT(a bigint);")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("set sql_mode='IGNORE_SPACE'")
+	_, err = tk.Exec("CREATE TABLE COUNT (a bigint);")
+	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE `COUNT` (a bigint);")
+	tk.MustExec("DROP TABLE COUNT;")
+	_, err = tk.Exec("CREATE TABLE COUNT(a bigint);")
+	c.Assert(err, NotNil)
+}
