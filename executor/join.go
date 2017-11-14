@@ -273,9 +273,9 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 			break
 		}
 
-		numMatchedOuters, numOuters := 0, len(outerFilterResult)
+		numMatchedOuters, numOuters := 0, len(outerBuffer.rows)
 		if e.outerFilter != nil {
-			outerFilterResult := outerFilterResult[:0]
+			outerFilterResult = outerFilterResult[:0]
 			for _, outerRow := range outerBuffer.rows {
 				matched, err := expression.EvalBool(e.outerFilter, outerRow, e.ctx)
 				if err != nil {
@@ -349,9 +349,9 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 
 	innerRows := make([]Row, 0, len(values))
 	for _, value := range values {
-		_, innerID, err := codec.DecodeInt(value)
-		if err != nil {
-			resultBuffer.err = errors.Trace(err)
+		_, innerID, err1 := codec.DecodeInt(value)
+		if err1 != nil {
+			resultBuffer.err = errors.Trace(err1)
 			return false
 		}
 		innerRows = append(innerRows, e.innerRowBuffer[innerID])
