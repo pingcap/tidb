@@ -123,7 +123,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		c.Assert(err, IsNil)
 
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmt, is, ctx)
+		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmt, is)
 		c.Assert(err, IsNil, comment)

@@ -280,7 +280,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmts[0], is, ctx)
+		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
@@ -319,7 +319,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a varchar(50), b int, c double, index idx_ab(a, b), index idx_cb(c, a))")
+	testKit.MustExec("create table t(a varchar(50), b int, c double, index idx_ab(a(50), b), index idx_cb(c, a))")
 
 	tests := []struct {
 		indexPos    int
@@ -435,7 +435,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmts[0], is, ctx)
+		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
@@ -686,7 +686,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmts[0], is, ctx)
+		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))

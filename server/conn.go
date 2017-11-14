@@ -49,6 +49,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -460,6 +461,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	case mysql.ComQuit:
 		label = "Quit"
 	case mysql.ComQuery:
+		if cc.ctx.Value(context.LastExecuteDDL) != nil {
+			// Don't take DDL execute time into account.
+			// It's already recorded by other metrics in ddl package.
+			return
+		}
 		label = "Query"
 	case mysql.ComPing:
 		label = "Ping"
@@ -813,9 +819,6 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	if err = cc.writeEOF(false); err != nil {
 		return errors.Trace(err)
 	}
-
-	numBytes4Null := ((len(columns) + 7 + 2) / 8)
-	rowBuffer := make([]byte, 1+numBytes4Null, 1+numBytes4Null+8*(len(columns)))
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -825,24 +828,14 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		}
 		data = data[0:4]
 		if binary {
-			rowBuffer = rowBuffer[0 : 1+numBytes4Null : cap(rowBuffer)]
-			rowBuffer, err = dumpRowValuesBinary(rowBuffer, columns, row)
+			data, err = dumpBinaryRow(data, columns, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			data = append(data, rowBuffer...)
 		} else {
-			for i, value := range row {
-				if value.IsNull() {
-					data = append(data, 0xfb)
-					continue
-				}
-				var valData []byte
-				valData, err = dumpTextValue(columns[i], value)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				data = dumpLengthEncodedString(data, valData)
+			data, err = dumpTextRow(data, columns, row)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 

@@ -149,6 +149,13 @@ func (s *testMySQLConstSuite) TestRealAsFloatMode(c *C) {
 	c.Assert(row[1], Equals, "float")
 }
 
+func (s *testMySQLConstSuite) TestPipesAsConcatMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("SET sql_mode='PIPES_AS_CONCAT';")
+	r := tk.MustQuery(`SELECT 'hello' || 'world';`)
+	r.Check(testkit.Rows("helloworld"))
+}
+
 func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
@@ -183,4 +190,14 @@ func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	r.Check(testkit.Rows())
 	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
 	r.Check(testkit.Rows("1"))
+}
+
+func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode=''")
+	r := tk.MustQuery("SELECT '\\\\'")
+	r.Check(testkit.Rows("\\"))
+	tk.MustExec("set sql_mode='NO_BACKSLASH_ESCAPES'")
+	r = tk.MustQuery("SELECT '\\\\'")
+	r.Check(testkit.Rows("\\\\"))
 }

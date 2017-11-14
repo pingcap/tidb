@@ -427,6 +427,11 @@ func (m SQLMode) HasStrictMode() bool {
 	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
 }
 
+// HasPipesAsConcatMode detects if 'PIPES_AS_CONCAT' mode is set in SQLMode
+func (m SQLMode) HasPipesAsConcatMode() bool {
+	return m&ModePipesAsConcat == ModePipesAsConcat
+}
+
 // HasNoUnsignedSubtractionMode detects if 'NO_UNSIGNED_SUBTRACTION' mode is set in SQLMode
 func (m SQLMode) HasNoUnsignedSubtractionMode() bool {
 	return m&ModeNoUnsignedSubtraction == ModeNoUnsignedSubtraction
@@ -445,6 +450,11 @@ func (m SQLMode) HasANSIQuotesMode() bool {
 // HasRealAsFloatMode detects if 'REAL_AS_FLOAT' mode is set in SQLMode
 func (m SQLMode) HasRealAsFloatMode() bool {
 	return m&ModeRealAsFloat == ModeRealAsFloat
+}
+
+// HasNoBackslashEscapesMode detects if 'NO_BACKSLASH_ESCAPES' mode is set in SQLMode
+func (m SQLMode) HasNoBackslashEscapesMode() bool {
+	return m&ModeNoBackslashEscapes == ModeNoBackslashEscapes
 }
 
 // consts for sql modes.

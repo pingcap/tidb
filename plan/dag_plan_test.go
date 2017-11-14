@@ -17,8 +17,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testleak"
@@ -45,7 +43,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-
+	_, err = se.Execute(goctx.Background(), "use test")
+	c.Assert(err, IsNil)
 	tests := []struct {
 		sql  string
 		best string
@@ -180,8 +179,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
-
-		is, err := plan.MockResolve(stmt)
+		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
@@ -198,6 +196,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		store.Close()
 	}()
 	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -351,7 +351,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
+		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
@@ -368,6 +368,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		store.Close()
 	}()
 	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -421,7 +423,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
+		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
@@ -438,6 +440,8 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		store.Close()
 	}()
 	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -478,7 +482,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
+		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
@@ -561,10 +565,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is := infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})
-		err = plan.Preprocess(se.(context.Context), stmt, is, false)
-		c.Assert(err, IsNil)
-		_, err = plan.MockResolve(stmt)
+		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
@@ -581,6 +582,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		store.Close()
 	}()
 	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -613,7 +616,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
+		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
@@ -630,6 +633,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		store.Close()
 	}()
 	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -675,7 +680,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
+		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		err = se.NewTxn()
@@ -697,6 +702,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		store.Close()
 	}()
 	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -820,7 +827,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
+		is, err := plan.MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
@@ -837,6 +844,8 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		store.Close()
 	}()
 	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -1048,9 +1057,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
+		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc.IgnoreTruncate = false
+		is, err := plan.MockPreprocess(stmt, false)
+		c.Assert(err, IsNil, comment)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))

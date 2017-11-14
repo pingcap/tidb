@@ -14,7 +14,6 @@
 package aggregation
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -70,11 +69,7 @@ func (ff *firstRowFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Da
 // CalculateDefaultValue implements Aggregation interface.
 func (ff *firstRowFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
-	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if err != nil {
-		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
-		return d, false
-	}
+	result := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if con, ok := result.(*expression.Constant); ok {
 		return con.Value, true
 	}

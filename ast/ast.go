@@ -135,7 +135,7 @@ type Row struct {
 type RecordSet interface {
 
 	// Fields gets result fields.
-	Fields() (fields []*ResultField, err error)
+	Fields() []*ResultField
 
 	// Next returns the next row, nil row means there is no more to return.
 	Next() (row *Row, err error)
@@ -149,10 +149,6 @@ type RecordSet interface {
 // Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node
-	// GetResultFields gets result fields.
-	GetResultFields() []*ResultField
-	// SetResultFields sets result fields.
-	SetResultFields(fields []*ResultField)
 }
 
 // SensitiveStmtNode overloads StmtNode and provides a SecureText method.
