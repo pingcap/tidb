@@ -185,17 +185,17 @@ func (pe *projectionEliminater) resetDefaultValues(join *LogicalJoin, prj Plan) 
 		return join.DefaultValues
 	}
 	var schemaIdxMap map[int]int
-	joinInnerChildSchema := joinInnerChild.Schema().Columns
+	prjSchema := prj.Schema().Columns
 	childOfPrjSchema := prjChild.Schema().Columns
-	for i := 0; i < len(joinInnerChildSchema); i++ {
+	for i := 0; i < len(prjSchema); i++ {
 		for j := 0; j < len(childOfPrjSchema); j++ {
-			if joinInnerChildSchema[i].Equal(childOfPrjSchema[j], nil) {
+			if prjSchema[i].Equal(childOfPrjSchema[j], nil) {
 				schemaIdxMap[i] = j
 			}
 		}
 	}
 	newDefaultValues := make([]types.Datum, len(childOfPrjSchema))
-	for i := range joinInnerChildSchema {
+	for i := range prjSchema {
 		if j, ok := schemaIdxMap[i]; ok {
 			newDefaultValues[j] = join.DefaultValues[i]
 		}
