@@ -106,7 +106,7 @@ type projectionEliminater struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
 	return root.(LogicalPlan), nil
 }
