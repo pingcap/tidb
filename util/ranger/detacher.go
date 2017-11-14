@@ -86,7 +86,7 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 	return accessConditions, hasResidualConditions
 }
 
-// getEqOrInColOffset judge if the expression is a eq function that one side is constant and another is column or an
+// getEqOrInColOffset checks if the expression is a eq function that one side is constant and another is column or an
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
 func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
@@ -156,6 +156,7 @@ func extractAccessAndFilterConds(conditions, accessConds, filterConds []expressi
 }
 
 // DetachIndexConditions will detach the index filters from table filters.
+// It will first find the point query column and then extract the range query column.
 func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accessConds []expression.Expression, filterConds []expression.Expression) {
 	accessConds = make([]expression.Expression, len(cols))
