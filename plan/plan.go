@@ -40,8 +40,6 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() string
-	// Get id allocator
-	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
 	// SetChildren sets the children for the plan.
@@ -246,13 +244,14 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
-func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan) *basePlan {
+func newBasePlan(tp string, ctx context.Context, p Plan) *basePlan {
+	ctx.GetSessionVars().PlanID++
+	id := ctx.GetSessionVars().PlanID
 	return &basePlan{
-		tp:        tp,
-		allocator: allocator,
-		id:        allocator.allocID(),
-		ctx:       ctx,
-		self:      p,
+		tp:   tp,
+		id:   id,
+		ctx:  ctx,
+		self: p,
 	}
 }
 
@@ -277,10 +276,6 @@ func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn
 	return corCols
 }
 
-func (p *basePlan) Allocator() *idAllocator {
-	return p.allocator
-}
-
 // PruneColumns implements LogicalPlan interface.
 func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 	if len(p.basePlan.children) == 0 {
@@ -297,13 +292,12 @@ type basePlan struct {
 	parents  []Plan
 	children []Plan
 
-	schema    *expression.Schema
-	tp        string
-	id        int
-	allocator *idAllocator
-	ctx       context.Context
-	self      Plan
-	profile   *statsProfile
+	schema  *expression.Schema
+	tp      string
+	id      int
+	ctx     context.Context
+	self    Plan
+	profile *statsProfile
 	// expectedCnt means this operator may be closed after fetching expectedCnt records.
 	expectedCnt float64
 }
