@@ -149,7 +149,6 @@ var clauseMsg = map[clauseCode]string{
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err           error
-	allocator     *idAllocator
 	ctx           context.Context
 	is            infoschema.InfoSchema
 	outerSchemas  []*expression.Schema
@@ -225,7 +224,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	exprs := make([]expression.Expression, 0, len(v.Exprs))
-	dual := TableDual{RowCount: 1}.init(b.allocator, b.ctx)
+	dual := TableDual{RowCount: 1}.init(b.ctx)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
@@ -235,7 +234,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		exprs = append(exprs, expr)
 	}
 	dual.SetSchema(expression.NewSchema())
-	p := Projection{Exprs: exprs}.init(b.allocator, b.ctx)
+	p := Projection{Exprs: exprs}.init(b.ctx)
 	setParentAndChildren(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
@@ -255,7 +254,7 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 				// Convert column name expression to string value expression.
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
 			}
-			mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+			mockTablePlan := TableDual{}.init(b.ctx)
 			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
@@ -375,7 +374,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 }
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
-	selectLock := SelectLock{Lock: lock}.init(b.allocator, b.ctx)
+	selectLock := SelectLock{Lock: lock}.init(b.ctx)
 	setParentAndChildren(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
@@ -574,7 +573,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		Flag:   show.Flag,
 		Full:   show.Full,
 		User:   show.User,
-	}.init(b.allocator, b.ctx)
+	}.init(b.ctx)
 	resultPlan = p
 	switch showTp := show.Tp; showTp {
 	case ast.ShowProcedureStatus:
@@ -622,7 +621,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		}
 	}
 	if len(conditions) != 0 {
-		sel := Selection{Conditions: conditions}.init(b.allocator, b.ctx)
+		sel := Selection{Conditions: conditions}.init(b.ctx)
 		setParentAndChildren(sel, p)
 		sel.SetSchema(p.Schema())
 		resultPlan = sel
@@ -758,7 +757,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		IsReplace:   insert.IsReplace,
 		Priority:    insert.Priority,
 		IgnoreErr:   insert.IgnoreErr,
-	}.init(b.allocator, b.ctx)
+	}.init(b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
 		privilege: mysql.InsertPriv,
@@ -784,7 +783,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
-	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan := TableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 
 	checkRefColumn := func(n ast.Node) ast.Node {
@@ -948,7 +947,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		return nil
 	}
 	schema := expression.TableInfo2Schema(tableInfo)
-	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan := TableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	p.SetSchema(expression.NewSchema())

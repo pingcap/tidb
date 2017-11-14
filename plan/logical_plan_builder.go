@@ -51,15 +51,6 @@ const (
 	ErrExprInOrderBy = "ORDER BY"
 )
 
-type idAllocator struct {
-	id int
-}
-
-func (a *idAllocator) allocID() int {
-	a.id++
-	return a.id
-}
-
 func (p *LogicalAggregation) collectGroupByColumns() {
 	p.groupByCols = p.groupByCols[:0]
 	for _, item := range p.GroupByItems {
@@ -73,7 +64,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 
-	agg := LogicalAggregation{AggFuncs: make([]aggregation.Aggregation, 0, len(aggFuncList))}.init(b.allocator, b.ctx)
+	agg := LogicalAggregation{AggFuncs: make([]aggregation.Aggregation, 0, len(aggFuncList))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -257,7 +248,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	rightAlias := extractTableAlias(rightPlan)
 
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
-	joinPlan := LogicalJoin{}.init(b.allocator, b.ctx)
+	joinPlan := LogicalJoin{}.init(b.ctx)
 	setParentAndChildren(joinPlan, leftPlan, rightPlan)
 	joinPlan.SetSchema(newSchema)
 
@@ -422,7 +413,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
-	selection := Selection{}.init(b.allocator, b.ctx)
+	selection := Selection{}.init(b.ctx)
 	for _, cond := range conditions {
 		expr, np, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {
@@ -441,7 +432,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 					continue
 				} else {
 					// If there is condition which is always false, return dual plan directly.
-					dual := TableDual{}.init(b.allocator, b.ctx)
+					dual := TableDual{}.init(b.ctx)
 					dual.SetSchema(p.Schema().Clone())
 					return dual
 				}
@@ -544,7 +535,7 @@ func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
-	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.allocator, b.ctx)
+	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	for _, field := range fields {
@@ -574,7 +565,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	agg := LogicalAggregation{
 		AggFuncs:     make([]aggregation.Aggregation, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
-	}.init(b.allocator, b.ctx)
+	}.init(b.ctx)
 	agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
 		agg.AggFuncs = append(agg.AggFuncs, aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
@@ -597,7 +588,7 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := Union{}.init(b.allocator, b.ctx)
+	u := Union{}.init(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
@@ -613,7 +604,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		}
 		if _, ok := sel.(*Projection); !ok {
 			b.optFlag |= flagEliminateProjection
-			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.allocator, b.ctx)
+			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.ctx)
 			schema := sel.Schema().Clone()
 			for _, col := range schema.Columns {
 				col.FromID = proj.ID()
@@ -680,7 +671,7 @@ func (by *ByItems) Clone() *ByItems {
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	b.curClause = orderByClause
-	sort := Sort{}.init(b.allocator, b.ctx)
+	sort := Sort{}.init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
@@ -742,7 +733,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	li := Limit{
 		Offset: offset,
 		Count:  count,
-	}.init(b.allocator, b.ctx)
+	}.init(b.ctx)
 	setParentAndChildren(li, src)
 	li.SetSchema(src.Schema().Clone())
 	return li
@@ -1536,7 +1527,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		b.needColHandle--
 	}
 	if oldLen != p.Schema().Len() {
-		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
+		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
 		setParentAndChildren(proj, p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
@@ -1550,7 +1541,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
-	dual := TableDual{RowCount: 1}.init(b.allocator, b.ctx)
+	dual := TableDual{RowCount: 1}.init(b.ctx)
 	dual.SetSchema(expression.NewSchema())
 	return dual
 }
@@ -1582,7 +1573,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
 		NeedColHandle:  b.needColHandle > 0,
-	}.init(b.allocator, b.ctx)
+	}.init(b.ctx)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
 	var columns []*table.Column
@@ -1667,7 +1658,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	var proj = Projection{
 		Exprs:            make([]expression.Expression, 0, len(columns)),
 		calculateGenCols: true,
-	}.init(b.allocator, b.ctx)
+	}.init(b.ctx)
 	for i, colExpr := range ds.Schema().Columns {
 		var exprIsGen = false
 		var expr expression.Expression
@@ -1702,7 +1693,7 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
-	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.allocator, b.ctx)
+	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.ctx)
 	if tp == LeftOuterJoin {
 		ap.DefaultValues = make([]types.Datum, innerPlan.Schema().Len())
 	}
@@ -1722,7 +1713,6 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = TypeApply
-	ap.id = ap.allocator.allocID()
 	ap.self = ap
 	ap.children[0].SetParents(ap)
 	ap.children[1].SetParents(ap)
@@ -1749,7 +1739,7 @@ out:
 			break out
 		}
 	}
-	exists := Exists{}.init(b.allocator, b.ctx)
+	exists := Exists{}.init(b.ctx)
 	setParentAndChildren(exists, p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
@@ -1760,14 +1750,14 @@ out:
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := MaxOneRow{}.init(b.allocator, b.ctx)
+	maxOneRow := MaxOneRow{}.init(b.ctx)
 	setParentAndChildren(maxOneRow, p)
 	maxOneRow.SetSchema(p.Schema().Clone())
 	return maxOneRow
 }
 
 func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) *LogicalJoin {
-	joinPlan := LogicalJoin{}.init(b.allocator, b.ctx)
+	joinPlan := LogicalJoin{}.init(b.ctx)
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
@@ -1844,7 +1834,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	updt := Update{
 		OrderedList: orderedList,
 		IgnoreErr:   update.IgnoreErr,
-	}.init(b.allocator, b.ctx)
+	}.init(b.ctx)
 	setParentAndChildren(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt
@@ -1996,7 +1986,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	del := Delete{
 		Tables:       tables,
 		IsMultiTable: delete.IsMultiTable,
-	}.init(b.allocator, b.ctx)
+	}.init(b.ctx)
 	setParentAndChildren(del, p)
 	del.SetSchema(expression.NewSchema())
 
