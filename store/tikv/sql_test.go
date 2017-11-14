@@ -59,7 +59,8 @@ func (s *testSQLSuite) TestBusyServerCop(c *C) {
 		row, err := rs[0].Next()
 		c.Assert(err, IsNil)
 		c.Assert(row, NotNil)
-		c.Assert(row.Data[0].GetString(), Equals, "True")
+		sVal, _ := row.GetString(0)
+		c.Assert(sVal, Equals, "True")
 	}()
 
 	wg.Wait()

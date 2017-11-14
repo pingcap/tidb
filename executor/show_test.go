@@ -475,9 +475,11 @@ func (s *testSuite) TestShow2(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 18)
-	c.Assert(row.Data[0].GetString(), Equals, "t")
-	c.Assert(row.Data[17].GetString(), Equals, "注释")
+	c.Assert(row.Len(), Equals, 18)
+	sVal, _ := row.GetString(0)
+	c.Assert(sVal, Equals, "t")
+	sVal, _ = row.GetString(17)
+	c.Assert(sVal, Equals, "注释")
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 
