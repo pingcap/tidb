@@ -49,6 +49,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -460,6 +461,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	case mysql.ComQuit:
 		label = "Quit"
 	case mysql.ComQuery:
+		if cc.ctx.Value(context.LastExecuteDDL) != nil {
+			// Don't take DDL execute time into account.
+			return
+		}
 		label = "Query"
 	case mysql.ComPing:
 		label = "Ping"
