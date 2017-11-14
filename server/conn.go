@@ -463,6 +463,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	case mysql.ComQuery:
 		if cc.ctx.Value(context.LastExecuteDDL) != nil {
 			// Don't take DDL execute time into account.
+			// It's already recorded by other metrics in ddl package.
 			return
 		}
 		label = "Query"
