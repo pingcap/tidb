@@ -24,7 +24,7 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+func (s *columnPruner) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
 	lp.PruneColumns(lp.Schema().Columns)
 	return lp, nil
 }
