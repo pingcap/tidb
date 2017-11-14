@@ -64,6 +64,19 @@ type Datum struct {
 	x         interface{} // x hold all other types.
 }
 
+// Copy deepcopy a Datum.
+func (d *Datum) Copy() *Datum {
+	ret := *d
+	if d.b != nil {
+		ret.b = make([]byte, len(d.b))
+		copy(ret.b, d.b)
+	}
+	if ret.k == KindMysqlJSON {
+		ret.x = *ret.x.(json.JSON).Copy()
+	}
+	return &ret
+}
+
 // Kind gets the kind of the datum.
 func (d *Datum) Kind() byte {
 	return d.k
