@@ -13,8 +13,6 @@
 package plan
 
 import (
-	"fmt"
-
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 )
@@ -50,9 +48,13 @@ func (a *aggEliminater) eliminateAgg(p LogicalPlan) LogicalPlan {
 		li := Limit{Count: 1}.init(a.allocator, a.ctx)
 		li.SetSchema(p.Schema().Clone())
 		setParentAndChildren(li, sort)
-		fmt.Printf("AggElimiate: %s |||| %s\n", li.Schema(), p.Schema())
-		fmt.Printf("AggParent: %s\n", p.Parents()[0].Schema())
-		return li
+
+		// Add a prjection operator here.
+		proj := Projection{}.init(a.allocator, a.ctx)
+		proj.Exprs = append(proj.Exprs, f.GetArgs()[0])
+		proj.SetSchema(p.Schema().Clone())
+		setParentAndChildren(proj, li)
+		return proj
 	}
 
 	newChildren := make([]Plan, 0, len(p.Children()))

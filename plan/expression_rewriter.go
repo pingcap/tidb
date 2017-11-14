@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -615,14 +614,12 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 }
 
 func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Node, bool) {
-	fmt.Println("handleScalarSubquery")
 	np := er.buildSubquery(v)
 	if er.err != nil {
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		fmt.Println("before Apply")
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
