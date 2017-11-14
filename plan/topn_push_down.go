@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"fmt"
-
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
@@ -55,7 +53,6 @@ func (s *TopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
 		limit.SetSchema(p.Schema().Clone())
 		return limit
 	}
-	fmt.Printf("Set TopN Schema: %s %T %s\n", s.Schema(), p, p.Schema())
 	// Then s must be topN.
 	setParentAndChildren(s, p)
 	s.SetSchema(p.Schema().Clone())

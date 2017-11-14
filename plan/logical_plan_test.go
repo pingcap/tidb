@@ -1675,3 +1675,54 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		}
 	}
 }
+
+func (s *testPlanSuite) TestAggEliminater(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Max to Limit + Sort-Desc.
+		{
+			sql:  "select max(a) from t;",
+			best: "DataScan(t)->TopN([test.t.a true],0,1)->Projection->Projection",
+		},
+		// Min to Limit + Sort-Desc.
+		{
+			sql:  "select min(a) from t;",
+			best: "DataScan(t)->TopN([test.t.a],0,1)->Projection->Projection",
+		},
+		// Do nothing to max+min.
+		{
+			sql:  "select max(a), min(a) from t;",
+			best: "DataScan(t)->Aggr(max(test.t.a),min(test.t.a))->Projection",
+		},
+		// Do nothing to max with groupby.
+		{
+			sql:  "select max(a) from t group by b;",
+			best: "DataScan(t)->Aggr(max(test.t.a))->Projection",
+		},
+	}
+
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := MockPreprocess(stmt, false)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			ctx:       mockContext(),
+			is:        is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt).(LogicalPlan)
+		c.Assert(builder.err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
