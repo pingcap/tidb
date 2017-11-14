@@ -159,7 +159,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		return p
 	}
 	if join, ok := p.Parents()[0].(*LogicalJoin); ok {
-		join.DefaultValues = pe.resetDefaultValues(join, p)
+		pe.resetDefaultValues(join, p)
 	}
 	exprs := proj.Exprs
 	for i, col := range proj.Schema().Columns {
@@ -172,7 +172,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 // If the inner child of a Join is a Projection which been eliminated,
 // and the schema of child plan of Projection is not consistent with
 // the schema of Projection, the default values of Join should be reset.
-func (pe *projectionEliminater) resetDefaultValues(join *LogicalJoin, prj Plan) []types.Datum {
+func (pe *projectionEliminater) resetDefaultValues(join *LogicalJoin, prj Plan) {
 	prjChild := prj.Children()[0]
 	var joinInnerChild Plan
 	switch join.JoinType {
@@ -180,9 +180,11 @@ func (pe *projectionEliminater) resetDefaultValues(join *LogicalJoin, prj Plan) 
 		joinInnerChild = join.Children()[1]
 	case RightOuterJoin:
 		joinInnerChild = join.Children()[0]
+	default:
+		return
 	}
 	if joinInnerChild != prj {
-		return join.DefaultValues
+		return
 	}
 	var schemaIdxMap map[int]int
 	prjSchema := prj.Schema().Columns
@@ -200,7 +202,8 @@ func (pe *projectionEliminater) resetDefaultValues(join *LogicalJoin, prj Plan) 
 			newDefaultValues[j] = join.DefaultValues[i]
 		}
 	}
-	return newDefaultValues
+	join.DefaultValues = newDefaultValues
+	return
 }
 
 func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {
