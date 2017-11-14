@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"fmt"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 )
@@ -146,11 +144,6 @@ func (p *Selection) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.children[0].Schema())
-		if c, ok := expr.(*expression.Column); ok {
-			if c.Index == -1 {
-				fmt.Printf("Miss Column in %s %T", p.children[0].Schema(), p.children[0])
-			}
-		}
 	}
 }
 
@@ -188,9 +181,6 @@ func (p *PhysicalApply) ResolveIndices() {
 	p.PhysicalJoin.ResolveIndices()
 	for _, col := range p.OuterSchema {
 		col.Column.ResolveIndices(p.children[0].Schema())
-		if col.Index == -1 {
-			fmt.Printf("Miss Column in %s %T", p.children[0].Schema(), p.children[0])
-		}
 	}
 }
 
