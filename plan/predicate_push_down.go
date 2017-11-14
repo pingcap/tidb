@@ -23,14 +23,14 @@ import (
 
 type ppdSolver struct{}
 
-func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil)
 	return p, nil
 }
 
-func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) {
+func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression) {
 	conditions = expression.PropagateConstant(p.context(), conditions)
-	selection := Selection{Conditions: conditions}.init(allocator, p.context())
+	selection := Selection{Conditions: conditions}.init(p.context())
 	selection.SetSchema(child.Schema().Clone())
 	replaceChild(p, child, selection)
 	selection.SetChildren(child)
@@ -46,7 +46,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	child := p.basePlan.children[0].(LogicalPlan)
 	rest, _ := child.PredicatePushDown(predicates)
 	if len(rest) > 0 {
-		addSelection(p.basePlan.self, child, rest, p.basePlan.allocator)
+		addSelection(p.basePlan.self, child, rest)
 	}
 	return nil, p.basePlan.self.(LogicalPlan)
 }
@@ -78,7 +78,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	outerJoinSimplify(p, predicates)
 	groups, valid := tryToGetJoinGroup(p)
 	if valid {
-		e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
+		e := joinReOrderSolver{ctx: p.ctx}
 		e.reorderJoin(groups, predicates)
 		newJoin := e.resultJoin
 		if len(p.parents) > 0 {
@@ -137,10 +137,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	leftRet, _ := leftPlan.PredicatePushDown(leftCond)
 	rightRet, _ := rightPlan.PredicatePushDown(rightCond)
 	if len(leftRet) > 0 {
-		addSelection(p, leftPlan, leftRet, p.allocator)
+		addSelection(p, leftPlan, leftRet)
 	}
 	if len(rightRet) > 0 {
-		addSelection(p, rightPlan, rightRet, p.allocator)
+		addSelection(p, rightPlan, rightRet)
 	}
 	p.updateEQCond()
 	for _, eqCond := range p.EqualConditions {
@@ -208,7 +208,7 @@ func (p *LogicalJoin) getProj(idx int) *Projection {
 	if ok {
 		return proj
 	}
-	proj = Projection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.allocator, p.ctx)
+	proj = Projection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.ctx)
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col.Clone())
 	}
@@ -308,7 +308,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 	child := p.children[0].(LogicalPlan)
 	restConds, _ := child.PredicatePushDown(push)
 	if len(restConds) > 0 {
-		addSelection(p, child, restConds, p.allocator)
+		addSelection(p, child, restConds)
 	}
 	return
 }
@@ -324,7 +324,7 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 		}
 		retCond, _ := proj.(LogicalPlan).PredicatePushDown(newExprs)
 		if len(retCond) != 0 {
-			addSelection(p, proj.(LogicalPlan), retCond, p.allocator)
+			addSelection(p, proj.(LogicalPlan), retCond)
 		}
 	}
 	return

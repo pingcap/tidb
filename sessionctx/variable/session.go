@@ -139,6 +139,9 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
+	// PlanID is the unique id of logical and physical plan.
+	PlanID int
+
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
