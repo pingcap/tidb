@@ -1358,8 +1358,7 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		newRowData := make(types.DatumRow, len(row))
-		copy(newRowData, row)
+		newRowData := row.Copy()
 		for _, assign := range e.OrderedList {
 			val, err := assign.Expr.Eval(newRowData)
 			if err != nil {
