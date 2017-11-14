@@ -42,12 +42,31 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, errors.Trace(err)
 	}
 
+	// check whether the stmt is read only
+	readOnly := false
+	if e, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		vars := ctx.GetSessionVars()
+
+		if id, ok := vars.PreparedStmtNameToID[e.Name]; ok {
+			v := vars.PreparedStmts[id]
+			if v == nil {
+				return nil, errors.Trace(ErrStmtNotFound)
+			}
+
+			prepared := v.(*Prepared)
+			readOnly = ast.IsReadOnly(prepared.Stmt)
+		}
+	} else {
+		readOnly = ast.IsReadOnly(stmtNode)
+	}
+
 	return &ExecStmt{
 		InfoSchema: infoSchema,
 		Plan:       finalPlan,
 		Expensive:  stmtCount(stmtNode, finalPlan, ctx.GetSessionVars().InRestrictedSQL),
 		Cacheable:  plan.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
+		ReadOnly:   readOnly,
 	}, nil
 }
 

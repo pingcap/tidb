@@ -318,12 +318,16 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		value := ast.NewValueExpr(val)
 		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
 	}
+
 	stmt := &ExecStmt{
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
+		ReadOnly:   false,
 	}
+
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*Prepared); ok {
 		stmt.Text = prepared.Stmt.Text()
+		stmt.ReadOnly = ast.IsReadOnly(prepared.Stmt)
 	}
 	return stmt
 }
