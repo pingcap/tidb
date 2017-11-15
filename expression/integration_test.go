@@ -2902,6 +2902,10 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 
 	r = tk.MustQuery(`select json_extract(json_object(1,2,3,4), '$."1"')`)
 	r.Check(testkit.Rows("2"))
+
+	tk.MustExec(`update table_json set a=json_set(a,'$.a',json_object('a',1,'b',2)) where json_extract(a,'$.a[1]') = '2'`)
+	r = tk.MustQuery(`select json_extract(a, '$.a.a'), json_extract(a, '$.a.b') from table_json`)
+	r.Check(testkit.Rows("1 2", "<nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
