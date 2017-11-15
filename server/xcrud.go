@@ -167,7 +167,7 @@ func (crud *xCrud) dealCrudStmtExecute(goCtx goctx.Context, msgType Mysqlx.Clien
 			return err
 		}
 	}
-	return SendExecOk(crud.pkt, crud.ctx.LastInsertID())
+	return SendExecOk(crud.pkt, crud.ctx.AffectedRows(), crud.ctx.LastInsertID())
 }
 
 func createCrud(xcc *mysqlXClientConn) *xCrud {

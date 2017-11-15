@@ -67,6 +67,42 @@ func SendNoticeOK(pkt *xpacketio.XPacketIO, content string) error {
 	return n.sendLocalNotice(false)
 }
 
+// SendWarnings is used to send warnings after query.
+func SendWarnings() {
+
+}
+
+// SendRowsAffected is used to number of rows which are affected.
+func SendRowsAffected(pkt *xpacketio.XPacketIO, numRows uint64) error {
+	param := Mysqlx_Notice.SessionStateChanged_Parameter(Mysqlx_Notice.SessionStateChanged_ROWS_AFFECTED)
+	scalarType := Mysqlx_Datatypes.Scalar_V_UINT
+	msg := Mysqlx_Notice.SessionStateChanged{
+		Param: &param,
+		Value: &Mysqlx_Datatypes.Scalar{
+			Type:         &scalarType,
+			VUnsignedInt: &numRows,
+		},
+	}
+
+	data, err := msg.Marshal()
+	if err != nil {
+		return err
+	}
+
+	n := notice{
+		noticeType: noticeSessionStateChanged,
+		value:      data,
+		pkt:        pkt,
+	}
+
+	return n.sendLocalNotice(false)
+}
+
+// SendMessage is used to send server a message.
+func SendMessage() {
+
+}
+
 // SendLastInsertID send a notice which contains last insert ID.
 func SendLastInsertID(pkt *xpacketio.XPacketIO, lastID uint64) error {
 	param := Mysqlx_Notice.SessionStateChanged_Parameter(Mysqlx_Notice.SessionStateChanged_GENERATED_INSERT_ID)

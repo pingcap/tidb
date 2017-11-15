@@ -73,7 +73,7 @@ func (xsql *xSQL) dealSQLStmtExecute(goCtx goctx.Context, payload []byte) error 
 	default:
 		return util.ErrXInvalidNamespace.GenByArgs(msg.GetNamespace())
 	}
-	return SendExecOk(xsql.pkt, xsql.ctx.LastInsertID())
+	return SendExecOk(xsql.pkt, xsql.ctx.AffectedRows(), xsql.ctx.LastInsertID())
 }
 
 func (xsql *xSQL) executeStmtNoResult(goCtx goctx.Context, sql string) error {
@@ -99,6 +99,8 @@ func (xsql *xSQL) executeStmt(goCtx goctx.Context, sql string) error {
 func setColumnMeta(c *ColumnInfo) Mysqlx_Resultset.ColumnMetaData {
 	var xflags uint32
 	var xctype uint32
+	xcollation := uint64(c.Charset)
+	xfd := uint32(c.Decimal)
 	var xtp Mysqlx_Resultset.ColumnMetaData_FieldType
 	flags := uint(c.Flag)
 	if mysql.HasNotNullFlag(flags) {
@@ -202,14 +204,18 @@ func setColumnMeta(c *ColumnInfo) Mysqlx_Resultset.ColumnMetaData {
 		xtp = Mysqlx_Resultset.ColumnMetaData_BIT
 	}
 	return Mysqlx_Resultset.ColumnMetaData{
-		Type:          &xtp,
-		Name:          []byte(c.Name),
-		Table:         []byte(c.OrgName),
-		OriginalTable: []byte(c.OrgTable),
-		Schema:        []byte(c.Schema),
-		Length:        &c.ColumnLength,
-		Flags:         &xflags,
-		ContentType:   &xctype,
+		Type:             &xtp,
+		Name:             []byte(c.Name),
+		OriginalName:     []byte(c.OrgName),
+		Table:            []byte(c.Table),
+		OriginalTable:    []byte(c.OrgTable),
+		Schema:           []byte(c.Schema),
+		Catalog:          []byte("def"),
+		Collation:        &xcollation,
+		FractionalDigits: &xfd,
+		Length:           &c.ColumnLength,
+		Flags:            &xflags,
+		ContentType:      &xctype,
 	}
 }
 
@@ -279,7 +285,15 @@ func WriteResultSet(r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator
 }
 
 // SendExecOk send exec ok message to client, used when statement is finished.
-func SendExecOk(pkt *xpacketio.XPacketIO, lastID uint64) error {
+func SendExecOk(pkt *xpacketio.XPacketIO, numRows, lastID uint64) error {
+	// TODO: the exact order is
+	//       1. send warning if any.
+	//       2. send row affected.
+	//       3. send last insert id if it is not zero.
+	//       4. send message if any.
+	if err := notice.SendRowsAffected(pkt, numRows); err != nil {
+		return errors.Trace(err)
+	}
 	if lastID > 0 {
 		if err := notice.SendLastInsertID(pkt, lastID); err != nil {
 			return errors.Trace(err)
