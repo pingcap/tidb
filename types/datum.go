@@ -71,6 +71,7 @@ func (d *Datum) Copy() *Datum {
 		ret.b = make([]byte, len(d.b))
 		copy(ret.b, d.b)
 	}
+	// JSON object requires a deep copy, because it includes map/slice fields.
 	if ret.k == KindMysqlJSON {
 		ret.x = *ret.x.(json.JSON).Copy()
 	}
