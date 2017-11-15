@@ -192,16 +192,6 @@ func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	r.Check(testkit.Rows("1"))
 }
 
-func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set sql_mode=''")
-	r := tk.MustQuery("SELECT '\\\\'")
-	r.Check(testkit.Rows("\\"))
-	tk.MustExec("set sql_mode='NO_BACKSLASH_ESCAPES'")
-	r = tk.MustQuery("SELECT '\\\\'")
-	r.Check(testkit.Rows("\\\\"))
-}
-
 func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
