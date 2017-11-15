@@ -28,6 +28,18 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
+func (s *testJSONSuite) TestCopy(c *C) {
+	jstr1 := `{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`
+	js1 := mustParseFromString(jstr1)
+	js2 := js1.Copy()
+	js2.Object["a"].Array[2].Object["aa"] = JSON{
+		TypeCode: TypeCodeString,
+		Str:      "cc",
+	}
+	c.Assert(js1.String(), Equals, `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`)
+	c.Assert(js2.String(), Equals, `{"a":[1,"2",{"aa":"cc"},4,null],"b":true,"c":null}`)
+}
+
 // mustParseFromString parse a JSON from a string.
 // Panic if string is not a valid JSON.
 func mustParseFromString(s string) JSON {
