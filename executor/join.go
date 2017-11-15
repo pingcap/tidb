@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -54,6 +55,7 @@ type HashJoinExec struct {
 	finished        atomic.Value
 	closeCh         chan struct{} // closeCh add a lock for closing executor.
 	defaultInners   []types.Datum
+	joinType        plan.JoinType
 
 	resultGenerator joinResultGenerator
 	resultBufferCh  chan *execResult // Channels for output.
@@ -103,10 +105,6 @@ func (e *HashJoinExec) Open() error {
 		e.hashJoinBuffers = append(e.hashJoinBuffers, buffer)
 	}
 
-	e.outerBufferChs = make([]chan *execResult, e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
-		e.outerBufferChs[i] = make(chan *execResult, e.concurrency)
-	}
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.workerWaitGroup = sync.WaitGroup{}
@@ -190,12 +188,7 @@ func (e *HashJoinExec) fetchOuterRows() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
-	// Start a worker to fetch big table rows.
-	e.workerWaitGroup.Add(1)
-	go e.fetchOuterRows()
-
 	e.hashTable = mvmap.NewMVMap()
-	e.resultCursor = 0
 	var buffer []byte
 	sequentialDatums := make([]types.Datum, 0, e.innerlExec.Schema().Len()*1024)
 	for {
@@ -229,19 +222,31 @@ func (e *HashJoinExec) prepare() error {
 
 		buffer = buffer[:0]
 		buffer = codec.EncodeInt(buffer, int64(len(e.innerRowBuffer)-1))
-
 		e.hashTable.Put(joinKey, buffer)
 	}
 
+	e.prepared = true
 	e.resultBufferCh = make(chan *execResult, e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
+
+	if e.hashTable.Len() != 0 || e.joinType != plan.InnerJoin {
+		e.outerBufferChs = make([]chan *execResult, e.concurrency)
+		for i := 0; i < e.concurrency; i++ {
+			e.outerBufferChs[i] = make(chan *execResult, e.concurrency)
+		}
+
+		// Start a worker to fetch outer rows and partition them to join workers.
 		e.workerWaitGroup.Add(1)
-		go e.runJoinWorker(i)
+		go e.fetchOuterRows()
+
+		// Start e.concurrency join workers to probe hash table and join inner and outer rows.
+		for i := 0; i < e.concurrency; i++ {
+			e.workerWaitGroup.Add(1)
+			go e.runJoinWorker(i)
+		}
 	}
 
+	// start a goroutine to wait join workers finish their job and close channels.
 	go e.waitJoinWorkersAndCloseResultChan()
-
-	e.prepared = true
 	return nil
 }
 

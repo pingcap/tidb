@@ -564,6 +564,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, v.DefaultValues, v.OtherConditions),
 		concurrency:     v.Concurrency,
 		defaultInners:   v.DefaultValues,
+		joinType:        v.JoinType,
 	}
 
 	if v.SmallChildIdx == 0 {
