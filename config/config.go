@@ -30,6 +30,7 @@ type Config struct {
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
+	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
 
 	Log         Log         `toml:"log" json:"log"`
 	Security    Security    `toml:"security" json:"security"`
@@ -97,12 +98,13 @@ type PlanCache struct {
 }
 
 var defaultConf = Config{
-	Host:   "0.0.0.0",
-	Port:   4000,
-	Store:  "mocktikv",
-	Path:   "/tmp/tidb",
-	RunDDL: true,
-	Lease:  "10s",
+	Host:       "0.0.0.0",
+	Port:       4000,
+	Store:      "mocktikv",
+	Path:       "/tmp/tidb",
+	RunDDL:     true,
+	Lease:      "10s",
+	TokenLimit: 1000,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
@@ -154,6 +156,9 @@ func GetGlobalConfig() *Config {
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	_, err := toml.DecodeFile(confFile, c)
+	if c.TokenLimit <= 0 {
+		c.TokenLimit = 1000
+	}
 	return errors.Trace(err)
 }
 

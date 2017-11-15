@@ -655,6 +655,11 @@ func (s *session) SetProcessInfo(sql string) {
 
 func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
 	s.SetValue(context.QueryString, stmt.OriginText())
+	if _, ok := stmtNode.(ast.DDLNode); ok {
+		s.SetValue(context.LastExecuteDDL, true)
+	} else {
+		s.ClearValue(context.LastExecuteDDL)
+	}
 
 	startTS := time.Now()
 	recordSet, err := runStmt(s, stmt)
