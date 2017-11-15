@@ -259,8 +259,9 @@ func (a *aggregationOptimizer) makeNewAgg(aggFuncs []aggregation.Aggregation, gb
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		groupByCols:  gbyCols,
 	}.init(a.ctx)
-	var newAggFuncs []aggregation.Aggregation
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)+len(gbyCols))...)
+	aggLen := len(aggFuncs) + len(gbyCols)
+	newAggFuncs := make([]aggregation.Aggregation, 0, aggLen)
+	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []aggregation.Aggregation
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.ID())
