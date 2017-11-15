@@ -67,7 +67,7 @@ type JSON struct {
 	Array    []JSON
 }
 
-// Copy deepcopy a JSON.
+// Copy deep copies a JSON.
 func (j JSON) Copy() *JSON {
 	ret := j
 	if j.Object != nil {

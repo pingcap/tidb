@@ -69,7 +69,7 @@ var _ Row = DatumRow{}
 // DatumRow is a slice of Datum, implements Row interface.
 type DatumRow []Datum
 
-// Copy deepcopy a DatumRow.
+// Copy deep copies a DatumRow.
 func (dr DatumRow) Copy() DatumRow {
 	c := make(DatumRow, len(dr))
 	for i, d := range dr {

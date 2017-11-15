@@ -64,7 +64,7 @@ type Datum struct {
 	x         interface{} // x hold all other types.
 }
 
-// Copy deepcopy a Datum.
+// Copy deep copies a Datum.
 func (d *Datum) Copy() *Datum {
 	ret := *d
 	if d.b != nil {
