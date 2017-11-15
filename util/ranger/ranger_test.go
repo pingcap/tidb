@@ -426,6 +426,41 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			filterConds: "[]",
 			resultStr:   "[(<nil> +inf,1 <nil>) (1 +inf,2 <nil>) (2 +inf,3 <nil>) (3 +inf,+inf +inf]]",
 		},
+		{
+			indexPos:    0,
+			exprStr:     "a in (NULL)",
+			accessConds: "[in(test.t.a, <nil>)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a not in (NULL, '1', '2', '3')",
+			accessConds: "[not(in(test.t.a, <nil>, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "not (a not in (NULL, '1', '2', '3') and a > '2')",
+			accessConds: "[or(in(test.t.a, <nil>, 1, 2, 3), le(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,2] [3,3]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "not (a not in (NULL) and a > '2')",
+			accessConds: "[or(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,2]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "not (a not in (NULL) or a > '2')",
+			accessConds: "[and(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
 	}
 
 	for _, tt := range tests {
