@@ -1031,6 +1031,15 @@ func (s *testSessionSuite) TestMultiStmts(c *C) {
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1"))
 }
 
+func (s *testSessionSuite) TestLastExecuteDDLFlag(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int)")
+	c.Assert(tk.Se.Value(context.LastExecuteDDL), NotNil)
+	tk.MustExec("insert into t1 values (1)")
+	c.Assert(tk.Se.Value(context.LastExecuteDDL), IsNil)
+}
+
 func (s *testSessionSuite) TestDecimal(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
