@@ -48,7 +48,7 @@ func (a *aggEliminater) eliminateAgg(p LogicalPlan) LogicalPlan {
 		sort := Sort{}.init(a.ctx)
 		sort.ByItems = append(sort.ByItems, &ByItems{f.GetArgs()[0], desc})
 		sort.SetSchema(p.Schema().Clone())
-		sort.SetChildren(p.Children()...)
+		setParentAndChildren(sort, p.Children()...)
 		// Compose Limit operator.
 		li := Limit{Count: 1}.init(a.ctx)
 		li.SetSchema(p.Schema().Clone())

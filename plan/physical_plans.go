@@ -562,7 +562,6 @@ func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Sche
 		return newSchema
 	}
 	return expression.MergeSchema(join.Children()[outerID].Schema(), join.Children()[1-outerID].Schema())
-
 }
 
 func buildSchema(p PhysicalPlan) {
