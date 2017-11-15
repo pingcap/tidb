@@ -474,9 +474,9 @@ func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType
 }
 
 const (
-	minTaskHandledCnt    = 16 // minTaskHandledCnt is the least number of handles per batch.
+	minTaskHandledCnt    = 32 // minTaskHandledCnt is the least number of handles per batch.
 	defaultTaskHandleCnt = 128
-	maxTaskHandleCnt     = 2048
+	maxTaskHandleCnt     = 1 << 20
 	defaultWorkers       = 16
 )
 
@@ -529,6 +529,13 @@ type handleInfo struct {
 	endHandle   int64
 }
 
+func chooseInt64(baseHandle, batch int64) int64 {
+	if baseHandle >= math.MaxInt64-batch {
+		return math.MaxInt64
+	}
+	return baseHandle + batch
+}
+
 // addTableIndex adds index into table.
 // TODO: Move this to doc or wiki.
 // How to add index in reorganization state?
@@ -556,7 +563,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	workerCnt := defaultWorkers
 	addedCount := job.GetRowCount()
-	baseHandle := reorgInfo.Handle
+	baseHandle, logStartHandle := reorgInfo.Handle, reorgInfo.Handle
 
 	workers := make([]*worker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
@@ -568,12 +575,14 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	for {
 		startTime := time.Now()
 		wg := sync.WaitGroup{}
+		currentBatchSize := int64(workers[0].batchSize)
 		for i := 0; i < workerCnt; i++ {
 			wg.Add(1)
-			batch := int64(workers[i].batchSize)
-			workers[i].setTaskNewRange(baseHandle+int64(i)*batch, baseHandle+int64(i+1)*batch)
+			endHandle := chooseInt64(baseHandle, currentBatchSize)
+			workers[i].setTaskNewRange(baseHandle, endHandle)
 			// TODO: Consider one worker to one goroutine.
 			go workers[i].doBackfillIndexTask(t, colMap, &wg)
+			baseHandle = endHandle
 		}
 		wg.Wait()
 
@@ -588,19 +597,19 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 				return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 			})
-			log.Warnf("[ddl] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
-				addedCount, baseHandle, nextHandle, taskAddedCount, err, sub, err1)
+			log.Warnf("[ddl] total added index for %d rows, this task [%d,%d) add index for %d failed %v, batch %d, take time %v, update handle err %v",
+				addedCount, logStartHandle, nextHandle, taskAddedCount, err, currentBatchSize, sub, err1)
 			return errors.Trace(err)
 		}
 		d.reorgCtx.setRowCountAndHandle(addedCount, nextHandle)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
-		log.Infof("[ddl] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
-			addedCount, baseHandle, nextHandle, taskAddedCount, sub)
+		log.Infof("[ddl] total added index for %d rows, this task [%d,%d) added index for %d rows, batch %d, take time %v",
+			addedCount, logStartHandle, nextHandle, taskAddedCount, currentBatchSize, sub)
 
 		if isEnd {
 			return nil
 		}
-		baseHandle = nextHandle
+		baseHandle, logStartHandle = nextHandle, nextHandle
 	}
 }
 
@@ -608,7 +617,8 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 	taskAddedCount, nextHandle := int64(0), workers[0].taskRange.startHandle
 	var err error
 	var isEnd bool
-	lessExpectedWorkers := 0
+	lessMinWorkers := 0
+	largerDefaultWorkers := 0
 	for _, worker := range workers {
 		ret := worker.taskRet
 		if ret.err != nil {
@@ -617,15 +627,23 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 		}
 		taskAddedCount += int64(ret.count)
 		if ret.count < minTaskHandledCnt {
-			lessExpectedWorkers++
+			lessMinWorkers++
+		} else if ret.count > defaultTaskHandleCnt {
+			largerDefaultWorkers++
 		}
 		nextHandle = ret.outOfRangeHandle
 		isEnd = ret.isAllDone
 	}
+
 	// Adjust the worker's batch size.
-	if lessExpectedWorkers >= len(workers)/2 && workers[0].batchSize < maxTaskHandleCnt {
+	halfWorkers := len(workers) / 2
+	if lessMinWorkers >= halfWorkers && workers[0].batchSize < maxTaskHandleCnt {
 		for _, worker := range workers {
 			worker.batchSize *= 2
+		}
+	} else if largerDefaultWorkers >= halfWorkers && workers[0].batchSize > defaultTaskHandleCnt {
+		for _, worker := range workers {
+			worker.batchSize /= 2
 		}
 	}
 	return taskAddedCount, nextHandle, isEnd, errors.Trace(err)
