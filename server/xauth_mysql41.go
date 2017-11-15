@@ -35,7 +35,7 @@ const (
 type saslMysql41Auth struct {
 	mState authMysql41State
 	mSalts []byte
-	xauth  *xAuth
+	xs     *xSession
 }
 
 func (spa *saslMysql41Auth) handleStart(mechanism *string, data []byte, initialResponses []byte) *response {
@@ -68,14 +68,14 @@ func (spa *saslMysql41Auth) handleContinue(data []byte) *response {
 			}
 		}
 
-		xcc := spa.xauth.xcc
+		xcc := spa.xs.xcc
 		xcc.dbname = dbname
 		xcc.user = user
 
 		spa.mState = sDone
-		if !spa.xauth.xcc.server.skipAuth() {
+		if !spa.xs.xcc.server.skipAuth() {
 			// Do Auth
-			addr := spa.xauth.xcc.conn.RemoteAddr().String()
+			addr := spa.xs.xcc.conn.RemoteAddr().String()
 			host, _, err := net.SplitHostPort(addr)
 			if err != nil {
 				return &response{
@@ -94,7 +94,7 @@ func (spa *saslMysql41Auth) handleContinue(data []byte) *response {
 					}
 				}
 			}
-			if !spa.xauth.xcc.ctx.Auth(&auth.UserIdentity{Username: string(user), Hostname: host},
+			if !spa.xs.xcc.ctx.Auth(&auth.UserIdentity{Username: string(user), Hostname: host},
 				hpwd, spa.mSalts) {
 				return &response{
 					status:  authFailed,

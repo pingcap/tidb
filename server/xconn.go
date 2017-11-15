@@ -36,7 +36,6 @@ import (
 type mysqlXClientConn struct {
 	pkt          *xpacketio.XPacketIO           // a helper to read and write data in packet format.
 	conn         net.Conn                       // MySQL conn, used by authentication
-	xauth        *xAuth                         // client authentication
 	xsession     *xSession                      // client session
 	server       *Server                        // a reference of server instance.
 	capability   uint32                         // client capability affects the way server handles client request.
@@ -83,7 +82,7 @@ func (xcc *mysqlXClientConn) Run() {
 	}()
 
 	log.Infof("[%d] establish connection successfully.", xcc.connectionID)
-	for xcc.state != clientClosed {
+	for xcc.state != clientClosed && xcc.xsession != nil {
 		tp, payload, err := xcc.pkt.ReadPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
@@ -93,13 +92,8 @@ func (xcc *mysqlXClientConn) Run() {
 			return
 		}
 		log.Debugf("[%d] receive msg type[%d]", xcc.connectionID, tp)
-		if xcc.state == clientAccepted {
-			if err = xcc.handleMessage(tp, payload); err != nil {
-				err1 := xcc.writeError(err)
-				terror.Log(errors.Trace(err1))
-			}
-		} else {
-			if err = xcc.dispatch(tp, payload); err != nil {
+		if xcc.state != clientAccepted && xcc.xsession != nil {
+			if err = xcc.xsession.handleMessage(tp, payload); err != nil {
 				if terror.ErrorEqual(err, terror.ErrResultUndetermined) {
 					log.Errorf("[%d] result undetermined error, close this connection %s",
 						xcc.connectionID, errors.ErrorStack(err))
@@ -113,7 +107,13 @@ func (xcc *mysqlXClientConn) Run() {
 					}
 					return
 				}
-				log.Warnf("[%d] dispatch error: %s", xcc.connectionID, err)
+				log.Warnf("[%d] handle session message error: %s", xcc.connectionID, err)
+				err1 := xcc.writeError(err)
+				terror.Log(errors.Trace(err1))
+			}
+		} else {
+			// Do something we could do before normal sql or crud.
+			if err = xcc.handleMessage(tp, payload); err != nil {
 				err1 := xcc.writeError(err)
 				terror.Log(errors.Trace(err1))
 			}
@@ -122,6 +122,7 @@ func (xcc *mysqlXClientConn) Run() {
 }
 
 func (xcc *mysqlXClientConn) Close() error {
+	xcc.state = clientClosing
 	xcc.server.rwlock.Lock()
 	delete(xcc.server.clients, xcc.connectionID)
 	connections := len(xcc.server.clients)
@@ -138,27 +139,25 @@ func (xcc *mysqlXClientConn) Close() error {
 
 func (xcc *mysqlXClientConn) handleMessage(tp Mysqlx.ClientMessages_Type, msg []byte) error {
 	switch tp {
-	case Mysqlx.ClientMessages_CON_CLOSE, Mysqlx.ClientMessages_SESS_RESET:
-		return xcc.xauth.handleReadyMessage(tp, msg)
+	case Mysqlx.ClientMessages_CON_CLOSE:
+		if err := xutil.SendOK(xcc.pkt, "bye!"); err != nil {
+			return errors.Trace(err)
+		}
+		return xcc.Close()
+	case Mysqlx.ClientMessages_SESS_RESET:
+		return nil
 	case Mysqlx.ClientMessages_CON_CAPABILITIES_GET:
 		return xcc.getCapabilities()
 	case Mysqlx.ClientMessages_CON_CAPABILITIES_SET:
 		return xcc.setCapabilities(msg)
 	case Mysqlx.ClientMessages_SESS_AUTHENTICATE_START:
-		if err := xcc.auth(tp, msg); err != nil {
-			return errors.Trace(err)
+		xcc.state = clientAuthenticatingFirst
+		if xcc.xsession != nil {
+			return xcc.xsession.handleMessage(tp, msg)
 		}
-		if xcc.dbname != "" {
-			if err := xcc.useDB(xcc.dbname); err != nil {
-				if err = xcc.writeError(err); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-		xcc.ctx.SetSessionManager(xcc.server)
-		return nil
+		fallthrough
 	default:
-		log.Infof("%d: Invalid message %d received during client initialization", xcc.connectionID, tp)
+		log.Infof("%d: Invalid message %s received during client initialization", xcc.connectionID, tp.String())
 		return xutil.ErrXBadMessage
 	}
 }
@@ -197,31 +196,6 @@ func (xcc *mysqlXClientConn) setCapabilities(msg []byte) error {
 	return nil
 }
 
-func (xcc *mysqlXClientConn) auth(tp Mysqlx.ClientMessages_Type, msg []byte) error {
-	for {
-		err := xcc.xauth.handleMessage(tp, msg)
-		if err != nil {
-			log.Errorf("[%d] auth failed on x-protocol, get error %s", xcc.connectionID, err.Error())
-			if err1 := xcc.writeError(err); err1 != nil {
-				return errors.Trace(err1)
-			}
-			return err
-		}
-
-		if xcc.xauth.ready() {
-			xcc.state = clientRunning
-			break
-		}
-
-		tp, msg, err = xcc.pkt.ReadPacket()
-		if err != nil {
-			return err
-		}
-
-	}
-	return nil
-}
-
 func (xcc *mysqlXClientConn) handshake() error {
 	// Open session
 	ctx, err := xcc.server.driver.OpenCtx(uint64(xcc.connectionID), xcc.capability, uint8(xcc.collation), xcc.dbname, nil)
@@ -230,21 +204,10 @@ func (xcc *mysqlXClientConn) handshake() error {
 	}
 	xcc.ctx = ctx
 	xcc.xsession = xcc.createXSession()
-	xcc.xauth = xcc.createAuth(xcc.connectionID)
 	xcc.configCapabilities()
 	xcc.state = clientAccepted
 
 	return nil
-}
-
-func (xcc *mysqlXClientConn) dispatch(tp Mysqlx.ClientMessages_Type, payload []byte) error {
-	msgType := Mysqlx.ClientMessages_Type(tp)
-	switch msgType {
-	case Mysqlx.ClientMessages_SESS_CLOSE, Mysqlx.ClientMessages_SESS_RESET, Mysqlx.ClientMessages_CON_CLOSE:
-		return xcc.xauth.handleMessage(msgType, payload)
-	default:
-		return xcc.xsession.handleMessage(msgType, payload)
-	}
 }
 
 func (xcc *mysqlXClientConn) flush() error {
@@ -300,14 +263,6 @@ func (xcc *mysqlXClientConn) useDB(db string) (err error) {
 	return
 }
 
-func (xcc *mysqlXClientConn) createAuth(id uint32) *xAuth {
-	return &xAuth{
-		xcc:               xcc,
-		mState:            authenticating,
-		mStateBeforeClose: authenticating,
-	}
-}
-
 func (xcc *mysqlXClientConn) addCapability(h capability.Handler) {
 	xcc.capabilities.Capabilities = append(xcc.capabilities.Capabilities, h.Get())
 }
@@ -316,20 +271,4 @@ func (xcc *mysqlXClientConn) configCapabilities() {
 	xcc.addCapability(&capability.HandlerAuthMechanisms{Values: []string{"MYSQL41"}})
 	xcc.addCapability(&capability.HandlerReadOnlyValue{Name: "doc.formats", Value: "text"})
 	xcc.addCapability(&capability.HandlerReadOnlyValue{Name: "node_type", Value: "mysql"})
-}
-
-func (xs *xSession) handleMessage(msgType Mysqlx.ClientMessages_Type, payload []byte) error {
-	switch msgType {
-	case Mysqlx.ClientMessages_SQL_STMT_EXECUTE:
-		return xs.xsql.dealSQLStmtExecute(payload)
-	// @TODO will support in next pr
-	case Mysqlx.ClientMessages_CRUD_FIND, Mysqlx.ClientMessages_CRUD_INSERT, Mysqlx.ClientMessages_CRUD_UPDATE, Mysqlx.ClientMessages_CRUD_DELETE,
-		Mysqlx.ClientMessages_CRUD_CREATE_VIEW, Mysqlx.ClientMessages_CRUD_MODIFY_VIEW, Mysqlx.ClientMessages_CRUD_DROP_VIEW:
-		return xutil.ErrXBadMessage
-	// @TODO will support in next pr
-	case Mysqlx.ClientMessages_EXPECT_OPEN, Mysqlx.ClientMessages_EXPECT_CLOSE:
-		return xutil.ErrXBadMessage
-	default:
-		return xutil.ErrXBadMessage
-	}
 }

@@ -142,12 +142,22 @@ func (xsql *xSQL) killClient(args []*Mysqlx_Datatypes.Any) error {
 }
 
 func (xsql *xSQL) createCollectionImpl(args []*Mysqlx_Datatypes.Any) error {
-	if err := checkArgs(args, []Mysqlx_Datatypes.Scalar_Type{Mysqlx_Datatypes.Scalar_V_STRING, Mysqlx_Datatypes.Scalar_V_STRING}); err != nil {
-		return errors.Trace(err)
+	schema, collection := "", ""
+	switch len(args) {
+	case 1:
+		if err := checkArgs(args, []Mysqlx_Datatypes.Scalar_Type{Mysqlx_Datatypes.Scalar_V_STRING}); err != nil {
+			return errors.Trace(err)
+		}
+		collection = string(args[0].GetScalar().GetVString().GetValue())
+	case 2:
+		if err := checkArgs(args, []Mysqlx_Datatypes.Scalar_Type{Mysqlx_Datatypes.Scalar_V_STRING, Mysqlx_Datatypes.Scalar_V_STRING}); err != nil {
+			return errors.Trace(err)
+		}
+		schema = string(args[0].GetScalar().GetVString().GetValue())
+		collection = string(args[1].GetScalar().GetVString().GetValue())
+	default:
+		return util.ErrXCmdNumArguments.GenByArgs(2, len(args))
 	}
-
-	schema := string(args[0].GetScalar().GetVString().GetValue())
-	collection := string(args[1].GetScalar().GetVString().GetValue())
 
 	sql := "CREATE TABLE "
 	if len(schema) != 0 {
@@ -210,11 +220,24 @@ func (xsql *xSQL) dropCollectionIndex(args []*Mysqlx_Datatypes.Any) error {
 }
 
 func (xsql *xSQL) listObjects(args []*Mysqlx_Datatypes.Any) error {
-	if err := checkArgs(args, []Mysqlx_Datatypes.Scalar_Type{Mysqlx_Datatypes.Scalar_V_STRING, Mysqlx_Datatypes.Scalar_V_STRING}); err != nil {
-		return errors.Trace(err)
+	schema, pattern := "", ""
+	switch len(args) {
+	case 0:
+		// Nothing to do.
+	case 1:
+		if err := checkArgs(args, []Mysqlx_Datatypes.Scalar_Type{Mysqlx_Datatypes.Scalar_V_STRING}); err != nil {
+			return errors.Trace(err)
+		}
+		schema = string(args[0].GetScalar().GetVString().GetValue())
+	case 2:
+		if err := checkArgs(args, []Mysqlx_Datatypes.Scalar_Type{Mysqlx_Datatypes.Scalar_V_STRING, Mysqlx_Datatypes.Scalar_V_STRING}); err != nil {
+			return errors.Trace(err)
+		}
+		schema = string(args[0].GetScalar().GetVString().GetValue())
+		pattern = string(args[1].GetScalar().GetVString().GetValue())
+	default:
+		return util.ErrXCmdNumArguments.GenByArgs(2, len(args))
 	}
-	schema := string(args[0].GetScalar().GetVString().GetValue())
-	pattern := string(args[1].GetScalar().GetVString().GetValue())
 	if err := xsql.isSchemaSelectedAndExists(schema); err != nil {
 		return errors.Trace(err)
 	}

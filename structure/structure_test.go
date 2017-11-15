@@ -204,8 +204,8 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	res, err := tx.HGetAll(key)
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, []structure.HashPair{
-		{[]byte("1"), []byte("1")},
-		{[]byte("2"), []byte("2")}})
+		{Field: []byte("1"), Value: []byte("1")},
+		{Field: []byte("2"), Value: []byte("2")}})
 
 	err = tx.HDel(key, []byte("1"))
 	c.Assert(err, IsNil)

@@ -25,7 +25,7 @@ func QuoteIdentifier(str string) string {
 // QuoteIdentifierIfNeeded quotes identifier if needed.
 func QuoteIdentifierIfNeeded(str string) string {
 	needQuote := false
-	if len(str) > 0 && unicode.IsLetter(rune(str[0])) {
+	if len(str) > 0 && (unicode.IsLetter(rune(str[0])) || rune(str[0]) == '_') {
 		for _, r := range str[1:] {
 			if !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' {
 				needQuote = true

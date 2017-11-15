@@ -37,12 +37,12 @@ type authHandler interface {
 	handleContinue(data []byte) *response
 }
 
-func (xa *xAuth) createAuthHandler(method string) authHandler {
+func (xs *xSession) createAuthHandler(method string) authHandler {
 	switch method {
 	case "MYSQL41":
 		return &saslMysql41Auth{
 			mState: sStarting,
-			xauth:  xa,
+			xs:     xs,
 		}
 	//@TODO support in next pr
 	case "PLAIN":

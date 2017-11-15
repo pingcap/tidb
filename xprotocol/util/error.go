@@ -14,8 +14,10 @@
 package util
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/xprotocol/xpacketio"
 	"github.com/pingcap/tipb/go-mysqlx"
 )
 
@@ -36,8 +38,20 @@ var (
 	ErrXCmdArgumentType           = ErrorMessage(mysql.ErrXCmdArgumentType, mysql.MySQLErrName[mysql.ErrXCmdArgumentType])
 	ErrXCannotDisableNotice       = ErrorMessage(mysql.ErrXCannotDisableNotice, mysql.MySQLErrName[mysql.ErrXCannotDisableNotice])
 	ErrNotSupportedAuthMode       = ErrorMessage(mysql.ErrNotSupportedAuthMode, mysql.MySQLErrName[mysql.ErrNotSupportedAuthMode])
+	ErrXExprBadNumArgs            = ErrorMessage(mysql.ErrXExprBadNumArgs, mysql.MySQLErrName[mysql.ErrXExprBadNumArgs])
+	ErrXExprBadOperator           = ErrorMessage(mysql.ErrXExprBadOperator, mysql.MySQLErrName[mysql.ErrXExprBadOperator])
+	ErrXExprBadTypeValue          = ErrorMessage(mysql.ErrXExprBadTypeValue, mysql.MySQLErrName[mysql.ErrXExprBadTypeValue])
+	ErrXExprBadValue              = ErrorMessage(mysql.ErrXExprBadValue, mysql.MySQLErrName[mysql.ErrXExprBadValue])
+	ErrXInvalidArgument           = ErrorMessage(mysql.ErrXInvalidArgument, mysql.MySQLErrName[mysql.ErrXInvalidArgument])
+	ErrXProjBadKeyName            = ErrorMessage(mysql.ErrXProjBadKeyName, mysql.MySQLErrName[mysql.ErrXProjBadKeyName])
+	ErrXBadProjection             = ErrorMessage(mysql.ErrXBadProjection, mysql.MySQLErrName[mysql.ErrXBadProjection])
+	ErrXBadUpdateData             = ErrorMessage(mysql.ErrXBadUpdateData, mysql.MySQLErrName[mysql.ErrXBadUpdateData])
+	ErrXBadColumnToUpdate         = ErrorMessage(mysql.ErrXBadColumnToUpdate, mysql.MySQLErrName[mysql.ErrXBadColumnToUpdate])
+	ErrXBadTypeOfUpdate           = ErrorMessage(mysql.ErrXBadTypeOfUpdate, mysql.MySQLErrName[mysql.ErrXBadTypeOfUpdate])
+	ErrXBadMemberToUpdate         = ErrorMessage(mysql.ErrXBadMemberToUpdate, mysql.MySQLErrName[mysql.ErrXBadMemberToUpdate])
 )
 
+// Error Codes
 const (
 	codeErrXBadMessage                terror.ErrCode = terror.ErrCode(mysql.ErrXBadMessage)
 	codeErrXAccessDenied                             = terror.ErrCode(mysql.ErrAccessDenied)
@@ -48,15 +62,25 @@ const (
 	codeErrJSONUsedAsKey                             = terror.ErrCode(mysql.ErrJSONUsedAsKey)
 	codeErrXBadNotice                                = terror.ErrCode(mysql.ErrXBadNotice)
 	codeErrXCapabilitiesPrepareFailed                = terror.ErrCode(mysql.ErrXCapabilitiesPrepareFailed)
-	codeErrXBadProjection                            = terror.ErrCode(mysql.ErrXBadProjection)
-	codeErrXBadInsertData                            = terror.ErrCode(mysql.ErrXBadInsertData)
-	codeErrXExprMissingArg                           = terror.ErrCode(mysql.ErrXExprMissingArg)
+	CodeErrXBadProjection                            = terror.ErrCode(mysql.ErrXBadProjection)
+	CodeErrXBadInsertData                            = terror.ErrCode(mysql.ErrXBadInsertData)
+	CodeErrXExprMissingArg                           = terror.ErrCode(mysql.ErrXExprMissingArg)
 	codeErrXInvalidNamespace                         = terror.ErrCode(mysql.ErrXInvalidNamespace)
 	codeErrXInvalidAdminCommand                      = terror.ErrCode(mysql.ErrXInvalidAdminCommand)
 	codeErrXCmdNumArguments                          = terror.ErrCode(mysql.ErrXCmdNumArguments)
 	codeErrXCmdArgumentType                          = terror.ErrCode(mysql.ErrXCmdArgumentType)
 	codeErrXCannotDisableNotice                      = terror.ErrCode(mysql.ErrXCannotDisableNotice)
 	codeErrNotSupportedAuthMode                      = terror.ErrCode(mysql.ErrNotSupportedAuthMode)
+	CodeErrXExprBadTypeValue                         = terror.ErrCode(mysql.ErrXExprBadTypeValue)
+	CodeErrXExprBadValue                             = terror.ErrCode(mysql.ErrXExprBadValue)
+	codeErrXExprBadNumArgs                           = terror.ErrCode(mysql.ErrXExprBadNumArgs)
+	codeErrXExprBadOperator                          = terror.ErrCode(mysql.ErrXExprBadOperator)
+	codeErrXInvalidArgument                          = terror.ErrCode(mysql.ErrXInvalidArgument)
+	codeErrXProjBadKeyName                           = terror.ErrCode(mysql.ErrXProjBadKeyName)
+	codeErrXBadUpdateData                            = terror.ErrCode(mysql.ErrXBadUpdateData)
+	codeErrXBadColumnToUpdate                        = terror.ErrCode(mysql.ErrXBadColumnToUpdate)
+	codeErrXBadTypeOfUpdate                          = terror.ErrCode(mysql.ErrXBadTypeOfUpdate)
+	codeErrXBadMemberToUpdate                        = terror.ErrCode(mysql.ErrXBadMemberToUpdate)
 )
 
 func init() {
@@ -70,15 +94,25 @@ func init() {
 		codeErrXInvalidCollection:         mysql.ErrXInvalidCollection,
 		codeErrJSONUsedAsKey:              mysql.ErrJSONUsedAsKey,
 		codeErrXBadNotice:                 mysql.ErrXBadNotice,
-		codeErrXBadProjection:             mysql.ErrXBadProjection,
-		codeErrXBadInsertData:             mysql.ErrXBadInsertData,
-		codeErrXExprMissingArg:            mysql.ErrXExprMissingArg,
+		CodeErrXBadProjection:             mysql.ErrXBadProjection,
+		CodeErrXBadInsertData:             mysql.ErrXBadInsertData,
+		CodeErrXExprMissingArg:            mysql.ErrXExprMissingArg,
 		codeErrXInvalidNamespace:          mysql.ErrXInvalidNamespace,
 		codeErrXInvalidAdminCommand:       mysql.ErrXInvalidAdminCommand,
 		codeErrXCmdNumArguments:           mysql.ErrXCmdNumArguments,
 		codeErrXCmdArgumentType:           mysql.ErrXCmdArgumentType,
 		codeErrXCannotDisableNotice:       mysql.ErrXCannotDisableNotice,
 		codeErrNotSupportedAuthMode:       mysql.ErrNotSupportedAuthMode,
+		CodeErrXExprBadTypeValue:          mysql.ErrXExprBadTypeValue,
+		CodeErrXExprBadValue:              mysql.ErrXExprBadValue,
+		codeErrXExprBadNumArgs:            mysql.ErrXExprBadNumArgs,
+		codeErrXExprBadOperator:           mysql.ErrXExprBadOperator,
+		codeErrXInvalidArgument:           mysql.ErrXInvalidArgument,
+		codeErrXProjBadKeyName:            mysql.ErrXProjBadKeyName,
+		codeErrXBadUpdateData:             mysql.ErrXBadUpdateData,
+		codeErrXBadColumnToUpdate:         mysql.ErrXBadColumnToUpdate,
+		codeErrXBadTypeOfUpdate:           mysql.ErrXBadTypeOfUpdate,
+		codeErrXBadMemberToUpdate:         mysql.ErrXBadMemberToUpdate,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassXProtocol] = xProtocolMySQLErrCodes
 }
@@ -99,4 +133,21 @@ func XErrorMessage(errcode uint16, msg string, state string) *Mysqlx.Error {
 		Msg:      &msg,
 	}
 	return &errMsg
+}
+
+// SendOK is used to send server message OK.
+func SendOK(pkt *xpacketio.XPacketIO, content string) error {
+	msg := Mysqlx.Ok{
+		Msg: &content,
+	}
+
+	data, err := msg.Marshal()
+	if err != nil {
+		return err
+	}
+
+	if err := pkt.WritePacket(Mysqlx.ServerMessages_OK, data); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
