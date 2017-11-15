@@ -67,6 +67,24 @@ type JSON struct {
 	Array    []JSON
 }
 
+// Copy deep copies a JSON.
+func (j JSON) Copy() *JSON {
+	ret := j
+	if j.Object != nil {
+		ret.Object = make(map[string]JSON, len(j.Object))
+		for k, v := range j.Object {
+			ret.Object[k] = *v.Copy()
+		}
+	}
+	if j.Array != nil {
+		ret.Array = make([]JSON, len(j.Array))
+		for i, v := range j.Array {
+			ret.Array[i] = *v.Copy()
+		}
+	}
+	return &ret
+}
+
 // CreateJSON creates a JSON from in. Panic if any error occurs.
 func CreateJSON(in interface{}) JSON {
 	j, err := normalize(in)
