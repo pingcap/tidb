@@ -178,3 +178,13 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 	cfg.PreparedPlanCache.Enabled = orgEnable
 	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
+
+func (s *testSuite) TestPreparedNameResolver(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, KEY id (id))")
+	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
+	_, err := tk.Exec("prepare stmt from 'select b from t'")
+	c.Assert(err.Error(), Equals, "[plan:1054]Unknown column 'b' in 'field list'")
+}
