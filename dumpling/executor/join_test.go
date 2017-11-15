@@ -177,6 +177,38 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1,2), (5,3), (6,4)")
 	tk.MustExec("insert into t1 values(1), (2), (3)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t1.a from t1, t where t.a = 5 and t.b = t1.a").Check(testkit.Rows("3"))
+
+	// test issue#4997
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`
+	CREATE TABLE t1 (
+  		pk int(11) NOT NULL AUTO_INCREMENT primary key,
+  		a int(11) DEFAULT NULL,
+  		b date DEFAULT NULL,
+  		c varchar(1) DEFAULT NULL,
+  		KEY a (a),
+  		KEY b (b),
+  		KEY c (c,a)
+	)`)
+	tk.MustExec(`
+	CREATE TABLE t2 (
+  		pk int(11) NOT NULL AUTO_INCREMENT primary key,
+  		a int(11) DEFAULT NULL,
+  		b date DEFAULT NULL,
+  		c varchar(1) DEFAULT NULL,
+  		KEY a (a),
+  		KEY b (b),
+  		KEY c (c,a)
+	)`)
+	tk.MustExec(`insert into t1 value(1,1,"2000-11-11", null);`)
+	result = tk.MustQuery(`
+	SELECT table2.b AS field2 FROM
+	(
+	  t1 AS table1  LEFT OUTER JOIN
+		(SELECT tmp_t2.* FROM ( t2 AS tmp_t1 RIGHT JOIN t1 AS tmp_t2 ON (tmp_t2.a = tmp_t1.a))) AS table2
+	  ON (table2.c = table1.c)
+	) `)
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
