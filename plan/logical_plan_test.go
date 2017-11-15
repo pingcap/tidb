@@ -17,6 +17,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -270,14 +271,10 @@ func MockTable() *model.TableInfo {
 	return table
 }
 
-func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
-	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+func MockPreprocess(node ast.Node, inPrepare bool) (infoschema.InfoSchema, error) {
 	ctx := mockContext()
-	err := MockResolveName(node, is, "test", ctx)
-	if err != nil {
-		return nil, err
-	}
-	return is, nil
+	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+	return is, errors.Trace(Preprocess(ctx, node, is, inPrepare))
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -406,6 +403,10 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a from (select a from t where d = 0) k where k.a = 5",
+			best: "DataScan(t)->Projection->Projection",
+		},
+		{
+			sql:  "select a from (select a+1 as a from t) k where k.a = 5",
 			best: "DataScan(t)->Projection->Projection",
 		},
 		{
@@ -538,12 +539,10 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -551,7 +550,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil, comment)
 		c.Assert(builder.optFlag&flagPredicatePushDown, Greater, uint64(0))
-		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -661,18 +660,17 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
 		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, builder.ctx, builder.allocator)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, builder.ctx)
 			c.Assert(err, IsNil)
 		}
 		c.Assert(builder.err, IsNil)
@@ -716,18 +714,17 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -821,11 +818,10 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
@@ -833,8 +829,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
-		p.ResolveIndices()
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -960,19 +955,18 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil, comment)
+		is, err := MockPreprocess(stmt, false)
+		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		checkDataSourceCols(p, c, tt.ans, comment)
 	}
@@ -980,9 +974,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 func (s *testPlanSuite) TestAllocID(c *C) {
 	ctx := mockContext()
-	pA := DataSource{}.init(new(idAllocator), ctx)
-	pB := DataSource{}.init(new(idAllocator), ctx)
-	c.Assert(pA.id, Equals, pB.id)
+	pA := DataSource{}.init(ctx)
+	pB := DataSource{}.init(ctx)
+	c.Assert(pA.id+1, Equals, pB.id)
 }
 
 func checkDataSourceCols(p Plan, c *C, ans map[int][]string, comment CommentInterface) {
@@ -1124,10 +1118,9 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil, comment)
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
@@ -1228,19 +1221,18 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		checkUniqueKeys(p, c, tt.ans, tt.sql)
 	}
@@ -1278,18 +1270,17 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			is:        is,
+			ctx: mockContext(),
+			is:  is,
 		}
 		builder.ctx.GetSessionVars().AllowAggPushDown = true
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
@@ -1442,16 +1433,11 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
-		ctx := mockContext()
-		err = Preprocess(ctx, stmt, is, false)
-		c.Assert(err, IsNil, comment)
-		is, err = MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
@@ -1514,7 +1500,6 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 }
 
 func (s *testPlanSuite) TestTopNPushDown(c *C) {
-	c.Skip("Only new plan support it.")
 	defer func() {
 		testleak.AfterTest(c)()
 	}()
@@ -1540,7 +1525,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + Agg + Proj .
 		{
 			sql:  "select a, count(b) from t group by b order by c limit 5",
-			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->TopN([test.t.c],0,5)->Projection->Projection",
+			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->TopN([test.t.c],0,5)->Projection",
 		},
 		// Test TopN + Join + Proj.
 		{
@@ -1570,17 +1555,17 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test Limit + Left Join Apply + Proj.
 		{
 			sql:  "select (select s.a from t s where t.a = s.a) from t limit 5",
-			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection->Projection",
+			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection",
 		},
 		// Test TopN + Left Join Apply + Proj.
 		{
 			sql:  "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
-			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection->Projection->Projection",
+			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection",
 		},
 		// Test TopN + Left Semi Join Apply + Proj.
 		{
 			sql:  "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
-			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection->Projection",
+			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection",
 		},
 		// Test TopN + Semi Join Apply + Proj.
 		{
@@ -1610,7 +1595,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test Limit + UA + Proj + Sort.
 		{
 			sql:  "select * from t union all (select * from t s order by a) limit 5",
-			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection->Projection}->Limit",
+			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection}->Limit",
 		},
 	}
 	for _, tt := range tests {
@@ -1618,19 +1603,75 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockResolve(stmt)
+		is, err := MockPreprocess(stmt, false)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
-			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestNameResolver(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql          string
+		tblNameValid bool
+		colNameValid bool
+		err          string
+	}{
+		{"select a from t", true, true, ""},
+		{"select c3 from t", true, false, "[plan:1054]Unknown column 'c3' in 'field list'"},
+		{"select c1 from t4", false, true, "[schema:1146]Table 'test.t4' doesn't exist"},
+		{"select * from t", true, true, ""},
+		{"select t.* from t", true, true, ""},
+		{"select t2.* from t", true, false, "[plan:1051]Unknown table 't2'"},
+		{"select b as a, c as a from t group by a", true, false, "[plan:1052]Column 'c' in field list is ambiguous"},
+		{"select 1 as a, b as a, c as a from t group by a", true, true, ""},
+		{"select a, b as a from t group by a+1", true, true, ""},
+		{"select c, a as c from t order by c+1", true, true, ""},
+		{"select * from t as t1, t as t2 join t as t3 on t2.a = t3.a", true, true, ""},
+		{"select * from t as t1, t as t2 join t as t3 on t1.c1 = t2.a", true, false, "[plan:1054]Unknown column 't1.c1' in 'on clause'"},
+		{"select a from t group by a having a = 3", true, true, ""},
+		{"select a from t group by a having c2 = 3", true, false, "[plan:1054]Unknown column 'c2' in 'having clause'"},
+		{"select a from t where exists (select b)", true, true, ""},
+		{"select cnt from (select count(a) as cnt from t group by b) as t2 group by cnt", true, true, ""},
+		{"select a from t where t11.a < t.a", true, false, "[plan:1054]Unknown column 't11.a' in 'where clause'"},
+		{"select a from t having t11.c1 < t.a", true, false, "[plan:1054]Unknown column 't11.c1' in 'having clause'"},
+		{"select a from t where t.a < t.a order by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'order clause'"},
+		{"select a from t group by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'group statement'"},
+		{"delete a from (select * from t ) as a, t", true, false, "[optimizer:1288]The target table a of the DELETE is not updatable"},
+		{"delete b from (select * from t ) as a, t", true, false, "[plan:1109]Unknown table 'b' in MULTI DELETE"},
+	}
+
+	for _, t := range tests {
+		comment := Commentf("for %s", t.sql)
+		stmt, err := s.ParseOneStmt(t.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := MockPreprocess(stmt, false)
+		if !t.tblNameValid {
+			c.Assert(err.Error(), Equals, t.err)
+			continue
+		}
+		c.Assert(err, IsNil)
+		builder := &planBuilder{
+			ctx:       mockContext(),
+			is:        is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		builder.build(stmt)
+		if t.colNameValid {
+			c.Assert(builder.err, IsNil)
+		} else {
+			c.Assert(builder.err.Error(), Equals, t.err)
+		}
 	}
 }

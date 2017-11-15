@@ -14,84 +14,24 @@
 package executor_test
 
 import (
-	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func (s *testSuite) TestNestedLoopJoin(c *C) {
-	bigExec := &MockExec{Rows: []executor.Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	smallExec := &MockExec{Rows: []executor.Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
-	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
-	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
-	bigFilter := expression.NewFunctionInternal(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
-	smallFilter := bigFilter.Clone()
-	otherFilter := expression.NewFunctionInternal(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	join := &executor.NestedLoopJoinExec{
-		BigExec:     bigExec,
-		SmallExec:   smallExec,
-		Ctx:         mock.NewContext(),
-		BigFilter:   []expression.Expression{bigFilter},
-		SmallFilter: []expression.Expression{smallFilter},
-		OtherFilter: []expression.Expression{otherFilter},
-	}
-	row, err := join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, IsNil)
-}
-
 func (s *testSuite) TestJoinPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
 	tk.MustExec("drop table if exists events")
 	tk.MustExec("create table events (clock int, source int)")
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+	_, err := tk.Exec("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+	c.Check(err, NotNil)
 }
 
 func (s *testSuite) TestJoin(c *C) {
@@ -631,7 +571,7 @@ func (s *testSuite) TestInSubquery(c *C) {
 	result := tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b from t as m2)")
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select m1.a from t as m1 where (3, m1.b) not in (select * from t as m2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)", 1)
 	result.Check(testkit.Rows("2"))
 	tk.MustExec(`prepare stmt1 from 'select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)'`)
@@ -665,18 +605,18 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("insert into t2 values (1),(2)")
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
 	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int, key b (a))")
@@ -704,9 +644,8 @@ func (s *testSuite) TestJoinLeak(c *C) {
 		tk.MustExec("insert t values (1)")
 	}
 	tk.MustExec("commit")
-	rs, err := tk.Se.Execute("select * from t t1 left join (select 1) t2 on 1")
+	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	result := rs[0]
 	result.Next()
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
@@ -723,4 +662,18 @@ func (s *testSuite) TestHashJoinExecEncodeDecodeRow(c *C) {
 	tk.MustExec("insert into t2 values (1, 'xxx', '2003-06-09 10:51:26')")
 	result := tk.MustQuery("select ts from t1 inner join t2 where t2.name = 'xxx'")
 	result.Check(testkit.Rows("2003-06-09 10:51:26"))
+}
+
+func (s *testSuite) TestSubqueryInJoinOn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+
+	_, err := tk.Exec("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
+	c.Check(err, NotNil)
 }

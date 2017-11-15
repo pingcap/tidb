@@ -22,7 +22,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -38,21 +37,18 @@ var _ Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	ctx   context.Context
+	baseExecutor
 	tasks []*analyzeTask
 }
 
 const (
-	maxSampleSize       = 10000
-	maxRegionSampleSize = 1000
-	maxSketchSize       = 10000
-	maxBucketSize       = 256
+	maxSampleSize        = 10000
+	maxRegionSampleSize  = 1000
+	maxSketchSize        = 10000
+	maxBucketSize        = 256
+	defaultCMSketchDepth = 8
+	defaultCMSketchWidth = 2048
 )
-
-// Schema implements the Executor Schema interface.
-func (e *AnalyzeExec) Schema() *expression.Schema {
-	return expression.NewSchema()
-}
 
 // Open implements the Executor Open interface.
 func (e *AnalyzeExec) Open() error {
@@ -111,8 +107,8 @@ func (e *AnalyzeExec) Next() (Row, error) {
 		return nil, errors.Trace(err1)
 	}
 	for _, result := range results {
-		for _, hg := range result.Hist {
-			err = hg.SaveToStorage(e.ctx, result.TableID, result.Count, result.IsIndex)
+		for i, hg := range result.Hist {
+			err = statistics.SaveStatsToStorage(e.ctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i])
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -160,13 +156,14 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 }
 
 func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
-	hist, err := idxExec.buildHistogram()
+	hist, cms, err := idxExec.buildStats()
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
 		TableID: idxExec.tblInfo.ID,
 		Hist:    []*statistics.Histogram{hist},
+		Cms:     []*statistics.CMSketch{cms},
 		IsIndex: 1,
 	}
 	if len(hist.Buckets) > 0 {
@@ -208,21 +205,23 @@ func (e *AnalyzeIndexExec) open() error {
 	return nil
 }
 
-func (e *AnalyzeIndexExec) buildHistogram() (hist *statistics.Histogram, err error) {
+func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
 	if err = e.open(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	defer func() {
 		if err1 := e.result.Close(); err1 != nil {
 			hist = nil
+			cms = nil
 			err = errors.Trace(err1)
 		}
 	}()
 	hist = &statistics.Histogram{}
+	cms = statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth)
 	for {
 		data, err := e.result.NextRaw()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		if data == nil {
 			break
@@ -230,25 +229,32 @@ func (e *AnalyzeIndexExec) buildHistogram() (hist *statistics.Histogram, err err
 		resp := &tipb.AnalyzeIndexResp{}
 		err = resp.Unmarshal(data)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), maxBucketSize)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
+		}
+		if resp.Cms != nil {
+			err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms))
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
 		}
 	}
 	hist.ID = e.idxInfo.ID
-	return hist, nil
+	return hist, cms, nil
 }
 
 func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResult {
-	hists, err := colExec.buildHistograms()
+	hists, cms, err := colExec.buildStats()
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
 		TableID: colExec.tblInfo.ID,
 		Hist:    hists,
+		Cms:     cms,
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
@@ -292,13 +298,14 @@ func (e *AnalyzeColumnsExec) open() error {
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildHistograms() (hists []*statistics.Histogram, err error) {
+func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
 	if err = e.open(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	defer func() {
 		if err1 := e.result.Close(); err1 != nil {
 			hists = nil
+			cms = nil
 			err = errors.Trace(err1)
 		}
 	}()
@@ -307,14 +314,15 @@ func (e *AnalyzeColumnsExec) buildHistograms() (hists []*statistics.Histogram, e
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
-			Sketch:        statistics.NewFMSketch(maxSketchSize),
+			FMSketch:      statistics.NewFMSketch(maxSketchSize),
 			MaxSampleSize: maxSampleSize,
+			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
 		}
 	}
 	for {
 		data, err1 := e.result.NextRaw()
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, nil, errors.Trace(err1)
 		}
 		if data == nil {
 			break
@@ -322,12 +330,12 @@ func (e *AnalyzeColumnsExec) buildHistograms() (hists []*statistics.Histogram, e
 		resp := &tipb.AnalyzeColumnsResp{}
 		err = resp.Unmarshal(data)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		if e.pkInfo != nil {
 			pkHist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 		}
 		for i, rc := range resp.Collectors {
@@ -340,27 +348,29 @@ func (e *AnalyzeColumnsExec) buildHistograms() (hists []*statistics.Histogram, e
 		for i, bkt := range pkHist.Buckets {
 			pkHist.Buckets[i].LowerBound, err = tablecodec.DecodeColumnValue(bkt.LowerBound.GetBytes(), &e.pkInfo.FieldType, timeZone)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 			pkHist.Buckets[i].UpperBound, err = tablecodec.DecodeColumnValue(bkt.UpperBound.GetBytes(), &e.pkInfo.FieldType, timeZone)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 		}
 		hists = append(hists, pkHist)
+		cms = append(cms, nil)
 	}
 	for i, col := range e.colsInfo {
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j], err = tablecodec.DecodeColumnValue(s.GetBytes(), &col.FieldType, timeZone)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 		}
 		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		hists = append(hists, hg)
+		cms = append(cms, collectors[i].CMSketch)
 	}
-	return hists, nil
+	return hists, cms, nil
 }

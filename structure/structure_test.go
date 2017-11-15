@@ -36,6 +36,7 @@ type testTxStructureSuite struct {
 }
 
 func (s *testTxStructureSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
@@ -44,10 +45,10 @@ func (s *testTxStructureSuite) SetUpSuite(c *C) {
 func (s *testTxStructureSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)
 }
 
 func (s *testTxStructureSuite) TestString(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
@@ -87,7 +88,6 @@ func (s *testTxStructureSuite) TestString(c *C) {
 }
 
 func (s *testTxStructureSuite) TestList(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
@@ -170,7 +170,6 @@ func (s *testTxStructureSuite) TestList(c *C) {
 }
 
 func (s *testTxStructureSuite) TestHash(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()

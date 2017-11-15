@@ -58,7 +58,7 @@ const (
 
 var _ = Suite(&testDBSuite{})
 
-const defaultBatchSize = 4196
+const defaultBatchSize = 2048
 
 type testDBSuite struct {
 	store      kv.Storage
@@ -88,14 +88,14 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.s, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 
-	_, err = s.s.Execute("create database test_db")
+	_, err = s.s.Execute(goctx.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 
 	s.tk = testkit.NewTestKit(c, s.store)
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	s.s.Execute("drop database if exists test_db")
+	s.s.Execute(goctx.Background(), "drop database if exists test_db")
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
@@ -224,12 +224,12 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 		return
 	}
 	defer se.Close()
-	_, err = se.Execute("use test_db")
+	_, err = se.Execute(goctx.Background(), "use test_db")
 	if err != nil {
 		done <- errors.Trace(err)
 		return
 	}
-	_, err = se.Execute(sql)
+	_, err = se.Execute(goctx.Background(), sql)
 	done <- errors.Trace(err)
 }
 
@@ -459,6 +459,21 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
 		s.mustExec(c, sql)
 	}
+	// Add some discrete rows.
+	maxBatch := 20
+	batchCnt := 100
+	otherKeys := make([]int, 0, batchCnt*maxBatch)
+	// Make sure there are no duplicate keys.
+	base := defaultBatchSize * 20
+	for i := 1; i < batchCnt; i++ {
+		n := base + i*defaultBatchSize + i
+		for j := 0; j < rand.Intn(maxBatch); j++ {
+			n += j
+			sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", n, n, n)
+			s.mustExec(c, sql)
+			otherKeys = append(otherKeys, n)
+		}
+	}
 
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
@@ -503,6 +518,7 @@ LOOP:
 		}
 		keys = append(keys, i)
 	}
+	keys = append(keys, otherKeys...)
 
 	// test index key
 	expectedRows := make([][]interface{}, 0, len(keys))
@@ -748,9 +764,9 @@ func (s *testDBSuite) TestColumn(c *C) {
 func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := tidb.CreateSession(s)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test_db")
+	_, err = se.Execute(goctx.Background(), "use test_db")
 	c.Assert(err, IsNil)
-	rs, err := se.Execute(sql)
+	rs, err := se.Execute(goctx.Background(), sql)
 	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 	c.Assert(rs, IsNil)
 	se.Close()
@@ -764,12 +780,12 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
 			return
 		}
 		defer se.Close()
-		_, err = se.Execute("use test_db")
+		_, err = se.Execute(goctx.Background(), "use test_db")
 		if err != nil {
 			done <- errors.Trace(err)
 			return
 		}
-		rs, err := se.Execute(sql)
+		rs, err := se.Execute(goctx.Background(), sql)
 		if err != nil {
 			done <- errors.Trace(err)
 			return

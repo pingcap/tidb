@@ -103,7 +103,7 @@ func init() {
 	initTokenByte('?', paramMarker)
 	initTokenByte('=', eq)
 
-	initTokenString("||", oror)
+	initTokenString("||", pipes)
 	initTokenString("&&", andand)
 	initTokenString("&^", andnot)
 	initTokenString(":=", assignmentEq)
@@ -237,6 +237,7 @@ var tokenMap = map[string]int{
 	"ENUM":              enum,
 	"ESCAPE":            escape,
 	"ESCAPED":           escaped,
+	"EVENT":             event,
 	"EVENTS":            events,
 	"EXCLUSIVE":         exclusive,
 	"EXECUTE":           execute,
@@ -373,6 +374,7 @@ var tokenMap = map[string]int{
 	"REDUNDANT":                redundant,
 	"REFERENCES":               references,
 	"REGEXP":                   regexpKwd,
+	"RELOAD":                   reload,
 	"RENAME":                   rename,
 	"REPEAT":                   repeat,
 	"REPEATABLE":               repeatable,
@@ -384,6 +386,7 @@ var tokenMap = map[string]int{
 	"RIGHT":                    right,
 	"RLIKE":                    rlike,
 	"ROLLBACK":                 rollback,
+	"ROUTINE":                  routine,
 	"ROW":                      row,
 	"ROW_COUNT":                rowCount,
 	"ROW_FORMAT":               rowFormat,
@@ -423,6 +426,7 @@ var tokenMap = map[string]int{
 	"SUPER":                    super,
 	"TABLE":                    tableKwd,
 	"TABLES":                   tables,
+	"TEMPORARY":                temporary,
 	"TERMINATED":               terminated,
 	"TEXT":                     textType,
 	"THAN":                     than,

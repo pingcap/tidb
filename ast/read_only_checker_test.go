@@ -11,4 +11,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package ast
+
+import (
+	. "github.com/pingcap/check"
+)
+
+var _ = Suite(&testCacheableSuite{})
+
+type testCacheableSuite struct {
+}
+
+func (s *testCacheableSuite) TestCacheable(c *C) {
+	// test non-SelectStmt
+	var stmt Node = &DeleteStmt{}
+	c.Assert(IsReadOnly(stmt), IsFalse)
+
+	stmt = &InsertStmt{}
+	c.Assert(IsReadOnly(stmt), IsFalse)
+
+	stmt = &UpdateStmt{}
+	c.Assert(IsReadOnly(stmt), IsFalse)
+
+	stmt = &ExplainStmt{}
+	c.Assert(IsReadOnly(stmt), IsTrue)
+
+	stmt = &ExplainStmt{}
+	c.Assert(IsReadOnly(stmt), IsTrue)
+}

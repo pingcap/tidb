@@ -68,8 +68,9 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 
 // PrepareExec represents a PREPARE executor.
 type PrepareExec struct {
+	baseExecutor
+
 	IS      infoschema.InfoSchema
-	Ctx     context.Context
 	Name    string
 	SQLText string
 
@@ -79,10 +80,13 @@ type PrepareExec struct {
 	Fields     []*ast.ResultField
 }
 
-// Schema implements the Executor Schema interface.
-func (e *PrepareExec) Schema() *expression.Schema {
-	// Will never be called.
-	return expression.NewSchema()
+// NewPrepareExec creates a new PrepareExec.
+func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
+	return &PrepareExec{
+		baseExecutor: newBaseExecutor(nil, ctx),
+		IS:           is,
+		SQLText:      sqlTxt,
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -104,7 +108,7 @@ func (e *PrepareExec) Open() error {
 // DoPrepare prepares the statement, it can be called multiple times without
 // side effect.
 func (e *PrepareExec) DoPrepare() {
-	vars := e.Ctx.GetSessionVars()
+	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
 		// Make sure it is idempotent.
@@ -118,7 +122,7 @@ func (e *PrepareExec) DoPrepare() {
 		stmts []ast.StmtNode
 		err   error
 	)
-	if sqlParser, ok := e.Ctx.(sqlexec.SQLParser); ok {
+	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		stmts, err = sqlParser.ParseSQL(e.SQLText, charset, collation)
 	} else {
 		stmts, err = parser.New().Parse(e.SQLText, charset, collation)
@@ -138,13 +142,10 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.ResolveName(stmt, e.IS, e.Ctx)
+	err = plan.Preprocess(e.ctx, stmt, e.IS, true)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
-	}
-	if result, ok := stmt.(ast.ResultSetNode); ok {
-		e.Fields = result.GetResultFields()
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -163,7 +164,7 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
-	err = plan.PrepareStmt(e.IS, e.Ctx, stmt)
+	err = plan.Preprocess(e.ctx, stmt, e.IS, true)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -182,20 +183,15 @@ func (e *PrepareExec) DoPrepare() {
 // It cannot be executed by itself, all it needs to do is to build
 // another Executor from a prepared statement.
 type ExecuteExec struct {
+	baseExecutor
+
 	IS        infoschema.InfoSchema
-	Ctx       context.Context
 	Name      string
 	UsingVars []expression.Expression
 	ID        uint32
 	StmtExec  Executor
 	Stmt      ast.StmtNode
 	Plan      plan.Plan
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ExecuteExec) Schema() *expression.Schema {
-	// Will never be called.
-	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -219,35 +215,30 @@ func (e *ExecuteExec) Close() error {
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
 	var err error
-	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, e.Plan) {
-		err = e.Ctx.InitTxnWithStartTS(math.MaxUint64)
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.Plan) {
+		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
 	} else {
-		err = e.Ctx.ActivePendingTxn()
+		err = e.ctx.ActivePendingTxn()
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := newExecutorBuilder(e.Ctx, e.IS, kv.PriorityNormal)
+	b := newExecutorBuilder(e.ctx, e.IS, kv.PriorityNormal)
 	stmtExec := b.build(e.Plan)
 	if b.err != nil {
 		return errors.Trace(b.err)
 	}
 	e.StmtExec = stmtExec
-	ResetStmtCtx(e.Ctx, e.Stmt)
-	stmtCount(e.Stmt, e.Plan, e.Ctx.GetSessionVars().InRestrictedSQL)
+	ResetStmtCtx(e.ctx, e.Stmt)
+	stmtCount(e.Stmt, e.Plan, e.ctx.GetSessionVars().InRestrictedSQL)
 	return nil
 }
 
 // DeallocateExec represent a DEALLOCATE executor.
 type DeallocateExec struct {
-	Name string
-	ctx  context.Context
-}
+	baseExecutor
 
-// Schema implements the Executor Schema interface.
-func (e *DeallocateExec) Schema() *expression.Schema {
-	// Will never be called.
-	return expression.NewSchema()
+	Name string
 }
 
 // Next implements the Executor Next interface.
@@ -284,9 +275,16 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	readOnly := false
+	if execute, ok := execPlan.(*plan.Execute); ok {
+		readOnly = ast.IsReadOnly(execute.Stmt)
+	}
+
 	stmt := &ExecStmt{
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
+		ReadOnly:   readOnly,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
 		stmt.Text = prepared.Stmt.Text()

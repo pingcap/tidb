@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Resultset"
 	"github.com/pingcap/tipb/go-mysqlx/Sql"
+	goctx "golang.org/x/net/context"
 )
 
 type xSQL struct {
@@ -43,7 +44,7 @@ func createXSQL(xcc *mysqlXClientConn) *xSQL {
 	}
 }
 
-func (xsql *xSQL) dealSQLStmtExecute(payload []byte) error {
+func (xsql *xSQL) dealSQLStmtExecute(goCtx goctx.Context, payload []byte) error {
 	var msg Mysqlx_Sql.StmtExecute
 	if err := msg.Unmarshal(payload); err != nil {
 		return err
@@ -52,7 +53,7 @@ func (xsql *xSQL) dealSQLStmtExecute(payload []byte) error {
 	switch msg.GetNamespace() {
 	case "xplugin", "mysqlx":
 		// TODO: 'xplugin' is deprecated, need to send a notice message.
-		if err := xsql.dispatchAdminCmd(msg); err != nil {
+		if err := xsql.dispatchAdminCmd(goCtx, msg); err != nil {
 			return errors.Trace(err)
 		}
 	case "sql", "":
@@ -66,7 +67,7 @@ func (xsql *xSQL) dealSQLStmtExecute(payload []byte) error {
 			}
 		}
 		log.Infof("ready to execute X Protocol SQL: %s", sql)
-		if err = xsql.executeStmt(sql); err != nil {
+		if err = xsql.executeStmt(goCtx, sql); err != nil {
 			return errors.Trace(err)
 		}
 	default:
@@ -75,15 +76,15 @@ func (xsql *xSQL) dealSQLStmtExecute(payload []byte) error {
 	return SendExecOk(xsql.pkt, xsql.ctx.LastInsertID())
 }
 
-func (xsql *xSQL) executeStmtNoResult(sql string) error {
-	if _, err := xsql.ctx.Execute(sql); err != nil {
+func (xsql *xSQL) executeStmtNoResult(goCtx goctx.Context, sql string) error {
+	if _, err := xsql.ctx.Execute(goCtx, sql); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (xsql *xSQL) executeStmt(sql string) error {
-	rs, err := xsql.ctx.Execute(sql)
+func (xsql *xSQL) executeStmt(goCtx goctx.Context, sql string) error {
+	rs, err := xsql.ctx.Execute(goCtx, sql)
 	if err != nil {
 		return err
 	}
@@ -290,13 +291,13 @@ func SendExecOk(pkt *xpacketio.XPacketIO, lastID uint64) error {
 	return nil
 }
 
-func rowToRow(alloc arena.Allocator, columns []*ColumnInfo, row []types.Datum) (*Mysqlx_Resultset.Row, error) {
-	if len(columns) != len(row) {
+func rowToRow(alloc arena.Allocator, columns []*ColumnInfo, row types.Row) (*Mysqlx_Resultset.Row, error) {
+	if len(columns) != row.Len() {
 		return nil, mysql.ErrMalformPacket
 	}
 	var fields [][]byte
-	for _, val := range row {
-		datum, err := protocol.DumpDatumToBinary(alloc, val)
+	for i := 0; i < row.Len(); i++ {
+		datum, err := protocol.DumpDatumToBinary(alloc, row.GetDatum(i, nil))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

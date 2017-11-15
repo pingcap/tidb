@@ -32,14 +32,19 @@ type SampleCollector struct {
 	NullCount     int64
 	Count         int64 // Count is the number of non-null rows.
 	MaxSampleSize int64
-	Sketch        *FMSketch
+	FMSketch      *FMSketch
+	CMSketch      *CMSketch
 }
 
 // MergeSampleCollector merges two sample collectors.
 func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	c.NullCount += rc.NullCount
 	c.Count += rc.Count
-	c.Sketch.mergeFMSketch(rc.Sketch)
+	c.FMSketch.mergeFMSketch(rc.FMSketch)
+	if rc.CMSketch != nil {
+		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
+		terror.Log(errors.Trace(err))
+	}
 	for _, val := range rc.Samples {
 		err := c.collect(val)
 		terror.Log(errors.Trace(err))
@@ -51,7 +56,10 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	collector := &tipb.SampleCollector{
 		NullCount: c.NullCount,
 		Count:     c.Count,
-		Sketch:    FMSketchToProto(c.Sketch),
+		FmSketch:  FMSketchToProto(c.FMSketch),
+	}
+	if c.CMSketch != nil {
+		collector.CmSketch = CMSketchToProto(c.CMSketch)
 	}
 	for _, sample := range c.Samples {
 		collector.Samples = append(collector.Samples, sample.GetBytes())
@@ -64,7 +72,10 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	s := &SampleCollector{
 		NullCount: collector.NullCount,
 		Count:     collector.Count,
-		Sketch:    FMSketchFromProto(collector.Sketch),
+		FMSketch:  FMSketchFromProto(collector.FmSketch),
+	}
+	if collector.CmSketch != nil {
+		s.CMSketch = CMSketchFromProto(collector.CmSketch)
 	}
 	for _, val := range collector.Samples {
 		s.Samples = append(s.Samples, types.NewBytesDatum(val))
@@ -79,8 +90,11 @@ func (c *SampleCollector) collect(d types.Datum) error {
 			return nil
 		}
 		c.Count++
-		if err := c.Sketch.InsertValue(d); err != nil {
+		if err := c.FMSketch.InsertValue(d); err != nil {
 			return errors.Trace(err)
+		}
+		if c.CMSketch != nil {
+			c.CMSketch.InsertBytes(d.GetBytes())
 		}
 	}
 	c.seenValues++
@@ -102,21 +116,23 @@ func (c *SampleCollector) collect(d types.Datum) error {
 // SampleBuilder is used to build samples for columns.
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
-	Sc            *variable.StatementContext
-	RecordSet     ast.RecordSet
-	ColLen        int   // ColLen is the number of columns need to be sampled.
-	PkID          int64 // If primary key is handle, the PkID is the id of the primary key. If not exists, it is -1.
-	MaxBucketSize int64
-	MaxSampleSize int64
-	MaxSketchSize int64
+	Sc              *variable.StatementContext
+	RecordSet       ast.RecordSet
+	ColLen          int   // ColLen is the number of columns need to be sampled.
+	PkID            int64 // If primary key is handle, the PkID is the id of the primary key. If not exists, it is -1.
+	MaxBucketSize   int64
+	MaxSampleSize   int64
+	MaxFMSketchSize int64
+	CMSketchDepth   int32
+	CMSketchWidth   int32
 }
 
-// CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
+// CollectColumnStats collects sample from the result set using Reservoir Sampling algorithm,
 // and estimates NDVs using FM Sketch during the collecting process.
-// It returns the sample collectors which contain total count, null count and distinct values count.
+// It returns the sample collectors which contain total count, null count, distinct values count and CM Sketch.
 // It also returns the statistic builder for PK which contains the histogram.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
-func (s SampleBuilder) CollectSamplesAndEstimateNDVs() ([]*SampleCollector, *SortedBuilder, error) {
+func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder, error) {
 	var pkBuilder *SortedBuilder
 	if s.PkID != -1 {
 		pkBuilder = NewSortedBuilder(s.Sc, s.MaxBucketSize, s.PkID)
@@ -125,7 +141,12 @@ func (s SampleBuilder) CollectSamplesAndEstimateNDVs() ([]*SampleCollector, *Sor
 	for i := range collectors {
 		collectors[i] = &SampleCollector{
 			MaxSampleSize: s.MaxSampleSize,
-			Sketch:        NewFMSketch(int(s.MaxSketchSize)),
+			FMSketch:      NewFMSketch(int(s.MaxFMSketchSize)),
+		}
+	}
+	if s.CMSketchDepth > 0 && s.CMSketchWidth > 0 {
+		for i := range collectors {
+			collectors[i].CMSketch = NewCMSketch(s.CMSketchDepth, s.CMSketchWidth)
 		}
 	}
 	for {

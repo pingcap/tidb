@@ -22,6 +22,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -43,10 +44,6 @@ var (
 	_ Executor = &TableReaderExecutor{}
 	_ Executor = &IndexReaderExecutor{}
 	_ Executor = &IndexLookUpExecutor{}
-
-	_ DataReader = &TableReaderExecutor{}
-	_ DataReader = &IndexReaderExecutor{}
-	_ DataReader = &IndexLookUpExecutor{}
 )
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
@@ -301,12 +298,6 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.PartialResult) ([]int
 	return handles, nil
 }
 
-type int64Slice []int64
-
-func (p int64Slice) Len() int           { return len(p) }
-func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
-func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-
 // Closeable is a interface for closeable structures.
 type Closeable interface {
 	// Close closes the object.
@@ -393,13 +384,6 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 	return nil
 }
 
-// DataReader can send requests which ranges are constructed by datums.
-type DataReader interface {
-	Executor
-
-	doRequestForDatums(goCtx goctx.Context, datums [][]types.Datum) error
-}
-
 // handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
 func handleIsExtra(col *expression.Column) bool {
 	if col != nil && col.ID == model.ExtraHandleID {
@@ -410,14 +394,14 @@ func handleIsExtra(col *expression.Column) bool {
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
+	baseExecutor
+
 	table     table.Table
 	tableID   int64
 	keepOrder bool
 	desc      bool
 	ranges    []types.IntColumnRange
 	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
@@ -425,11 +409,6 @@ type TableReaderExecutor struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	priority      int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *TableReaderExecutor) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Close implements the Executor Close interface.
@@ -477,30 +456,11 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
+	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
+	defer span.Finish()
+
 	var builder requestBuilder
 	kvReq, err := builder.SetTableRanges(e.tableID, e.ranges).
-		SetDAGRequest(e.dagPB).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		Build()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result, err = distsql.SelectDAG(goctx.Background(), e.ctx.GetClient(), kvReq, e.schema.Len())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result.Fetch(e.ctx.GoCtx())
-	return nil
-}
-
-// doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
-func (e *TableReaderExecutor) doRequestForHandles(goCtx goctx.Context, handles []int64) error {
-	sort.Sort(int64Slice(handles))
-	var builder requestBuilder
-	kvReq, err := builder.SetTableHandles(e.tableID, handles).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
@@ -518,18 +478,22 @@ func (e *TableReaderExecutor) doRequestForHandles(goCtx goctx.Context, handles [
 	return nil
 }
 
-// doRequestForDatums constructs kv ranges by Datums. It is used by index look up join.
-// Every lens for `datums` will always be one and must be type of int64.
-func (e *TableReaderExecutor) doRequestForDatums(goCtx goctx.Context, datums [][]types.Datum) error {
-	handles := make([]int64, 0, len(datums))
-	for _, datum := range datums {
-		handles = append(handles, datum[0].GetInt64())
+// startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.
+func startSpanFollowsContext(goCtx goctx.Context, operationName string) (opentracing.Span, goctx.Context) {
+	span := opentracing.SpanFromContext(goCtx)
+	if span != nil {
+		span = opentracing.StartSpan(operationName, opentracing.FollowsFrom(span.Context()))
+	} else {
+		span = opentracing.StartSpan(operationName)
 	}
-	return errors.Trace(e.doRequestForHandles(goCtx, handles))
+
+	return span, opentracing.ContextWithSpan(goCtx, span)
 }
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
+	baseExecutor
+
 	table     table.Table
 	index     *model.IndexInfo
 	tableID   int64
@@ -537,8 +501,6 @@ type IndexReaderExecutor struct {
 	desc      bool
 	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -546,11 +508,6 @@ type IndexReaderExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *IndexReaderExecutor) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Close implements the Executor Close interface.
@@ -598,6 +555,9 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open() error {
+	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader.Open")
+	defer span.Finish()
+
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -613,28 +573,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result.Fetch(e.ctx.GoCtx())
-	return nil
-}
-
-// doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
-func (e *IndexReaderExecutor) doRequestForDatums(goCtx goctx.Context, values [][]types.Datum) error {
-	var builder requestBuilder
-	kvReq, err := builder.SetIndexValues(e.tableID, e.index.ID, values).
-		SetDAGRequest(e.dagPB).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		Build()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -644,6 +583,8 @@ func (e *IndexReaderExecutor) doRequestForDatums(goCtx goctx.Context, values [][
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
+	baseExecutor
+
 	table     table.Table
 	index     *model.IndexInfo
 	tableID   int64
@@ -651,8 +592,6 @@ type IndexLookUpExecutor struct {
 	desc      bool
 	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol    *expression.Column
 	tableRequest *tipb.DAGRequest
@@ -663,6 +602,7 @@ type IndexLookUpExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
+	*dataReaderBuilder
 	// All fields above is immutable.
 
 	indexWorker
@@ -679,7 +619,7 @@ type indexWorker struct {
 }
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
-func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
+func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
 	var builder requestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -692,16 +632,16 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, 1)
+	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, 1)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	result.Fetch(e.ctx.GoCtx())
+	result.Fetch(goCtx)
 	worker := &e.indexWorker
 	worker.wg.Add(1)
 	go func() {
-		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
-		worker.fetchHandles(e, result, workCh, ctx, finished)
+		goCtx1, cancel := goctx.WithCancel(goCtx)
+		worker.fetchHandles(e, result, workCh, goCtx1, finished)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
@@ -716,7 +656,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, goCtx goctx.Context, finished <-chan struct{}) {
 	for {
 		handles, finish, err := extractHandlesFromNewIndexResult(result)
 		if err != nil {
@@ -733,7 +673,7 @@ func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.S
 		tasks := e.buildTableTasks(handles)
 		for _, task := range tasks {
 			select {
-			case <-ctx.Done():
+			case <-goCtx.Done():
 				return
 			case <-finished:
 				return
@@ -754,14 +694,14 @@ type tableWorker struct {
 }
 
 // startTableWorker launch some background goroutines which pick tasks from workCh and execute the task.
-func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, finished <-chan struct{}) {
+func (e *IndexLookUpExecutor) startTableWorker(goCtx goctx.Context, workCh <-chan *lookupTableTask, finished <-chan struct{}) {
 	worker := &e.tableWorker
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	worker.wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
-		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
+		goCtx1, cancel := goctx.WithCancel(goCtx)
 		go func() {
-			worker.pickAndExecTask(e, workCh, ctx, finished)
+			worker.pickAndExecTask(e, workCh, goCtx1, finished)
 			cancel()
 			worker.wg.Done()
 		}()
@@ -769,7 +709,7 @@ func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, f
 }
 
 // pickAndExecTask picks tasks from workCh, and execute them.
-func (worker *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+func (worker *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, goCtx goctx.Context, finished <-chan struct{}) {
 	for {
 		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
@@ -779,7 +719,7 @@ func (worker *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan
 			if !ok {
 				return
 			}
-			e.executeTask(task, ctx)
+			e.executeTask(task, goCtx)
 		case <-finished:
 			return
 		}
@@ -800,6 +740,9 @@ func (e *IndexLookUpExecutor) Open() error {
 }
 
 func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
+	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexLookUp.Open")
+	defer span.Finish()
+
 	e.finished = make(chan struct{})
 	e.indexWorker = indexWorker{}
 	e.tableWorker = tableWorker{}
@@ -808,11 +751,11 @@ func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	err := e.startIndexWorker(kvRanges, workCh, e.finished)
+	err := e.startIndexWorker(goCtx, kvRanges, workCh, e.finished)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.startTableWorker(workCh, e.finished)
+	e.startTableWorker(goCtx, workCh, e.finished)
 	return nil
 }
 
@@ -822,15 +765,6 @@ func (e *IndexLookUpExecutor) indexRangesToKVRanges() ([]kv.KeyRange, error) {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
 	return indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes)
-}
-
-// doRequestForDatums constructs kv ranges by datums. It is used by index look up join.
-func (e *IndexLookUpExecutor) doRequestForDatums(goCtx goctx.Context, values [][]types.Datum) error {
-	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return e.open(kvRanges)
 }
 
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
@@ -846,18 +780,20 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	} else {
 		schema = e.schema
 	}
-	tableReader := &TableReaderExecutor{
-		table:   e.table,
-		tableID: e.tableID,
-		dagPB:   e.tableRequest,
-		schema:  schema,
-		ctx:     e.ctx,
-	}
-	err = tableReader.doRequestForHandles(goCtx, task.handles)
+
+	var tableReader Executor
+	tableReader, err = e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
+		baseExecutor: newBaseExecutor(schema, e.ctx),
+		table:        e.table,
+		tableID:      e.tableID,
+		dagPB:        e.tableRequest,
+	}, task.handles)
 	if err != nil {
+		log.Error(err)
 		return
 	}
 	defer terror.Call(tableReader.Close)
+
 	for {
 		var row Row
 		row, err = tableReader.Next()
@@ -911,11 +847,6 @@ func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTas
 		tasks[i] = task
 	}
 	return tasks
-}
-
-// Schema implements Exec Schema interface.
-func (e *IndexLookUpExecutor) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Close implements Exec Close interface.

@@ -199,22 +199,13 @@ type ddl struct {
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
-
-	// reorgDoneCh is for reorganization, if the reorganization job is done,
-	// we will use this channel to notify outer.
-	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
-	// use a persistent job list.
-	reorgDoneCh chan error
-	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
-	reorgRowCount int64
-	// notifyCancelReorgJob is for reorganization, it used to notify the backfilling goroutine if the DDL job is cancelled.
-	notifyCancelReorgJob chan struct{}
+	// reorgCtx is for reorganization.
+	reorgCtx *reorgCtx
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
 
-	workerVars *variable.SessionVars
-
+	workerVars      *variable.SessionVars
 	delRangeManager delRangeManager
 }
 
@@ -273,17 +264,17 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
-		infoHandle:           infoHandle,
-		hook:                 hook,
-		store:                store,
-		uuid:                 id,
-		lease:                lease,
-		ddlJobCh:             make(chan struct{}, 1),
-		ddlJobDoneCh:         make(chan struct{}, 1),
-		notifyCancelReorgJob: make(chan struct{}, 1),
-		ownerManager:         manager,
-		schemaSyncer:         syncer,
-		workerVars:           variable.NewSessionVars(),
+		infoHandle:   infoHandle,
+		hook:         hook,
+		store:        store,
+		uuid:         id,
+		lease:        lease,
+		ddlJobCh:     make(chan struct{}, 1),
+		ddlJobDoneCh: make(chan struct{}, 1),
+		reorgCtx:     &reorgCtx{notifyCancelReorgJob: make(chan struct{}, 1)},
+		ownerManager: manager,
+		schemaSyncer: syncer,
+		workerVars:   variable.NewSessionVars(),
 	}
 	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 

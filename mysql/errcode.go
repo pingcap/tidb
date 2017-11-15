@@ -72,7 +72,7 @@ const (
 	ErrNonUniq                                                      = 1052
 	ErrServerShutdown                                               = 1053
 	ErrBadField                                                     = 1054
-	ErrWrongFieldWithGroup                                          = 1055
+	ErrFieldNotInGroupBy                                            = 1055
 	ErrWrongGroupField                                              = 1056
 	ErrWrongSumSelect                                               = 1057
 	ErrWrongValueCount                                              = 1058

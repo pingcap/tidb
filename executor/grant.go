@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -41,20 +40,16 @@ var (
 
 // GrantExec executes GrantStmt.
 type GrantExec struct {
+	baseExecutor
+
 	Privs      []*ast.PrivElem
 	ObjectType ast.ObjectTypeType
 	Level      *ast.GrantLevel
 	Users      []*ast.UserSpec
 	WithGrant  bool
 
-	ctx  context.Context
 	is   infoschema.InfoSchema
 	done bool
-}
-
-// Schema implements the Executor Schema interface.
-func (e *GrantExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // Next implements Execution Next interface.
@@ -85,7 +80,7 @@ func (e *GrantExec) Next() (Row, error) {
 
 			user := fmt.Sprintf(`("%s", "%s", "%s")`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
+			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(e.ctx.GoCtx(), sql)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

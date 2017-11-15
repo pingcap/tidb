@@ -18,11 +18,13 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/xprotocol/notice"
 	"github.com/pingcap/tidb/xprotocol/util"
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Session"
+	goctx "golang.org/x/net/context"
 )
 
 type sessionState int32
@@ -121,13 +123,15 @@ func (xs *xSession) handleSessionMessage(msgType Mysqlx.ClientMessages_Type, pay
 }
 
 func (xs *xSession) dispatchCommand(msgType Mysqlx.ClientMessages_Type, payload []byte) error {
+	span := opentracing.StartSpan("xserver.dispatch")
+	goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
 	switch msgType {
 	case Mysqlx.ClientMessages_SQL_STMT_EXECUTE:
-		return xs.xsql.dealSQLStmtExecute(payload)
+		return xs.xsql.dealSQLStmtExecute(goCtx, payload)
 	// @TODO will support in next pr
 	case Mysqlx.ClientMessages_CRUD_FIND, Mysqlx.ClientMessages_CRUD_INSERT, Mysqlx.ClientMessages_CRUD_UPDATE, Mysqlx.ClientMessages_CRUD_DELETE,
 		Mysqlx.ClientMessages_CRUD_CREATE_VIEW, Mysqlx.ClientMessages_CRUD_MODIFY_VIEW, Mysqlx.ClientMessages_CRUD_DROP_VIEW:
-		return xs.crud.dealCrudStmtExecute(msgType, payload)
+		return xs.crud.dealCrudStmtExecute(goCtx, msgType, payload)
 	// @TODO will support in next pr
 	case Mysqlx.ClientMessages_EXPECT_OPEN, Mysqlx.ClientMessages_EXPECT_CLOSE:
 		return util.ErrXBadMessage

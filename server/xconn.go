@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/xprotocol/xpacketio"
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Connection"
+	goctx "golang.org/x/net/context"
 )
 
 // mysqlXClientConn represents a connection between server and client,
@@ -255,7 +256,7 @@ func (xcc *mysqlXClientConn) showProcess() util.ProcessInfo {
 func (xcc *mysqlXClientConn) useDB(db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = xcc.ctx.Execute("use `" + db + "`")
+	_, err = xcc.ctx.Execute(goctx.Background(), "use `"+db+"`")
 	if err != nil {
 		return errors.Trace(err)
 	}

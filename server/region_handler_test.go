@@ -195,10 +195,9 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
 
-	cfg := &config.Config{
-		Port:  4001,
-		Store: "tikv",
-	}
+	cfg := config.NewConfig()
+	cfg.Port = 4001
+	cfg.Store = "tikv"
 	cfg.Status.StatusPort = 10090
 	cfg.Status.ReportStatus = true
 

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
 	"github.com/pingcap/tipb/go-mysqlx/Sql"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -45,7 +46,7 @@ const (
 		"END)"
 )
 
-func (xsql *xSQL) dispatchAdminCmd(msg Mysqlx_Sql.StmtExecute) error {
+func (xsql *xSQL) dispatchAdminCmd(goCtx goctx.Context, msg Mysqlx_Sql.StmtExecute) error {
 	stmt := string(msg.GetStmt())
 	args := msg.GetArgs()
 	log.Infof("MySQL X SQL statement: %s", stmt)
@@ -57,17 +58,17 @@ func (xsql *xSQL) dispatchAdminCmd(msg Mysqlx_Sql.StmtExecute) error {
 	case "kill_client":
 		return xsql.killClient(args)
 	case "create_collection":
-		return xsql.createCollection(args)
+		return xsql.createCollection(goCtx, args)
 	case "drop_collection":
-		return xsql.dropCollection(args)
+		return xsql.dropCollection(goCtx, args)
 	case "ensure_collection":
-		return xsql.ensureCollection(args)
+		return xsql.ensureCollection(goCtx, args)
 	case "create_collection_index":
 		return xsql.createCollectionIndex(args)
 	case "drop_collection_index":
 		return xsql.dropCollectionIndex(args)
 	case "list_objects":
-		return xsql.listObjects(args)
+		return xsql.listObjects(goCtx, args)
 	case "enable_notices":
 		return xsql.enableNotices(args)
 	case "disable_notices":
@@ -86,7 +87,7 @@ func (xsql *xSQL) ping(args []*Mysqlx_Datatypes.Any) error {
 	return nil
 }
 
-func (xsql *xSQL) writeOneRow(row []types.Datum, columnsInfo []*ColumnInfo) error {
+func (xsql *xSQL) writeOneRow(row types.Row, columnsInfo []*ColumnInfo) error {
 	rowData, err := rowToRow(xsql.xcc.alloc, columnsInfo, row)
 	if err != nil {
 		return errors.Trace(err)
@@ -116,7 +117,7 @@ func (xsql *xSQL) listClients(args []*Mysqlx_Datatypes.Any) error {
 		return errors.Trace(err)
 	}
 	for _, i := range info {
-		row := []types.Datum{
+		row := types.DatumRow{
 			types.NewUintDatum(uint64(i.clientID)),
 			types.NewStringDatum(i.user),
 			types.NewStringDatum(i.host),
@@ -141,7 +142,7 @@ func (xsql *xSQL) killClient(args []*Mysqlx_Datatypes.Any) error {
 	return nil
 }
 
-func (xsql *xSQL) createCollectionImpl(args []*Mysqlx_Datatypes.Any) error {
+func (xsql *xSQL) createCollectionImpl(goCtx goctx.Context, args []*Mysqlx_Datatypes.Any) error {
 	schema, collection := "", ""
 	switch len(args) {
 	case 1:
@@ -168,15 +169,15 @@ func (xsql *xSQL) createCollectionImpl(args []*Mysqlx_Datatypes.Any) error {
 		") CHARSET utf8mb4 ENGINE=InnoDB;"
 	log.Infof("CreateCollection: %s", collection)
 
-	return xsql.executeStmtNoResult(sql)
+	return xsql.executeStmtNoResult(goCtx, sql)
 }
 
-func (xsql *xSQL) createCollection(args []*Mysqlx_Datatypes.Any) error {
-	return xsql.createCollectionImpl(args)
+func (xsql *xSQL) createCollection(goCtx goctx.Context, args []*Mysqlx_Datatypes.Any) error {
+	return xsql.createCollectionImpl(goCtx, args)
 }
 
-func (xsql *xSQL) ensureCollection(args []*Mysqlx_Datatypes.Any) error {
-	err := xsql.createCollectionImpl(args)
+func (xsql *xSQL) ensureCollection(goCtx goctx.Context, args []*Mysqlx_Datatypes.Any) error {
+	err := xsql.createCollectionImpl(goCtx, args)
 	if err != nil {
 		if !terror.ErrorEqual(err, infoschema.ErrTableExists) {
 			return errors.Trace(err)
@@ -184,7 +185,7 @@ func (xsql *xSQL) ensureCollection(args []*Mysqlx_Datatypes.Any) error {
 	}
 	schema := string(args[0].GetScalar().GetVString().GetValue())
 	collection := string(args[1].GetScalar().GetVString().GetValue())
-	isColl, err := xsql.isCollection(schema, collection)
+	isColl, err := xsql.isCollection(goCtx, schema, collection)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -194,7 +195,7 @@ func (xsql *xSQL) ensureCollection(args []*Mysqlx_Datatypes.Any) error {
 	return nil
 }
 
-func (xsql *xSQL) dropCollection(args []*Mysqlx_Datatypes.Any) error {
+func (xsql *xSQL) dropCollection(goCtx goctx.Context, args []*Mysqlx_Datatypes.Any) error {
 	if err := checkArgs(args, []Mysqlx_Datatypes.Scalar_Type{Mysqlx_Datatypes.Scalar_V_STRING, Mysqlx_Datatypes.Scalar_V_STRING}); err != nil {
 		return errors.Trace(err)
 	}
@@ -208,7 +209,7 @@ func (xsql *xSQL) dropCollection(args []*Mysqlx_Datatypes.Any) error {
 	}
 	sql := "DROP TABLE " + util.QuoteIdentifier(schema) + "." + util.QuoteIdentifier(collection)
 	log.Infof("DropCollection: %s", collection)
-	return xsql.executeStmtNoResult(sql)
+	return xsql.executeStmtNoResult(goCtx, sql)
 }
 
 func (xsql *xSQL) createCollectionIndex(args []*Mysqlx_Datatypes.Any) error {
@@ -219,7 +220,7 @@ func (xsql *xSQL) dropCollectionIndex(args []*Mysqlx_Datatypes.Any) error {
 	return util.ErrJSONUsedAsKey
 }
 
-func (xsql *xSQL) listObjects(args []*Mysqlx_Datatypes.Any) error {
+func (xsql *xSQL) listObjects(goCtx goctx.Context, args []*Mysqlx_Datatypes.Any) error {
 	schema, pattern := "", ""
 	switch len(args) {
 	case 0:
@@ -238,7 +239,7 @@ func (xsql *xSQL) listObjects(args []*Mysqlx_Datatypes.Any) error {
 	default:
 		return util.ErrXCmdNumArguments.GenByArgs(2, len(args))
 	}
-	if err := xsql.isSchemaSelectedAndExists(schema); err != nil {
+	if err := xsql.isSchemaSelectedAndExists(goCtx, schema); err != nil {
 		return errors.Trace(err)
 	}
 	sql :=
@@ -271,7 +272,7 @@ func (xsql *xSQL) listObjects(args []*Mysqlx_Datatypes.Any) error {
 
 	sql += " GROUP BY name ORDER BY name"
 	log.Infof("sql: %s", sql)
-	return xsql.executeStmt(sql)
+	return xsql.executeStmt(goCtx, sql)
 }
 
 func (xsql *xSQL) enableNotices(args []*Mysqlx_Datatypes.Any) error {
@@ -332,7 +333,7 @@ func (xsql *xSQL) listNotices(args []*Mysqlx_Datatypes.Any) error {
 	if xsql.xcc.xsession.getSendWarnings() {
 		enabled = 1
 	}
-	row := []types.Datum{
+	row := types.DatumRow{
 		types.NewStringDatum("warnings"),
 		types.NewIntDatum(enabled),
 	}
@@ -341,7 +342,7 @@ func (xsql *xSQL) listNotices(args []*Mysqlx_Datatypes.Any) error {
 	}
 
 	for _, n := range fixedNoticeNames {
-		r := []types.Datum{
+		r := types.DatumRow{
 			types.NewStringDatum(n),
 			types.NewIntDatum(1),
 		}
@@ -356,15 +357,15 @@ func (xsql *xSQL) listNotices(args []*Mysqlx_Datatypes.Any) error {
 	return nil
 }
 
-func (xsql *xSQL) isSchemaSelectedAndExists(schema string) error {
+func (xsql *xSQL) isSchemaSelectedAndExists(goCtx goctx.Context, schema string) error {
 	sql := "SHOW TABLES"
 	if len(schema) != 0 {
 		sql = sql + " FROM " + util.QuoteIdentifier(schema)
 	}
-	return xsql.executeStmtNoResult(sql)
+	return xsql.executeStmtNoResult(goCtx, sql)
 }
 
-func (xsql *xSQL) isCollection(schema string, collection string) (bool, error) {
+func (xsql *xSQL) isCollection(goCtx goctx.Context, schema string, collection string) (bool, error) {
 	sql := "SELECT COUNT(*) AS cnt," + countDoc + " As doc," + countID + " AS id," + countGen +
 		" AS gen " + "FROM information_schema.columns WHERE table_name = " +
 		util.QuoteString(collection) + " AND table_schema = "
@@ -373,7 +374,7 @@ func (xsql *xSQL) isCollection(schema string, collection string) (bool, error) {
 	} else {
 		sql += util.QuoteString(schema)
 	}
-	rs, err := xsql.ctx.Execute(sql)
+	rs, err := xsql.ctx.Execute(goCtx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -395,13 +396,13 @@ func (xsql *xSQL) isCollection(schema string, collection string) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if len(row) != 4 {
+	if row.Len() != 4 {
 		return false, nil
 	}
-	cnt := row[0].GetInt64()
-	doc := row[1].GetInt64()
-	id := row[2].GetInt64()
-	gen := row[3].GetInt64()
+	cnt, _ := row.GetInt64(0)
+	doc, _ := row.GetInt64(1)
+	id, _ := row.GetInt64(2)
+	gen, _ := row.GetInt64(3)
 
 	return doc == 1 && id == 1 && (cnt == gen+doc+id), nil
 }

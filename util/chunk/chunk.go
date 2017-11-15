@@ -16,10 +16,13 @@ package chunk
 import (
 	"unsafe"
 
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
+
+var _ types.Row = Row{}
 
 // Chunk stores multiple rows of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/memory_layout.html
@@ -50,6 +53,25 @@ func (c *Chunk) AddInterfaceColumn() {
 	c.columns = append(c.columns, &column{
 		ifaces: []interface{}{},
 	})
+}
+
+// AddColumnByFieldType adds a column by field type.
+func (c *Chunk) AddColumnByFieldType(fieldTp byte, initCap int) {
+	switch fieldTp {
+	case mysql.TypeFloat:
+		c.AddFixedLenColumn(4, initCap)
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble:
+		c.AddFixedLenColumn(8, initCap)
+	case mysql.TypeDuration:
+		c.AddFixedLenColumn(16, initCap)
+	case mysql.TypeNewDecimal:
+		c.AddFixedLenColumn(types.MyDecimalStructSize, initCap)
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeJSON:
+		c.AddInterfaceColumn()
+	default:
+		c.AddVarLenColumn(initCap)
+	}
 }
 
 // Reset resets the chunk, so the memory it allocated can be reused.
@@ -190,7 +212,10 @@ func (c *column) reset() {
 	c.length = 0
 	c.nullCount = 0
 	c.nullBitmap = c.nullBitmap[:0]
-	c.offsets = c.offsets[:0]
+	if len(c.offsets) > 0 {
+		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
+		c.offsets = c.offsets[:1]
+	}
 	c.data = c.data[:0]
 	c.ifaces = c.ifaces[:0]
 }
@@ -297,6 +322,11 @@ type Row struct {
 	idx int
 }
 
+// Len returns the number of values in the row.
+func (r Row) Len() int {
+	return r.c.NumCols()
+}
+
 // GetInt64 returns the int64 value and isNull with the colIdx.
 func (r Row) GetInt64(colIdx int) (int64, bool) {
 	col := r.c.columns[colIdx]
@@ -312,7 +342,7 @@ func (r Row) GetUint64(colIdx int) (uint64, bool) {
 // GetFloat32 returns the float64 value and isNull with the colIdx.
 func (r Row) GetFloat32(colIdx int) (float32, bool) {
 	col := r.c.columns[colIdx]
-	return *(*float32)(unsafe.Pointer(&col.data[r.idx*8])), col.isNull(r.idx)
+	return *(*float32)(unsafe.Pointer(&col.data[r.idx*4])), col.isNull(r.idx)
 }
 
 // GetFloat64 returns the float64 value and isNull with the colIdx.
@@ -382,4 +412,80 @@ func (r Row) GetJSON(colIdx int) (json.JSON, bool) {
 	col := r.c.columns[colIdx]
 	j, ok := col.ifaces[r.idx].(json.JSON)
 	return j, !ok
+}
+
+// GetDatum implements the types.Row interface.
+func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
+	var d types.Datum
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(tp.Flag) {
+			val, isNull := r.GetUint64(colIdx)
+			if !isNull {
+				d.SetUint64(val)
+			}
+		} else {
+			val, isNull := r.GetInt64(colIdx)
+			if !isNull {
+				d.SetInt64(val)
+			}
+		}
+	case mysql.TypeFloat:
+		val, isNull := r.GetFloat32(colIdx)
+		if !isNull {
+			d.SetFloat32(val)
+		}
+	case mysql.TypeDouble:
+		val, isNull := r.GetFloat64(colIdx)
+		if !isNull {
+			d.SetFloat64(val)
+		}
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		val, isNull := r.GetBytes(colIdx)
+		if !isNull {
+			d.SetBytes(val)
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		val, isNull := r.GetTime(colIdx)
+		if !isNull {
+			d.SetMysqlTime(val)
+		}
+	case mysql.TypeDuration:
+		val, isNull := r.GetDuration(colIdx)
+		if !isNull {
+			d.SetMysqlDuration(val)
+		}
+	case mysql.TypeNewDecimal:
+		val, IsNull := r.GetMyDecimal(colIdx)
+		if !IsNull {
+			d.SetMysqlDecimal(val)
+		}
+	case mysql.TypeEnum:
+		val, isNull := r.GetEnum(colIdx)
+		if !isNull {
+			d.SetMysqlEnum(val)
+		}
+	case mysql.TypeSet:
+		val, isNull := r.GetSet(colIdx)
+		if !isNull {
+			d.SetMysqlSet(val)
+		}
+	case mysql.TypeBit:
+		val, isNull := r.GetBytes(colIdx)
+		if !isNull {
+			d.SetMysqlBit(val)
+		}
+	case mysql.TypeJSON:
+		val, isNull := r.GetJSON(colIdx)
+		if !isNull {
+			d.SetMysqlJSON(val)
+		}
+	}
+	return d
+}
+
+// IsNull implements the types.Row interface.
+func (r Row) IsNull(colIdx int) bool {
+	return r.c.columns[colIdx].isNull(r.idx)
 }

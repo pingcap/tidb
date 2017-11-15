@@ -48,7 +48,7 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 	planMark[plan.ID()] = false
 	for pID := 0; pID < len(allPlans); pID++ {
 		for _, p := range allPlans[pID].Children() {
-			p.AddParent(allPlans[pID])
+			p.SetParents(allPlans[pID])
 			if planMark[p.ID()] {
 				planMark[p.ID()] = false
 				allPlans = append(allPlans, p.(PhysicalPlan))
@@ -233,7 +233,7 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
-	buffer.WriteString(fmt.Sprintf(", small:%s", p.Children()[p.SmallTable].ExplainID()))
+	buffer.WriteString(fmt.Sprintf(", small:%s", p.Children()[p.SmallChildIdx].ExplainID()))
 	if len(p.EqualConditions) > 0 {
 		buffer.WriteString(fmt.Sprintf(", equal:%s", p.EqualConditions))
 	}

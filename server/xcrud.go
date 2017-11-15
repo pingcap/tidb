@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Crud"
 	"github.com/pingcap/tipb/go-mysqlx/Expr"
+	goctx "golang.org/x/net/context"
 )
 
 type builder interface {
@@ -142,7 +143,7 @@ type xCrud struct {
 	alloc arena.Allocator
 }
 
-func (crud *xCrud) dealCrudStmtExecute(msgType Mysqlx.ClientMessages_Type, payload []byte) error {
+func (crud *xCrud) dealCrudStmtExecute(goCtx goctx.Context, msgType Mysqlx.ClientMessages_Type, payload []byte) error {
 	var sqlQuery *string
 	builder, err := crud.createCrudBuilder(msgType)
 	if err != nil {
@@ -157,7 +158,7 @@ func (crud *xCrud) dealCrudStmtExecute(msgType Mysqlx.ClientMessages_Type, paylo
 	}
 
 	log.Infof("mysqlx reported 'CRUD query: %s'", *sqlQuery)
-	rs, err := crud.ctx.Execute(*sqlQuery)
+	rs, err := crud.ctx.Execute(goCtx, *sqlQuery)
 	if err != nil {
 		return err
 	}
