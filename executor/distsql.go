@@ -827,10 +827,9 @@ func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTas
 		if e.batchSize > remained {
 			taskSizes = append(taskSizes, remained)
 			break
-		} else {
-			taskSizes = append(taskSizes, e.batchSize)
-			remained -= e.batchSize
 		}
+		taskSizes = append(taskSizes, e.batchSize)
+		remained -= e.batchSize
 	}
 
 	var indexOrder map[int64]int
