@@ -1476,6 +1476,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED)", true},
+		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED, b varchar(255))", true},
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED FIRST)", false},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
