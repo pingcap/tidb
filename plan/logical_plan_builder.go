@@ -75,12 +75,6 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	for i, aggFunc := range aggFuncList {
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
-			if eliminateAgg {
-				_, ok := arg.(*ast.ColumnNameExpr)
-				if !ok {
-					eliminateAgg = false
-				}
-			}
 			newArg, np, err := b.rewrite(arg, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
