@@ -78,7 +78,7 @@ func (e *GrantExec) Next() (Row, error) {
 						pwd = user.AuthOpt.HashString
 					} else {
 						return nil,errors.Trace(ErrPasswordFormat)
-                    		}
+				}
 				}
 			}
 
