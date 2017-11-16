@@ -189,7 +189,7 @@ func (p *Projection) prepareStatsProfile() *statsProfile {
 
 func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
-	var gbyCols []*expression.Column
+	gbyCols := make([]*expression.Column, 0, len(p.GroupByItems))
 	for _, gbyExpr := range p.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
@@ -243,7 +243,8 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 		}
 		return p.profile
 	}
-	var leftKeys, rightKeys []*expression.Column
+	leftKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	rightKeys := make([]*expression.Column, 0, len(p.EqualConditions))
 	for _, eqCond := range p.EqualConditions {
 		leftKeys = append(leftKeys, eqCond.GetArgs()[0].(*expression.Column))
 		rightKeys = append(rightKeys, eqCond.GetArgs()[1].(*expression.Column))

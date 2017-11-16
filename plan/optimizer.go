@@ -36,6 +36,7 @@ const (
 	flagDecorrelate
 	flagPredicatePushDown
 	flagAggregationOptimize
+	flagAggEliminate // Keep AggEliminater before PushDownTopN, for it will add a TopN operator.
 	flagPushDownTopN
 )
 
@@ -46,6 +47,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
+	&aggEliminater{},
 	&pushDownTopNOptimizer{},
 }
 
@@ -86,7 +88,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	return p, nil
 }
 
-// BuildLogicalPlan is exported and only used for test.
+// BuildLogicalPlan used to build logical plan from ast.Node.
 func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
