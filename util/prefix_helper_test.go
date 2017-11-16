@@ -43,6 +43,7 @@ type testPrefixSuite struct {
 }
 
 func (s *testPrefixSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
@@ -52,6 +53,7 @@ func (s *testPrefixSuite) SetUpSuite(c *C) {
 func (s *testPrefixSuite) TearDownSuite(c *C) {
 	err := s.s.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func encodeInt(n int) []byte {
@@ -113,7 +115,6 @@ func (c *MockContext) CommitTxn() error {
 }
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := &MockContext{10000000, make(map[fmt.Stringer]interface{}), s.s, nil}
 	ctx.fillTxn()
 	txn, err := ctx.GetTxn(false)
@@ -137,7 +138,6 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 }
 
 func (s *testPrefixSuite) TestPrefixFilter(c *C) {
-	defer testleak.AfterTest(c)()
 	rowKey := []byte("test@#$%l(le[0]..prefix) 2uio")
 	rowKey[8] = 0x00
 	rowKey[9] = 0x00
