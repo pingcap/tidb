@@ -1501,9 +1501,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-		if b.optFlag&flagAggEliminate == flagAggEliminate {
-			b.optFlag = b.optFlag &^ flagAggregationOptimize
-		}
 	}
 	var oldLen int
 	p, oldLen = b.buildProjection(p, sel.Fields.Fields, totalMap)
