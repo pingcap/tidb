@@ -256,7 +256,7 @@ func checkBootstrapped(s Session) (bool, error) {
 
 // getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
-func getTiDBVar(s Session, name string) (string, bool, error) {
+func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, name)
 	rs, err := s.Execute(goctx.Background(), sql)
@@ -272,7 +272,7 @@ func getTiDBVar(s Session, name string) (string, bool, error) {
 	if err != nil || row == nil {
 		return "", true, errors.Trace(err)
 	}
-	sVal, isNull := row.GetString(0)
+	sVal, isNull = row.GetString(0)
 	return sVal, isNull, nil
 }
 
