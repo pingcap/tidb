@@ -1574,7 +1574,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		columns = tbl.Cols()
 	}
-	var pkCol *expression.Column
+	var handleCol *expression.Column
 	ds.Columns = make([]*model.ColumnInfo, 0, len(columns))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
@@ -1588,11 +1588,11 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			Position: i,
 			ID:       col.ID})
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			pkCol = schema.Columns[schema.Len()-1]
+			handleCol = schema.Columns[schema.Len()-1]
 		}
 	}
-	if pkCol == nil {
-		pkCol = &expression.Column{
+	if handleCol == nil {
+		handleCol = &expression.Column{
 			FromID:   ds.id,
 			DBName:   schemaName,
 			TblName:  tableInfo.Name,
@@ -1606,9 +1606,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			ID:   model.ExtraHandleID,
 			Name: model.NewCIStr("_rowid"),
 		})
-		schema.Append(pkCol)
+		schema.Append(handleCol)
 	}
-	schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+	schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
 	ds.SetSchema(schema)
 	// make plan as DS -> US -> Proj
 	var result LogicalPlan = ds
