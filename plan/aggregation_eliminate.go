@@ -33,7 +33,7 @@ func (a *aggEliminater) optimize(p LogicalPlan, ctx context.Context) (LogicalPla
 func (a *aggEliminater) eliminateAgg(p LogicalPlan) LogicalPlan {
 	if agg, ok := p.(*LogicalAggregation); ok {
 		// We only consider case with single max/min function.
-		if len(agg.AggFuncs) != 1 {
+		if len(agg.AggFuncs) != 1 || len(agg.GroupByItems) != 0 {
 			return p
 		}
 		f := agg.AggFuncs[0]

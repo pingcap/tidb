@@ -63,16 +63,16 @@ func (p *LogicalAggregation) collectGroupByColumns() {
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
-	eliminateAgg := len(gbyItems) == 0
+	// We may apply aggregation eliminate optimization.
+	// So we add the flagAggEliminate to try to convert max/min to topn and flagPushDownTopN to handle the newly added topn operator.
+	b.optFlag = b.optFlag | flagAggEliminate
+	b.optFlag = b.optFlag | flagPushDownTopN
 
 	agg := LogicalAggregation{AggFuncs: make([]aggregation.Aggregation, 0, len(aggFuncList))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
-		if eliminateAgg && (aggFunc.F != ast.AggFuncMax) && (aggFunc.F != ast.AggFuncMin) {
-			eliminateAgg = false
-		}
 		var newArgList []expression.Expression
 		for _, arg := range aggFunc.Args {
 			if eliminateAgg {
@@ -119,10 +119,6 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
-	if eliminateAgg {
-		b.optFlag = b.optFlag | flagAggEliminate
-		b.optFlag = b.optFlag | flagPushDownTopN
-	}
 	return agg, aggIndexMap
 }
 
