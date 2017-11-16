@@ -154,6 +154,8 @@ var tokenMap = map[string]int{
 	"BINARY":            binaryType,
 	"BINLOG":            binlog,
 	"BIT":               bitType,
+	"BIT_AND":           bitAnd,
+	"BIT_OR":            bitOr,
 	"BIT_XOR":           bitXor,
 	"BLOB":              blobType,
 	"BOOL":              boolType,

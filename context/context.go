@@ -80,6 +80,8 @@ func (t basicCtxType) String() string {
 		return "query_string"
 	case Initing:
 		return "initing"
+	case LastExecuteDDL:
+		return "last_execute_ddl"
 	}
 	return "unknown"
 }
@@ -90,4 +92,6 @@ const (
 	QueryString basicCtxType = 1
 	// Initing is the key for indicating if the server is running bootstrap or upgrad job.
 	Initing basicCtxType = 2
+	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
+	LastExecuteDDL basicCtxType = 3
 )
