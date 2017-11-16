@@ -348,9 +348,9 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 
 	innerRows := make([]Row, 0, len(values))
 	for _, value := range values {
-		innerRow, err := e.decodeRow(value)
-		if err != nil {
-			resultBuffer.err = errors.Trace(err)
+		innerRow, err1 := e.decodeRow(value)
+		if err1 != nil {
+			resultBuffer.err = errors.Trace(err1)
 			return false
 		}
 		innerRows = append(innerRows, innerRow)
