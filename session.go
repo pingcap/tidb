@@ -88,8 +88,7 @@ type Session interface {
 }
 
 var (
-	_         Session = (*session)(nil)
-	sessionMu sync.Mutex
+	_ Session = (*session)(nil)
 )
 
 type stmtRecord struct {
@@ -981,11 +980,6 @@ func getHostByIP(ip string) []string {
 	terror.Log(errors.Trace(err))
 	return addrs
 }
-
-// Some vars name for debug.
-const (
-	retryEmptyHistoryList = "RetryEmptyHistoryList"
-)
 
 func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
 	if n1 <= n2 {
