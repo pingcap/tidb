@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -164,7 +165,11 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
-	err = plan.Preprocess(e.ctx, stmt, e.IS, true)
+	// We try to build the real statement of preparedStmt.
+	for i := range prepared.Params {
+		prepared.Params[i].SetDatum(types.NewIntDatum(0))
+	}
+	_, err = plan.BuildLogicalPlan(e.ctx, stmt, e.IS)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
