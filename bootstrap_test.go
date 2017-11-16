@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -51,7 +52,8 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	datums := ast.RowToDatums(row, r.Fields())
+	match(c, datums, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
@@ -64,7 +66,8 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 	v, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(v.Data[0].GetInt64(), Equals, globalVarsCount())
+	iVal, _ := v.GetInt64(0)
+	c.Assert(iVal, Equals, globalVarsCount())
 
 	// Check a storage operations are default autocommit after the second start.
 	mustExecSQL(c, se, "USE test;")
@@ -83,7 +86,8 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 	v, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, v.Data, 3)
+	datums = ast.RowToDatums(v, r.Fields())
+	match(c, datums, 3)
 	mustExecSQL(c, se, "drop table if exists t")
 	se.Close()
 
@@ -141,7 +145,8 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	datums := ast.RowToDatums(row, r.Fields())
+	match(c, datums, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -151,14 +156,16 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	v, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(v.Data[0].GetInt64(), Equals, globalVarsCount())
+	iVal, _ := v.GetInt64(0)
+	c.Assert(iVal, Equals, globalVarsCount())
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0].GetBytes(), BytesEquals, []byte("True"))
+	c.Assert(row.Len(), Equals, 1)
+	bVal, _ := row.GetBytes(0)
+	c.Assert(bVal, BytesEquals, []byte("True"))
 
 	err = store.Close()
 	c.Assert(err, IsNil)
@@ -177,8 +184,9 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0].GetBytes(), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(row.Len(), Equals, 1)
+	bVal, _ := row.GetBytes(0)
+	c.Assert(bVal, BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
 
 	se1 := newSession(c, store, s.dbName)
 	ver, err := getBootstrapVersion(se1)
@@ -218,8 +226,9 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0].GetBytes(), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(row.Len(), Equals, 1)
+	bVal, _ = row.GetBytes(0)
+	c.Assert(bVal, BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
 
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
