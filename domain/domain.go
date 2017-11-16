@@ -453,11 +453,19 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, idleTimeout)
 	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease, sysCtxPool)
+	defer func() {
+		if err != nil {
+			d.Close()
+			log.Errorf("[ddl] new domain failed %v", errors.ErrorStack(errors.Trace(err)))
+		}
+	}()
 
-	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
+	err = d.ddl.SchemaSyncer().Init(ctx)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = d.Reload(); err != nil {
+	err = d.Reload()
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
