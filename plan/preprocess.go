@@ -315,8 +315,8 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
-		if spec.NewColumn != nil {
-			if err := checkColumn(spec.NewColumn); err != nil {
+		if len(spec.NewColumns) > 0 && spec.NewColumns[0] != nil {
+			if err := checkColumn(spec.NewColumns[0]); err != nil {
 				p.err = err
 				return
 			}
