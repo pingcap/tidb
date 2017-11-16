@@ -844,7 +844,10 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 
 	for _, spec := range validSpecs {
 		switch spec.Tp {
-		case ast.AlterTableAddColumn:
+		case ast.AlterTableAddColumns:
+			if len(spec.NewColumns) != 1 {
+				return errRunMultiSchemaChanges
+			}
 			err = d.AddColumn(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
@@ -902,8 +905,9 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 
 // AddColumn will add a new column to the table.
 func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
 	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(spec.NewColumn.Options)
+	err := checkColumnConstraint(specNewColumn.Options)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -919,7 +923,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	// Check whether added column has existed.
-	colName := spec.NewColumn.Name.Name.O
+	colName := specNewColumn.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -929,13 +933,13 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	// NOTE: Because now we can only append columns to table,
 	// we dont't need check whether the column refers other
 	// generated columns occurring later in table.
-	for _, option := range spec.NewColumn.Options {
+	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			referableColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
 				referableColNames[col.Name.L] = struct{}{}
 			}
-			_, dependColNames := findDependedColumnNames(spec.NewColumn)
+			_, dependColNames := findDependedColumnNames(specNewColumn)
 			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
@@ -949,7 +953,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), spec.NewColumn)
+	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1155,6 +1159,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 
 func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, originalColName model.CIStr,
 	spec *ast.AlterTableSpec) (*model.Job, error) {
+	specNewColumn := spec.NewColumns[0]
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1172,7 +1177,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `setDefaultAndComment` later.
-	if spec.NewColumn.Tp == nil {
+	if specNewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
@@ -1182,8 +1187,8 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		Offset:             col.Offset,
 		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
-		FieldType:          *spec.NewColumn.Tp,
-		Name:               spec.NewColumn.Name.Name,
+		FieldType:          *specNewColumn.Tp,
+		Name:               specNewColumn.Name.Name,
 	})
 
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
@@ -1194,7 +1199,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
+	if err = setDefaultAndComment(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1234,14 +1239,15 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 // currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
-		return ErrWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+	specNewColumn := spec.NewColumns[0]
+	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
+		return ErrWrongDBName.GenByArgs(specNewColumn.Name.Schema.O)
 	}
 	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
 		return ErrWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
 	}
-	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
-		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
+		return ErrWrongTableName.GenByArgs(specNewColumn.Name.Table.O)
 	}
 	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
 		return ErrWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
@@ -1260,14 +1266,15 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
-		return ErrWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+	specNewColumn := spec.NewColumns[0]
+	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
+		return ErrWrongDBName.GenByArgs(specNewColumn.Name.Schema.O)
 	}
-	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
-		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
+		return ErrWrongTableName.GenByArgs(specNewColumn.Name.Table.O)
 	}
 
-	originalColName := spec.NewColumn.Name.Name
+	originalColName := specNewColumn.Name.Name
 	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
 	if err != nil {
 		return errors.Trace(err)
@@ -1279,6 +1286,7 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 }
 
 func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1289,7 +1297,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
 	}
 
-	colName := spec.NewColumn.Name.Name
+	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
@@ -1298,11 +1306,11 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^mysql.NoDefaultValueFlag
-	if len(spec.NewColumn.Options) == 0 {
+	if len(specNewColumn.Options) == 0 {
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err = setDefaultValue(ctx, col, spec.NewColumn.Options[0])
+		err = setDefaultValue(ctx, col, specNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
