@@ -340,7 +340,7 @@ func (p *TopN) canPushDown() bool {
 }
 
 func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
-        cols := make([]*expression.Column, 0, len(p.ByItems))
+	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
