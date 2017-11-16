@@ -739,6 +739,10 @@ func (e *IndexLookUpExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.batchSize = 128
+	if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
+		e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
+	}
 	return e.open(kvRanges)
 }
 
@@ -750,7 +754,6 @@ func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
 	e.indexWorker = indexWorker{}
 	e.tableWorker = tableWorker{}
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
-	e.batchSize = 128
 
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
