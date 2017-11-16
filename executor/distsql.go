@@ -824,20 +824,21 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTask {
 	// Build tasks with increasing batch size.
 	var taskSizes []int
-	total := len(handles)
-	batchSize := e.batchSize
-	if e.batchSize < e.ctx.GetSessionVars().IndexLookupSize {
-		e.batchSize *= 2
+	for remained := len(handles); remained > 0; e.batchSize *= 2 {
 		if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
 			e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
 		}
-	}
-	for total > 0 {
-		if batchSize > total {
-			batchSize = total
+		if e.batchSize > remained {
+			taskSizes = append(taskSizes, remained)
+			break
+		} else {
+			taskSizes = append(taskSizes, e.batchSize)
+			remained -= e.batchSize
 		}
-		taskSizes = append(taskSizes, batchSize)
-		total -= batchSize
+	}
+	sum := 0
+	for _, s := range taskSizes {
+		sum += s
 	}
 
 	var indexOrder map[int64]int
