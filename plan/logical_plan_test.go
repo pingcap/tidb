@@ -1635,13 +1635,10 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
-		is, err := MockPreprocess(stmt, false)
-		c.Assert(err, IsNil)
-
+		Preprocess(s.ctx, stmt, s.is, false)
 		builder := &planBuilder{
 			ctx:       mockContext(),
-			is:        is,
+			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
 		p := builder.build(stmt).(LogicalPlan)
