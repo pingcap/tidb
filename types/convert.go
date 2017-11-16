@@ -291,6 +291,17 @@ func StrToFloat(sc *variable.StatementContext, str string) (float64, error) {
 	validStr, err := getValidFloatPrefix(sc, str)
 	f, err1 := strconv.ParseFloat(validStr, 64)
 	if err1 != nil {
+		if err2, ok := err1.(*strconv.NumError); ok {
+			if err2.Err == strconv.ErrRange {
+				warnErr := ErrTruncatedWrongVal.GenByArgs("DOUBLE", str)
+				err1 = sc.HandleOverflow(err1, warnErr)
+				if math.IsInf(f, 1) {
+					f = math.MaxFloat64
+				} else if math.IsInf(f, -1) {
+					f = -math.MaxFloat64
+				}
+			}
+		}
 		return f, errors.Trace(err1)
 	}
 	return f, errors.Trace(err)
