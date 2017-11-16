@@ -311,7 +311,13 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 			numMatchedOuters = numOuters
 		}
 
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuters(outerBuffer.rows[numMatchedOuters:], resultBuffer.rows)
+		if len(outerBuffer.rows)-numMatchedOuters > 0 {
+			resultBuffer.rows = e.resultGenerator.emitUnMatchedOuters(outerBuffer.rows[numMatchedOuters:], resultBuffer.rows)
+			if len(resultBuffer.rows) >= bufferCapacity {
+				e.resultBufferCh <- resultBuffer
+				resultBuffer = &execResult{rows: make([]Row, 0, bufferCapacity)}
+			}
+		}
 		for _, outerRow := range outerBuffer.rows[:numMatchedOuters] {
 			ok = e.joinOuterRow(workerID, outerRow, resultBuffer)
 			if !ok {

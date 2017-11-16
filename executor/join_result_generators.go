@@ -294,9 +294,8 @@ func (outputer *leftOuterJoinResultGenerator) emitMatchedInners(outer Row, inner
 	originLen := len(resultBuffer)
 	buffer := make([]types.Datum, 0, len(inners)*(len(outer)+len(inners[0])))
 	for _, inner := range inners {
-		buffer = outputer.makeJoinRowToBuffer(buffer, outer, inner)
+		buffer = outputer.makeJoinRowToBuffer(buffer[len(buffer):], outer, inner)
 		resultBuffer = append(resultBuffer, buffer)
-		buffer = buffer[len(buffer):]
 	}
 	return outputer.filterResult(resultBuffer, originLen)
 }
@@ -314,9 +313,8 @@ func (outputer *leftOuterJoinResultGenerator) emitUnMatchedOuters(outers []Row, 
 	resultBuffer = outputer.growResultBufferIfNecessary(resultBuffer, len(outers))
 	buffer := make([]types.Datum, 0, len(outers)*(len(outers[0])+len(outputer.defaultInner)))
 	for _, outer := range outers {
-		buffer = outputer.makeJoinRowToBuffer(buffer, outer, outputer.defaultInner)
+		buffer = outputer.makeJoinRowToBuffer(buffer[len(buffer):], outer, outputer.defaultInner)
 		resultBuffer = append(resultBuffer, buffer)
-		buffer = buffer[:]
 	}
 	return resultBuffer
 }
@@ -334,9 +332,8 @@ func (outputer *rightOuterJoinResultGenerator) emitMatchedInners(outer Row, inne
 	originLen := len(resultBuffer)
 	buffer := make([]types.Datum, 0, len(inners)*(len(outer)+len(inners[0])))
 	for _, inner := range inners {
-		buffer = outputer.makeJoinRowToBuffer(buffer, inner, outer)
+		buffer = outputer.makeJoinRowToBuffer(buffer[len(buffer):], inner, outer)
 		resultBuffer = append(resultBuffer, buffer)
-		buffer = buffer[len(buffer):]
 	}
 	return outputer.filterResult(resultBuffer, originLen)
 }
@@ -354,9 +351,8 @@ func (outputer *rightOuterJoinResultGenerator) emitUnMatchedOuters(outers []Row,
 	resultBuffer = outputer.growResultBufferIfNecessary(resultBuffer, len(outers))
 	buffer := make([]types.Datum, 0, len(outers)*(len(outers[0])+len(outputer.defaultInner)))
 	for _, outer := range outers {
-		buffer = outputer.makeJoinRowToBuffer(buffer, outputer.defaultInner, outer)
+		buffer = outputer.makeJoinRowToBuffer(buffer[len(buffer):], outputer.defaultInner, outer)
 		resultBuffer = append(resultBuffer, buffer)
-		buffer = buffer[len(buffer):]
 	}
 	return resultBuffer
 }
@@ -375,15 +371,13 @@ func (outputer *innerJoinResultGenerator) emitMatchedInners(outer Row, inners []
 	buffer := make([]types.Datum, 0, (len(outer)+len(inners[0]))*len(inners))
 	if outputer.outerIsRight {
 		for _, inner := range inners {
-			buffer = outputer.makeJoinRowToBuffer(buffer, inner, outer)
+			buffer = outputer.makeJoinRowToBuffer(buffer[len(buffer):], inner, outer)
 			resultBuffer = append(resultBuffer, buffer)
-			buffer = buffer[len(buffer):]
 		}
 	} else {
 		for _, inner := range inners {
-			buffer = outputer.makeJoinRowToBuffer(buffer, outer, inner)
+			buffer = outputer.makeJoinRowToBuffer(buffer[len(buffer):], outer, inner)
 			resultBuffer = append(resultBuffer, buffer)
-			buffer = buffer[len(buffer):]
 		}
 	}
 	return outputer.filterResult(resultBuffer, originLen)
