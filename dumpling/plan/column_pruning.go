@@ -69,7 +69,7 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
-	var selfUsedCols []*expression.Column
+	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	for _, expr := range p.Exprs {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
