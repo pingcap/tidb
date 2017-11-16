@@ -739,10 +739,6 @@ func (e *IndexLookUpExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.batchSize = 128
-	if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
-		e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
-	}
 	return e.open(kvRanges)
 }
 
@@ -835,10 +831,6 @@ func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTas
 			taskSizes = append(taskSizes, e.batchSize)
 			remained -= e.batchSize
 		}
-	}
-	sum := 0
-	for _, s := range taskSizes {
-		sum += s
 	}
 
 	var indexOrder map[int64]int
