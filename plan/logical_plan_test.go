@@ -17,7 +17,6 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -46,9 +45,14 @@ func TestT(t *testing.T) {
 
 type testPlanSuite struct {
 	*parser.Parser
+
+	is  infoschema.InfoSchema
+	ctx context.Context
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+	s.ctx = mockContext()
 	s.Parser = parser.New()
 }
 
@@ -269,12 +273,6 @@ func MockTable() *model.TableInfo {
 		PKIsHandle: true,
 	}
 	return table
-}
-
-func MockPreprocess(node ast.Node, inPrepare bool) (infoschema.InfoSchema, error) {
-	ctx := mockContext()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
-	return is, errors.Trace(Preprocess(ctx, node, is, inPrepare))
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -539,18 +537,9 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is, err := MockPreprocess(stmt, false)
-		c.Assert(err, IsNil, comment)
-
-		builder := &planBuilder{
-			ctx:       mockContext(),
-			is:        is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil, comment)
-		c.Assert(builder.optFlag&flagPredicatePushDown, Greater, uint64(0))
-		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), builder.ctx)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -660,20 +649,13 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockPreprocess(stmt, false)
+		Preprocess(s.ctx, stmt, s.is, false)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, builder.ctx)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, s.ctx)
 			c.Assert(err, IsNil)
 		}
-		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
 	}
 }
@@ -714,17 +696,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockPreprocess(stmt, false)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), builder.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -813,26 +787,19 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)(a.b,b.b)->Aggr(max(a.c))->Projection",
 		},
 	}
+	s.ctx.GetSessionVars().AllowAggPushDown = true
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockPreprocess(stmt, false)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		builder.ctx.GetSessionVars().AllowAggPushDown = true
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), builder.ctx)
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
+	s.ctx.GetSessionVars().AllowAggPushDown = false
 }
 
 func (s *testPlanSuite) TestColumnPruning(c *C) {
@@ -955,18 +922,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockPreprocess(stmt, false)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			ctx:       mockContext(),
-			is:        is,
-		}
-		p := builder.build(stmt).(LogicalPlan)
-		c.Assert(builder.err, IsNil, comment)
-
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), s.ctx)
 		c.Assert(err, IsNil)
 		checkDataSourceCols(p, c, tt.ans, comment)
 	}
@@ -1118,18 +1076,12 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is, err := MockPreprocess(stmt, false)
-		c.Assert(err, IsNil, comment)
-		builder := &planBuilder{
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		builder.build(stmt)
+		Preprocess(s.ctx, stmt, s.is, false)
+		_, err = BuildLogicalPlan(s.ctx, stmt, s.is)
 		if tt.err == nil {
-			c.Assert(builder.err, IsNil, comment)
+			c.Assert(err, IsNil, comment)
 		} else {
-			c.Assert(tt.err.Equal(builder.err), IsTrue, comment)
+			c.Assert(tt.err.Equal(err), IsTrue, comment)
 		}
 	}
 }
@@ -1221,18 +1173,9 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockPreprocess(stmt, false)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			ctx:       mockContext(),
-			is:        is,
-		}
-		p := builder.build(stmt).(LogicalPlan)
-		c.Assert(builder.err, IsNil, comment)
-
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), s.ctx)
 		c.Assert(err, IsNil)
 		checkUniqueKeys(p, c, tt.ans, tt.sql)
 	}
@@ -1265,25 +1208,20 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			best: "DataScan(t)->Projection->Projection->Projection->Projection",
 		},
 	}
+	s.ctx.GetSessionVars().AllowAggPushDown = true
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockPreprocess(stmt, false)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
-			ctx: mockContext(),
-			is:  is,
-		}
-		builder.ctx.GetSessionVars().AllowAggPushDown = true
-		p := builder.build(stmt).(LogicalPlan)
-		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
+	s.ctx.GetSessionVars().AllowAggPushDown = false
 }
 
 func (s *testPlanSuite) TestVisitInfo(c *C) {
@@ -1433,13 +1371,11 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is, err := MockPreprocess(stmt, false)
-		c.Assert(err, IsNil)
-
+		Preprocess(s.ctx, stmt, s.is, false)
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			ctx:       mockContext(),
-			is:        is,
+			is:        s.is,
 		}
 		builder.build(stmt)
 		c.Assert(builder.err, IsNil, comment)
@@ -1602,13 +1538,10 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
-		is, err := MockPreprocess(stmt, false)
-		c.Assert(err, IsNil)
-
+		Preprocess(s.ctx, stmt, s.is, false)
 		builder := &planBuilder{
 			ctx:       mockContext(),
-			is:        is,
+			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
 		p := builder.build(stmt).(LogicalPlan)
@@ -1622,33 +1555,31 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 func (s *testPlanSuite) TestNameResolver(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
-		sql          string
-		tblNameValid bool
-		colNameValid bool
-		err          string
+		sql string
+		err string
 	}{
-		{"select a from t", true, true, ""},
-		{"select c3 from t", true, false, "[plan:1054]Unknown column 'c3' in 'field list'"},
-		{"select c1 from t4", false, true, "[schema:1146]Table 'test.t4' doesn't exist"},
-		{"select * from t", true, true, ""},
-		{"select t.* from t", true, true, ""},
-		{"select t2.* from t", true, false, "[plan:1051]Unknown table 't2'"},
-		{"select b as a, c as a from t group by a", true, false, "[plan:1052]Column 'c' in field list is ambiguous"},
-		{"select 1 as a, b as a, c as a from t group by a", true, true, ""},
-		{"select a, b as a from t group by a+1", true, true, ""},
-		{"select c, a as c from t order by c+1", true, true, ""},
-		{"select * from t as t1, t as t2 join t as t3 on t2.a = t3.a", true, true, ""},
-		{"select * from t as t1, t as t2 join t as t3 on t1.c1 = t2.a", true, false, "[plan:1054]Unknown column 't1.c1' in 'on clause'"},
-		{"select a from t group by a having a = 3", true, true, ""},
-		{"select a from t group by a having c2 = 3", true, false, "[plan:1054]Unknown column 'c2' in 'having clause'"},
-		{"select a from t where exists (select b)", true, true, ""},
-		{"select cnt from (select count(a) as cnt from t group by b) as t2 group by cnt", true, true, ""},
-		{"select a from t where t11.a < t.a", true, false, "[plan:1054]Unknown column 't11.a' in 'where clause'"},
-		{"select a from t having t11.c1 < t.a", true, false, "[plan:1054]Unknown column 't11.c1' in 'having clause'"},
-		{"select a from t where t.a < t.a order by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'order clause'"},
-		{"select a from t group by t11.c1", true, false, "[plan:1054]Unknown column 't11.c1' in 'group statement'"},
-		{"delete a from (select * from t ) as a, t", true, false, "[optimizer:1288]The target table a of the DELETE is not updatable"},
-		{"delete b from (select * from t ) as a, t", true, false, "[plan:1109]Unknown table 'b' in MULTI DELETE"},
+		{"select a from t", ""},
+		{"select c3 from t", "[plan:1054]Unknown column 'c3' in 'field list'"},
+		{"select c1 from t4", "[schema:1146]Table 'test.t4' doesn't exist"},
+		{"select * from t", ""},
+		{"select t.* from t", ""},
+		{"select t2.* from t", "[plan:1051]Unknown table 't2'"},
+		{"select b as a, c as a from t group by a", "[plan:1052]Column 'c' in field list is ambiguous"},
+		{"select 1 as a, b as a, c as a from t group by a", ""},
+		{"select a, b as a from t group by a+1", ""},
+		{"select c, a as c from t order by c+1", ""},
+		{"select * from t as t1, t as t2 join t as t3 on t2.a = t3.a", ""},
+		{"select * from t as t1, t as t2 join t as t3 on t1.c1 = t2.a", "[plan:1054]Unknown column 't1.c1' in 'on clause'"},
+		{"select a from t group by a having a = 3", ""},
+		{"select a from t group by a having c2 = 3", "[plan:1054]Unknown column 'c2' in 'having clause'"},
+		{"select a from t where exists (select b)", ""},
+		{"select cnt from (select count(a) as cnt from t group by b) as t2 group by cnt", ""},
+		{"select a from t where t11.a < t.a", "[plan:1054]Unknown column 't11.a' in 'where clause'"},
+		{"select a from t having t11.c1 < t.a", "[plan:1054]Unknown column 't11.c1' in 'having clause'"},
+		{"select a from t where t.a < t.a order by t11.c1", "[plan:1054]Unknown column 't11.c1' in 'order clause'"},
+		{"select a from t group by t11.c1", "[plan:1054]Unknown column 't11.c1' in 'group statement'"},
+		{"delete a from (select * from t ) as a, t", "[optimizer:1288]The target table a of the DELETE is not updatable"},
+		{"delete b from (select * from t ) as a, t", "[plan:1109]Unknown table 'b' in MULTI DELETE"},
 	}
 
 	for _, t := range tests {
@@ -1656,22 +1587,11 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		stmt, err := s.ParseOneStmt(t.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := MockPreprocess(stmt, false)
-		if !t.tblNameValid {
-			c.Assert(err.Error(), Equals, t.err)
-			continue
-		}
-		c.Assert(err, IsNil)
-		builder := &planBuilder{
-			ctx:       mockContext(),
-			is:        is,
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-		}
-		builder.build(stmt)
-		if t.colNameValid {
-			c.Assert(builder.err, IsNil)
+		_, err = BuildLogicalPlan(s.ctx, stmt, s.is)
+		if t.err == "" {
+			c.Check(err, IsNil)
 		} else {
-			c.Assert(builder.err.Error(), Equals, t.err)
+			c.Assert(err.Error(), Equals, t.err)
 		}
 	}
 }
