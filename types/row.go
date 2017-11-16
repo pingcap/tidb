@@ -69,6 +69,15 @@ var _ Row = DatumRow{}
 // DatumRow is a slice of Datum, implements Row interface.
 type DatumRow []Datum
 
+// Copy deep copies a DatumRow.
+func (dr DatumRow) Copy() DatumRow {
+	c := make(DatumRow, len(dr))
+	for i, d := range dr {
+		c[i] = *d.Copy()
+	}
+	return c
+}
+
 // Len implements Row interface.
 func (dr DatumRow) Len() int {
 	return len(dr)
