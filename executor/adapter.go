@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -70,7 +71,7 @@ func (a *recordSet) Fields() []*ast.ResultField {
 	return a.fields
 }
 
-func (a *recordSet) Next() (*ast.Row, error) {
+func (a *recordSet) Next() (types.Row, error) {
 	row, err := a.executor.Next()
 	if err != nil {
 		a.lastErr = err
@@ -86,7 +87,7 @@ func (a *recordSet) Next() (*ast.Row, error) {
 	if a.stmt != nil {
 		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
-	return &ast.Row{Data: row}, nil
+	return row, nil
 }
 
 func (a *recordSet) Close() error {
