@@ -110,6 +110,7 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		}
 		vars.StrictSQLMode = sqlMode.HasStrictMode()
 		vars.SQLMode = sqlMode
+		vars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
 	case variable.TiDBSnapshot:
 		err = setSnapshotTS(vars, sVal)
 		if err != nil {

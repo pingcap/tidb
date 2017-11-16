@@ -167,6 +167,9 @@ func points2TableRanges(sc *variable.StatementContext, rangePoints []point) ([]t
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
+			if startPoint.value.IsNull() {
+				startPoint.excl = false
+			}
 			startPoint.value.SetInt64(math.MinInt64)
 		}
 		startInt, err := startPoint.value.ToInt64(sc)
