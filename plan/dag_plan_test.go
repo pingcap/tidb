@@ -650,7 +650,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		},
 		{
 			sql:  "select * from t where a = 1 order by a",
-			best: "TableReader(Table(t))->UnionScan([eq(test.t.a, 1)])->Sort",
+			best: "TableReader(Table(t))->UnionScan([eq(test.t.a, 1)])",
 		},
 		{
 			sql:  "select * from t where a = 1 order by b",

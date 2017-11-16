@@ -70,10 +70,7 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context) task {
 }
 
 func (p *PhysicalUnionScan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
-	if !prop.isEmpty() {
-		return nil
-	}
-	return [][]*requiredProp{{&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}}}
+	return [][]*requiredProp{{prop}}
 }
 
 func (p *LogicalUnionScan) generatePhysicalPlans() []PhysicalPlan {
