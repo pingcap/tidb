@@ -1694,6 +1694,11 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 			sql:  "select min(a) from t;",
 			best: "DataScan(t)->TopN([test.t.a],0,1)->Projection->Projection",
 		},
+		// Do nothing to max + firstrow.
+		{
+			sql:  "select max(a), b from t;",
+			best: "DataScan(t)->Aggr(max(test.t.a),firstrow(test.t.b))->Projection",
+		},
 		// Do nothing to max+min.
 		{
 			sql:  "select max(a), min(a) from t;",
