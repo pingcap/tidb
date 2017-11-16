@@ -656,7 +656,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		},
 		{
 			sql:  "select * from t where a = 1 order by a",
-			best: "TableReader(Table(t))->UnionScan([eq(test.t.a, 1)])",
+			best: "TableReader(Table(t))->UnionScan([eq(test.t.a, 1)])->Sort",
 		},
 		{
 			sql:  "select * from t where a = 1 order by b",
@@ -672,7 +672,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		},
 		{
 			sql:  "select c from t where c = 1",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]])->UnionScan([eq(test.t.c, 1)])",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->UnionScan([eq(test.t.c, 1)])->Projection",
 		},
 	}
 	for _, tt := range tests {
