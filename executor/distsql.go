@@ -609,6 +609,9 @@ type IndexLookUpExecutor struct {
 	tableWorker
 	finished chan struct{}
 
+	// batchSize is for slow startup. It will slowly increase to the max batch size value.
+	batchSize int
+
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 }
@@ -747,6 +750,7 @@ func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
 	e.indexWorker = indexWorker{}
 	e.tableWorker = tableWorker{}
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.batchSize = 128
 
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
@@ -818,7 +822,13 @@ func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTas
 	// Build tasks with increasing batch size.
 	var taskSizes []int
 	total := len(handles)
-	batchSize := e.ctx.GetSessionVars().IndexLookupSize
+	batchSize := e.batchSize
+	if e.batchSize < e.ctx.GetSessionVars().IndexLookupSize {
+		e.batchSize *= 2
+		if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
+			e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
+		}
+	}
 	for total > 0 {
 		if batchSize > total {
 			batchSize = total
