@@ -269,7 +269,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a not in (1, 2, 3)",
 			accessConds: "[not(in(test.t.a, 1, 2, 3))]",
 			filterConds: "[]",
-			resultStr:   "[[-9223372036854775807,0] [4,+inf)]",
+			resultStr:   "[(-inf,0] [4,+inf)]",
 		},
 	}
 
