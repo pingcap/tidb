@@ -207,15 +207,14 @@ func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "user":
-			value.User, _ = row.GetString(i)
+			value.User = row.GetString(i)
 		case f.ColumnAsName.L == "host":
-			value.Host, _ = row.GetString(i)
+			value.Host = row.GetString(i)
 			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "password":
-			value.Password, _ = row.GetString(i)
+			value.Password = row.GetString(i)
 		case f.Column.Tp == mysql.TypeEnum:
-			ed, _ := row.GetEnum(i)
-			if ed.String() != "Y" {
+			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
@@ -234,16 +233,15 @@ func (p *MySQLPrivilege) decodeDBTableRow(row types.Row, fs []*ast.ResultField) 
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "user":
-			value.User, _ = row.GetString(i)
+			value.User = row.GetString(i)
 		case f.ColumnAsName.L == "host":
-			value.Host, _ = row.GetString(i)
+			value.Host = row.GetString(i)
 			value.hostPatChars, value.hostPatTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "db":
-			value.DB, _ = row.GetString(i)
+			value.DB = row.GetString(i)
 			value.dbPatChars, value.dbPatTypes = stringutil.CompilePattern(strings.ToUpper(value.DB), '\\')
 		case f.Column.Tp == mysql.TypeEnum:
-			ed, _ := row.GetEnum(i)
-			if ed.String() != "Y" {
+			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
@@ -262,20 +260,18 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row types.Row, fs []*ast.Resul
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "user":
-			value.User, _ = row.GetString(i)
+			value.User = row.GetString(i)
 		case f.ColumnAsName.L == "host":
-			value.Host, _ = row.GetString(i)
+			value.Host = row.GetString(i)
 			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "db":
-			value.DB, _ = row.GetString(i)
+			value.DB = row.GetString(i)
 		case f.ColumnAsName.L == "table_name":
-			value.TableName, _ = row.GetString(i)
+			value.TableName = row.GetString(i)
 		case f.ColumnAsName.L == "table_priv":
-			set, _ := row.GetSet(i)
-			value.TablePriv = decodeSetToPrivilege(set)
+			value.TablePriv = decodeSetToPrivilege(row.GetSet(i))
 		case f.ColumnAsName.L == "column_priv":
-			set, _ := row.GetSet(i)
-			value.ColumnPriv = decodeSetToPrivilege(set)
+			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
 		}
 	}
 	p.TablesPriv = append(p.TablesPriv, value)
@@ -287,26 +283,24 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row types.Row, fs []*ast.Resu
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "user":
-			value.User, _ = row.GetString(i)
+			value.User = row.GetString(i)
 		case f.ColumnAsName.L == "host":
-			value.Host, _ = row.GetString(i)
+			value.Host = row.GetString(i)
 			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "db":
-			value.DB, _ = row.GetString(i)
+			value.DB = row.GetString(i)
 		case f.ColumnAsName.L == "table_name":
-			value.TableName, _ = row.GetString(i)
+			value.TableName = row.GetString(i)
 		case f.ColumnAsName.L == "column_name":
-			value.ColumnName, _ = row.GetString(i)
+			value.ColumnName = row.GetString(i)
 		case f.ColumnAsName.L == "timestamp":
-			t, _ := row.GetTime(i)
 			var err error
-			value.Timestamp, err = t.Time.GoTime(time.Local)
+			value.Timestamp, err = row.GetTime(i).Time.GoTime(time.Local)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		case f.ColumnAsName.L == "column_priv":
-			set, _ := row.GetSet(i)
-			value.ColumnPriv = decodeSetToPrivilege(set)
+			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
 		}
 	}
 	p.ColumnsPriv = append(p.ColumnsPriv, value)

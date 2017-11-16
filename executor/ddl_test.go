@@ -65,8 +65,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 		if row == nil {
 			break
 		}
-		sVal, _ := row.GetString(1)
-		c.Assert(sVal, Equals, "float")
+		c.Assert(row.GetString(1), Equals, "float")
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
@@ -76,8 +75,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 		if row == nil {
 			break
 		}
-		sVal, _ := row.GetString(1)
-		c.Assert(sVal, Equals, "double")
+		c.Assert(row.GetString(1), Equals, "double")
 	}
 
 	// table option is auto-increment

@@ -66,8 +66,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 	v, err := r.Next()
 	c.Assert(err, IsNil)
-	iVal, _ := v.GetInt64(0)
-	c.Assert(iVal, Equals, globalVarsCount())
+	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
 
 	// Check a storage operations are default autocommit after the second start.
 	mustExecSQL(c, se, "USE test;")
@@ -156,8 +155,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	v, err := r.Next()
 	c.Assert(err, IsNil)
-	iVal, _ := v.GetInt64(0)
-	c.Assert(iVal, Equals, globalVarsCount())
+	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	row, err = r.Next()
