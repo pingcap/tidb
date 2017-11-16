@@ -284,7 +284,7 @@ func (r *builder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) [
 	return []point{startPoint, endPoint}
 }
 
-func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
+func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]point, 0, len(list)*2)
 	hasNull := false
@@ -414,7 +414,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
-		rangePoints, hasNull := r.newBuildFromIn(expr)
+		rangePoints, hasNull := r.buildFromIn(expr)
 		if hasNull {
 			return nil
 		}
@@ -454,7 +454,7 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
-		retPoints, _ := r.newBuildFromIn(expr)
+		retPoints, _ := r.buildFromIn(expr)
 		return retPoints
 	case ast.Like:
 		return r.newBuildFromPatternLike(expr)
