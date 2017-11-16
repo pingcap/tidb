@@ -185,7 +185,7 @@ func (e *analyzeColumnsExec) Next() (row types.Row, err error) {
 	if values == nil {
 		return nil, nil
 	}
-	var datumRow types.DatumRow
+	datumRow := make(types.DatumRow, 0, len(values))
 	for _, val := range values {
 		d := types.NewBytesDatum(val)
 		if len(val) == 1 && val[0] == codec.NilFlag {
