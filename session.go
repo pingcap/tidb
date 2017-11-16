@@ -511,7 +511,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
 	var span opentracing.Span
 	goCtx := ctx.GoCtx()
 	if goCtx == nil {
@@ -534,7 +534,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 	}
 
 	var (
-		rows   []*ast.Row
+		rows   []types.Row
 		fields []*ast.ResultField
 	)
 	// Execute all recordset, take out the first one as result.
@@ -587,8 +587,8 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
-	var rows []*ast.Row
+func drainRecordSet(rs ast.RecordSet) ([]types.Row, error) {
+	var rows []types.Row
 	for {
 		row, err := rs.Next()
 		if err != nil {
@@ -605,14 +605,15 @@ func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
-	rows, _, err := s.ExecRestrictedSQL(ctx, sql)
+	rows, fields, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
 	if len(rows) == 0 {
 		return "", executor.ErrResultIsEmpty
 	}
-	value, err := types.ToString(rows[0].Data[0].GetValue())
+	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
+	value, err := d.ToString()
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -1187,16 +1188,17 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	// Set the variable to true to prevent cyclic recursive call.
 	vars.CommonGlobalLoaded = true
-	rows, _, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+	rows, fields, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
 	if err != nil {
 		vars.CommonGlobalLoaded = false
 		log.Errorf("Failed to load common global variables.")
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		varName := row.Data[0].GetString()
+		varName, _ := row.GetString(0)
+		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
 		if _, ok := vars.Systems[varName]; !ok {
-			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
+			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
 				return errors.Trace(err)
 			}

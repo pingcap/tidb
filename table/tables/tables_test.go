@@ -159,7 +159,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs[0].Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, NotNil)
+	c.Assert(row, NotNil)
 	_, err = ts.se.Execute(goctx.Background(), "drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -171,8 +171,9 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, NotNil)
-	c.Assert(row.Data[5].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(6, -1))
+	c.Assert(row, NotNil)
+	bin, _ := row.GetBytes(5)
+	c.Assert(types.BinaryLiteral(bin), DeepEquals, types.NewBinaryLiteralFromUint(6, -1))
 	_, err = ts.se.Execute(goctx.Background(), "drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -184,8 +185,9 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, NotNil)
-	c.Assert(row.Data[0].GetFloat64(), DeepEquals, float64(2))
+	c.Assert(row, NotNil)
+	fVal, _ := row.GetFloat64(0)
+	c.Assert(fVal, DeepEquals, float64(2))
 	_, err = ts.se.Execute(goctx.Background(), "drop table test.t")
 	c.Assert(err, IsNil)
 }

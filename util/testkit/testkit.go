@@ -157,12 +157,13 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]
-		iRow := make([]string, len(row))
-		for j := range row {
-			if row[j].IsNull() {
+		iRow := make([]string, row.Len())
+		for j := 0; j < row.Len(); j++ {
+			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {
-				iRow[j], err = row[j].ToString()
+				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				iRow[j], err = d.ToString()
 				tk.c.Assert(err, check.IsNil)
 			}
 		}
