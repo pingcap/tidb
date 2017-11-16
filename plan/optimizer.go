@@ -36,6 +36,7 @@ const (
 	flagDecorrelate
 	flagPredicatePushDown
 	flagAggregationOptimize
+	flagAggEliminate // Keep AggEliminater before PushDownTopN, for it will add a TopN operator.
 	flagPushDownTopN
 )
 
@@ -46,6 +47,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
+	&aggEliminater{},
 	&pushDownTopNOptimizer{},
 }
 
