@@ -364,7 +364,6 @@ func upgrade(s Session) {
 		log.Errorf("[Upgrade] upgrade from %d to %d error", ver, currentBootstrapVersion)
 		log.Fatal(err)
 	}
-	return
 }
 
 // upgradeToVer2 updates to version 2.
