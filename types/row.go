@@ -20,40 +20,40 @@ type Row interface {
 	// Len returns the number of values in the row.
 	Len() int
 
-	// GetInt64 returns the int64 value and isNull with the colIdx.
+	// GetInt64 returns the int64 value with the colIdx.
 	GetInt64(colIdx int) int64
 
-	// GetUint64 returns the uint64 value and isNull with the colIdx.
+	// GetUint64 returns the uint64 value with the colIdx.
 	GetUint64(colIdx int) uint64
 
-	// GetFloat32 returns the float32 value and isNull with the colIdx.
+	// GetFloat32 returns the float32 value with the colIdx.
 	GetFloat32(colIdx int) float32
 
-	// GetFloat64 returns the float64 value and isNull with the colIdx.
+	// GetFloat64 returns the float64 value with the colIdx.
 	GetFloat64(colIdx int) float64
 
-	// GetString returns the string value and isNull with the colIdx.
+	// GetString returns the string value with the colIdx.
 	GetString(colIdx int) string
 
-	// GetBytes returns the bytes value and isNull with the colIdx.
+	// GetBytes returns the bytes value with the colIdx.
 	GetBytes(colIdx int) []byte
 
-	// GetTime returns the Time value and is isNull with the colIdx.
+	// GetTime returns the Time value with the colIdx.
 	GetTime(colIdx int) Time
 
-	// GetDuration returns the Duration value and isNull with the colIdx.
+	// GetDuration returns the Duration value with the colIdx.
 	GetDuration(colIdx int) Duration
 
-	// GetEnum returns the Enum value and isNull with the colIdx.
+	// GetEnum returns the Enum value with the colIdx.
 	GetEnum(colIdx int) Enum
 
-	// GetSet returns the Set value and isNull with the colIdx.
+	// GetSet returns the Set value with the colIdx.
 	GetSet(colIdx int) Set
 
-	// GetMyDecimal returns the MyDecimal value and isNull with the colIdx.
+	// GetMyDecimal returns the MyDecimal value with the colIdx.
 	GetMyDecimal(colIdx int) *MyDecimal
 
-	// GetJSON returns the JSON value and isNull with the colIdx.
+	// GetJSON returns the JSON value with the colIdx.
 	GetJSON(colIdx int) json.JSON
 
 	// GetDatum returns a Datum with the colIdx and field type.
