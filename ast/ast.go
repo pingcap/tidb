@@ -126,33 +126,33 @@ type ResultField struct {
 	Referenced bool
 }
 
-// Row represents a single row from Recordset.
-type Row struct {
-	Data []types.Datum
-}
-
 // RecordSet is an abstract result set interface to help get data from Plan.
 type RecordSet interface {
 
 	// Fields gets result fields.
-	Fields() (fields []*ResultField, err error)
+	Fields() []*ResultField
 
 	// Next returns the next row, nil row means there is no more to return.
-	Next() (row *Row, err error)
+	Next() (row types.Row, err error)
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
 }
 
+// RowToDatums converts row to datum slice.
+func RowToDatums(row types.Row, fields []*ResultField) []types.Datum {
+	datums := make([]types.Datum, len(fields))
+	for i, f := range fields {
+		datums[i] = row.GetDatum(i, &f.Column.FieldType)
+	}
+	return datums
+}
+
 // ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
 // Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node
-	// GetResultFields gets result fields.
-	GetResultFields() []*ResultField
-	// SetResultFields sets result fields.
-	SetResultFields(fields []*ResultField)
 }
 
 // SensitiveStmtNode overloads StmtNode and provides a SecureText method.
@@ -176,6 +176,9 @@ type Statement interface {
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool
+
+	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
+	IsReadOnly() bool
 }
 
 // Visitor visits a Node.

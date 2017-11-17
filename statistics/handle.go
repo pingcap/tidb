@@ -98,7 +98,10 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	tables := make([]*Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
-		version, tableID, modifyCount, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64(), row.Data[3].GetInt64()
+		version := row.GetUint64(0)
+		tableID := row.GetInt64(1)
+		modifyCount := row.GetInt64(2)
+		count := row.GetInt64(3)
 		h.LastVersion = version
 		table, ok := is.TableByID(tableID)
 		if !ok {
@@ -171,7 +174,11 @@ func (h *Handle) LoadNeededHistograms() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, Count: int64(hg.totalRowCount())}
+		cms, err := h.cmSketchFromStorage(col.tableID, 0, col.columnID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, CMSketch: cms, Count: int64(hg.totalRowCount())}
 		h.UpdateTableStats([]*Table{tbl}, nil)
 		histogramNeededColumns.delete(col)
 	}

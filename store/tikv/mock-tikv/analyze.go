@@ -20,7 +20,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -66,6 +68,10 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		IndexScan:      &tipb.IndexScan{Desc: false},
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0)
+	var cms *statistics.CMSketch
+	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
+		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
+	}
 	for {
 		values, err := e.Next()
 		if err != nil {
@@ -82,9 +88,16 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if cms != nil {
+			cms.InsertBytes(value)
+		}
 	}
 	hg := statistics.HistogramToProto(statsBuilder.Hist())
-	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg})
+	var cm *tipb.CMSketch
+	if cms != nil {
+		cm = statistics.CMSketchToProto(cms)
+	}
+	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -93,6 +106,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 
 type analyzeColumnsExec struct {
 	tblExec *tableScanExec
+	fields  []*ast.ResultField
 }
 
 func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
@@ -111,6 +125,14 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 			mvccStore:      h.mvccStore,
 		},
 	}
+	e.fields = make([]*ast.ResultField, len(columns))
+	for i := range e.fields {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *distsql.FieldTypeFromPBColumn(columns[i])
+		e.fields[i] = rf
+	}
+
 	pkID := int64(-1)
 	numCols := len(columns)
 	if columns[0].GetPkHandle() {
@@ -119,15 +141,19 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	}
 	colReq := analyzeReq.ColReq
 	builder := statistics.SampleBuilder{
-		Sc:            sc,
-		RecordSet:     e,
-		ColLen:        numCols,
-		PkID:          pkID,
-		MaxBucketSize: colReq.BucketSize,
-		MaxSketchSize: colReq.SketchSize,
-		MaxSampleSize: colReq.SampleSize,
+		Sc:              sc,
+		RecordSet:       e,
+		ColLen:          numCols,
+		PkID:            pkID,
+		MaxBucketSize:   colReq.BucketSize,
+		MaxFMSketchSize: colReq.SketchSize,
+		MaxSampleSize:   colReq.SampleSize,
 	}
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
+		builder.CMSketchWidth = *colReq.CmsketchWidth
+		builder.CMSketchDepth = *colReq.CmsketchDepth
+	}
+	collectors, pkBuilder, err := builder.CollectColumnStats()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -146,12 +172,12 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 }
 
 // Fields implements the ast.RecordSet Fields interface.
-func (e *analyzeColumnsExec) Fields() (fields []*ast.ResultField, err error) {
-	return nil, nil
+func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
+	return e.fields
 }
 
 // Next implements the ast.RecordSet Next interface.
-func (e *analyzeColumnsExec) Next() (row *ast.Row, err error) {
+func (e *analyzeColumnsExec) Next() (row types.Row, err error) {
 	values, err := e.tblExec.Next()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -159,15 +185,15 @@ func (e *analyzeColumnsExec) Next() (row *ast.Row, err error) {
 	if values == nil {
 		return nil, nil
 	}
-	row = &ast.Row{}
+	datumRow := make(types.DatumRow, 0, len(values))
 	for _, val := range values {
 		d := types.NewBytesDatum(val)
 		if len(val) == 1 && val[0] == codec.NilFlag {
 			d.SetNull()
 		}
-		row.Data = append(row.Data, d)
+		datumRow = append(datumRow, d)
 	}
-	return
+	return datumRow, nil
 }
 
 // Close implements the ast.RecordSet Close interface.

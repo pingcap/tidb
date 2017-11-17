@@ -52,18 +52,29 @@ type recordSet struct {
 	data   []types.Datum
 	count  int64
 	cursor int64
+	fields []*ast.ResultField
 }
 
-func (r *recordSet) Fields() ([]*ast.ResultField, error) {
-	return nil, nil
+func (r *recordSet) Fields() []*ast.ResultField {
+	return r.fields
 }
 
-func (r *recordSet) Next() (*ast.Row, error) {
+func (r *recordSet) setFields(tps ...uint8) {
+	r.fields = make([]*ast.ResultField, len(tps))
+	for i := 0; i < len(tps); i++ {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *types.NewFieldType(tps[i])
+		r.fields[i] = rf
+	}
+}
+
+func (r *recordSet) Next() (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
 	r.cursor++
-	return &ast.Row{Data: []types.Datum{r.data[r.cursor-1]}}, nil
+	return types.DatumRow{r.data[r.cursor-1]}, nil
 }
 
 func (r *recordSet) Close() error {
@@ -98,6 +109,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		count:  s.count,
 		cursor: 0,
 	}
+	rc.setFields(mysql.TypeLonglong)
 	rc.data[0].SetInt64(0)
 	for i := 1; i < start; i++ {
 		rc.data[i].SetInt64(2)
@@ -120,6 +132,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		count:  s.count,
 		cursor: 0,
 	}
+	pk.setFields(mysql.TypeLonglong)
 	for i := int64(0); i < rc.count; i++ {
 		pk.data[i].SetInt64(int64(i))
 	}
@@ -141,12 +154,39 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 		if row == nil {
 			break
 		}
-		err = b.Iterate(row.Data[0])
+		datums := ast.RowToDatums(row, records.Fields())
+		err = b.Iterate(datums[0])
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 	}
 	return b.Count, b.hist, nil
+}
+
+func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
+	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
+	cms := NewCMSketch(8, 2048)
+	for {
+		row, err := records.Next()
+		if err != nil {
+			return 0, nil, nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		datums := ast.RowToDatums(row, records.Fields())
+		bytes, err := codec.EncodeKey(nil, datums...)
+		if err != nil {
+			return 0, nil, nil, errors.Trace(err)
+		}
+		data := types.NewBytesDatum(bytes)
+		err = b.Iterate(data)
+		if err != nil {
+			return 0, nil, nil, errors.Trace(err)
+		}
+		cms.InsertBytes(bytes)
+	}
+	return b.Count, b.Hist(), cms, nil
 }
 
 func calculateScalar(hist *Histogram) {
@@ -172,7 +212,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 		Count:     s.count,
 		NullCount: 0,
 		Samples:   s.samples,
-		Sketch:    sketch,
+		FMSketch:  sketch,
 	}
 	col, err := BuildColumn(ctx, bucketCount, 2, collector)
 	checkRepeats(c, col)
@@ -208,22 +248,22 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 9)
 
 	builder := SampleBuilder{
-		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
-		RecordSet:     s.pk,
-		ColLen:        1,
-		PkID:          -1,
-		MaxSampleSize: 1000,
-		MaxSketchSize: 1000,
+		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+		RecordSet:       s.pk,
+		ColLen:          1,
+		PkID:            -1,
+		MaxSampleSize:   1000,
+		MaxFMSketchSize: 1000,
 	}
 	s.pk.Close()
-	collectors, _, err := builder.CollectSamplesAndEstimateNDVs()
+	collectors, _, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(len(collectors), Equals, 1)
 	col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0])
 	c.Assert(err, IsNil)
 	checkRepeats(c, col)
 
-	tblCount, col, err := BuildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
 	checkRepeats(c, col)
 	calculateScalar(col)
 	c.Check(err, IsNil)
@@ -276,7 +316,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 	ctx := mock.NewContext()
 	s.rc.Close()
-	tblCount, col, err := BuildIndex(ctx, 256, 1, ast.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, 256, 1, ast.RecordSet(s.rc))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 
@@ -384,6 +424,14 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	c.Assert(int(count), Equals, 250)
 }
 
+func buildCMSketch(values []types.Datum) *CMSketch {
+	cms := NewCMSketch(8, 2048)
+	for _, val := range values {
+		cms.insert(&val)
+	}
+	return cms
+}
+
 func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	bucketCount := int64(256)
 	sketch, _, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
@@ -394,12 +442,12 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 		Count:     s.count,
 		NullCount: 0,
 		Samples:   s.samples,
-		Sketch:    sketch,
+		FMSketch:  sketch,
 	}
 	hg, err := BuildColumn(ctx, bucketCount, 2, collector)
 	calculateScalar(hg)
 	c.Check(err, IsNil)
-	col := &Column{Histogram: *hg}
+	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data)}
 	tbl := &Table{
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
@@ -444,7 +492,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	ran[0].HighExcl = true
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9995)
+	c.Assert(int(count), Equals, 9994)
 	ran[0].LowExcl = false
 	ran[0].HighExcl = false
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
@@ -523,12 +571,12 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	sc := ctx.GetSessionVars().StmtCtx
 
 	s.rc.(*recordSet).cursor = 0
-	rowCount, hg, err := BuildIndex(ctx, bucketCount, 0, s.rc)
+	rowCount, hg, cms, err := buildIndex(ctx, bucketCount, 0, s.rc)
 	calculateScalar(hg)
 	c.Check(err, IsNil)
 	c.Check(rowCount, Equals, int64(100000))
 	idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
-	idx := &Index{Histogram: *hg, Info: idxInfo}
+	idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 	tbl := &Table{
 		Count:   int64(idx.totalRowCount()),
 		Indices: make(map[int64]*Index),
@@ -576,5 +624,5 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	ran[0].HighVal[0] = types.NewIntDatum(1000)
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 1)
+	c.Assert(int(count), Equals, 0)
 }

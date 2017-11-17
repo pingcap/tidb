@@ -1,5 +1,5 @@
-hash: d5b53dbf492fd8ed8ec327ee4f66837a6c6ee8263dbec54f77776ee3a68894ab
-updated: 2017-11-03T21:08:22.127776139+08:00
+hash: 562f87d58eab4d3af8b132f0c8f7beb379d83c57eb3f4b393e305b444f4385dd
+updated: 2017-11-08T14:59:33.459797409+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -23,7 +23,6 @@ imports:
   - auth/authpb
   - clientv3
   - clientv3/concurrency
-  - contrib/recipes
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
@@ -143,11 +142,11 @@ imports:
   version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
   repo: git@github.com:pingcap/mysqlx-driver.git
 - name: github.com/pingcap/pd
-  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
+  version: 96db717124a5bd980e8a244af2db8952e04159d6
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: eccd39c3992538c382a6351430a77233f42b1344
+  version: a2a2b2ab2ee4b8cd4349418ac1c1cde289798485
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -208,7 +207,7 @@ imports:
   subpackages:
   - metrics
 - name: github.com/uber/tchannel-go
-  version: a7ad9ecb640b5f10a0395b38d6319175172b3ab2
+  version: cc230a2942d078a8b01f4a79895dad62e6c572f1
   subpackages:
   - atomic
   - thrift

@@ -21,7 +21,6 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -70,9 +69,23 @@ func (t *Table) copy() *Table {
 	return nt
 }
 
-func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo *model.TableInfo) error {
-	histID, distinct := row.Data[2].GetInt64(), row.Data[3].GetInt64()
-	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
+func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSketch, error) {
+	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return decodeCMSketch(rows[0].GetBytes(0))
+}
+
+func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
+	histID := row.GetInt64(2)
+	distinct := row.GetInt64(3)
+	histVer := row.GetUint64(4)
+	nullCount := row.GetInt64(5)
 	idx := table.Indices[histID]
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
@@ -83,7 +96,11 @@ func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &Index{Histogram: *hg, Info: idxInfo}
+			cms, err := h.cmSketchFromStorage(tableInfo.ID, 1, idxInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idx = &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 		}
 		break
 	}
@@ -95,9 +112,11 @@ func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo
 	return nil
 }
 
-func (h *Handle) columnHistogramFromStorage(row *ast.Row, table *Table, tableInfo *model.TableInfo) error {
-	histID, distinct := row.Data[2].GetInt64(), row.Data[3].GetInt64()
-	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
+func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
+	histID := row.GetInt64(2)
+	distinct := row.GetInt64(3)
+	histVer := row.GetUint64(4)
+	nullCount := row.GetInt64(5)
 	col := table.Columns[histID]
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
@@ -121,7 +140,11 @@ func (h *Handle) columnHistogramFromStorage(row *ast.Row, table *Table, tableInf
 			if err != nil {
 				return errors.Trace(err)
 			}
-			col = &Column{Histogram: *hg, Info: colInfo, Count: int64(hg.totalRowCount())}
+			cms, err := h.cmSketchFromStorage(tableInfo.ID, 0, colInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			col = &Column{Histogram: *hg, Info: colInfo, CMSketch: cms, Count: int64(hg.totalRowCount())}
 		}
 		break
 	}
@@ -159,12 +182,12 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 		return nil, nil
 	}
 	for _, row := range rows {
-		if row.Data[1].GetInt64() > 0 {
-			if err := h.indexHistogramFromStorage(row, table, tableInfo); err != nil {
+		if row.GetInt64(1) > 0 {
+			if err := h.indexStatsFromStorage(row, table, tableInfo); err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
-			if err := h.columnHistogramFromStorage(row, table, tableInfo); err != nil {
+			if err := h.columnStatsFromStorage(row, table, tableInfo); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}

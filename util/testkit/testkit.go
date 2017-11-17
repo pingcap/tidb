@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testutil"
+	goctx "golang.org/x/net/context"
 )
 
 // TestKit is a utility to run sql test.
@@ -68,6 +69,8 @@ func (res *Result) Sort() *Result {
 		for i := range a {
 			if a[i] < b[i] {
 				return true
+			} else if a[i] > b[i] {
+				return false
 			}
 		}
 		return false
@@ -104,7 +107,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 	}
 	if len(args) == 0 {
 		var rss []ast.RecordSet
-		rss, err = tk.Se.Execute(sql)
+		rss, err = tk.Se.Execute(goctx.Background(), sql)
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}
@@ -154,12 +157,13 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]
-		iRow := make([]string, len(row))
-		for j := range row {
-			if row[j].IsNull() {
+		iRow := make([]string, row.Len())
+		for j := 0; j < row.Len(); j++ {
+			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {
-				iRow[j], err = row[j].ToString()
+				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				iRow[j], err = d.ToString()
 				tk.c.Assert(err, check.IsNil)
 			}
 		}

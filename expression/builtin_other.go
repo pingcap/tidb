@@ -458,11 +458,14 @@ func (b *builtinValuesIntSig) evalInt(_ types.Row) (int64, bool, error) {
 	if values == nil {
 		return 0, true, errors.New("Session current insert values is nil")
 	}
-	row := values.([]types.Datum)
-	if b.offset < len(row) {
-		return row[b.offset].GetInt64(), row[b.offset].IsNull(), nil
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return 0, true, nil
+		}
+		return row.GetInt64(b.offset), false, nil
 	}
-	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type builtinValuesRealSig struct {
@@ -478,11 +481,14 @@ func (b *builtinValuesRealSig) evalReal(_ types.Row) (float64, bool, error) {
 	if values == nil {
 		return 0, true, errors.New("Session current insert values is nil")
 	}
-	row := values.([]types.Datum)
-	if b.offset < len(row) {
-		return row[b.offset].GetFloat64(), row[b.offset].IsNull(), nil
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return 0, true, nil
+		}
+		return row.GetFloat64(b.offset), false, nil
 	}
-	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type builtinValuesDecimalSig struct {
@@ -498,14 +504,14 @@ func (b *builtinValuesDecimalSig) evalDecimal(_ types.Row) (*types.MyDecimal, bo
 	if values == nil {
 		return nil, true, errors.New("Session current insert values is nil")
 	}
-	row := values.([]types.Datum)
-	if b.offset < len(row) {
-		if row[b.offset].IsNull() {
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
 			return nil, true, nil
 		}
-		return row[b.offset].GetMysqlDecimal(), false, nil
+		return row.GetMyDecimal(b.offset), false, nil
 	}
-	return nil, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+	return nil, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type builtinValuesStringSig struct {
@@ -521,11 +527,14 @@ func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
 	if values == nil {
 		return "", true, errors.New("Session current insert values is nil")
 	}
-	row := values.([]types.Datum)
-	if b.offset < len(row) {
-		return row[b.offset].GetString(), row[b.offset].IsNull(), nil
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return "", true, nil
+		}
+		return row.GetString(b.offset), false, nil
 	}
-	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type builtinValuesTimeSig struct {
@@ -541,14 +550,14 @@ func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
 	if values == nil {
 		return types.Time{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.([]types.Datum)
-	if b.offset < len(row) {
-		if row[b.offset].IsNull() {
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
 			return types.Time{}, true, nil
 		}
-		return row[b.offset].GetMysqlTime(), false, nil
+		return row.GetTime(b.offset), false, nil
 	}
-	return types.Time{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+	return types.Time{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type builtinValuesDurationSig struct {
@@ -564,11 +573,14 @@ func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bo
 	if values == nil {
 		return types.Duration{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.([]types.Datum)
-	if b.offset < len(row) {
-		return row[b.offset].GetMysqlDuration(), row[b.offset].IsNull(), nil
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return types.Duration{}, true, nil
+		}
+		return row.GetDuration(b.offset), false, nil
 	}
-	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type builtinValuesJSONSig struct {
@@ -584,14 +596,14 @@ func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.JSON, bool, error) {
 	if values == nil {
 		return json.JSON{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.([]types.Datum)
-	if b.offset < len(row) {
-		if row[b.offset].IsNull() {
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
 			return json.JSON{}, true, nil
 		}
-		return row[b.offset].GetMysqlJSON(), false, nil
+		return row.GetJSON(b.offset), false, nil
 	}
-	return json.JSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+	return json.JSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type bitCountFunctionClass struct {

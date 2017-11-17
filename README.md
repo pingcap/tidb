@@ -38,7 +38,7 @@ For more details, see [How we build TiDB](https://pingcap.github.io/blog/2016/10
 
 ## Roadmap
 
-Read the [Roadmap](./docs/ROADMAP.md).
+Read the [Roadmap](https://github.com/pingcap/docs/blob/master/ROADMAP.md).
 
 ## Quick start
 

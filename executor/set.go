@@ -150,8 +150,14 @@ func (e *SetExecutor) executeSet() error {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return errors.Trace(err)
 			}
-			valStr, err := value.ToString()
-			terror.Log(errors.Trace(err))
+			var valStr string
+			if value.IsNull() {
+				valStr = "NULL"
+			} else {
+				var err error
+				valStr, err = value.ToString()
+				terror.Log(errors.Trace(err))
+			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 
@@ -174,7 +180,7 @@ func validateSnapshot(ctx context.Context, snapshotTS uint64) error {
 	if len(rows) != 1 {
 		return errors.New("can not get 'tikv_gc_safe_point'")
 	}
-	safePointString := rows[0].Data[0].GetString()
+	safePointString := rows[0].GetString(0)
 	const gcTimeFormat = "20060102-15:04:05 -0700 MST"
 	safePointTime, err := time.Parse(gcTimeFormat, safePointString)
 	if err != nil {

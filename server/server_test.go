@@ -237,17 +237,19 @@ func runTestPrepareResultFieldType(t *C) {
 
 func runTestSpecialType(t *C) {
 	runTestsOnNewDB(t, nil, "SpecialType", func(dbt *DBTest) {
-		dbt.mustExec("create table test (a decimal(10, 5), b datetime, c time)")
-		dbt.mustExec("insert test values (1.4, '2012-12-21 12:12:12', '4:23:34')")
+		dbt.mustExec("create table test (a decimal(10, 5), b datetime, c time, d bit(8))")
+		dbt.mustExec("insert test values (1.4, '2012-12-21 12:12:12', '4:23:34', b'1000')")
 		rows := dbt.mustQuery("select * from test where a > ?", 0)
 		t.Assert(rows.Next(), IsTrue)
 		var outA float64
 		var outB, outC string
-		err := rows.Scan(&outA, &outB, &outC)
+		var outD []byte
+		err := rows.Scan(&outA, &outB, &outC, &outD)
 		t.Assert(err, IsNil)
 		t.Assert(outA, Equals, 1.4)
 		t.Assert(outB, Equals, "2012-12-21 12:12:12")
 		t.Assert(outC, Equals, "04:23:34")
+		t.Assert(outD, BytesEquals, []byte{8})
 	})
 }
 
@@ -721,6 +723,28 @@ func runTestTLSConnection(t *C, overrider configOverrider) error {
 	defer db.Close()
 	_, err = db.Exec("USE test")
 	return err
+}
+
+func runTestSumAvg(c *C) {
+	runTests(c, nil, func(dbt *DBTest) {
+		dbt.mustExec("create table sumavg (a int, b decimal, c double)")
+		dbt.mustExec("insert sumavg values (1, 1, 1)")
+		rows := dbt.mustQuery("select sum(a), sum(b), sum(c) from sumavg")
+		c.Assert(rows.Next(), IsTrue)
+		var outA, outB, outC float64
+		err := rows.Scan(&outA, &outB, &outC)
+		c.Assert(err, IsNil)
+		c.Assert(outA, Equals, 1.0)
+		c.Assert(outB, Equals, 1.0)
+		c.Assert(outC, Equals, 1.0)
+		rows = dbt.mustQuery("select avg(a), avg(b), avg(c) from sumavg")
+		c.Assert(rows.Next(), IsTrue)
+		err = rows.Scan(&outA, &outB, &outC)
+		c.Assert(err, IsNil)
+		c.Assert(outA, Equals, 1.0)
+		c.Assert(outB, Equals, 1.0)
+		c.Assert(outC, Equals, 1.0)
+	})
 }
 
 func getMetrics(t *C) []byte {

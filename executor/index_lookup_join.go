@@ -86,7 +86,7 @@ type IndexLookUpJoin struct {
 	baseExecutor
 
 	outerExec        Executor
-	innerExec        DataReader
+	innerExecBuilder *dataReaderBuilder
 	outerKeys        []*expression.Column
 	innerKeys        []*expression.Column
 	outerFilter      expression.CNFExprs
@@ -101,8 +101,9 @@ type IndexLookUpJoin struct {
 	buffer4JoinKeys [][]types.Datum
 	buffer4JoinKey  []types.Datum
 
-	batchSize int
-	exhausted bool // exhausted means whether all data has been extracted.
+	maxBatchSize int
+	curBatchSize int
+	exhausted    bool // exhausted means whether all data has been extracted.
 }
 
 // Open implements the Executor Open interface.
@@ -112,9 +113,10 @@ func (e *IndexLookUpJoin) Open() error {
 	}
 
 	e.resultCursor = 0
-	e.resultBuffer = make([]Row, 0, e.batchSize)
-	e.buffer4JoinKeys = make([][]types.Datum, 0, e.batchSize)
-	e.buffer4JoinKey = make([]types.Datum, 0, e.batchSize*len(e.outerKeys))
+	e.curBatchSize = 32
+	e.resultBuffer = make([]Row, 0, e.maxBatchSize)
+	e.buffer4JoinKeys = make([][]types.Datum, 0, e.maxBatchSize)
+	e.buffer4JoinKey = make([]types.Datum, 0, e.maxBatchSize*len(e.outerKeys))
 	e.exhausted = false
 	return nil
 }
@@ -127,7 +129,7 @@ func (e *IndexLookUpJoin) Close() error {
 
 	// release all resource references.
 	e.outerExec = nil
-	e.innerExec = nil
+	e.innerExecBuilder = nil
 	e.outerKeys = nil
 	e.innerKeys = nil
 	e.outerFilter = nil
@@ -152,6 +154,9 @@ func (e *IndexLookUpJoin) Close() error {
 // Step7: do merge join on the **sorted** outer and inner rows.
 func (e *IndexLookUpJoin) Next() (Row, error) {
 	for ; e.resultCursor == len(e.resultBuffer); e.resultCursor = 0 {
+		if e.curBatchSize < e.maxBatchSize {
+			e.curBatchSize *= 2
+		}
 		if e.exhausted {
 			return nil, nil
 		}
@@ -160,7 +165,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 		e.innerOrderedRows.reset()
 		e.resultBuffer = e.resultBuffer[:0:cap(e.resultBuffer)]
 
-		for i := 0; i < e.batchSize; i++ {
+		for i := 0; i < e.curBatchSize; i++ {
 			outerRow, err := e.outerExec.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -257,16 +262,16 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
-	if err := e.innerExec.doRequestForDatums(e.ctx.GoCtx(), requestRows); err != nil {
+	innerExec, err := e.innerExecBuilder.buildExecutorForDatums(e.ctx.GoCtx(), requestRows)
+	if err != nil {
 		return errors.Trace(err)
 	}
-
-	defer terror.Call(e.innerExec.Close)
+	defer terror.Call(innerExec.Close)
 
 	for {
-		innerRow, err := e.innerExec.Next()
-		if err != nil {
-			return errors.Trace(err)
+		innerRow, err1 := innerExec.Next()
+		if err1 != nil {
+			return errors.Trace(err1)
 		} else if innerRow == nil {
 			break
 		}
@@ -293,7 +298,6 @@ func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 		innerJoinKey = innerJoinKey[len(innerJoinKey):]
 	}
 
-	var err error
 	e.innerOrderedRows.keys, err = e.constructJoinKeys(innerJoinKeys)
 	if err != nil {
 		return errors.Trace(err)
@@ -319,12 +323,12 @@ func (e *IndexLookUpJoin) doMergeJoin() (err error) {
 			outerNextCursor := e.outerOrderedRows.nextBatch(outerCursor)
 			innerNextCursor := e.innerOrderedRows.nextBatch(innerCursor)
 			for _, outerRow := range e.outerOrderedRows.rows[outerCursor:outerNextCursor] {
-				initLen := len(e.resultBuffer)
-				e.resultBuffer, err = e.resultGenerator.emitMatchedInners(outerRow, e.innerOrderedRows.rows[innerCursor:innerNextCursor], e.resultBuffer)
+				matched := true
+				e.resultBuffer, matched, err = e.resultGenerator.emitMatchedInners(outerRow, e.innerOrderedRows.rows[innerCursor:innerNextCursor], e.resultBuffer)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if initLen == len(e.resultBuffer) {
+				if !matched {
 					e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outerRow, e.resultBuffer)
 				}
 			}

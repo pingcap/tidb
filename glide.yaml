@@ -14,7 +14,6 @@ import:
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
-  - contrib/recipes
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -137,9 +136,11 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
+  version: 96db717124a5bd980e8a244af2db8952e04159d6
+  subpackages:
+  - pd-client
 - package: github.com/pingcap/tipb
-  version: eccd39c3992538c382a6351430a77233f42b1344
+  version: a2a2b2ab2ee4b8cd4349418ac1c1cde289798485
   subpackages:
   - go-binlog
   - go-mysqlx

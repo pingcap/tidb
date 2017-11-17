@@ -16,10 +16,13 @@ package chunk
 import (
 	"unsafe"
 
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
+
+var _ types.Row = Row{}
 
 // Chunk stores multiple rows of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/memory_layout.html
@@ -50,6 +53,25 @@ func (c *Chunk) AddInterfaceColumn() {
 	c.columns = append(c.columns, &column{
 		ifaces: []interface{}{},
 	})
+}
+
+// AddColumnByFieldType adds a column by field type.
+func (c *Chunk) AddColumnByFieldType(fieldTp byte, initCap int) {
+	switch fieldTp {
+	case mysql.TypeFloat:
+		c.AddFixedLenColumn(4, initCap)
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble:
+		c.AddFixedLenColumn(8, initCap)
+	case mysql.TypeDuration:
+		c.AddFixedLenColumn(16, initCap)
+	case mysql.TypeNewDecimal:
+		c.AddFixedLenColumn(types.MyDecimalStructSize, initCap)
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeJSON:
+		c.AddInterfaceColumn()
+	default:
+		c.AddVarLenColumn(initCap)
+	}
 }
 
 // Reset resets the chunk, so the memory it allocated can be reused.
@@ -190,7 +212,10 @@ func (c *column) reset() {
 	c.length = 0
 	c.nullCount = 0
 	c.nullBitmap = c.nullBitmap[:0]
-	c.offsets = c.offsets[:0]
+	if len(c.offsets) > 0 {
+		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
+		c.offsets = c.offsets[:1]
+	}
 	c.data = c.data[:0]
 	c.ifaces = c.ifaces[:0]
 }
@@ -297,89 +322,156 @@ type Row struct {
 	idx int
 }
 
-// GetInt64 returns the int64 value and isNull with the colIdx.
-func (r Row) GetInt64(colIdx int) (int64, bool) {
-	col := r.c.columns[colIdx]
-	return *(*int64)(unsafe.Pointer(&col.data[r.idx*8])), col.isNull(r.idx)
+// Len returns the number of values in the row.
+func (r Row) Len() int {
+	return r.c.NumCols()
 }
 
-// GetUint64 returns the uint64 value and isNull with the colIdx.
-func (r Row) GetUint64(colIdx int) (uint64, bool) {
+// GetInt64 returns the int64 value with the colIdx.
+func (r Row) GetInt64(colIdx int) int64 {
 	col := r.c.columns[colIdx]
-	return *(*uint64)(unsafe.Pointer(&col.data[r.idx*8])), col.isNull(r.idx)
+	return *(*int64)(unsafe.Pointer(&col.data[r.idx*8]))
 }
 
-// GetFloat32 returns the float64 value and isNull with the colIdx.
-func (r Row) GetFloat32(colIdx int) (float32, bool) {
+// GetUint64 returns the uint64 value with the colIdx.
+func (r Row) GetUint64(colIdx int) uint64 {
 	col := r.c.columns[colIdx]
-	return *(*float32)(unsafe.Pointer(&col.data[r.idx*8])), col.isNull(r.idx)
+	return *(*uint64)(unsafe.Pointer(&col.data[r.idx*8]))
 }
 
-// GetFloat64 returns the float64 value and isNull with the colIdx.
-func (r Row) GetFloat64(colIdx int) (float64, bool) {
+// GetFloat32 returns the float64 value with the colIdx.
+func (r Row) GetFloat32(colIdx int) float32 {
 	col := r.c.columns[colIdx]
-	return *(*float64)(unsafe.Pointer(&col.data[r.idx*8])), col.isNull(r.idx)
+	return *(*float32)(unsafe.Pointer(&col.data[r.idx*4]))
 }
 
-// GetString returns the string value and isNull with the colIdx.
-func (r Row) GetString(colIdx int) (string, bool) {
+// GetFloat64 returns the float64 value with the colIdx.
+func (r Row) GetFloat64(colIdx int) float64 {
 	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return hack.String(col.data[start:end]), col.isNull(r.idx)
+	return *(*float64)(unsafe.Pointer(&col.data[r.idx*8]))
 }
 
-// GetBytes returns the bytes value and isNull with the colIdx.
-func (r Row) GetBytes(colIdx int) ([]byte, bool) {
+// GetString returns the string value with the colIdx.
+func (r Row) GetString(colIdx int) string {
 	col := r.c.columns[colIdx]
 	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return col.data[start:end], col.isNull(r.idx)
+	return hack.String(col.data[start:end])
 }
 
-// GetTime returns the Time value and is isNull with the colIdx.
-func (r Row) GetTime(colIdx int) (types.Time, bool) {
+// GetBytes returns the bytes value with the colIdx.
+func (r Row) GetBytes(colIdx int) []byte {
 	col := r.c.columns[colIdx]
-	t, ok := col.ifaces[r.idx].(types.Time)
-	return t, !ok
+	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
+	return col.data[start:end]
 }
 
-// GetDuration returns the Duration value and isNull with the colIdx.
-func (r Row) GetDuration(colIdx int) (types.Duration, bool) {
+// GetTime returns the Time value with the colIdx.
+func (r Row) GetTime(colIdx int) types.Time {
 	col := r.c.columns[colIdx]
-	return *(*types.Duration)(unsafe.Pointer(&col.data[r.idx*16])), col.isNull(r.idx)
+	t, _ := col.ifaces[r.idx].(types.Time)
+	return t
 }
 
-func (r Row) getNameValue(colIdx int) (string, uint64, bool) {
+// GetDuration returns the Duration value with the colIdx.
+func (r Row) GetDuration(colIdx int) types.Duration {
+	col := r.c.columns[colIdx]
+	return *(*types.Duration)(unsafe.Pointer(&col.data[r.idx*16]))
+}
+
+func (r Row) getNameValue(colIdx int) (string, uint64) {
 	col := r.c.columns[colIdx]
 	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
 	if start == end {
-		return "", 0, true
+		return "", 0
 	}
 	val := *(*uint64)(unsafe.Pointer(&col.data[start]))
 	name := hack.String(col.data[start+8 : end])
-	return name, val, false
+	return name, val
 }
 
-// GetEnum returns the Enum value and isNull with the colIdx.
-func (r Row) GetEnum(colIdx int) (types.Enum, bool) {
-	name, val, isNull := r.getNameValue(colIdx)
-	return types.Enum{Name: name, Value: val}, isNull
+// GetEnum returns the Enum value with the colIdx.
+func (r Row) GetEnum(colIdx int) types.Enum {
+	name, val := r.getNameValue(colIdx)
+	return types.Enum{Name: name, Value: val}
 }
 
-// GetSet returns the Set value and isNull with the colIdx.
-func (r Row) GetSet(colIdx int) (types.Set, bool) {
-	name, val, isNull := r.getNameValue(colIdx)
-	return types.Set{Name: name, Value: val}, isNull
+// GetSet returns the Set value with the colIdx.
+func (r Row) GetSet(colIdx int) types.Set {
+	name, val := r.getNameValue(colIdx)
+	return types.Set{Name: name, Value: val}
 }
 
-// GetMyDecimal returns the MyDecimal value and isNull with the colIdx.
-func (r Row) GetMyDecimal(colIdx int) (*types.MyDecimal, bool) {
+// GetMyDecimal returns the MyDecimal value with the colIdx.
+func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
 	col := r.c.columns[colIdx]
-	return (*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize])), col.isNull(r.idx)
+	return (*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize]))
 }
 
-// GetJSON returns the JSON value and isNull with the colIdx.
-func (r Row) GetJSON(colIdx int) (json.JSON, bool) {
+// GetJSON returns the JSON value with the colIdx.
+func (r Row) GetJSON(colIdx int) json.JSON {
 	col := r.c.columns[colIdx]
-	j, ok := col.ifaces[r.idx].(json.JSON)
-	return j, !ok
+	j, _ := col.ifaces[r.idx].(json.JSON)
+	return j
+}
+
+// GetDatum implements the types.Row interface.
+func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
+	var d types.Datum
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if !r.IsNull(colIdx) {
+			if mysql.HasUnsignedFlag(tp.Flag) {
+				d.SetUint64(r.GetUint64(colIdx))
+			} else {
+				d.SetInt64(r.GetInt64(colIdx))
+			}
+		}
+	case mysql.TypeFloat:
+		if !r.IsNull(colIdx) {
+			d.SetFloat32(r.GetFloat32(colIdx))
+		}
+	case mysql.TypeDouble:
+		if !r.IsNull(colIdx) {
+			d.SetFloat64(r.GetFloat64(colIdx))
+		}
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		if !r.IsNull(colIdx) {
+			d.SetBytes(r.GetBytes(colIdx))
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		if !r.IsNull(colIdx) {
+			d.SetMysqlTime(r.GetTime(colIdx))
+		}
+	case mysql.TypeDuration:
+		if !r.IsNull(colIdx) {
+			d.SetMysqlDuration(r.GetDuration(colIdx))
+		}
+	case mysql.TypeNewDecimal:
+		if !r.IsNull(colIdx) {
+			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
+		}
+	case mysql.TypeEnum:
+		if !r.IsNull(colIdx) {
+			d.SetMysqlEnum(r.GetEnum(colIdx))
+		}
+	case mysql.TypeSet:
+		if !r.IsNull(colIdx) {
+			d.SetMysqlSet(r.GetSet(colIdx))
+		}
+	case mysql.TypeBit:
+		if !r.IsNull(colIdx) {
+			d.SetMysqlBit(r.GetBytes(colIdx))
+		}
+	case mysql.TypeJSON:
+		if !r.IsNull(colIdx) {
+			d.SetMysqlJSON(r.GetJSON(colIdx))
+		}
+	}
+	return d
+}
+
+// IsNull implements the types.Row interface.
+func (r Row) IsNull(colIdx int) bool {
+	return r.c.columns[colIdx].isNull(r.idx)
 }

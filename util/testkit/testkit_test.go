@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,28 +11,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package testkit
 
-// ExplainExec represents an explain executor.
-type ExplainExec struct {
-	baseExecutor
+import (
+	"testing"
 
-	rows   []Row
-	cursor int
+	"github.com/pingcap/check"
+)
+
+var _ = check.Suite(&testKitSuite{})
+
+func TestT(t *testing.T) {
+	check.TestingT(t)
 }
 
-// Next implements Execution Next interface.
-func (e *ExplainExec) Next() (Row, error) {
-	if e.cursor >= len(e.rows) {
-		return nil, nil
+type testKitSuite struct {
+}
+
+func (s testKitSuite) TestSort(c *check.C) {
+	result := &Result{
+		rows:    [][]string{{"1", "1", "<nil>", "<nil>"}, {"2", "2", "2", "3"}},
+		c:       c,
+		comment: check.Commentf(""),
 	}
-	row := e.rows[e.cursor]
-	e.cursor++
-	return row, nil
-}
-
-// Close implements the Executor Close interface.
-func (e *ExplainExec) Close() error {
-	e.rows = nil
-	return nil
+	result.Sort().Check(Rows("1 1 <nil> <nil>", "2 2 2 3"))
 }

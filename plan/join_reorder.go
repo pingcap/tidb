@@ -57,7 +57,6 @@ type joinReOrderSolver struct {
 	visited    []bool
 	resultJoin LogicalPlan
 	groupRank  []*rankInfo
-	allocator  *idAllocator
 	ctx        context.Context
 }
 
@@ -189,7 +188,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.init(e.allocator, e.ctx)
+	}.init(e.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	setParentAndChildren(join, lChild, rChild)
 	return join

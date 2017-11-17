@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
+	goctx "golang.org/x/net/context"
 )
 
 type TidbTestSuite struct {
@@ -50,16 +51,11 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
-	cfg := &config.Config{
-		Port: 4001,
-		Status: config.Status{
-			ReportStatus: true,
-			StatusPort:   10090,
-		},
-		Performance: config.Performance{
-			TCPKeepAlive: true,
-		},
-	}
+	cfg := config.NewConfig()
+	cfg.Port = 4001
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10090
+	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -147,12 +143,9 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 }
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
-	cfg := &config.Config{
-		Socket: "/tmp/tidbtest.sock",
-		Status: config.Status{
-			StatusPort: 10091,
-		},
-	}
+	cfg := config.NewConfig()
+	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Status.StatusPort = 10091
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -282,13 +275,10 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.TLSConfig = "skip-verify"
 		config.Addr = "localhost:4002"
 	}
-	cfg := &config.Config{
-		Port: 4002,
-		Status: config.Status{
-			ReportStatus: true,
-			StatusPort:   10091,
-		},
-	}
+	cfg := config.NewConfig()
+	cfg.Port = 4002
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10091
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
@@ -303,16 +293,13 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.TLSConfig = "skip-verify"
 		config.Addr = "localhost:4003"
 	}
-	cfg = &config.Config{
-		Port: 4003,
-		Status: config.Status{
-			ReportStatus: true,
-			StatusPort:   10091,
-		},
-		Security: config.Security{
-			SSLCert: "/tmp/server-cert.pem",
-			SSLKey:  "/tmp/server-key.pem",
-		},
+	cfg = config.NewConfig()
+	cfg.Port = 4003
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10091
+	cfg.Security = config.Security{
+		SSLCert: "/tmp/server-cert.pem",
+		SSLKey:  "/tmp/server-key.pem",
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -336,17 +323,14 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.TLSConfig = "client-certificate"
 		config.Addr = "localhost:4004"
 	}
-	cfg = &config.Config{
-		Port: 4004,
-		Status: config.Status{
-			ReportStatus: true,
-			StatusPort:   10091,
-		},
-		Security: config.Security{
-			SSLCA:   "/tmp/ca-cert.pem",
-			SSLCert: "/tmp/server-cert.pem",
-			SSLKey:  "/tmp/server-key.pem",
-		},
+	cfg = config.NewConfig()
+	cfg.Port = 4004
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10091
+	cfg.Security = config.Security{
+		SSLCA:   "/tmp/ca-cert.pem",
+		SSLCert: "/tmp/server-cert.pem",
+		SSLKey:  "/tmp/server-key.pem",
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -379,7 +363,7 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	// issue #4540
 	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute("use test;")
+	_, err = ctx.Execute(goctx.Background(), "use test;")
 	c.Assert(err, IsNil)
 
 	testSQL := "CREATE TABLE `t1` (" +
@@ -409,14 +393,19 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 		"`x` varchar(250) DEFAULT ''," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = ctx.Execute(testSQL)
+	_, err = ctx.Execute(goctx.Background(), testSQL)
 	c.Assert(err, IsNil)
-	rs, err := ctx.Execute("show create table t1")
+	rs, err := ctx.Execute(goctx.Background(), "show create table t1")
 	row, err := rs[0].Next()
 	c.Assert(err, IsNil)
 	cols, err := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(row[1].GetString())*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(row.GetString(1))*tmysql.MaxBytesOfCharacter)
+}
+
+func (ts *TidbTestSuite) TestSumAvg(c *C) {
+	c.Parallel()
+	runTestSumAvg(c)
 }

@@ -48,6 +48,8 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -55,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
+	goctx "golang.org/x/net/context"
 )
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -365,7 +368,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		}
 	}
 	if cc.dbname != "" {
-		err = cc.useDB(cc.dbname)
+		err = cc.useDB(goctx.Background(), cc.dbname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -458,6 +461,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	case mysql.ComQuit:
 		label = "Quit"
 	case mysql.ComQuery:
+		if cc.ctx.Value(context.LastExecuteDDL) != nil {
+			// Don't take DDL execute time into account.
+			// It's already recorded by other metrics in ddl package.
+			return
+		}
 		label = "Query"
 	case mysql.ComPing:
 		label = "Ping"
@@ -492,12 +500,15 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(data []byte) error {
+	span := opentracing.StartSpan("server.dispatch")
+	goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
 		cc.server.releaseToken(token)
+		span.Finish()
 	}()
 
 	switch cmd {
@@ -516,11 +527,11 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		return cc.handleQuery(hack.String(data))
+		return cc.handleQuery(goCtx, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(hack.String(data)); err != nil {
+		if err := cc.useDB(goCtx, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
@@ -543,10 +554,10 @@ func (cc *clientConn) dispatch(data []byte) error {
 	}
 }
 
-func (cc *clientConn) useDB(db string) (err error) {
+func (cc *clientConn) useDB(goCtx goctx.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute("use `" + db + "`")
+	_, err = cc.ctx.Execute(goCtx, "use `"+db+"`")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -726,8 +737,8 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
-func (cc *clientConn) handleQuery(sql string) (err error) {
-	rs, err := cc.ctx.Execute(sql)
+func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
+	rs, err := cc.ctx.Execute(goCtx, sql)
 	if err != nil {
 		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
 		return errors.Trace(err)
@@ -808,9 +819,6 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	if err = cc.writeEOF(false); err != nil {
 		return errors.Trace(err)
 	}
-
-	numBytes4Null := ((len(columns) + 7 + 2) / 8)
-	rowBuffer := make([]byte, 1+numBytes4Null, 1+numBytes4Null+8*(len(columns)))
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -820,24 +828,14 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		}
 		data = data[0:4]
 		if binary {
-			rowBuffer = rowBuffer[0 : 1+numBytes4Null : cap(rowBuffer)]
-			rowBuffer, err = dumpRowValuesBinary(rowBuffer, columns, row)
+			data, err = dumpBinaryRow(data, columns, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			data = append(data, rowBuffer...)
 		} else {
-			for i, value := range row {
-				if value.IsNull() {
-					data = append(data, 0xfb)
-					continue
-				}
-				var valData []byte
-				valData, err = dumpTextValue(columns[i], value)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				data = dumpLengthEncodedString(data, valData)
+			data, err = dumpTextRow(data, columns, row)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 

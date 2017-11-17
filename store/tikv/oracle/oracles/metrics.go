@@ -11,12 +11,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package xserver
+package oracles
 
-// Config contains configuration options.
-type Config struct {
-	Addr       string `json:"addr" toml:"addr"`
-	Socket     string `json:"socket" toml:"socket"`
-	SkipAuth   bool   `json:"skip-auth" toml:"skip-auth"`
-	TokenLimit int    `json:"token-limit" toml:"token-limit"`
+import (
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+	tsFutureWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "pdclient",
+			Name:      "ts_future_wait_seconds",
+			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
+			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 18), // 5us ~ 128 ms
+		})
+)
+
+func init() {
+	prometheus.MustRegister(tsFutureWaitDuration)
 }

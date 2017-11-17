@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -194,48 +195,60 @@ func (col *Column) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (col *Column) Eval(row types.Row) (types.Datum, error) {
-	return row.(types.DatumRow)[col.Index], nil
+	return row.GetDatum(col.Index, col.RetType), nil
 }
 
 // EvalInt returns int representation of Column.
 func (col *Column) EvalInt(row types.Row, sc *variable.StatementContext) (int64, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
-		return 0, true, nil
-	}
 	if col.GetType().Hybrid() {
+		val := row.GetDatum(col.Index, col.RetType)
+		if val.IsNull() {
+			return 0, true, nil
+		}
 		res, err := val.ToInt64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
-	return val.GetInt64(), false, nil
+	if row.IsNull(col.Index) {
+		return 0, true, nil
+	}
+	return row.GetInt64(col.Index), false, nil
 }
 
 // EvalReal returns real representation of Column.
 func (col *Column) EvalReal(row types.Row, sc *variable.StatementContext) (float64, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
+	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
 	if col.GetType().Hybrid() {
+		val := row.GetDatum(col.Index, col.RetType)
 		res, err := val.ToFloat64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
-	return val.GetFloat64(), false, nil
+	if col.GetType().Tp == mysql.TypeFloat {
+		return float64(row.GetFloat32(col.Index)), false, nil
+	}
+	return row.GetFloat64(col.Index), false, nil
 }
 
 // EvalString returns string representation of Column.
 func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (string, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
+	if col.GetType().Hybrid() {
+		val := row.GetDatum(col.Index, col.RetType)
+		if val.IsNull() {
+			return "", true, nil
+		}
+		res, err := val.ToString()
+		return res, err != nil, errors.Trace(err)
+	}
+	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
-	res, err := val.ToString()
-	return res, err != nil, errors.Trace(err)
+	return row.GetString(col.Index), false, nil
 }
 
 // EvalDecimal returns decimal representation of Column.
 func (col *Column) EvalDecimal(row types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
+	val := row.GetDatum(col.Index, col.RetType)
 	if val.IsNull() {
 		return nil, true, nil
 	}
@@ -253,20 +266,26 @@ func (col *Column) EvalDecimal(row types.Row, sc *variable.StatementContext) (*t
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
 func (col *Column) EvalTime(row types.Row, sc *variable.StatementContext) (types.Time, bool, error) {
-	t, isNull := row.GetTime(col.Index)
-	return t, isNull, nil
+	if row.IsNull(col.Index) {
+		return types.Time{}, true, nil
+	}
+	return row.GetTime(col.Index), false, nil
 }
 
 // EvalDuration returns Duration representation of Column.
 func (col *Column) EvalDuration(row types.Row, sc *variable.StatementContext) (types.Duration, bool, error) {
-	dur, isNull := row.GetDuration(col.Index)
-	return dur, isNull, nil
+	if row.IsNull(col.Index) {
+		return types.Duration{}, true, nil
+	}
+	return row.GetDuration(col.Index), false, nil
 }
 
 // EvalJSON returns JSON representation of Column.
 func (col *Column) EvalJSON(row types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
-	j, isNull := row.GetJSON(col.Index)
-	return j, isNull, nil
+	if row.IsNull(col.Index) {
+		return json.JSON{}, true, nil
+	}
+	return row.GetJSON(col.Index), false, nil
 }
 
 // Clone implements Expression interface.
@@ -347,7 +366,11 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 			return retCols, lengths
 		}
 		retCols = append(retCols, col)
-		lengths = append(lengths, c.Length)
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
+			lengths = append(lengths, types.UnspecifiedLength)
+		} else {
+			lengths = append(lengths, c.Length)
+		}
 	}
 	return retCols, lengths
 }

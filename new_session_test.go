@@ -290,7 +290,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.Execute("create table retrytxn (a int unique, b int)")
+	tk.MustExec("create table retrytxn (a int unique, b int)")
 	tk.MustExec("insert retrytxn values (1, 1)")
 	tk.MustExec("begin")
 	tk.MustExec("update retrytxn set b = b + 1 where a = 1")
@@ -671,9 +671,8 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(id TEXT)")
 	tk.MustExec(`INSERT INTO t VALUES ("id");`)
-	id, ps, fields, err := tk.Se.PrepareStmt("select id+? from t")
+	id, ps, _, err := tk.Se.PrepareStmt("select id+? from t")
 	c.Assert(err, IsNil)
-	c.Assert(fields, HasLen, 1)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)
@@ -815,7 +814,7 @@ func (s *testSessionSuite) TestResultField(c *C) {
 	tk.MustExec(`INSERT INTO t VALUES (2);`)
 	r, err := tk.Exec(`SELECT count(*) from t;`)
 	c.Assert(err, IsNil)
-	fields, err := r.Fields()
+	fields := r.Fields()
 	c.Assert(err, IsNil)
 	c.Assert(len(fields), Equals, 1)
 	field := fields[0].Column
@@ -830,10 +829,8 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetValue(), IsNil)
-	fs, err := rs.Fields()
-	c.Assert(err, IsNil)
-	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
+	c.Assert(row.IsNull(0), IsTrue)
+	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 
 func (s *testSessionSuite) TestFieldText(c *C) {
@@ -857,12 +854,9 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		{"select /*!32301 1 + 1, */ +1;", "1 + 1"},
 	}
 	for _, tt := range tests {
-		results, err := tk.Se.Execute(tt.sql)
+		result, err := tk.Exec(tt.sql)
 		c.Assert(err, IsNil)
-		result := results[0]
-		fields, err := result.Fields()
-		c.Assert(err, IsNil)
-		c.Assert(fields[0].ColumnAsName.O, Equals, tt.field)
+		c.Assert(result.Fields()[0].ColumnAsName.O, Equals, tt.field)
 	}
 }
 
@@ -1029,6 +1023,15 @@ func (s *testSessionSuite) TestMultiStmts(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestLastExecuteDDLFlag(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int)")
+	c.Assert(tk.Se.Value(context.LastExecuteDDL), NotNil)
+	tk.MustExec("insert into t1 values (1)")
+	c.Assert(tk.Se.Value(context.LastExecuteDDL), IsNil)
 }
 
 func (s *testSessionSuite) TestDecimal(c *C) {
@@ -1265,18 +1268,15 @@ func (s *testSessionSuite) TestCaseInsensitive(c *C) {
 	tk.MustExec("create table T (a text, B int)")
 	tk.MustExec("insert t (A, b) values ('aaa', 1)")
 	rs, _ := tk.Exec("select * from t")
-	fields, err := rs.Fields()
-	c.Assert(err, IsNil)
+	fields := rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "a")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "B")
 	rs, _ = tk.Exec("select A, b from t")
-	fields, err = rs.Fields()
-	c.Assert(err, IsNil)
+	fields = rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
 	rs, _ = tk.Exec("select a as A from t where A > 0")
-	fields, err = rs.Fields()
-	c.Assert(err, IsNil)
+	fields = rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
 	tk.MustExec("update T set b = B + 1")
 	tk.MustExec("update T set B = b + 1")

@@ -11,12 +11,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package xserver
+package ast
 
-// Config contains configuration options.
-type Config struct {
-	Addr       string `json:"addr" toml:"addr"`
-	Socket     string `json:"socket" toml:"socket"`
-	SkipAuth   bool   `json:"skip-auth" toml:"skip-auth"`
-	TokenLimit int    `json:"token-limit" toml:"token-limit"`
+import (
+	. "github.com/pingcap/check"
+)
+
+var _ = Suite(&testCacheableSuite{})
+
+type testCacheableSuite struct {
+}
+
+func (s *testCacheableSuite) TestCacheable(c *C) {
+	// test non-SelectStmt
+	var stmt Node = &DeleteStmt{}
+	c.Assert(IsReadOnly(stmt), IsFalse)
+
+	stmt = &InsertStmt{}
+	c.Assert(IsReadOnly(stmt), IsFalse)
+
+	stmt = &UpdateStmt{}
+	c.Assert(IsReadOnly(stmt), IsFalse)
+
+	stmt = &ExplainStmt{}
+	c.Assert(IsReadOnly(stmt), IsTrue)
+
+	stmt = &ExplainStmt{}
+	c.Assert(IsReadOnly(stmt), IsTrue)
 }
