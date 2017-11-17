@@ -119,11 +119,11 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	if handleChanged {
-		_, err = t.AddRecord(ctx, newData)
+		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		err = t.RemoveRecord(ctx, h, oldData)
+		_, err = t.AddRecord(ctx, newData)
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
@@ -157,9 +157,10 @@ type DeleteExec struct {
 	Tables       []*ast.TableName
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
+	// tblMap is the table map value is an array which contains table aliases.
 	// Table ID may not be unique for deleting multiple tables, for statements like
 	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
-	// by its alias instead of ID, so the table map value is an array which contains table aliases.
+	// by its alias instead of ID.
 	tblMap map[int64][]*ast.TableName
 
 	finished bool
