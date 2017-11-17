@@ -698,7 +698,7 @@ func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, er
 		log.Debugf("[gc worker] load kv, %s:nil", key)
 		return "", nil
 	}
-	value, _ := row.GetString(0)
+	value := row.GetString(0)
 	log.Debugf("[gc worker] load kv, %s:%s", key, value)
 	return value, nil
 }

@@ -609,6 +609,9 @@ type IndexLookUpExecutor struct {
 	tableWorker
 	finished chan struct{}
 
+	// batchSize is for slow startup. It will slowly increase to the max batch size value.
+	batchSize int
+
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 }
@@ -817,14 +820,16 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTask {
 	// Build tasks with increasing batch size.
 	var taskSizes []int
-	total := len(handles)
-	batchSize := e.ctx.GetSessionVars().IndexLookupSize
-	for total > 0 {
-		if batchSize > total {
-			batchSize = total
+	for remained := len(handles); remained > 0; e.batchSize *= 2 {
+		if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
+			e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
 		}
-		taskSizes = append(taskSizes, batchSize)
-		total -= batchSize
+		if e.batchSize > remained {
+			taskSizes = append(taskSizes, remained)
+			break
+		}
+		taskSizes = append(taskSizes, e.batchSize)
+		remained -= e.batchSize
 	}
 
 	var indexOrder map[int64]int

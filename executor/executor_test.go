@@ -126,10 +126,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
-	iVal, _ := row.GetInt64(0)
-	c.Assert(iVal, Equals, int64(1))
-	sVal, _ := row.GetString(1)
-	c.Assert(sVal, Equals, "error: Can't find this job")
+	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
@@ -140,14 +138,12 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	ddlInfo, err := admin.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
-	iVal, _ = row.GetInt64(0)
-	c.Assert(iVal, Equals, ddlInfo.SchemaVer)
+	c.Assert(row.GetInt64(0), Equals, ddlInfo.SchemaVer)
 	// TODO: Pass this test.
 	// rowOwnerInfos := strings.Split(row.Data[1].GetString(), ",")
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	sVal, _ = row.GetString(2)
-	c.Assert(sVal, Equals, "")
+	c.Assert(row.GetString(2), Equals, "")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
@@ -164,11 +160,9 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
-	sVal, _ = row.GetString(0)
-	c.Assert(len(sVal), Greater, 0)
+	c.Assert(len(row.GetString(0)), Greater, 0)
 	c.Assert(err, IsNil)
-	sVal, _ = row.GetString(1)
-	c.Assert(sVal, Equals, historyJobs[0].State.String())
+	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -714,8 +708,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	durVal, _ := row.GetDuration(0)
-	c.Assert(durVal.String(), Equals, "-46:09:02")
+	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -2154,8 +2147,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	bVal, _ := row.GetBytes(0)
-	c.Assert(types.BinaryLiteral(bVal), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")
