@@ -309,7 +309,7 @@ func (hg *Histogram) betweenRowCount(sc *variable.StatementContext, a, b types.D
 		return 0, errors.Trace(err)
 	}
 	if lessCountA >= lessCountB {
-		return hg.inBucketBetweenCount(), nil
+		return hg.totalRowCount() / float64(hg.NDV), nil
 	}
 	return lessCountB - lessCountA, nil
 }
@@ -319,15 +319,6 @@ func (hg *Histogram) totalRowCount() float64 {
 		return 0
 	}
 	return float64(hg.Buckets[len(hg.Buckets)-1].Count)
-}
-
-func (hg *Histogram) bucketRowCount() float64 {
-	return hg.totalRowCount() / float64(len(hg.Buckets))
-}
-
-func (hg *Histogram) inBucketBetweenCount() float64 {
-	// TODO: Make this estimation more accurate using uniform spread assumption.
-	return hg.bucketRowCount()/3 + 1
 }
 
 func (hg *Histogram) lowerBound(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
