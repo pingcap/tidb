@@ -926,7 +926,6 @@ func (s *session) Close() {
 	if err := s.RollbackTxn(ctx); err != nil {
 		log.Error("session Close error:", errors.ErrorStack(err))
 	}
-	return
 }
 
 // GetSessionVars implements the context.Context interface.
