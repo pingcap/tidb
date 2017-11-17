@@ -25,7 +25,7 @@ import (
 
 // VirtualDataSource is used to extract data from the struct in memory.
 type VirtualDataSource interface {
-	// GetRows, do the actual job
+	// GetRows do the actual job
 	GetRows(ctx context.Context) (fullRows [][]types.Datum, err error)
 	// Meta return the meta of table
 	Meta() *model.TableInfo

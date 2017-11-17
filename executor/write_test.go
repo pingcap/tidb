@@ -628,7 +628,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	r.Check(testkit.Rows("1 a a", "5 d b"))
 }
 
-// For issue #4514.
+// TestUpdateCastOnlyModifiedValues for issue #4514.
 func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1003,7 +1003,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-// reuse TestLoadDataEscape's test case :-)
+// TestLoadDataSpecifiedCoumns reuse TestLoadDataEscape's test case :-)
 func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -1205,7 +1205,7 @@ func assertEqualStrings(c *C, got []string, expect []string) {
 	}
 }
 
-// Test issue https://github.com/pingcap/tidb/issues/4067
+// TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
 func (s *testSuite) TestIssue4067(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
