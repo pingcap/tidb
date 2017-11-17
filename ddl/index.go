@@ -474,9 +474,9 @@ func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType
 }
 
 const (
-	minTaskHandledCnt    = 32 // minTaskHandledCnt is the least number of handles per batch.
+	minTaskHandledCnt    = 32 // minTaskHandledCnt is the minimum number of handles per batch.
 	defaultTaskHandleCnt = 128
-	maxTaskHandleCnt     = 1 << 20
+	maxTaskHandleCnt     = 1 << 20 // maxTaskHandleCnt is the maximum number of handles per batch.
 	defaultWorkers       = 16
 )
 
@@ -529,7 +529,7 @@ type handleInfo struct {
 	endHandle   int64
 }
 
-func chooseInt64(baseHandle, batch int64) int64 {
+func getEndHandle(baseHandle, batch int64) int64 {
 	if baseHandle >= math.MaxInt64-batch {
 		return math.MaxInt64
 	}
@@ -578,7 +578,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		currentBatchSize := int64(workers[0].batchSize)
 		for i := 0; i < workerCnt; i++ {
 			wg.Add(1)
-			endHandle := chooseInt64(baseHandle, currentBatchSize)
+			endHandle := getEndHandle(baseHandle, currentBatchSize)
 			workers[i].setTaskNewRange(baseHandle, endHandle)
 			// TODO: Consider one worker to one goroutine.
 			go workers[i].doBackfillIndexTask(t, colMap, &wg)
@@ -617,7 +617,7 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 	taskAddedCount, nextHandle := int64(0), workers[0].taskRange.startHandle
 	var err error
 	var isEnd bool
-	lessMinWorkers := 0
+	starvingWorkers := 0
 	largerDefaultWorkers := 0
 	for _, worker := range workers {
 		ret := worker.taskRet
@@ -627,7 +627,7 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 		}
 		taskAddedCount += int64(ret.count)
 		if ret.count < minTaskHandledCnt {
-			lessMinWorkers++
+			starvingWorkers++
 		} else if ret.count > defaultTaskHandleCnt {
 			largerDefaultWorkers++
 		}
@@ -637,11 +637,14 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 
 	// Adjust the worker's batch size.
 	halfWorkers := len(workers) / 2
-	if lessMinWorkers >= halfWorkers && workers[0].batchSize < maxTaskHandleCnt {
+	if starvingWorkers >= halfWorkers && workers[0].batchSize < maxTaskHandleCnt {
+		// If the index data is discrete, we need to increase the batch size to speed up.
 		for _, worker := range workers {
 			worker.batchSize *= 2
 		}
 	} else if largerDefaultWorkers >= halfWorkers && workers[0].batchSize > defaultTaskHandleCnt {
+		// If the batch size exceeds the limit after we increase it,
+		// we need to decrease the batch size to reduce write conflict.
 		for _, worker := range workers {
 			worker.batchSize /= 2
 		}
