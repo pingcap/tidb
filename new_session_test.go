@@ -829,7 +829,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetValue(), IsNil)
+	c.Assert(row.IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 

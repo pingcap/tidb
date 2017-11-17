@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	goctx "golang.org/x/net/context"
 )
@@ -238,14 +237,14 @@ func checkBootstrapped(s Session) (bool, error) {
 		log.Fatal(err)
 	}
 	// Check bootstrapped variable value in TiDB table.
-	d, err := getTiDBVar(s, bootstrappedVar)
+	sVal, _, err := getTiDBVar(s, bootstrappedVar)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return false, nil
 		}
 		return false, errors.Trace(err)
 	}
-	isBootstrapped := d.GetString() == bootstrappedVarTrue
+	isBootstrapped := sVal == bootstrappedVarTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
 		if err = s.CommitTxn(goctx.Background()); err != nil {
@@ -257,23 +256,26 @@ func checkBootstrapped(s Session) (bool, error) {
 
 // getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
-func getTiDBVar(s Session, name string) (types.Datum, error) {
+func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, name)
 	rs, err := s.Execute(goctx.Background(), sql)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return "", true, errors.Trace(err)
 	}
 	if len(rs) != 1 {
-		return types.Datum{}, errors.New("Wrong number of Recordset")
+		return "", true, errors.New("Wrong number of Recordset")
 	}
 	r := rs[0]
 	defer terror.Call(r.Close)
 	row, err := r.Next()
 	if err != nil || row == nil {
-		return types.Datum{}, errors.Trace(err)
+		return "", true, errors.Trace(err)
 	}
-	return row.Data[0], nil
+	if row.IsNull(0) {
+		return "", true, nil
+	}
+	return row.GetString(0), false, nil
 }
 
 // upgrade function  will do some upgrade works, when the system is boostrapped by low version TiDB server
@@ -468,9 +470,9 @@ func upgradeToVer12(s Session) {
 	defer terror.Call(r.Close)
 	row, err := r.Next()
 	for err == nil && row != nil {
-		user := row.Data[0].GetString()
-		host := row.Data[1].GetString()
-		pass := row.Data[2].GetString()
+		user := row.GetString(0)
+		host := row.GetString(1)
+		pass := row.GetString(2)
 		var newPass string
 		newPass, err = oldPasswordUpgrade(pass)
 		terror.MustNil(err)
@@ -560,14 +562,14 @@ func updateBootstrapVer(s Session) {
 
 // getBootstrapVersion gets bootstrap version from mysql.tidb table;
 func getBootstrapVersion(s Session) (int64, error) {
-	d, err := getTiDBVar(s, tidbServerVersionVar)
+	sVal, isNull, err := getTiDBVar(s, tidbServerVersionVar)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if d.IsNull() {
+	if isNull {
 		return 0, nil
 	}
-	return strconv.ParseInt(d.GetString(), 10, 64)
+	return strconv.ParseInt(sVal, 10, 64)
 }
 
 // doDDLWorks executes DDL statements in bootstrap stage.
