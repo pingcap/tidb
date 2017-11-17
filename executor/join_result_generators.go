@@ -169,7 +169,7 @@ func (outputer *leftOuterSemiJoinResultGenerator) emitMatchedInners(outer Row, i
 			return resultBuffer, false, errors.Trace(err)
 		}
 		if matched {
-			joinedRow = append(outer, types.NewDatum(true))
+			joinedRow = append(joinedRow[:len(outer)], types.NewDatum(true))
 			return append(resultBuffer, joinedRow), true, nil
 		}
 	}
@@ -208,7 +208,7 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitMatchedInners(outer Ro
 			return resultBuffer, false, errors.Trace(err)
 		}
 		if matched {
-			joinedRow = append(outer, types.NewDatum(false))
+			joinedRow = append(joinedRow[:len(outer)], types.NewDatum(false))
 			return append(resultBuffer, joinedRow), true, nil
 		}
 	}
