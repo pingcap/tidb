@@ -62,17 +62,17 @@ func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeT
 		if row == nil {
 			break
 		}
-		startKey, err := hex.DecodeString(row.Data[2].GetString())
+		startKey, err := hex.DecodeString(row.GetString(2))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		endKey, err := hex.DecodeString(row.Data[3].GetString())
+		endKey, err := hex.DecodeString(row.GetString(3))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ranges = append(ranges, DelRangeTask{
-			JobID:     row.Data[0].GetInt64(),
-			ElementID: row.Data[1].GetInt64(),
+			JobID:     row.GetInt64(0),
+			ElementID: row.GetInt64(1),
 			StartKey:  startKey,
 			EndKey:    endKey,
 		})

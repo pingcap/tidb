@@ -125,12 +125,12 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		if err != nil {
 			return errors.Trace(err)
 		}
-		var row *ast.Row
+		var row types.Row
 		row, err = rs[0].Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		count := row.Data[0].GetInt64()
+		count := row.GetInt64(0)
 		value := types.NewDatum(colInfo.OriginDefaultValue)
 		value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
