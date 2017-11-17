@@ -74,7 +74,7 @@ Define a local working directory:
 
 ```sh
 # If your GOPATH has multiple paths, pick
-# just one and use it instead of $GOPATH here
+# just one and use it instead of $GOPATH here.
 working_dir=$GOPATH/src/github.com/pingcap
 ```
 
@@ -100,7 +100,7 @@ cd $working_dir/tidb
 git remote add upstream https://github.com/pingcap/tidb.git
 # or: git remote add upstream git@github.com:pingcap/tidb.git
 
-# Never push to upstream master since you do not have write access
+# Never push to upstream master since you do not have write access.
 git remote set-url --push upstream no_push
 
 # Confirm that your remotes make sense:
@@ -164,7 +164,7 @@ make server
 bin/tidb-server
 ```
 
-Then you can connect to TiDB with mysql client in another session.
+Then you can connect to TiDB with mysql client.
 
 ```sh
 mysql -h127.0.0.1 -P4000 -uroot test
@@ -173,17 +173,17 @@ mysql -h127.0.0.1 -P4000 -uroot test
 #### Run Test
 
 ```sh
-# Run unit test to make sure all test passed
+# Run unit test to make sure all test passed.
 make dev
 
-# Check checklist before you move on
+# Check checklist before you move on.
 make checklist
 ```
 
 ### Step 5: Keep your branch in sync
 
 ```sh
-# While on your myfeature branch
+# While on your myfeature branch.
 git fetch upstream
 git rebase upstream/master
 ```
