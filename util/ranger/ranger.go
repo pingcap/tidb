@@ -189,7 +189,7 @@ func points2TableRanges(sc *variable.StatementContext, rangePoints []point) ([]t
 		}
 		endPoint := rangePoints[i+1]
 		if endPoint.value.IsNull() {
-			endPoint.value.SetInt64(math.MinInt64)
+			continue
 		} else if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value.SetInt64(math.MaxInt64)
 		}
