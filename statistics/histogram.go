@@ -138,9 +138,9 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 		NullCount:         nullCount,
 	}
 	for i := 0; i < bucketSize; i++ {
-		bucketID, _ := rows[i].GetInt64(0)
-		count, _ := rows[i].GetInt64(1)
-		repeats, _ := rows[i].GetInt64(2)
+		bucketID := rows[i].GetInt64(0)
+		count := rows[i].GetInt64(1)
+		repeats := rows[i].GetInt64(2)
 		var upperBound, lowerBound types.Datum
 		if isIndex == 1 {
 			lowerBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
@@ -183,8 +183,7 @@ func columnCountFromStorage(ctx context.Context, tableID, colID int64) (int64, e
 	if rows[0].IsNull(0) {
 		return 0, nil
 	}
-	dec, _ := rows[0].GetMyDecimal(0)
-	return dec.ToInt()
+	return rows[0].GetMyDecimal(0).ToInt()
 }
 
 func (hg *Histogram) toString(isIndex bool) string {

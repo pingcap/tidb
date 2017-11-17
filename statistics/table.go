@@ -78,15 +78,14 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSke
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	bVal, _ := rows[0].GetBytes(0)
-	return decodeCMSketch(bVal)
+	return decodeCMSketch(rows[0].GetBytes(0))
 }
 
 func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
-	histID, _ := row.GetInt64(2)
-	distinct, _ := row.GetInt64(3)
-	histVer, _ := row.GetUint64(4)
-	nullCount, _ := row.GetInt64(5)
+	histID := row.GetInt64(2)
+	distinct := row.GetInt64(3)
+	histVer := row.GetUint64(4)
+	nullCount := row.GetInt64(5)
 	idx := table.Indices[histID]
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
@@ -114,10 +113,10 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 }
 
 func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
-	histID, _ := row.GetInt64(2)
-	distinct, _ := row.GetInt64(3)
-	histVer, _ := row.GetUint64(4)
-	nullCount, _ := row.GetInt64(5)
+	histID := row.GetInt64(2)
+	distinct := row.GetInt64(3)
+	histVer := row.GetUint64(4)
+	nullCount := row.GetInt64(5)
 	col := table.Columns[histID]
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
@@ -183,8 +182,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 		return nil, nil
 	}
 	for _, row := range rows {
-		iVal, _ := row.GetInt64(1)
-		if iVal > 0 {
+		if row.GetInt64(1) > 0 {
 			if err := h.indexStatsFromStorage(row, table, tableInfo); err != nil {
 				return nil, errors.Trace(err)
 			}
