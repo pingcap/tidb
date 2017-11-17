@@ -277,6 +277,38 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	close(e.closeCh)
 }
 
+// filterOuters filters the outer rows stored in "outerBuffer" and move all the matched rows ahead of the unmatched rows.
+// The number of matched outer rows is returned as the first value.
+func (e *HashJoinExec) filterOuters(outerBuffer *execResult, outerFilterResult []bool) (int, error) {
+	if e.outerFilter == nil {
+		return len(outerBuffer.rows), nil
+	}
+
+	outerFilterResult = outerFilterResult[:0]
+	for _, outerRow := range outerBuffer.rows {
+		matched, err := expression.EvalBool(e.outerFilter, outerRow, e.ctx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		outerFilterResult = append(outerFilterResult, matched)
+	}
+
+	i, j := 0, len(outerBuffer.rows)-1
+	for i <= j {
+		for i <= j && outerFilterResult[i] == true {
+			i++
+		}
+		for i <= j && outerFilterResult[j] == false {
+			j--
+		}
+		if i <= j && outerFilterResult[i] == false && outerFilterResult[j] == true {
+			outerFilterResult[i], outerFilterResult[j] = outerFilterResult[j], outerFilterResult[i]
+			outerBuffer.rows[i], outerBuffer.rows[j] = outerBuffer.rows[j], outerBuffer.rows[i]
+		}
+	}
+	return i, nil
+}
+
 // runJoinWorker does join job in one goroutine.
 func (e *HashJoinExec) runJoinWorker(workerID int) {
 	bufferCapacity := 1024
@@ -299,54 +331,22 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 			break
 		}
 
-		numMatchedOuters, numOuters := 0, len(outerBuffer.rows)
-		if e.outerFilter != nil {
-			outerFilterResult = outerFilterResult[:0]
-			for _, outerRow := range outerBuffer.rows {
-				matched, err := expression.EvalBool(e.outerFilter, outerRow, e.ctx)
-				if err != nil {
-					resultBuffer.err = errors.Trace(err)
-					break
-				}
-				outerFilterResult = append(outerFilterResult, matched)
-			}
-
-			for i, j := 0, len(outerFilterResult)-1; i < j; {
-				for i < j && outerFilterResult[i] == true {
-					i++
-				}
-				for i < j && outerFilterResult[j] == false {
-					j--
-				}
-				if i < j && outerFilterResult[i] == false && outerFilterResult[j] == true {
-					outerFilterResult[i], outerFilterResult[j] = outerFilterResult[j], outerFilterResult[i]
-					outerBuffer.rows[i], outerBuffer.rows[j] = outerBuffer.rows[j], outerBuffer.rows[i]
-					i++
-					j--
-				}
-			}
-			for numMatchedOuters < numOuters && outerFilterResult[numMatchedOuters] == true {
-				numMatchedOuters++
-			}
-		} else {
-			numMatchedOuters = numOuters
+		numMatchedOuters, err := e.filterOuters(outerBuffer, outerFilterResult)
+		if err != nil {
+			outerBuffer.err = errors.Trace(err)
+			break
 		}
-
-		if len(outerBuffer.rows)-numMatchedOuters > 0 {
-			resultBuffer.rows = e.resultGenerator.emitUnMatchedOuters(outerBuffer.rows[numMatchedOuters:], resultBuffer.rows)
+		// process unmatched outer rows.
+		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuters(outerBuffer.rows[numMatchedOuters:], resultBuffer.rows)
+		// process matched outer rows.
+		for _, outerRow := range outerBuffer.rows[:numMatchedOuters] {
 			if len(resultBuffer.rows) >= bufferCapacity {
 				e.resultBufferCh <- resultBuffer
 				resultBuffer = &execResult{rows: make([]Row, 0, bufferCapacity)}
 			}
-		}
-		for _, outerRow := range outerBuffer.rows[:numMatchedOuters] {
 			ok = e.joinOuterRow(workerID, outerRow, resultBuffer)
 			if !ok {
 				break
-			}
-			if len(resultBuffer.rows) >= bufferCapacity {
-				e.resultBufferCh <- resultBuffer
-				resultBuffer = &execResult{rows: make([]Row, 0, bufferCapacity)}
 			}
 		}
 	}
@@ -381,9 +381,10 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 
 	innerRows := make([]Row, 0, len(values))
 	for _, value := range values {
-		innerRow, err := e.decodeRow(value)
-		if err != nil {
-			resultBuffer.err = errors.Trace(err)
+		innerRow, err1 := e.decodeRow(value)
+		if err1 != nil {
+			resultBuffer.rows = nil
+			resultBuffer.err = errors.Trace(err1)
 			return false
 		}
 		innerRows = append(innerRows, innerRow)
