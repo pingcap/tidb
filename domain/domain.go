@@ -454,6 +454,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease, sysCtxPool)
 	var err error
 	defer func() {
+		// Clean up domain when initializing syncer failed or reloading failed.
+		// If we don't clean it, there are some dirty data when retrying this function.
 		if err != nil {
 			d.Close()
 			log.Errorf("[ddl] new domain failed %v", errors.ErrorStack(errors.Trace(err)))
