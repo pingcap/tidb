@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -45,7 +46,6 @@ type HashJoinExec struct {
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
 
-	innerRowBuffer  []Row
 	prepared        bool
 	concurrency     int // concurrency is number of concurrent channels and join workers.
 	hashTable       *mvmap.MVMap
@@ -81,7 +81,6 @@ func (e *HashJoinExec) Close() error {
 		<-e.closeCh
 	}
 
-	e.innerRowBuffer = nil
 	e.resultBuffer = nil
 
 	return nil
@@ -94,7 +93,6 @@ func (e *HashJoinExec) Open() error {
 	}
 
 	e.prepared = false
-	e.innerRowBuffer = make([]Row, 0, 1024)
 
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
@@ -119,6 +117,31 @@ func makeJoinRow(a Row, b Row) Row {
 	ret = append(ret, a...)
 	ret = append(ret, b...)
 	return ret
+}
+
+func (e *HashJoinExec) encodeRow(b []byte, row Row) ([]byte, error) {
+	loc := e.ctx.GetSessionVars().GetTimeZone()
+	for _, datum := range row {
+		tmp, err := tablecodec.EncodeValue(datum, loc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		b = append(b, tmp...)
+	}
+	return b, nil
+}
+
+func (e *HashJoinExec) decodeRow(data []byte) (Row, error) {
+	values := make([]types.Datum, e.innerlExec.Schema().Len())
+	err := codec.SetRawValues(data, values)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = decodeRawValues(values, e.innerlExec.Schema(), e.ctx.GetSessionVars().GetTimeZone())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return values, nil
 }
 
 // getJoinKey gets the hash key when given a row and hash columns.
@@ -190,7 +213,6 @@ func (e *HashJoinExec) fetchOuterRows() {
 func (e *HashJoinExec) prepare() error {
 	e.hashTable = mvmap.NewMVMap()
 	var buffer []byte
-	sequentialDatums := make([]types.Datum, 0, e.innerlExec.Schema().Len()*1024)
 	for {
 		innerRow, err := e.innerlExec.Next()
 		if err != nil {
@@ -216,19 +238,18 @@ func (e *HashJoinExec) prepare() error {
 			continue
 		}
 
-		sequentialDatums = append(sequentialDatums, innerRow...)
-		e.innerRowBuffer = append(e.innerRowBuffer, sequentialDatums)
-		sequentialDatums = sequentialDatums[len(sequentialDatums):]
-
 		buffer = buffer[:0]
-		buffer = codec.EncodeInt(buffer, int64(len(e.innerRowBuffer)-1))
+		buffer, err = e.encodeRow(buffer, innerRow)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		e.hashTable.Put(joinKey, buffer)
 	}
 
 	e.prepared = true
 	e.resultBufferCh = make(chan *execResult, e.concurrency)
 
-	if e.hashTable.Len() != 0 || e.joinType != plan.InnerJoin {
+	if !(e.hashTable.Len() == 0 && e.joinType == plan.InnerJoin) {
 		e.outerBufferChs = make([]chan *execResult, e.concurrency)
 		for i := 0; i < e.concurrency; i++ {
 			e.outerBufferChs[i] = make(chan *execResult, e.concurrency)
@@ -360,12 +381,12 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 
 	innerRows := make([]Row, 0, len(values))
 	for _, value := range values {
-		_, innerID, err1 := codec.DecodeInt(value)
+		innerRow, err1 := e.decodeRow(value)
 		if err1 != nil {
 			resultBuffer.err = errors.Trace(err1)
 			return false
 		}
-		innerRows = append(innerRows, e.innerRowBuffer[innerID])
+		innerRows = append(innerRows, innerRow)
 	}
 
 	matched := false
