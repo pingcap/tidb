@@ -1195,7 +1195,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		varName, _ := row.GetString(0)
+		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
 		if _, ok := vars.Systems[varName]; !ok {
 			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, varVal)
