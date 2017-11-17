@@ -295,13 +295,13 @@ func (e *HashJoinExec) filterOuters(outerBuffer *execResult, outerFilterResult [
 
 	i, j := 0, len(outerBuffer.rows)-1
 	for i <= j {
-		for i <= j && outerFilterResult[i] == true {
+		for i <= j && outerFilterResult[i] {
 			i++
 		}
-		for i <= j && outerFilterResult[j] == false {
+		for i <= j && !outerFilterResult[j] {
 			j--
 		}
-		if i <= j && outerFilterResult[i] == false && outerFilterResult[j] == true {
+		if i <= j {
 			outerFilterResult[i], outerFilterResult[j] = outerFilterResult[j], outerFilterResult[i]
 			outerBuffer.rows[i], outerBuffer.rows[j] = outerBuffer.rows[j], outerBuffer.rows[i]
 		}
