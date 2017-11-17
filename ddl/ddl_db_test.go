@@ -439,6 +439,15 @@ func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
 }
 
+// Issue 5134
+func (s *testDBSuite) TestModifyColumnAfterAddIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "create table city (city VARCHAR(2) KEY);")
+	s.mustExec(c, "alter table city change column city city varchar(50);")
+	s.mustExec(c, `insert into city values ("abc"), ("abd");`)
+}
+
 func (s *testDBSuite) testAlterLock(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
