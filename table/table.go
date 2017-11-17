@@ -111,8 +111,8 @@ type Table interface {
 	// RecordKey returns the key in KV storage for the row.
 	RecordKey(h int64) kv.Key
 
-	// AddRecord inserts a row which should contain only public columns.
-	AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error)
+	// AddRecord inserts a row which should contain only public columns
+	AddRecord(ctx context.Context, r []types.Datum, recordDupChecked bool) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
 	UpdateRecord(ctx context.Context, h int64, currData, newData []types.Datum, touched []bool) error

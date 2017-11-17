@@ -2981,22 +2981,6 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("insert into tb(v) (select v from tb);")
 	r = tk.MustQuery(`SELECT * FROM tb;`)
 	r.Check(testkit.Rows("1 hello", "2 hello"))
-
-	// for issue #5132
-	tk.MustExec("CREATE TABLE `tt1` (" +
-		"`a` int(11) NOT NULL," +
-		"`b` varchar(32) DEFAULT NULL," +
-		"`c` varchar(32) DEFAULT NULL," +
-		"PRIMARY KEY (`a`)," +
-		"UNIQUE KEY `b_idx` (`b`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
-	tk.MustExec("insert into tt1 values(1, 'a', 'a');")
-	tk.MustExec("insert into tt1 values(2, 'd', 'b');")
-	r = tk.MustQuery("select * from tt1;")
-	r.Check(testkit.Rows("1 a a", "2 d b"))
-	tk.MustExec("update tt1 set a=5 where c='b';")
-	r = tk.MustQuery("select * from tt1;")
-	r.Check(testkit.Rows("1 a a", "5 d b"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
