@@ -321,10 +321,6 @@ func (hg *Histogram) totalRowCount() float64 {
 	return float64(hg.Buckets[len(hg.Buckets)-1].Count)
 }
 
-func (hg *Histogram) bucketRowCount() float64 {
-	return hg.totalRowCount() / float64(len(hg.Buckets))
-}
-
 func (hg *Histogram) lowerBound(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
 	index = sort.Search(len(hg.Buckets), func(i int) bool {
 		cmp, err1 := hg.Buckets[i].UpperBound.CompareDatum(sc, &target)
