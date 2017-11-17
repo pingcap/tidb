@@ -98,10 +98,10 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	tables := make([]*Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
-		version, _ := row.GetUint64(0)
-		tableID, _ := row.GetInt64(1)
-		modifyCount, _ := row.GetInt64(2)
-		count, _ := row.GetInt64(3)
+		version := row.GetUint64(0)
+		tableID := row.GetInt64(1)
+		modifyCount := row.GetInt64(2)
+		count := row.GetInt64(3)
 		h.LastVersion = version
 		table, ok := is.TableByID(tableID)
 		if !ok {
