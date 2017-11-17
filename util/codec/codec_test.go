@@ -905,8 +905,8 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{json.CreateJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
 	}
 
-	var datums []types.Datum
-	var tps []*types.FieldType
+	datums := make([]types.Datum, 0, len(table))
+	tps := make([]*types.FieldType, 0, len(table))
 	for _, t := range table {
 		tps = append(tps, t.tp)
 		datums = append(datums, types.NewDatum(t.value))

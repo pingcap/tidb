@@ -128,12 +128,15 @@ func (e *baseExecutor) Schema() *expression.Schema {
 }
 
 func (e *baseExecutor) supportChunk() bool {
+	if !e.supportChk {
+		return false
+	}
 	for _, child := range e.children {
 		if !child.supportChunk() {
 			return false
 		}
 	}
-	return e.supportChk
+	return true
 }
 
 func (e *baseExecutor) Read(chk *chunk.Chunk) error {

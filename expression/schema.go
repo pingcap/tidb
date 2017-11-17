@@ -209,8 +209,8 @@ func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
 	return cols
 }
 
-// ToFieldTypes creates a field type slice.
-func (s *Schema) ToFieldTypes() []*types.FieldType {
+// GetTypes creates a field type slice.
+func (s *Schema) GetTypes() []*types.FieldType {
 	fields := make([]*types.FieldType, len(s.Columns))
 	for i := range fields {
 		fields[i] = s.Columns[i].RetType

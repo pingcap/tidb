@@ -111,7 +111,7 @@ func (a *recordSet) Read(chk *chunk.Chunk) error {
 }
 
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return chunk.NewChunk(a.executor.Schema().ToFieldTypes())
+	return chunk.NewChunk(a.executor.Schema().GetTypes())
 }
 
 func (a *recordSet) SupportChunk() bool {

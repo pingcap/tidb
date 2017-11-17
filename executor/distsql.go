@@ -476,7 +476,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.ToFieldTypes(), e.ctx.GetSessionVars().TimeZone)
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -584,7 +584,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.ToFieldTypes(), e.ctx.GetSessionVars().TimeZone)
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return errors.Trace(err)
 	}
