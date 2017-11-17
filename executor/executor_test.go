@@ -708,8 +708,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	durVal, _ := row.GetDuration(0)
-	c.Assert(durVal.String(), Equals, "-46:09:02")
+	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -2148,8 +2147,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	bVal, _ := row.GetBytes(0)
-	c.Assert(types.BinaryLiteral(bVal), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")

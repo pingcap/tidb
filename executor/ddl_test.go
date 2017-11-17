@@ -144,8 +144,7 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 1)
-	t, _ := row.GetTime(0)
-	c.Assert(now, GreaterEqual, t.String())
+	c.Assert(now, GreaterEqual, row.GetTime(0).String())
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 }

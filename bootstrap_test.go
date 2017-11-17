@@ -162,8 +162,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Len(), Equals, 1)
-	bVal, _ := row.GetBytes(0)
-	c.Assert(bVal, BytesEquals, []byte("True"))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte("True"))
 
 	err = store.Close()
 	c.Assert(err, IsNil)
@@ -183,8 +182,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Len(), Equals, 1)
-	bVal, _ := row.GetBytes(0)
-	c.Assert(bVal, BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
 
 	se1 := newSession(c, store, s.dbName)
 	ver, err := getBootstrapVersion(se1)
@@ -225,8 +223,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Len(), Equals, 1)
-	bVal, _ = row.GetBytes(0)
-	c.Assert(bVal, BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
 
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
