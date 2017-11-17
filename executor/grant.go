@@ -507,11 +507,11 @@ func getTablePriv(ctx context.Context, name string, host string, db string, tbl 
 	var tPriv, cPriv string
 	row := rows[0]
 	if fields[0].Column.Tp == mysql.TypeSet {
-		tablePriv, _ := row.GetSet(0)
+		tablePriv := row.GetSet(0)
 		tPriv = tablePriv.Name
 	}
 	if fields[1].Column.Tp == mysql.TypeSet {
-		columnPriv, _ := row.GetSet(1)
+		columnPriv := row.GetSet(1)
 		cPriv = columnPriv.Name
 	}
 	return tPriv, cPriv, nil
@@ -530,7 +530,7 @@ func getColumnPriv(ctx context.Context, name string, host string, db string, tbl
 	}
 	cPriv := ""
 	if fields[0].Column.Tp == mysql.TypeSet {
-		setVal, _ := rows[0].GetSet(0)
+		setVal := rows[0].GetSet(0)
 		cPriv = setVal.Name
 	}
 	return cPriv, nil
