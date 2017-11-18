@@ -523,7 +523,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
 			Value:   rows[0][0],
-			RetType: types.NewFieldType(mysql.TypeTiny)})
+			RetType: types.ConstMySQLTiny})
 	}
 	return v, true
 }
@@ -575,7 +575,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		if listLen == 0 {
 			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
 				Value:   types.NewDatum(v.Not),
-				RetType: types.NewFieldType(mysql.TypeTiny),
+				RetType: types.ConstMySQLTiny,
 			}
 		} else {
 			er.inToExpression(listLen, v.Not, &v.Type)

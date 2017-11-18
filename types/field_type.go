@@ -29,6 +29,16 @@ const (
 	UnspecifiedLength int = -1
 )
 
+var (
+	ConstMySQLTiny     = NewFieldType(mysql.TypeTiny)
+	ConstMySQLLONGLONG = NewFieldType(mysql.TypeLonglong)
+	ConstMySQLLONG     = NewFieldType(mysql.TypeLong)
+	ConstMySQLString   = NewFieldType(mysql.TypeString)
+	ConstMySQLNull     = NewFieldType(mysql.TypeNull)
+	ConstMySQLDouble   = NewFieldType(mysql.TypeDouble)
+	ConstMySQLDecimal  = NewFieldType(mysql.TypeDecimal)
+)
+
 // FieldType records field type information.
 type FieldType struct {
 	Tp      byte
