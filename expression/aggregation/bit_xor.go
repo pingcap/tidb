@@ -79,7 +79,7 @@ func (bf *bitXorFunction) Update(ctx *AggEvaluateContext, sc *variable.Statement
 		if ctx.Value.IsNull() {
 			ctx.Value.SetInt64(0)
 		}
-		v, _ := row.GetInt64(0)
+		v := row.GetInt64(0)
 		ctx.Value.SetInt64(ctx.Value.GetInt64() ^ v)
 	}
 	return nil
