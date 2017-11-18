@@ -79,6 +79,7 @@ const (
 	ExprType_Max         ExprType = 3005
 	ExprType_First       ExprType = 3006
 	ExprType_GroupConcat ExprType = 3007
+	ExprType_AggBitOr    ExprType = 3009
 	// Math functions.
 	ExprType_Abs   ExprType = 3101
 	ExprType_Pow   ExprType = 3102
