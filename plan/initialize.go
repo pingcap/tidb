@@ -116,6 +116,12 @@ func (p Selection) init(ctx context.Context) *Selection {
 	return &p
 }
 
+func (p LogicalUnionScan) init(ctx context.Context) *LogicalUnionScan {
+	p.basePlan = newBasePlan(TypeUnionScan, ctx, &p)
+	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
 func (p Projection) init(ctx context.Context) *Projection {
 	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
