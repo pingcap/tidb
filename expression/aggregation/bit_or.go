@@ -53,6 +53,7 @@ func (bf *bitOrFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	ft.Flen = 21
 	types.SetBinChsClnFlag(ft)
+	ft.Flag |= mysql.UnsignedFlag
 	return ft
 }
 
@@ -70,24 +71,24 @@ func (bf *bitOrFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementC
 			return errors.Trace(err)
 		}
 		if ctx.Value.IsNull() {
-			ctx.Value.SetInt64(0)
+			ctx.Value.SetUint64(0)
 		}
 		if !value.IsNull() {
-			ctx.Value.SetInt64(ctx.Value.GetInt64() | value.GetInt64())
+			ctx.Value.SetUint64(ctx.Value.GetUint64() | value.GetUint64())
 		}
 	} else {
 		if ctx.Value.IsNull() {
-			ctx.Value.SetInt64(0)
+			ctx.Value.SetUint64(0)
 		}
-		v := row.GetInt64(0)
-		ctx.Value.SetInt64(ctx.Value.GetInt64() | v)
+		v := row.GetUint64(0)
+		ctx.Value.SetUint64(ctx.Value.GetUint64() | v)
 	}
 	return nil
 }
 
 // GetResult implements Aggregation interface.
 func (bf *bitOrFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	d.SetInt64(ctx.Value.GetInt64())
+	d.SetUint64(ctx.Value.GetUint64())
 	return d
 }
 
