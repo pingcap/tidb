@@ -30,13 +30,20 @@ const (
 )
 
 var (
-	ConstMySQLTiny     = NewFieldType(mysql.TypeTiny)
+	// ConstMySQLTiny MySQL Tiny
+	ConstMySQLTiny = NewFieldType(mysql.TypeTiny)
+	// ConstMySQLLONGLONG MySQL LongLong
 	ConstMySQLLONGLONG = NewFieldType(mysql.TypeLonglong)
-	ConstMySQLLONG     = NewFieldType(mysql.TypeLong)
-	ConstMySQLString   = NewFieldType(mysql.TypeString)
-	ConstMySQLNull     = NewFieldType(mysql.TypeNull)
-	ConstMySQLDouble   = NewFieldType(mysql.TypeDouble)
-	ConstMySQLDecimal  = NewFieldType(mysql.TypeDecimal)
+	// ConstMySQLLONG MySQL Long
+	ConstMySQLLONG = NewFieldType(mysql.TypeLong)
+	// ConstMySQLString MySQL String
+	ConstMySQLString = NewFieldType(mysql.TypeString)
+	// ConstMySQLNull MySQL Null
+	ConstMySQLNull = NewFieldType(mysql.TypeNull)
+	// ConstMySQLDouble MySQL Double
+	ConstMySQLDouble = NewFieldType(mysql.TypeDouble)
+	// ConstMySQLDecimal MySQL Decimal
+	ConstMySQLDecimal = NewFieldType(mysql.TypeDecimal)
 )
 
 // FieldType records field type information.
