@@ -40,6 +40,8 @@ var (
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
 // `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
+// ignoreErr indicate that update statement has the `IGNORE` modifier, in this situation, update statement will not update
+// the keys which cause duplicate conflicts and ignore the error.
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table, onDup, ignoreErr bool) (bool, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
