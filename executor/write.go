@@ -123,19 +123,19 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	if handleChanged {
-		skipDupCheck := false
+		skipHandleCheck := false
 		if ignoreErr {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
 			if err = checkHandleExists(ctx, t, newHandle); err != nil {
 				return false, errors.Trace(err)
 			}
-			skipDupCheck = true
+			skipHandleCheck = true
 		}
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		_, err = t.AddRecord(ctx, newData, skipDupCheck)
+		_, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)

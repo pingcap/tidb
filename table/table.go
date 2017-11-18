@@ -112,8 +112,8 @@ type Table interface {
 	RecordKey(h int64) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	// skipDupCheck indicate that recordID in r has been checked as not duplicate already.
-	AddRecord(ctx context.Context, r []types.Datum, skipDupCheck bool) (recordID int64, err error)
+	// skipHandleCheck indicate that recordID in r has been checked as not duplicate already.
+	AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
 	UpdateRecord(ctx context.Context, h int64, currData, newData []types.Datum, touched []bool) error
