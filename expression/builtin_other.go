@@ -460,8 +460,10 @@ func (b *builtinValuesIntSig) evalInt(_ types.Row) (int64, bool, error) {
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
-		val, isNull := row.GetInt64(b.offset)
-		return val, isNull, nil
+		if row.IsNull(b.offset) {
+			return 0, true, nil
+		}
+		return row.GetInt64(b.offset), false, nil
 	}
 	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
@@ -481,8 +483,10 @@ func (b *builtinValuesRealSig) evalReal(_ types.Row) (float64, bool, error) {
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
-		val, isNull := row.GetFloat64(b.offset)
-		return val, isNull, nil
+		if row.IsNull(b.offset) {
+			return 0, true, nil
+		}
+		return row.GetFloat64(b.offset), false, nil
 	}
 	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
@@ -502,8 +506,10 @@ func (b *builtinValuesDecimalSig) evalDecimal(_ types.Row) (*types.MyDecimal, bo
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
-		val, isNull := row.GetMyDecimal(b.offset)
-		return val, isNull, nil
+		if row.IsNull(b.offset) {
+			return nil, true, nil
+		}
+		return row.GetMyDecimal(b.offset), false, nil
 	}
 	return nil, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
@@ -523,8 +529,10 @@ func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
-		val, isNull := row.GetString(b.offset)
-		return val, isNull, nil
+		if row.IsNull(b.offset) {
+			return "", true, nil
+		}
+		return row.GetString(b.offset), false, nil
 	}
 	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
@@ -544,8 +552,10 @@ func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
-		val, isNull := row.GetTime(b.offset)
-		return val, isNull, nil
+		if row.IsNull(b.offset) {
+			return types.Time{}, true, nil
+		}
+		return row.GetTime(b.offset), false, nil
 	}
 	return types.Time{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
@@ -565,8 +575,10 @@ func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bo
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
-		val, isNull := row.GetDuration(b.offset)
-		return val, isNull, nil
+		if row.IsNull(b.offset) {
+			return types.Duration{}, true, nil
+		}
+		return row.GetDuration(b.offset), false, nil
 	}
 	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
@@ -586,8 +598,10 @@ func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.JSON, bool, error) {
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
-		val, isNull := row.GetJSON(b.offset)
-		return val, isNull, nil
+		if row.IsNull(b.offset) {
+			return json.JSON{}, true, nil
+		}
+		return row.GetJSON(b.offset), false, nil
 	}
 	return json.JSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }

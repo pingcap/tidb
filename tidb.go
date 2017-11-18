@@ -179,11 +179,11 @@ func GetHistory(ctx context.Context) *StmtHistory {
 }
 
 // GetRows gets all the rows from a RecordSet.
-func GetRows(rs ast.RecordSet) ([][]types.Datum, error) {
+func GetRows(rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
-	var rows [][]types.Datum
+	var rows []types.Row
 	defer terror.Call(rs.Close)
 	// Negative limit means no limit.
 	for {
@@ -194,7 +194,7 @@ func GetRows(rs ast.RecordSet) ([][]types.Datum, error) {
 		if row == nil {
 			break
 		}
-		rows = append(rows, row.Data)
+		rows = append(rows, row)
 	}
 	return rows, nil
 }

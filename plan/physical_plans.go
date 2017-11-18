@@ -181,9 +181,6 @@ type physicalTableSource struct {
 
 	// NeedColHandle is used in execution phase.
 	NeedColHandle bool
-
-	// TODO: This should be removed after old planner was removed.
-	unionScanSchema *expression.Schema
 }
 
 func needCount(af aggregation.Aggregation) bool {

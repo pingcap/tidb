@@ -16,6 +16,8 @@ package statistics_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -32,18 +34,29 @@ type recordSet struct {
 	data   []types.Datum
 	count  int
 	cursor int
+	fields []*ast.ResultField
 }
 
 func (r *recordSet) Fields() []*ast.ResultField {
-	return nil
+	return r.fields
 }
 
-func (r *recordSet) Next() (*ast.Row, error) {
+func (r *recordSet) setFields(tps ...uint8) {
+	r.fields = make([]*ast.ResultField, len(tps))
+	for i := 0; i < len(tps); i++ {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *types.NewFieldType(tps[i])
+		r.fields[i] = rf
+	}
+}
+
+func (r *recordSet) Next() (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
 	r.cursor++
-	return &ast.Row{Data: []types.Datum{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}}, nil
+	return types.DatumRow{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}, nil
 }
 
 func (r *recordSet) Close() error {
@@ -58,6 +71,7 @@ func (s *testSampleSuite) SetUpSuite(c *C) {
 		count:  s.count,
 		cursor: 0,
 	}
+	rs.setFields(mysql.TypeLonglong, mysql.TypeLonglong)
 	start := 1000 // 1000 values is null
 	for i := start; i < rs.count; i++ {
 		rs.data[i].SetInt64(int64(i))
