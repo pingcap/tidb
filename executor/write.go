@@ -164,8 +164,6 @@ func checkHandleExists(ctx context.Context, t table.Table, recordID int64) error
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
-	txn.SetOption(kv.PresumeKeyNotExistsError, e)
-	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err := txn.Get(recordKey)
 	if err == nil {
 		return errors.Trace(e)
