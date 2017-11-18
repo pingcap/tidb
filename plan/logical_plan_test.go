@@ -1544,8 +1544,8 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
+		p := builder.build(stmt).(LogicalPlan)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)

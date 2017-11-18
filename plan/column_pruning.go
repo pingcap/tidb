@@ -157,15 +157,20 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
+func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
+	for _, col := range p.schema.TblID2Handle {
+		parentUsedCols = append(parentUsedCols, col[0])
+	}
+	p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
+	p.SetSchema(p.children[0].Schema())
+}
+
+// PruneColumns implements LogicalPlan interface.
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
-	p.pruneUnionScanSchema(used)
 	handleIdx := -1 // -1 for not found.
 	for _, col := range p.schema.TblID2Handle {
 		handleIdx = col[0].Index
-	}
-	if p.unionScanSchema != nil {
-		used[handleIdx] = true
 	}
 	firstCol, firstColInfo := p.schema.Columns[0], p.Columns[0]
 	for i := len(used) - 1; i >= 0; i-- {
@@ -183,17 +188,6 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	if p.schema.Len() == 0 {
 		p.schema.Append(firstCol)
 		p.Columns = append(p.Columns, firstColInfo)
-	}
-}
-
-func (p *DataSource) pruneUnionScanSchema(usedMask []bool) {
-	if p.unionScanSchema == nil {
-		return
-	}
-	for i := p.unionScanSchema.Len() - 1; i >= 0; i-- {
-		if !usedMask[i] {
-			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns[:i], p.unionScanSchema.Columns[i+1:]...)
-		}
 	}
 }
 
