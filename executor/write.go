@@ -125,8 +125,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	if handleChanged {
 		recordDupChecked := false
 		if ignoreErr {
-			// check if new handle is exists, if yes, UPDATE IGNORE will
-			// avoid removing record, and do nothing.
+			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
 			if err = checkHandleExists(ctx, t, newHandle); err != nil {
 				return false, errors.Trace(err)
 			}
