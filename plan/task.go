@@ -117,7 +117,7 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	t := finishCopTask(tasks[0].copy(), p.basePlan.ctx, p.basePlan.allocator)
+	t := finishCopTask(tasks[0].copy(), p.basePlan.ctx)
 	return attachPlan2Task(p.basePlan.self.(PhysicalPlan).Copy(), t)
 }
 
@@ -125,8 +125,8 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() || tasks[1].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
+	lTask := finishCopTask(tasks[0].copy(), p.ctx)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	np := p.Copy().(*PhysicalApply)
 	np.SetChildren(lTask.plan(), rTask.plan())
 	np.PhysicalJoin.SetChildren(lTask.plan(), rTask.plan())
@@ -140,7 +140,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	if tasks[p.outerIndex].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[p.outerIndex].copy(), p.ctx, p.allocator)
+	lTask := finishCopTask(tasks[p.outerIndex].copy(), p.ctx)
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), p.innerPlan)
 	return &rootTask{
@@ -181,8 +181,8 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() || tasks[1].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
+	lTask := finishCopTask(tasks[0].copy(), p.ctx)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTask{
@@ -199,8 +199,8 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() || tasks[1].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
+	lTask := finishCopTask(tasks[0].copy(), p.ctx)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTask{
@@ -220,8 +220,8 @@ func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() || tasks[1].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
+	lTask := finishCopTask(tasks[0].copy(), p.ctx)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	task := &rootTask{
@@ -232,7 +232,7 @@ func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
 }
 
 // finishCopTask means we close the coprocessor task and create a root task.
-func finishCopTask(task task, ctx context.Context, allocator *idAllocator) task {
+func finishCopTask(task task, ctx context.Context) task {
 	t, ok := task.(*copTask)
 	if !ok {
 		return task
@@ -247,15 +247,15 @@ func finishCopTask(task task, ctx context.Context, allocator *idAllocator) task 
 		cst: t.cst,
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
+		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(ctx)
 		p.profile = t.tablePlan.statsProfile()
 		newTask.p = p
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(allocator, ctx)
+		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
 		p.profile = t.indexPlan.statsProfile()
 		newTask.p = p
 	} else {
-		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(allocator, ctx)
+		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
 		p.profile = t.tablePlan.statsProfile()
 		newTask.p = p
 	}
@@ -301,7 +301,7 @@ func (p *Limit) attach2Task(tasks ...task) task {
 		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
 			// When limit be pushed down, it should remove its offset.
-			pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
+			pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.ctx)
 			pushedDownLimit.profile = p.profile
 			if cop.tablePlan != nil {
 				pushedDownLimit.SetSchema(cop.tablePlan.Schema())
@@ -310,7 +310,7 @@ func (p *Limit) attach2Task(tasks ...task) task {
 			}
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
-		t = finishCopTask(cop, p.ctx, p.allocator)
+		t = finishCopTask(cop, p.ctx)
 	}
 	if !p.partial {
 		t = attachPlan2Task(p.Copy(), t)
@@ -340,7 +340,7 @@ func (p *TopN) canPushDown() bool {
 }
 
 func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
-	var cols []*expression.Column
+	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
@@ -389,7 +389,7 @@ func (p *TopN) attach2Task(tasks ...task) task {
 		}
 		copTask.addCost(pushedDownTopN.getCost(t.count()))
 	}
-	t = finishCopTask(t, p.ctx, p.allocator)
+	t = finishCopTask(t, p.ctx)
 	if !p.partial {
 		t = attachPlan2Task(p.Copy(), t)
 		t.addCost(p.getCost(t.count()))
@@ -406,7 +406,7 @@ func (p *Projection) attach2Task(tasks ...task) task {
 	switch tp := t.(type) {
 	case *copTask:
 		// TODO: Support projection push down.
-		t = finishCopTask(t, p.ctx, p.allocator)
+		t = finishCopTask(t, p.ctx)
 		t = attachPlan2Task(np, t)
 		return t
 	case *rootTask:
@@ -423,7 +423,7 @@ func (p *Union) attach2Task(tasks ...task) task {
 		if task.invalid() {
 			return invalidTask
 		}
-		task = finishCopTask(task, p.ctx, p.allocator)
+		task = finishCopTask(task, p.ctx)
 		newTask.cst += task.cost()
 		newChildren = append(newChildren, task.plan())
 	}
@@ -435,7 +435,7 @@ func (sel *Selection) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	t := finishCopTask(tasks[0].copy(), sel.ctx, sel.allocator)
+	t := finishCopTask(tasks[0].copy(), sel.ctx)
 	t.addCost(t.count() * cpuFactor)
 	t = attachPlan2Task(sel.Copy(), t)
 	return t
@@ -492,7 +492,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 		HasGby:   p.HasGby, // TODO: remove this field
 		AggType:  FinalAgg,
 		AggFuncs: finalAggFuncs,
-	}.init(p.allocator, p.ctx)
+	}.init(p.ctx)
 	finalAgg.profile = p.profile
 	finalAgg.SetSchema(p.schema)
 	// add group by columns
@@ -527,7 +527,7 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 				cop.indexPlan = partialAgg
 			}
 		}
-		task = finishCopTask(cop, p.ctx, p.allocator)
+		task = finishCopTask(cop, p.ctx)
 		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
 	} else {

@@ -293,14 +293,7 @@ type tidbResultSet struct {
 }
 
 func (trs *tidbResultSet) Next() (types.Row, error) {
-	row, err := trs.recordSet.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if row != nil {
-		return types.DatumRow(row.Data), nil
-	}
-	return nil, nil
+	return trs.recordSet.Next()
 }
 
 func (trs *tidbResultSet) Close() error {
@@ -308,10 +301,7 @@ func (trs *tidbResultSet) Close() error {
 }
 
 func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
-	fields, err := trs.recordSet.Fields()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	fields := trs.recordSet.Fields()
 	var columns []*ColumnInfo
 	for _, v := range fields {
 		columns = append(columns, convertColumnInfo(v))

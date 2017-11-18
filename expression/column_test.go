@@ -140,7 +140,8 @@ func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	defer testleak.AfterTest(c)()
 
-	col0, col1 := &Column{ColName: model.NewCIStr("col0")}, &Column{ColName: model.NewCIStr("col1")}
+	col0 := &Column{ColName: model.NewCIStr("col0"), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{ColName: model.NewCIStr("col1"), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("col0")}, &model.IndexColumn{Name: model.NewCIStr("col1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 

@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -278,6 +277,14 @@ type TableDual struct {
 	RowCount int
 }
 
+// LogicalUnionScan is only used in non read-only txn.
+type LogicalUnionScan struct {
+	*basePlan
+	baseLogicalPlan
+
+	conditions []expression.Expression
+}
+
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
 	*basePlan
@@ -299,9 +306,6 @@ type DataSource struct {
 
 	// NeedColHandle is used in execution phase.
 	NeedColHandle bool
-
-	// This is schema the PhysicalUnionScan should be.
-	unionScanSchema *expression.Schema
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
@@ -319,14 +323,6 @@ func (p *DataSource) getPKIsHandleCol() *expression.Column {
 // TableInfo returns the *TableInfo of data source.
 func (p *DataSource) TableInfo() *model.TableInfo {
 	return p.tableInfo
-}
-
-// Schema implements the plan interface.
-func (p *DataSource) Schema() *expression.Schema {
-	if p.unionScanSchema != nil {
-		return p.unionScanSchema
-	}
-	return p.schema
 }
 
 // Union represents Union plan.
@@ -406,51 +402,4 @@ type Delete struct {
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
-}
-
-// setParentAndChildren sets parent and children relationship.
-func setParentAndChildren(parent Plan, children ...Plan) {
-	if children == nil || parent == nil {
-		return
-	}
-	for _, child := range children {
-		child.SetParents(parent)
-	}
-	parent.SetChildren(children...)
-}
-
-// InsertPlan means inserting plan between two plans.
-func InsertPlan(parent Plan, child Plan, insert Plan) error {
-	err := child.ReplaceParent(parent, insert)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = parent.ReplaceChild(child, insert)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insert.AddChild(child)
-	insert.AddParent(parent)
-	return nil
-}
-
-// RemovePlan means removing a plan.
-func RemovePlan(p Plan) error {
-	parents := p.Parents()
-	children := p.Children()
-	if len(parents) > 1 || len(children) != 1 {
-		return SystemInternalErrorType.Gen("can't remove this plan")
-	}
-	if len(parents) == 0 {
-		child := children[0]
-		child.SetParents()
-		return nil
-	}
-	parent, child := parents[0], children[0]
-	err := parent.ReplaceChild(p, child)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = child.ReplaceParent(p, parent)
-	return errors.Trace(err)
 }

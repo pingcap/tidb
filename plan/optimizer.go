@@ -51,18 +51,17 @@ var optRuleList = []logicalOptRule{
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(LogicalPlan, context.Context, *idAllocator) (LogicalPlan, error)
+	optimize(LogicalPlan, context.Context) (LogicalPlan, error)
 }
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
-	allocator := new(idAllocator)
+	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: allocator,
 	}
 	p := builder.build(node)
 	if builder.err != nil {
@@ -78,7 +77,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic, ctx, allocator)
+		return doOptimize(builder.optFlag, logic, ctx)
 	}
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
@@ -87,13 +86,13 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	return p, nil
 }
 
-// BuildLogicalPlan is exported and only used for test.
+// BuildLogicalPlan used to build logical plan from ast.Node.
 func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: new(idAllocator),
 	}
 	p := builder.build(node)
 	if builder.err != nil {
@@ -111,8 +110,8 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
-func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
-	logic, err := logicalOptimize(flag, logic, ctx, allocator)
+func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (PhysicalPlan, error) {
+	logic, err := logicalOptimize(flag, logic, ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -127,7 +126,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	return finalPlan, nil
 }
 
-func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
+func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (LogicalPlan, error) {
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -136,7 +135,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 		if flag&(1<<uint(i)) == 0 {
 			continue
 		}
-		logic, err = rule.optimize(logic, ctx, alloc)
+		logic, err = rule.optimize(logic, ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

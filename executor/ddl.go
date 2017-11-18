@@ -18,8 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -32,15 +30,11 @@ import (
 // DDLExec represents a DDL executor.
 // It grabs a DDL instance from Domain, calling the DDL methods to do the work.
 type DDLExec struct {
+	baseExecutor
+
 	Statement ast.StmtNode
-	ctx       context.Context
 	is        infoschema.InfoSchema
 	done      bool
-}
-
-// Schema implements the Executor Schema interface.
-func (e *DDLExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // Next implements Execution Next interface.

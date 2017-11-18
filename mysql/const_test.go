@@ -210,3 +210,13 @@ func (s *testMySQLConstSuite) TestPadCharToFullLengthMode(c *C) {
 	// r := tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
 	// r.Check(testkit.Rows("0"))
 }
+
+func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode=''")
+	r := tk.MustQuery("SELECT '\\\\'")
+	r.Check(testkit.Rows("\\"))
+	tk.MustExec("set sql_mode='NO_BACKSLASH_ESCAPES'")
+	r = tk.MustQuery("SELECT '\\\\'")
+	r.Check(testkit.Rows("\\\\"))
+}

@@ -14,77 +14,14 @@
 package executor_test
 
 import (
-	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
-
-func (s *testSuite) TestNestedLoopJoin(c *C) {
-	bigExec := &MockExec{Rows: []executor.Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	smallExec := &MockExec{Rows: []executor.Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
-	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
-	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
-	bigFilter := expression.NewFunctionInternal(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
-	smallFilter := bigFilter.Clone()
-	otherFilter := expression.NewFunctionInternal(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	join := &executor.NestedLoopJoinExec{
-		BigExec:     bigExec,
-		SmallExec:   smallExec,
-		Ctx:         mock.NewContext(),
-		BigFilter:   []expression.Expression{bigFilter},
-		SmallFilter: []expression.Expression{smallFilter},
-		OtherFilter: []expression.Expression{otherFilter},
-	}
-	row, err := join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, IsNil)
-}
 
 func (s *testSuite) TestJoinPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -240,6 +177,38 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1,2), (5,3), (6,4)")
 	tk.MustExec("insert into t1 values(1), (2), (3)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t1.a from t1, t where t.a = 5 and t.b = t1.a").Check(testkit.Rows("3"))
+
+	// test issue#4997
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`
+	CREATE TABLE t1 (
+  		pk int(11) NOT NULL AUTO_INCREMENT primary key,
+  		a int(11) DEFAULT NULL,
+  		b date DEFAULT NULL,
+  		c varchar(1) DEFAULT NULL,
+  		KEY a (a),
+  		KEY b (b),
+  		KEY c (c,a)
+	)`)
+	tk.MustExec(`
+	CREATE TABLE t2 (
+  		pk int(11) NOT NULL AUTO_INCREMENT primary key,
+  		a int(11) DEFAULT NULL,
+  		b date DEFAULT NULL,
+  		c varchar(1) DEFAULT NULL,
+  		KEY a (a),
+  		KEY b (b),
+  		KEY c (c,a)
+	)`)
+	tk.MustExec(`insert into t1 value(1,1,"2000-11-11", null);`)
+	result = tk.MustQuery(`
+	SELECT table2.b AS field2 FROM
+	(
+	  t1 AS table1  LEFT OUTER JOIN
+		(SELECT tmp_t2.* FROM ( t2 AS tmp_t1 RIGHT JOIN t1 AS tmp_t2 ON (tmp_t2.a = tmp_t1.a))) AS table2
+	  ON (table2.c = table1.c)
+	) `)
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
@@ -725,4 +694,18 @@ func (s *testSuite) TestHashJoinExecEncodeDecodeRow(c *C) {
 	tk.MustExec("insert into t2 values (1, 'xxx', '2003-06-09 10:51:26')")
 	result := tk.MustQuery("select ts from t1 inner join t2 where t2.name = 'xxx'")
 	result.Check(testkit.Rows("2003-06-09 10:51:26"))
+}
+
+func (s *testSuite) TestSubqueryInJoinOn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+
+	_, err := tk.Exec("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
+	c.Check(err, NotNil)
 }
