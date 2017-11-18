@@ -207,9 +207,8 @@ func (s *testMySQLConstSuite) TestPadCharToFullLengthMode(c *C) {
 	tk.MustExec("set sql_mode='PAD_CHAR_TO_FULL_LENGTH';")
 	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
 	r.Check(testkit.Rows("1 10"))
-	//TODO: FIXME
-	// r := tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
-	// r.Check(testkit.Rows("0"))
+	r = tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
+	r.Check(testkit.Rows("1"))
 
 	// test type `VARCHAR(n)`
 	tk.MustExec("drop table if exists t1")
