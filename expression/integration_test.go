@@ -2601,7 +2601,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	result.Check(testkit.Rows("1.1234560000"))
 }
 
-func (s *testIntegrationSuite) TestAggregationBuiltinBitXor(c *C) {
+func (s *testIntegrationSuite) TestAggregationBuiltinBitOr(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
