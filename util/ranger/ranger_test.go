@@ -209,7 +209,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a IS NULL",
 			accessConds: "[isnull(test.t.a)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-inf)]",
+			resultStr:   "[]",
 		},
 		{
 			exprStr:     "a IS NOT NULL",
@@ -227,7 +227,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a IS NOT TRUE",
 			accessConds: "[not(istrue(test.t.a))]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-inf) [0,0]]",
+			resultStr:   "[[0,0]]",
 		},
 		{
 			exprStr:     "a IS FALSE",
@@ -270,6 +270,30 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			accessConds: "[not(in(test.t.a, 1, 2, 3))]",
 			filterConds: "[]",
 			resultStr:   "[(-inf,0] [4,+inf)]",
+		},
+		{
+			exprStr:     "a > 9223372036854775807",
+			accessConds: "[gt(test.t.a, 9223372036854775807)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			exprStr:     "a >= 9223372036854775807",
+			accessConds: "[ge(test.t.a, 9223372036854775807)]",
+			filterConds: "[]",
+			resultStr:   "[[9223372036854775807,+inf)]",
+		},
+		{
+			exprStr:     "a < -9223372036854775807",
+			accessConds: "[lt(test.t.a, -9223372036854775807)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,-9223372036854775808]]",
+		},
+		{
+			exprStr:     "a < -9223372036854775808",
+			accessConds: "[lt(test.t.a, -9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[]",
 		},
 	}
 
