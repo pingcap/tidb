@@ -58,9 +58,6 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -82,9 +79,6 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -106,9 +100,6 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -156,9 +147,6 @@ type PhysicalMemTable struct {
 	Columns     []*model.ColumnInfo
 	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -178,9 +166,6 @@ type physicalTableSource struct {
 
 	// filterCondition is only used by new planner.
 	filterCondition []expression.Expression
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 func needCount(af aggregation.Aggregation) bool {
@@ -334,8 +319,7 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	NeedColHandle bool
-	Conditions    []expression.Expression
+	Conditions []expression.Expression
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -344,11 +328,6 @@ func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
-}
-
-// SourceSchema returns the original schema of DataSource
-func (p *PhysicalIndexScan) SourceSchema() *expression.Schema {
-	return p.dataSourceSchema
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
@@ -597,7 +576,7 @@ func rebuildSchema(p PhysicalPlan) bool {
 		buildSchema(p)
 	}
 	switch p.(type) {
-	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin:
+	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexLookUpReader:
 		needRebuild = true
 	case *Projection, *PhysicalAggregation:
 		needRebuild = false

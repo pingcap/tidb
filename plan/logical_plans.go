@@ -303,9 +303,6 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {

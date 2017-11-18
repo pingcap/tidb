@@ -181,7 +181,6 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	if handleIdx != -1 && !used[handleIdx] {
 		p.schema.TblID2Handle = nil
-		p.NeedColHandle = false
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.

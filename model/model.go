@@ -155,6 +155,16 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 	return nil
 }
 
+// GetHandleColInfo mocks a column info for extra handle column.
+func GetHandleColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraHandleID,
+		Name: NewCIStr("_rowid"),
+	}
+	colInfo.Flag = mysql.PriKeyFlag
+	return colInfo
+}
+
 // ColumnIsInIndex checks whether c is included in any indices of t.
 func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 	for _, index := range t.Indices {
