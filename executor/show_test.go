@@ -334,8 +334,8 @@ func (s *testSuite) TestShowFullProcessList(c *C) {
 	fullSQL := "show                                                                                        full processlist"
 	simpSQL := "show                                                                                        processlist"
 
-	tk.MustQuery(fullSQL).Check(testutil.RowsWithSep("|", "219|   Query|0|2|"+fullSQL))
-	tk.MustQuery(simpSQL).Check(testutil.RowsWithSep("|", "219|   Query|0|2|"+simpSQL[:100]))
+	tk.MustQuery(fullSQL).Check(testutil.RowsWithSep("|", "221|   Query|0|2|"+fullSQL))
+	tk.MustQuery(simpSQL).Check(testutil.RowsWithSep("|", "221|   Query|0|2|"+simpSQL[:100]))
 
 	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }
@@ -475,9 +475,9 @@ func (s *testSuite) TestShow2(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 18)
-	c.Assert(row.Data[0].GetString(), Equals, "t")
-	c.Assert(row.Data[17].GetString(), Equals, "注释")
+	c.Assert(row.Len(), Equals, 18)
+	c.Assert(row.GetString(0), Equals, "t")
+	c.Assert(row.GetString(17), Equals, "注释")
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -498,7 +497,7 @@ func columnPrivEntryExists(ctx context.Context, name string, host string, db str
 // Return Table_priv and Column_priv.
 func getTablePriv(ctx context.Context, name string, host string, db string, tbl string) (string, string, error) {
 	sql := fmt.Sprintf(`SELECT Table_priv, Column_priv FROM %s.%s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s";`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, tbl)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", "", errors.Trace(err)
 	}
@@ -507,12 +506,12 @@ func getTablePriv(ctx context.Context, name string, host string, db string, tbl 
 	}
 	var tPriv, cPriv string
 	row := rows[0]
-	if row.Data[0].Kind() == types.KindMysqlSet {
-		tablePriv := row.Data[0].GetMysqlSet()
+	if fields[0].Column.Tp == mysql.TypeSet {
+		tablePriv := row.GetSet(0)
 		tPriv = tablePriv.Name
 	}
-	if row.Data[1].Kind() == types.KindMysqlSet {
-		columnPriv := row.Data[1].GetMysqlSet()
+	if fields[1].Column.Tp == mysql.TypeSet {
+		columnPriv := row.GetSet(1)
 		cPriv = columnPriv.Name
 	}
 	return tPriv, cPriv, nil
@@ -522,7 +521,7 @@ func getTablePriv(ctx context.Context, name string, host string, db string, tbl 
 // Return Column_priv.
 func getColumnPriv(ctx context.Context, name string, host string, db string, tbl string, col string) (string, error) {
 	sql := fmt.Sprintf(`SELECT Column_priv FROM %s.%s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s" AND Column_name="%s";`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, db, tbl, col)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -530,8 +529,9 @@ func getColumnPriv(ctx context.Context, name string, host string, db string, tbl
 		return "", errors.Errorf("get column privilege fail for %s %s %s %s %s", name, host, db, tbl, col)
 	}
 	cPriv := ""
-	if rows[0].Data[0].Kind() == types.KindMysqlSet {
-		cPriv = rows[0].Data[0].GetMysqlSet().Name
+	if fields[0].Column.Tp == mysql.TypeSet {
+		setVal := rows[0].GetSet(0)
+		cPriv = setVal.Name
 	}
 	return cPriv, nil
 }

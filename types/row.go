@@ -20,41 +20,41 @@ type Row interface {
 	// Len returns the number of values in the row.
 	Len() int
 
-	// GetInt64 returns the int64 value and isNull with the colIdx.
-	GetInt64(colIdx int) (val int64, isNull bool)
+	// GetInt64 returns the int64 value with the colIdx.
+	GetInt64(colIdx int) int64
 
-	// GetUint64 returns the uint64 value and isNull with the colIdx.
-	GetUint64(colIdx int) (val uint64, isNull bool)
+	// GetUint64 returns the uint64 value with the colIdx.
+	GetUint64(colIdx int) uint64
 
-	// GetFloat32 returns the float32 value and isNull with the colIdx.
-	GetFloat32(colIdx int) (float32, bool)
+	// GetFloat32 returns the float32 value with the colIdx.
+	GetFloat32(colIdx int) float32
 
-	// GetFloat64 returns the float64 value and isNull with the colIdx.
-	GetFloat64(colIdx int) (float64, bool)
+	// GetFloat64 returns the float64 value with the colIdx.
+	GetFloat64(colIdx int) float64
 
-	// GetString returns the string value and isNull with the colIdx.
-	GetString(colIdx int) (string, bool)
+	// GetString returns the string value with the colIdx.
+	GetString(colIdx int) string
 
-	// GetBytes returns the bytes value and isNull with the colIdx.
-	GetBytes(colIdx int) ([]byte, bool)
+	// GetBytes returns the bytes value with the colIdx.
+	GetBytes(colIdx int) []byte
 
-	// GetTime returns the Time value and is isNull with the colIdx.
-	GetTime(colIdx int) (Time, bool)
+	// GetTime returns the Time value with the colIdx.
+	GetTime(colIdx int) Time
 
-	// GetDuration returns the Duration value and isNull with the colIdx.
-	GetDuration(colIdx int) (Duration, bool)
+	// GetDuration returns the Duration value with the colIdx.
+	GetDuration(colIdx int) Duration
 
-	// GetEnum returns the Enum value and isNull with the colIdx.
-	GetEnum(colIdx int) (Enum, bool)
+	// GetEnum returns the Enum value with the colIdx.
+	GetEnum(colIdx int) Enum
 
-	// GetSet returns the Set value and isNull with the colIdx.
-	GetSet(colIdx int) (Set, bool)
+	// GetSet returns the Set value with the colIdx.
+	GetSet(colIdx int) Set
 
-	// GetMyDecimal returns the MyDecimal value and isNull with the colIdx.
-	GetMyDecimal(colIdx int) (*MyDecimal, bool)
+	// GetMyDecimal returns the MyDecimal value with the colIdx.
+	GetMyDecimal(colIdx int) *MyDecimal
 
-	// GetJSON returns the JSON value and isNull with the colIdx.
-	GetJSON(colIdx int) (json.JSON, bool)
+	// GetJSON returns the JSON value with the colIdx.
+	GetJSON(colIdx int) json.JSON
 
 	// GetDatum returns a Datum with the colIdx and field type.
 	// This method is provided for convenience, direct type methods are preferred for better performance.
@@ -69,117 +69,78 @@ var _ Row = DatumRow{}
 // DatumRow is a slice of Datum, implements Row interface.
 type DatumRow []Datum
 
+// Copy deep copies a DatumRow.
+func (dr DatumRow) Copy() DatumRow {
+	c := make(DatumRow, len(dr))
+	for i, d := range dr {
+		c[i] = *d.Copy()
+	}
+	return c
+}
+
 // Len implements Row interface.
 func (dr DatumRow) Len() int {
 	return len(dr)
 }
 
 // GetInt64 implements Row interface.
-func (dr DatumRow) GetInt64(colIdx int) (int64, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return 0, true
-	}
-	return dr[colIdx].GetInt64(), false
+func (dr DatumRow) GetInt64(colIdx int) int64 {
+	return dr[colIdx].GetInt64()
 }
 
 // GetUint64 implements Row interface.
-func (dr DatumRow) GetUint64(colIdx int) (uint64, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return 0, true
-	}
-	return dr[colIdx].GetUint64(), false
+func (dr DatumRow) GetUint64(colIdx int) uint64 {
+	return dr[colIdx].GetUint64()
 }
 
 // GetFloat32 implements Row interface.
-func (dr DatumRow) GetFloat32(colIdx int) (float32, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return 0, true
-	}
-	return dr[colIdx].GetFloat32(), false
+func (dr DatumRow) GetFloat32(colIdx int) float32 {
+	return dr[colIdx].GetFloat32()
 }
 
 // GetFloat64 implements Row interface.
-func (dr DatumRow) GetFloat64(colIdx int) (float64, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return 0, true
-	}
-	return dr[colIdx].GetFloat64(), false
+func (dr DatumRow) GetFloat64(colIdx int) float64 {
+	return dr[colIdx].GetFloat64()
 }
 
 // GetString implements Row interface.
-func (dr DatumRow) GetString(colIdx int) (string, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return "", true
-	}
-	return dr[colIdx].GetString(), false
+func (dr DatumRow) GetString(colIdx int) string {
+	return dr[colIdx].GetString()
 }
 
 // GetBytes implements Row interface.
-func (dr DatumRow) GetBytes(colIdx int) ([]byte, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return nil, true
-	}
-	return dr[colIdx].GetBytes(), false
+func (dr DatumRow) GetBytes(colIdx int) []byte {
+	return dr[colIdx].GetBytes()
 }
 
 // GetTime implements Row interface.
-func (dr DatumRow) GetTime(colIdx int) (Time, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return Time{}, true
-	}
-	return dr[colIdx].GetMysqlTime(), false
+func (dr DatumRow) GetTime(colIdx int) Time {
+	return dr[colIdx].GetMysqlTime()
 }
 
 // GetDuration implements Row interface.
-func (dr DatumRow) GetDuration(colIdx int) (Duration, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return Duration{}, true
-	}
-	return dr[colIdx].GetMysqlDuration(), false
+func (dr DatumRow) GetDuration(colIdx int) Duration {
+	return dr[colIdx].GetMysqlDuration()
 }
 
 // GetEnum implements Row interface.
-func (dr DatumRow) GetEnum(colIdx int) (Enum, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return Enum{}, true
-	}
-	return dr[colIdx].GetMysqlEnum(), false
+func (dr DatumRow) GetEnum(colIdx int) Enum {
+	return dr[colIdx].GetMysqlEnum()
 }
 
 // GetSet implements Row interface.
-func (dr DatumRow) GetSet(colIdx int) (Set, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return Set{}, true
-	}
-	return dr[colIdx].GetMysqlSet(), false
+func (dr DatumRow) GetSet(colIdx int) Set {
+	return dr[colIdx].GetMysqlSet()
 }
 
 // GetMyDecimal implements Row interface.
-func (dr DatumRow) GetMyDecimal(colIdx int) (*MyDecimal, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return nil, true
-	}
-	return dr[colIdx].GetMysqlDecimal(), false
+func (dr DatumRow) GetMyDecimal(colIdx int) *MyDecimal {
+	return dr[colIdx].GetMysqlDecimal()
 }
 
 // GetJSON implements Row interface.
-func (dr DatumRow) GetJSON(colIdx int) (json.JSON, bool) {
-	datum := dr[colIdx]
-	if datum.IsNull() {
-		return json.JSON{}, true
-	}
-	return dr[colIdx].GetMysqlJSON(), false
+func (dr DatumRow) GetJSON(colIdx int) json.JSON {
+	return dr[colIdx].GetMysqlJSON()
 }
 
 // GetDatum implements Row interface.

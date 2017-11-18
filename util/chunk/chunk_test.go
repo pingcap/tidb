@@ -50,24 +50,18 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	c.Assert(chk.NumRows(), Equals, numRows)
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
-		intV, isNull := row.GetInt64(0)
-		c.Assert(intV, Equals, int64(0))
-		c.Assert(isNull, IsTrue)
-		intV, isNull = row.GetInt64(1)
-		c.Assert(intV, Equals, int64(i))
+		c.Assert(row.GetInt64(0), Equals, int64(0))
+		c.Assert(row.IsNull(0), IsTrue)
+		c.Assert(row.GetInt64(1), Equals, int64(i))
 		str := fmt.Sprintf(strFmt, i)
-		strV, isNull := row.GetString(2)
-		c.Assert(isNull, IsFalse)
-		c.Assert(strV, Equals, str)
-		bytesV, isNull := row.GetBytes(3)
-		c.Assert(isNull, IsFalse)
-		c.Assert(bytesV, BytesEquals, []byte(str))
-		decV, isNull := row.GetMyDecimal(4)
-		c.Assert(isNull, IsFalse)
-		c.Assert(decV.String(), Equals, str)
-		jsonV, isNull := row.GetJSON(5)
-		c.Assert(isNull, IsFalse)
-		c.Assert(jsonV.Str, Equals, str)
+		c.Assert(row.IsNull(2), IsFalse)
+		c.Assert(row.GetString(2), Equals, str)
+		c.Assert(row.IsNull(3), IsFalse)
+		c.Assert(row.GetBytes(3), BytesEquals, []byte(str))
+		c.Assert(row.IsNull(4), IsFalse)
+		c.Assert(row.GetMyDecimal(4).String(), Equals, str)
+		c.Assert(row.IsNull(5), IsFalse)
+		c.Assert(row.GetJSON(5).Str, Equals, str)
 	}
 
 	chk2 := newChunk(8, 8, 0, 0, 40, -1)
@@ -96,18 +90,11 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	chk.AppendSet(5, setVal)
 
 	row := chk.GetRow(0)
-	f32, _ := row.GetFloat32(0)
-	c.Assert(f32, Equals, f32Val)
-	f64, _ := row.GetFloat64(1)
-	c.Assert(f64, Equals, f64Val)
-	t, _ := row.GetTime(2)
-	c.Assert(t.Compare(tVal), Equals, 0)
-	dur, _ := row.GetDuration(3)
-	c.Assert(dur, DeepEquals, durVal)
-	enum, _ := row.GetEnum(4)
-	c.Assert(enum, DeepEquals, enumVal)
-	set, _ := row.GetSet(5)
-	c.Assert(set, DeepEquals, setVal)
+	c.Assert(row.GetFloat32(0), Equals, f32Val)
+	c.Assert(row.GetTime(2).Compare(tVal), Equals, 0)
+	c.Assert(row.GetDuration(3), DeepEquals, durVal)
+	c.Assert(row.GetEnum(4), DeepEquals, enumVal)
+	c.Assert(row.GetSet(5), DeepEquals, setVal)
 
 	// AppendRow can be different number of columns, useful for join.
 	chk = newChunk(8, 8)
@@ -116,10 +103,8 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	chk2.AppendInt64(0, -1)
 	chk.AppendRow(0, chk2.GetRow(0))
 	chk.AppendRow(1, chk2.GetRow(0))
-	iVal, _ := chk.GetRow(0).GetInt64(0)
-	c.Assert(iVal, Equals, int64(1))
-	iVal, _ = chk.GetRow(0).GetInt64(1)
-	c.Assert(iVal, Equals, int64(1))
+	c.Assert(chk.GetRow(0).GetInt64(0), Equals, int64(1))
+	c.Assert(chk.GetRow(0).GetInt64(1), Equals, int64(1))
 	c.Assert(chk.NumRows(), Equals, 1)
 
 	// Test Reset.
@@ -127,16 +112,14 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	chk.AppendString(0, "abcd")
 	chk.Reset()
 	chk.AppendString(0, "def")
-	strVal, _ := chk.GetRow(0).GetString(0)
-	c.Assert(strVal, Equals, "def")
+	c.Assert(chk.GetRow(0).GetString(0), Equals, "def")
 
 	// Test float32
 	chk = newChunk(4)
 	chk.AppendFloat32(0, 1)
 	chk.AppendFloat32(0, 1)
 	chk.AppendFloat32(0, 1)
-	f32, _ = chk.GetRow(2).GetFloat32(0)
-	c.Assert(f32, Equals, float32(1))
+	c.Assert(chk.GetRow(2).GetFloat32(0), Equals, float32(1))
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
@@ -215,11 +198,9 @@ func BenchmarkAccess(b *testing.B) {
 	b.StartTimer()
 	var sum int64
 	for i := 0; i < b.N; i++ {
-		var v int64
 		for j := 0; j < 8192; j++ {
-			v, _ = rowChk.GetRow(j).GetInt64(0)
+			sum += rowChk.GetRow(j).GetInt64(0)
 		}
-		sum += v
 	}
 	fmt.Println(sum)
 }

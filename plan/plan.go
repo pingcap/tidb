@@ -269,7 +269,7 @@ func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
 }
 
 func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	var corCols []*expression.CorrelatedColumn
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.basePlan.children))
 	for _, child := range p.basePlan.children {
 		corCols = append(corCols, child.(LogicalPlan).extractCorrelatedCols()...)
 	}

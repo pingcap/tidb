@@ -1107,6 +1107,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		priority:          b.priority,
 		tableReaderSchema: tableReaderSchema,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
+		batchSize:         128,
+	}
+	if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
+		e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
 	}
 	return e, nil
 }

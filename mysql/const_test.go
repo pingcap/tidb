@@ -211,3 +211,13 @@ func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
 	_, err = tk.Exec("CREATE TABLE COUNT(a bigint);")
 	c.Assert(err, NotNil)
 }
+
+func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode=''")
+	r := tk.MustQuery("SELECT '\\\\'")
+	r.Check(testkit.Rows("\\"))
+	tk.MustExec("set sql_mode='NO_BACKSLASH_ESCAPES'")
+	r = tk.MustQuery("SELECT '\\\\'")
+	r.Check(testkit.Rows("\\\\"))
+}

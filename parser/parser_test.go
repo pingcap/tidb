@@ -1143,6 +1143,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select avg(distinct all c1) from t;`, true},
 		{`select avg(distinctrow all c1) from t;`, true},
 		{`select avg(c2) from t;`, true},
+		{`select bit_and(c1) from t;`, true},
+		{`select bit_and(), bit_and(distinct c1) from t;`, false},
+		{`select bit_and(), bit_and(distinctrow c1) from t;`, false},
+		{`select bit_and(), bit_and(all c1) from t;`, false},
+		{`select bit_or(c1) from t;`, true},
+		{`select bit_or(), bit_or(distinct c1) from t;`, false},
+		{`select bit_or(), bit_or(distinctrow c1) from t;`, false},
+		{`select bit_or(), bit_or(all c1) from t;`, false},
 		{`select bit_xor(c1) from t;`, true},
 		{`select bit_xor(), bit_xor(distinct c1) from t;`, false},
 		{`select bit_xor(), bit_xor(distinctrow c1) from t;`, false},
@@ -1468,6 +1476,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED)", true},
+		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED, b varchar(255))", true},
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED FIRST)", false},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
