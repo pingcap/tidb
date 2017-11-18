@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
-	"strings"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -244,7 +244,7 @@ func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (str
 		}
 		res, err := val.ToString()
 		resLen := len([]rune(res))
-		if resLen < col.RetType.Flen && sc.PadCharToFullLength {
+		if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
 			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
 		}
 		return res, err != nil, errors.Trace(err)
@@ -253,7 +253,7 @@ func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (str
 		return "", true, nil
 	}
 	val := row.GetString(col.Index)
-	if sc.PadCharToFullLength {
+	if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
 		valLen := len([]rune(val))
 		if valLen < col.RetType.Flen && sc.PadCharToFullLength {
 			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
