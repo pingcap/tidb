@@ -1536,7 +1536,7 @@ func (ds *DataSource) getHandleSchemaCol() *expression.Column {
 		FromID:   ds.id,
 		DBName:   ds.DBName,
 		TblName:  ds.tableInfo.Name,
-		ColName:  model.NewCIStr("_rowid"),
+		ColName:  model.ExtraHandleName,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		Position: ds.schema.Len(),
 		ID:       model.ExtraHandleID,
@@ -1597,7 +1597,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	ds.SetSchema(schema)
 	if handleCol == nil {
-		ds.Columns = append(ds.Columns, model.GetHandleColInfo())
+		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.getHandleSchemaCol()
 		schema.Append(handleCol)
 	}

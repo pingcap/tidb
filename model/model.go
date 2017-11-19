@@ -87,6 +87,9 @@ func (c *ColumnInfo) IsGenerated() bool {
 // for use of execution phase.
 const ExtraHandleID = -1
 
+// ExtraHandleName is the name of ExtraHandle Column.
+var ExtraHandleName = NewCIStr("_rowid")
+
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
 	ID      int64  `json:"id"`
@@ -155,11 +158,11 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 	return nil
 }
 
-// GetHandleColInfo mocks a column info for extra handle column.
-func GetHandleColInfo() *ColumnInfo {
+// NewExtraHandleColInfo mocks a column info for extra handle column.
+func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
 		ID:   ExtraHandleID,
-		Name: NewCIStr("_rowid"),
+		Name: ExtraHandleName,
 	}
 	colInfo.Flag = mysql.PriKeyFlag
 	return colInfo

@@ -739,7 +739,7 @@ func (ts *PhysicalTableScan) appendPK(ds *DataSource) {
 			}
 		}
 	}
-	pkInfo := model.GetHandleColInfo()
+	pkInfo := model.NewExtraHandleColInfo()
 	ts.Columns = append(ts.Columns, pkInfo)
 	handleCol := ds.getHandleSchemaCol()
 	ts.schema.Append(handleCol)
