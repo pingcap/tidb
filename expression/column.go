@@ -255,7 +255,7 @@ func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (str
 	val := row.GetString(col.Index)
 	if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
 		valLen := len([]rune(val))
-		if valLen < col.RetType.Flen && sc.PadCharToFullLength {
+		if valLen < col.RetType.Flen {
 			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
 		}
 	}
