@@ -543,7 +543,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementCon
 		}
 		return &Column{Index: int(offset), RetType: tps[offset]}, nil
 	case tipb.ExprType_Null:
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
+		return &Constant{Value: types.Datum{}, RetType: types.ConstMySQLNull}, nil
 	case tipb.ExprType_Int64:
 		return convertInt(expr.Val)
 	case tipb.ExprType_Uint64:
@@ -551,7 +551,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementCon
 	case tipb.ExprType_String:
 		return convertString(expr.Val)
 	case tipb.ExprType_Bytes:
-		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
+		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.ConstMySQLString}, nil
 	case tipb.ExprType_Float32:
 		return convertFloat(expr.Val, true)
 	case tipb.ExprType_Float64:

@@ -222,12 +222,12 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		for i, arg := range x.GetArgs() {
 			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, types.ConstMySQLTiny, args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
+		return &Constant{Value: types.Datum{}, RetType: types.ConstMySQLNull}
 	case *Constant:
 		if x.DeferredExpr != nil {
 			return FoldConstant(x)

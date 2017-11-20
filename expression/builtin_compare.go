@@ -941,7 +941,7 @@ func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 	}
 	return &Constant{
 		Value:        types.NewIntDatum(i64),
-		RetType:      types.NewFieldType(mysql.TypeLonglong),
+		RetType:      types.ConstMySQLLonglong,
 		DeferredExpr: con.DeferredExpr,
 	}
 }
@@ -965,7 +965,7 @@ func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Consta
 	if c == 0 {
 		return &Constant{
 			Value:        datumInt,
-			RetType:      types.NewFieldType(mysql.TypeLonglong),
+			RetType:      types.ConstMySQLLonglong,
 			DeferredExpr: con.DeferredExpr,
 		}
 	}

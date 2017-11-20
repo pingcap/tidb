@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -1083,7 +1082,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 			ID:      model.ExtraHandleID,
 			ColName: model.NewCIStr("_rowid"),
 			Index:   v.Schema().Len(),
-			RetType: types.NewFieldType(mysql.TypeLonglong),
+			RetType: types.ConstMySQLLonglong,
 		}
 		tableReaderSchema.Append(handleCol)
 		length = tableReaderSchema.Len()

@@ -221,7 +221,7 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []aggregation.Aggregati
 	if len(agg.GroupByItems) == 0 {
 		agg.GroupByItems = []expression.Expression{&expression.Constant{
 			Value:   types.NewDatum(0),
-			RetType: types.NewFieldType(mysql.TypeLong)}}
+			RetType: types.ConstMySQLLONG}}
 	}
 	if (childIdx == 0 && join.JoinType == RightOuterJoin) || (childIdx == 1 && join.JoinType == LeftOuterJoin) {
 		var existsDefaultValues bool
@@ -436,11 +436,11 @@ func (a *aggregationOptimizer) rewriteCount(exprs []expression.Expression) expre
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
-		isNullExpr := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
+		isNullExpr := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.ConstMySQLTiny, expr.Clone())
 		isNullExprs = append(isNullExprs, isNullExpr)
 	}
 	innerExpr := expression.ComposeDNFCondition(a.ctx, isNullExprs...)
-	newExpr := expression.NewFunctionInternal(a.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
+	newExpr := expression.NewFunctionInternal(a.ctx, ast.If, types.ConstMySQLLonglong, innerExpr, expression.Zero, expression.One)
 	return newExpr
 }
 
@@ -453,13 +453,13 @@ func (a *aggregationOptimizer) rewriteSumOrAvg(exprs []expression.Expression) ex
 	switch expr.GetType().Tp {
 	// Integer type should be cast to decimal.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return expression.BuildCastFunction(a.ctx, expr, types.NewFieldType(mysql.TypeNewDecimal))
+		return expression.BuildCastFunction(a.ctx, expr, types.ConstMySQLDecimal)
 	// Double and Decimal doesn't need to be cast.
 	case mysql.TypeDouble, mysql.TypeNewDecimal:
 		return expr
 	// Float should be cast to double. And other non-numeric type should be cast to double too.
 	default:
-		return expression.BuildCastFunction(a.ctx, expr, types.NewFieldType(mysql.TypeDouble))
+		return expression.BuildCastFunction(a.ctx, expr, types.ConstMySQLDouble)
 	}
 }
 

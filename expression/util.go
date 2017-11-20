@@ -22,7 +22,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -224,7 +223,7 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 		}
 	}
 	if not {
-		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.ConstMySQLTiny, expr)
 	}
 	return expr
 }

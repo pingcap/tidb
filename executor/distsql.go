@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -280,7 +279,6 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.PartialResult) ([]int
 		handles     []int64
 		handleDatum types.Datum
 	)
-	handleType := types.NewFieldType(mysql.TypeLonglong)
 	for {
 		data, err := subResult.Next()
 		if err != nil {
@@ -289,7 +287,7 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.PartialResult) ([]int
 		if data == nil {
 			break
 		}
-		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), handleType, nil)
+		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), types.ConstMySQLLonglong, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

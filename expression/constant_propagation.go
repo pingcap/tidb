@@ -18,7 +18,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -160,7 +159,7 @@ func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap
 func (s *propagateConstantSolver) setConds2ConstFalse() {
 	s.conditions = []Expression{&Constant{
 		Value:   types.NewDatum(false),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: types.ConstMySQLTiny,
 	}}
 }
 
