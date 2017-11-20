@@ -899,8 +899,8 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 			TimeZone: time.Local,
 		}, types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
-		{types.Enum{"a", 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
-		{types.Set{"a", 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
+		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
+		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
 		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
 		{json.CreateJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
 	}

@@ -51,9 +51,6 @@ func (tr IntColumnRange) String() string {
 	}
 	if tr.HighVal == math.MaxInt64 {
 		r = "+inf)"
-	} else if tr.HighVal == math.MinInt64 {
-		// This branch is for nil
-		r = "-inf)"
 	} else {
 		r = strconv.FormatInt(tr.HighVal, 10) + "]"
 	}
