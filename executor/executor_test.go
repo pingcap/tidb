@@ -772,6 +772,18 @@ func (s *testSuite) TestIssue345(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSuite) TestIssue5055(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1 (a int);`)
+	tk.MustExec(`create table t2 (a int);`)
+	tk.MustExec(`insert into t1 values(1);`)
+	tk.MustExec(`insert into t2 values(1);`)
+	result := tk.MustQuery("select tbl1.* from (select t1.a, 1 from t1) tbl1 left join t2 tbl2 on tbl1.a = tbl2.a order by tbl1.a desc limit 1;")
+	result.Check(testkit.Rows("1 1"))
+}
+
 func (s *testSuite) TestUnion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
