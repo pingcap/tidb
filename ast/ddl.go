@@ -679,7 +679,7 @@ type AlterTableType int
 // AlterTable types.
 const (
 	AlterTableOption AlterTableType = iota + 1
-	AlterTableAddColumn
+	AlterTableAddColumns
 	AlterTableAddConstraint
 	AlterTableDropColumn
 	AlterTableDropPrimaryKey
@@ -715,7 +715,7 @@ type AlterTableSpec struct {
 	Constraint    *Constraint
 	Options       []*TableOption
 	NewTable      *TableName
-	NewColumn     *ColumnDef
+	NewColumns    []*ColumnDef
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
 	LockType      LockType
@@ -742,12 +742,12 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.NewTable = node.(*TableName)
 	}
-	if n.NewColumn != nil {
-		node, ok := n.NewColumn.Accept(v)
+	for _, col := range n.NewColumns {
+		node, ok := col.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.NewColumn = node.(*ColumnDef)
+		col = node.(*ColumnDef)
 	}
 	if n.OldColumnName != nil {
 		node, ok := n.OldColumnName.Accept(v)

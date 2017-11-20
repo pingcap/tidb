@@ -125,25 +125,25 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 2)
-	c.Assert(row.Data[0].GetInt64(), Equals, int64(1))
-	c.Assert(row.Data[1].GetString(), Equals, "error: Can't find this job")
+	c.Assert(row.Len(), Equals, 2)
+	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
 	row, err = r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 4)
+	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	ddlInfo, err := admin.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetInt64(), Equals, ddlInfo.SchemaVer)
+	c.Assert(row.GetInt64(0), Equals, ddlInfo.SchemaVer)
 	// TODO: Pass this test.
 	// rowOwnerInfos := strings.Split(row.Data[1].GetString(), ",")
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	c.Assert(row.Data[2].GetString(), Equals, "")
+	c.Assert(row.GetString(2), Equals, "")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
@@ -155,14 +155,14 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	row, err = r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 2)
+	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
-	c.Assert(len(row.Data[0].GetString()), Greater, 0)
+	c.Assert(len(row.GetString(0)), Greater, 0)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[1].GetString(), Equals, historyJobs[0].State.String())
+	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -708,8 +708,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	str := row.Data[0].GetMysqlDuration().String()
-	c.Assert(str, Equals, "-46:09:02")
+	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -742,6 +741,18 @@ func (s *testSuite) TestIssue345(c *C) {
 
 	_, err := tk.Exec(`update t1 as a, t2 set t1.c1 = 10;`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestIssue5055(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1 (a int);`)
+	tk.MustExec(`create table t2 (a int);`)
+	tk.MustExec(`insert into t1 values(1);`)
+	tk.MustExec(`insert into t2 values(1);`)
+	result := tk.MustQuery("select tbl1.* from (select t1.a, 1 from t1) tbl1 left join t2 tbl2 on tbl1.a = tbl2.a order by tbl1.a desc limit 1;")
+	result.Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestUnion(c *C) {
@@ -2148,7 +2159,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")

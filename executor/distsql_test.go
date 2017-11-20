@@ -104,7 +104,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	defer rs.Close()
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
@@ -117,7 +117,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	c.Assert(err, IsNil)
 	row, err = rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.
