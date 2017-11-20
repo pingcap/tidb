@@ -106,6 +106,13 @@ func checkTooLongTable(table model.CIStr) error {
 	return nil
 }
 
+func checkTooLongIndex(index model.CIStr) error {
+	if len(index.L) > mysql.MaxIndexIdentifierLen {
+		return ErrTooLongIdent.Gen("too long index %s", index)
+	}
+	return nil
+}
+
 func getDefaultCharsetAndCollate() (string, string) {
 	// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
 	// TODO: Change TableOption parser to parse collate.
@@ -1436,6 +1443,10 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 
 	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
 		return errDupKeyName.Gen("index already exist %s", indexName)
+	}
+
+	if err = checkTooLongIndex(indexName); err != nil {
+		return errors.Trace(err)
 	}
 
 	if indexOption != nil {
