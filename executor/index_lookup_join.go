@@ -276,9 +276,9 @@ func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 			break
 		}
 
-		matched, err1 := expression.EvalBool(e.innerFilter, innerRow, e.ctx)
-		if err1 != nil {
-			return errors.Trace(err1)
+		matched, err2 := expression.EvalBool(e.innerFilter, innerRow, e.ctx)
+		if err2 != nil {
+			return errors.Trace(err2)
 		} else if matched {
 			e.innerOrderedRows.rows = append(e.innerOrderedRows.rows, innerRow)
 		}

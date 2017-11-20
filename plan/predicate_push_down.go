@@ -63,6 +63,13 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]exp
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	p.children[0].(LogicalPlan).PredicatePushDown(predicates)
+	p.conditions = predicates
+	return nil, p
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
 	return predicates, p

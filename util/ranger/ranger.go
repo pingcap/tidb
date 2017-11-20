@@ -167,6 +167,9 @@ func points2TableRanges(sc *variable.StatementContext, rangePoints []point) ([]t
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
+			if startPoint.value.IsNull() {
+				startPoint.excl = false
+			}
 			startPoint.value.SetInt64(math.MinInt64)
 		}
 		startInt, err := startPoint.value.ToInt64(sc)
@@ -179,11 +182,14 @@ func points2TableRanges(sc *variable.StatementContext, rangePoints []point) ([]t
 			return nil, errors.Trace(err)
 		}
 		if cmp < 0 || (cmp == 0 && startPoint.excl) {
+			if startInt == math.MaxInt64 {
+				continue
+			}
 			startInt++
 		}
 		endPoint := rangePoints[i+1]
 		if endPoint.value.IsNull() {
-			endPoint.value.SetInt64(math.MinInt64)
+			continue
 		} else if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value.SetInt64(math.MaxInt64)
 		}
@@ -197,6 +203,9 @@ func points2TableRanges(sc *variable.StatementContext, rangePoints []point) ([]t
 			return nil, errors.Trace(err)
 		}
 		if cmp > 0 || (cmp == 0 && endPoint.excl) {
+			if endInt == math.MinInt64 {
+				continue
+			}
 			endInt--
 		}
 		if startInt > endInt {

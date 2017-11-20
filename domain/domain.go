@@ -409,10 +409,10 @@ type EtcdBackend interface {
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory, sysFactory func(*Domain) (pools.Resource, error)) (d *Domain, err error) {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory, sysFactory func(*Domain) (pools.Resource, error)) (*Domain, error) {
 	capacity := 200                // capacity of the sysSessionPool size
 	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
-	d = &Domain{
+	d := &Domain{
 		store:           store,
 		SchemaValidator: NewSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
@@ -422,8 +422,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	if ebd, ok := store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
-			var cli *clientv3.Client
-			cli, err = clientv3.New(clientv3.Config{
+			cli, err := clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
 				DialOptions: []grpc.DialOption{
@@ -453,11 +452,22 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, idleTimeout)
 	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease, sysCtxPool)
+	var err error
+	defer func() {
+		// Clean up domain when initializing syncer failed or reloading failed.
+		// If we don't clean it, there are some dirty data when retrying this function.
+		if err != nil {
+			d.Close()
+			log.Errorf("[ddl] new domain failed %v", errors.ErrorStack(errors.Trace(err)))
+		}
+	}()
 
-	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
+	err = d.ddl.SchemaSyncer().Init(ctx)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = d.Reload(); err != nil {
+	err = d.Reload()
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
