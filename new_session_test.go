@@ -1479,6 +1479,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	c.Assert(err, IsNil)
 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 10)
 
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
