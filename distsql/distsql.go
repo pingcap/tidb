@@ -183,10 +183,6 @@ func (r *selectResult) getSelectResp() (*tipb.SelectResponse, error) {
 	}
 }
 
-func (r *selectResult) readRespChunk(chk *chunk.Chunk, rChkIdx int) {
-	r.readRowsData(chk, r.selectResp.Chunks[rChkIdx].RowsData)
-}
-
 func (r *selectResult) readRowsData(chk *chunk.Chunk, rowsData []byte) error {
 	var err error
 	for len(rowsData) > 0 {
