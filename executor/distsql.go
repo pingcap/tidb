@@ -287,7 +287,7 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.PartialResult) ([]int
 		if data == nil {
 			break
 		}
-		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), types.ConstMySQLLONGLONG, nil)
+		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), types.ConstMySQLLonglong, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

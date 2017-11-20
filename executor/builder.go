@@ -1082,7 +1082,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 			ID:      model.ExtraHandleID,
 			ColName: model.NewCIStr("_rowid"),
 			Index:   v.Schema().Len(),
-			RetType: types.ConstMySQLLONGLONG,
+			RetType: types.ConstMySQLLonglong,
 		}
 		tableReaderSchema.Append(handleCol)
 		length = tableReaderSchema.Len()

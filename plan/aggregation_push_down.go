@@ -440,7 +440,7 @@ func (a *aggregationOptimizer) rewriteCount(exprs []expression.Expression) expre
 		isNullExprs = append(isNullExprs, isNullExpr)
 	}
 	innerExpr := expression.ComposeDNFCondition(a.ctx, isNullExprs...)
-	newExpr := expression.NewFunctionInternal(a.ctx, ast.If, types.ConstMySQLLONGLONG, innerExpr, expression.Zero, expression.One)
+	newExpr := expression.NewFunctionInternal(a.ctx, ast.If, types.ConstMySQLLonglong, innerExpr, expression.Zero, expression.One)
 	return newExpr
 }
 

@@ -1351,7 +1351,7 @@ func WrapWithCastAsInt(ctx context.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETInt {
 		return expr
 	}
-	tp := types.ConstMySQLLONGLONG
+	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
 	types.SetBinChsClnFlag(tp)
 	return BuildCastFunction(ctx, expr, tp)
@@ -1364,7 +1364,8 @@ func WrapWithCastAsReal(ctx context.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETReal {
 		return expr
 	}
-	tp := types.ConstMySQLDouble
+
+	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
 	return BuildCastFunction(ctx, expr, tp)

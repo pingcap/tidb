@@ -32,8 +32,8 @@ const (
 var (
 	// ConstMySQLTiny MySQL Tiny
 	ConstMySQLTiny = NewFieldType(mysql.TypeTiny)
-	// ConstMySQLLONGLONG MySQL LongLong
-	ConstMySQLLONGLONG = NewFieldType(mysql.TypeLonglong)
+	// ConstMySQLLonglong MySQL LongLong
+	ConstMySQLLonglong = NewFieldType(mysql.TypeLonglong)
 	// ConstMySQLLONG MySQL Long
 	ConstMySQLLONG = NewFieldType(mysql.TypeLong)
 	// ConstMySQLString MySQL String
