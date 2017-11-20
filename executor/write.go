@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -126,7 +127,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		skipHandleCheck := false
 		if ignoreErr {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
-			if err = checkHandleExists(ctx, t, newHandle); err != nil {
+			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
 				return false, errors.Trace(err)
 			}
 			skipHandleCheck = true
@@ -157,20 +158,6 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
 	return true, nil
-}
-
-func checkHandleExists(ctx context.Context, t table.Table, recordID int64) error {
-	txn := ctx.Txn()
-	// Check key exists.
-	recordKey := t.RecordKey(recordID)
-	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
-	_, err := txn.Get(recordKey)
-	if err == nil {
-		return errors.Trace(e)
-	} else if !kv.ErrNotExist.Equal(err) {
-		return errors.Trace(err)
-	}
-	return nil
 }
 
 // DeleteExec represents a delete executor.

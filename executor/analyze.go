@@ -184,13 +184,9 @@ type AnalyzeIndexExec struct {
 }
 
 func (e *AnalyzeIndexExec) open() error {
-	fieldTypes := make([]*types.FieldType, len(e.idxInfo.Columns))
-	for i, v := range e.idxInfo.Columns {
-		fieldTypes[i] = &(e.tblInfo.Columns[v.Offset].FieldType)
-	}
 	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	var builder requestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*types.IndexRange{idxRange}, fieldTypes).
+	kvReq, err := builder.SetIndexRanges(e.tblInfo.ID, e.idxInfo.ID, []*types.IndexRange{idxRange}).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		SetPriority(e.priority).
