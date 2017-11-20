@@ -78,10 +78,11 @@ func (outputer *baseJoinResultGenerator) makeJoinRowToBuffer(buffer []types.Datu
 
 // growResultBufferIfNecessary grows resultBuffer if necessary.
 func (outputer *baseJoinResultGenerator) growResultBufferIfNecessary(resultBuffer []Row, numToAppend int) []Row {
-	if cap(resultBuffer)-len(resultBuffer) >= numToAppend {
+	length := len(resultBuffer)
+	if cap(resultBuffer)-length >= numToAppend {
 		return resultBuffer
 	}
-	newResultBuffer := make([]Row, len(resultBuffer), len(resultBuffer)+numToAppend)
+	newResultBuffer := make([]Row, length, length+numToAppend)
 	copy(newResultBuffer, resultBuffer)
 	return newResultBuffer
 }

@@ -249,6 +249,9 @@ func (e *HashJoinExec) prepare() error {
 	e.prepared = true
 	e.resultBufferCh = make(chan *execResult, e.concurrency)
 
+	// If it's inner join and the small table is filtered out, there is no need to fetch big table and
+	// start join workers to do the join work. Otherwise, we start one goroutine to fetch outer rows
+	// and e.concurrency goroutines to concatenate the matched inner and outer rows and filter the result.
 	if !(e.hashTable.Len() == 0 && e.joinType == plan.InnerJoin) {
 		e.outerBufferChs = make([]chan *execResult, e.concurrency)
 		for i := 0; i < e.concurrency; i++ {
