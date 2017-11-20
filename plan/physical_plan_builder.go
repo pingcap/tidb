@@ -737,7 +737,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 	}
 	pkInfo := model.NewExtraHandleColInfo()
 	ts.Columns = append(ts.Columns, pkInfo)
-	handleCol := ds.getHandleSchemaCol()
+	handleCol := ds.newExtraHandleSchemaCol()
 	ts.schema.Append(handleCol)
 	ts.schema.TblID2Handle[ds.tableInfo.ID] = []*expression.Column{handleCol}
 }

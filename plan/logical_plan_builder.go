@@ -1531,7 +1531,7 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 	return dual
 }
 
-func (ds *DataSource) getHandleSchemaCol() *expression.Column {
+func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	return &expression.Column{
 		FromID:   ds.id,
 		DBName:   ds.DBName,
@@ -1598,7 +1598,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	ds.SetSchema(schema)
 	if handleCol == nil {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
-		handleCol = ds.getHandleSchemaCol()
+		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
 	}
 	schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
