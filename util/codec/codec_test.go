@@ -903,6 +903,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
 		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
 		{json.CreateJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
+		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
 
 	datums := make([]types.Datum, 0, len(table))

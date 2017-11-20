@@ -76,7 +76,7 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	case mysql.TypeFloat:
 		c.addFixedLenColumn(4, initCap)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeDouble:
+		mysql.TypeDouble, mysql.TypeYear:
 		c.addFixedLenColumn(8, initCap)
 	case mysql.TypeDuration:
 		c.addFixedLenColumn(16, initCap)
@@ -433,7 +433,7 @@ func (r Row) GetJSON(colIdx int) json.JSON {
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
 	switch tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		if !r.IsNull(colIdx) {
 			if mysql.HasUnsignedFlag(tp.Flag) {
 				d.SetUint64(r.GetUint64(colIdx))
