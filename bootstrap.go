@@ -272,8 +272,10 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	if err != nil || row == nil {
 		return "", true, errors.Trace(err)
 	}
-	sVal, isNull = row.GetString(0)
-	return sVal, isNull, nil
+	if row.IsNull(0) {
+		return "", true, nil
+	}
+	return row.GetString(0), false, nil
 }
 
 // upgrade function  will do some upgrade works, when the system is boostrapped by low version TiDB server
@@ -362,7 +364,6 @@ func upgrade(s Session) {
 		log.Errorf("[Upgrade] upgrade from %d to %d error", ver, currentBootstrapVersion)
 		log.Fatal(err)
 	}
-	return
 }
 
 // upgradeToVer2 updates to version 2.
@@ -468,9 +469,9 @@ func upgradeToVer12(s Session) {
 	defer terror.Call(r.Close)
 	row, err := r.Next()
 	for err == nil && row != nil {
-		user, _ := row.GetString(0)
-		host, _ := row.GetString(1)
-		pass, _ := row.GetString(2)
+		user := row.GetString(0)
+		host := row.GetString(1)
+		pass := row.GetString(2)
 		var newPass string
 		newPass, err = oldPasswordUpgrade(pass)
 		terror.MustNil(err)
