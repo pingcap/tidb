@@ -731,13 +731,9 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 }
 
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
-func (ts *PhysicalTableScan) appendPK(ds *DataSource) {
-	if ds.tableInfo.PKIsHandle {
-		for _, col := range ds.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				return
-			}
-		}
+func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
+	if len(ds.schema.TblID2Handle) > 0 {
+		return
 	}
 	pkInfo := model.NewExtraHandleColInfo()
 	ts.Columns = append(ts.Columns, pkInfo)
@@ -832,7 +828,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			cop.cst = rowCount * descScanFactor
 		}
 		if cop.tablePlan != nil {
-			cop.tablePlan.(*PhysicalTableScan).appendPK(p)
+			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(p)
 		}
 		cop.keepOrder = true
 		is.addPushedDownSelection(cop, p, prop.expectedCnt)

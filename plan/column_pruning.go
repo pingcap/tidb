@@ -170,7 +170,7 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
 	handleIdx := -1 // -1 for not found.
 	for _, col := range p.schema.TblID2Handle {
-		handleIdx = col[0].Index
+		handleIdx = col[0].Position
 	}
 	firstCol, firstColInfo := p.schema.Columns[0], p.Columns[0]
 	for i := len(used) - 1; i >= 0; i-- {

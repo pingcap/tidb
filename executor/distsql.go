@@ -592,7 +592,7 @@ type IndexLookUpExecutor struct {
 	desc      bool
 	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
-	// handleIdx is the index of handle.
+	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
