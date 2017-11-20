@@ -197,7 +197,7 @@ func (e *analyzeColumnsExec) Next() (row types.Row, err error) {
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) Read(chk *chunk.Chunk) error {
+func (e *analyzeColumnsExec) NextChunk(chk *chunk.Chunk) error {
 	return nil
 }
 

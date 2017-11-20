@@ -189,7 +189,7 @@ func GetRows(rs ast.RecordSet) ([]types.Row, error) {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()
-			err := rs.Read(chk)
+			err := rs.NextChunk(chk)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

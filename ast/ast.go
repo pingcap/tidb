@@ -136,8 +136,8 @@ type RecordSet interface {
 	// Next returns the next row, nil row means there is no more to return.
 	Next() (row types.Row, err error)
 
-	// Read read records into chunk.
-	Read(chk *chunk.Chunk) error
+	// NextChunk reads records into chunk.
+	NextChunk(chk *chunk.Chunk) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk

@@ -137,7 +137,7 @@ func (r *selectResult) NextRaw() ([]byte, error) {
 }
 
 // Read reads data to the chunk.
-func (r *selectResult) Read(chk *chunk.Chunk) error {
+func (r *selectResult) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	re := <-r.results
 	if re.err != nil {

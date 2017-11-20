@@ -343,7 +343,7 @@ func timeZoneOffset(ctx context.Context) int64 {
 // Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
 const (
 	// FlagIgnoreTruncate indicates if truncate error should be ignored.
-	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
+	// NextChunk-only statements should ignore truncate error, write statements should not ignore truncate error.
 	FlagIgnoreTruncate uint64 = 1
 	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
@@ -455,8 +455,8 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 	}
 }
 
-// Read implements the Executor Read interface.
-func (e *TableReaderExecutor) Read(chk *chunk.Chunk) error {
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableReaderExecutor) NextChunk(chk *chunk.Chunk) error {
 	return e.result.Read(chk)
 }
 
@@ -476,7 +476,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().TimeZone)
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -559,8 +559,8 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 	}
 }
 
-// Read implements the Executor Read interface.
-func (e *IndexReaderExecutor) Read(chk *chunk.Chunk) error {
+// NextChunk implements the Executor NextChunk interface.
+func (e *IndexReaderExecutor) NextChunk(chk *chunk.Chunk) error {
 	return e.result.Read(chk)
 }
 
@@ -584,7 +584,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().TimeZone)
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -646,7 +646,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.ctx.GetSessionVars().TimeZone)
+	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}

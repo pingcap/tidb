@@ -91,7 +91,7 @@ func (a *recordSet) Next() (types.Row, error) {
 	return row, nil
 }
 
-func (a *recordSet) Read(chk *chunk.Chunk) error {
+func (a *recordSet) NextChunk(chk *chunk.Chunk) error {
 	err := a.executor.Read(chk)
 	if err != nil {
 		a.lastErr = err

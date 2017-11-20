@@ -298,8 +298,8 @@ func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
 
-func (trs *tidbResultSet) Read(chk *chunk.Chunk) error {
-	return trs.recordSet.Read(chk)
+func (trs *tidbResultSet) NextChunk(chk *chunk.Chunk) error {
+	return trs.recordSet.NextChunk(chk)
 }
 
 func (trs *tidbResultSet) SupportChunk() bool {

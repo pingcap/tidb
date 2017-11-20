@@ -60,7 +60,7 @@ func (r *recordSet) Next() (types.Row, error) {
 	return types.DatumRow{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}, nil
 }
 
-func (r *recordSet) Read(chk *chunk.Chunk) error {
+func (r *recordSet) NextChunk(chk *chunk.Chunk) error {
 	return nil
 }
 

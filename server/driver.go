@@ -125,6 +125,6 @@ type ResultSet interface {
 	Next() (types.Row, error)
 	SupportChunk() bool
 	NewChunk() *chunk.Chunk
-	Read(chk *chunk.Chunk) error
+	NextChunk(chk *chunk.Chunk) error
 	Close() error
 }

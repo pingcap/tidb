@@ -139,7 +139,7 @@ func (e *baseExecutor) supportChunk() bool {
 	return true
 }
 
-func (e *baseExecutor) Read(chk *chunk.Chunk) error {
+func (e *baseExecutor) NextChunk(chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -158,7 +158,7 @@ type Executor interface {
 	Open() error
 	Schema() *expression.Schema
 	supportChunk() bool
-	Read(chk *chunk.Chunk) error
+	NextChunk(chk *chunk.Chunk) error
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.

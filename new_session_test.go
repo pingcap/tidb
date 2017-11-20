@@ -1485,7 +1485,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	var count int
 	var numChunks int
 	for {
-		err = rs.Read(chk)
+		err = rs.NextChunk(chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
