@@ -172,7 +172,7 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 // because we will swap the children of join when the right child is outer child.
 // First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or PK
 // column of inner child, we can apply the index join.
-func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) ([]PhysicalPlan, error) {
+func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
 	var (
 		usedIndexInfo *model.IndexInfo
@@ -188,17 +188,15 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) ([]PhysicalPlan, erro
 	}
 	x, ok := innerChild.(*DataSource)
 	if !ok {
-		return nil, nil
+		return nil
 	}
-	indices, includeTableScan, err := availableIndices(x.indexHints, x.tableInfo)
-	if err != nil {
-		return nil, err
-	}
+	indices := x.availableIndices.indices
+	includeTableScan := x.availableIndices.includeTableScan
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
 			innerPlan := x.forceToTableScan()
-			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan), nil
+			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
 		}
 	}
 	for _, indexInfo := range indices {
@@ -219,9 +217,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) ([]PhysicalPlan, erro
 	}
 	if usedIndexInfo != nil {
 		innerPlan := x.forceToIndexScan(usedIndexInfo)
-		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan), nil
+		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
 	}
-	return nil, nil
+	return nil
 }
 
 // getChildrenPossibleProps gets children possible props.:
@@ -267,85 +265,64 @@ func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
-func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool, error) {
+func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	if len(p.EqualConditions) == 0 {
-		return nil, false, nil
+		return nil, false
 	}
 	plans := make([]PhysicalPlan, 0, 2)
 	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
 	if leftOuter && (p.JoinType == LeftOuterJoin || p.JoinType == InnerJoin) {
-		join, err := p.getIndexJoinByOuterIdx(0)
-		if err != nil {
-			return nil, false, err
-		}
+		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join...)
 		}
 	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
 	if rightOuter && (p.JoinType == RightOuterJoin || p.JoinType == InnerJoin) {
-		join, err := p.getIndexJoinByOuterIdx(1)
-		if err != nil {
-			return nil, false, err
-		}
+		join := p.getIndexJoinByOuterIdx(1)
 		if join != nil {
 			plans = append(plans, join...)
 		}
 	}
 	if len(plans) > 0 {
-		return plans, true, nil
+		return plans, true
 	}
 	// We try to choose join without considering hints.
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		join, err := p.getIndexJoinByOuterIdx(0)
-		if err != nil {
-			return nil, false, err
-		}
+		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join...)
 		}
 	case RightOuterJoin:
-		join, err := p.getIndexJoinByOuterIdx(1)
-		if err != nil {
-			return nil, false, err
-		}
+		join := p.getIndexJoinByOuterIdx(1)
 		if join != nil {
 			plans = append(plans, join...)
 		}
 	case InnerJoin:
-		join, err := p.getIndexJoinByOuterIdx(0)
-		if err != nil {
-			return nil, false, err
-		}
+		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join...)
 		}
-		join, err = p.getIndexJoinByOuterIdx(1)
-		if err != nil {
-			return nil, false, err
-		}
+		join = p.getIndexJoinByOuterIdx(1)
 		if join != nil {
 			plans = append(plans, join...)
 		}
 	}
-	return plans, false, nil
+	return plans, false
 }
 
-func (p *LogicalJoin) generatePhysicalPlans() ([]PhysicalPlan, error) {
+func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	mergeJoins := p.getMergeJoin()
 	if p.preferMergeJoin && len(mergeJoins) > 0 {
-		return mergeJoins, nil
+		return mergeJoins
 	}
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
 
-	indexJoins, forced, err := p.tryToGetIndexJoin()
-	if err != nil {
-		return nil, err
-	}
+	indexJoins, forced := p.tryToGetIndexJoin()
 	if forced {
-		return indexJoins, nil
+		return indexJoins
 	}
 	joins = append(joins, indexJoins...)
 
@@ -358,7 +335,7 @@ func (p *LogicalJoin) generatePhysicalPlans() ([]PhysicalPlan, error) {
 		joins = append(joins, p.getHashJoin(1))
 		joins = append(joins, p.getHashJoin(0))
 	}
-	return joins, nil
+	return joins
 }
 
 func getPermutation(cols1, cols2 []*expression.Column) ([]int, []*expression.Column) {
@@ -496,7 +473,7 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
-func (p *TopN) generatePhysicalPlans() ([]PhysicalPlan, error) {
+func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
 	plans := []PhysicalPlan{p.Copy()}
 	if prop, canPass := getPropByOrderByItems(p.ByItems); canPass {
 		limit := Limit{
@@ -509,7 +486,7 @@ func (p *TopN) generatePhysicalPlans() ([]PhysicalPlan, error) {
 		limit.profile = p.profile
 		plans = append(plans, limit)
 	}
-	return plans, nil
+	return plans
 }
 
 // convert2NewPhysicalPlan implements PhysicalPlan interface.
@@ -572,11 +549,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 		return t, nil
 	}
 	// Else we suppose it only has one child.
-	physicalPlans, err := p.basePlan.self.(LogicalPlan).generatePhysicalPlans()
-	if err != nil {
-		return t, err
-	}
-	for _, pp := range physicalPlans {
+	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
 		t, err = p.getBestTask(t, prop, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -685,10 +658,8 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		return t, nil
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
-	indices, includeTableScan, err := availableIndices(p.indexHints, p.tableInfo)
-	if err != nil {
-		log.Error(err)
-	}
+	indices := p.availableIndices.indices
+	includeTableScan := p.availableIndices.includeTableScan
 	t = invalidTask
 	if includeTableScan {
 		t, err = p.convertToTableScan(prop)
@@ -1116,7 +1087,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *s
 	}
 }
 
-func (p *LogicalApply) generatePhysicalPlans() ([]PhysicalPlan, error) {
+func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
 	var join PhysicalPlan
 	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin ||
 		p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -1131,12 +1102,12 @@ func (p *LogicalApply) generatePhysicalPlans() ([]PhysicalPlan, error) {
 	}.init(p.ctx)
 	apply.SetSchema(p.schema)
 	apply.profile = p.profile
-	return []PhysicalPlan{apply}, nil
+	return []PhysicalPlan{apply}
 }
 
-func (p *baseLogicalPlan) generatePhysicalPlans() ([]PhysicalPlan, error) {
+func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 	np := p.basePlan.self.(PhysicalPlan).Copy()
-	return []PhysicalPlan{np}, nil
+	return []PhysicalPlan{np}
 }
 
 func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
@@ -1244,7 +1215,7 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 	return streamAggs
 }
 
-func (p *LogicalAggregation) generatePhysicalPlans() ([]PhysicalPlan, error) {
+func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
 	agg := PhysicalAggregation{
 		GroupByItems: p.GroupByItems,
@@ -1259,7 +1230,7 @@ func (p *LogicalAggregation) generatePhysicalPlans() ([]PhysicalPlan, error) {
 	streamAggs := p.getStreamAggs()
 	aggs = append(aggs, streamAggs...)
 
-	return aggs, nil
+	return aggs
 }
 
 func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {

@@ -170,7 +170,7 @@ type LogicalPlan interface {
 	preparePossibleProperties() [][]*expression.Column
 
 	// generatePhysicalPlans generates all possible plans.
-	generatePhysicalPlans() ([]PhysicalPlan, error)
+	generatePhysicalPlans() []PhysicalPlan
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 }
