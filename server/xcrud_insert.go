@@ -14,7 +14,6 @@
 package server
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/xprotocol/expr"
 	"github.com/pingcap/tidb/xprotocol/util"
@@ -106,7 +105,6 @@ func (b *insertBuilder) addValues(c []*Mysqlx_Crud.Insert_TypedRow, projectionSi
 
 func (b *insertBuilder) addRow(row *Mysqlx_Crud.Insert_TypedRow, projectionSize int, isRelation bool, msg []*Mysqlx_Datatypes.Scalar) (*string, error) {
 	if len(row.GetField()) == 0 || len(row.GetField()) != projectionSize {
-		log.Infof("[XUWT] row filed(%d), projection size(%d)", len(row.GetField()), projectionSize)
 		return nil, util.ErrorMessage(util.CodeErrXBadInsertData, "Wrong number of fields in row being inserted")
 	}
 	target := "("

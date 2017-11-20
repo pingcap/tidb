@@ -399,10 +399,10 @@ func (xsql *xSQL) isCollection(goCtx goctx.Context, schema string, collection st
 	if row.Len() != 4 {
 		return false, nil
 	}
-	cnt, _ := row.GetInt64(0)
-	doc, _ := row.GetInt64(1)
-	id, _ := row.GetInt64(2)
-	gen, _ := row.GetInt64(3)
+	cnt := row.GetInt64(0)
+	doc := row.GetInt64(1)
+	id := row.GetInt64(2)
+	gen := row.GetInt64(3)
 
 	return doc == 1 && id == 1 && (cnt == gen+doc+id), nil
 }

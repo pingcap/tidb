@@ -133,7 +133,7 @@ func (crud *xCrud) createCrudBuilder(msgType Mysqlx.ClientMessages_Type) (builde
 		return nil, util.ErrXBadMessage
 	}
 	// @TODO should be moved to default
-	log.Warnf("[XUWT] unknown crud builder type %d", msgType.String())
+	log.Warnf("unknown crud builder type %d", msgType.String())
 	return nil, util.ErrXBadMessage
 }
 
