@@ -70,6 +70,9 @@ type baseJoinResultGenerator struct {
 	outerIsRight bool
 }
 
+// makeJoinRowToBuffer concatenates "lhs" and "rhs" to "buffer" and return that buffer.
+// With the help of this function, we can make all of the joined rows to a consecutive
+// memory buffer and explore the best cache performance.
 func (outputer *baseJoinResultGenerator) makeJoinRowToBuffer(buffer []types.Datum, lhs, rhs Row) []types.Datum {
 	buffer = append(buffer, lhs...)
 	buffer = append(buffer, rhs...)
