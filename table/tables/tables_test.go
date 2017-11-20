@@ -77,7 +77,7 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpClient()
 	ctx.GetSessionVars().InRestrictedSQL = false
-	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	c.Assert(rid, Greater, int64(0))
 	row, err := tb.Row(ctx, rid)
@@ -85,9 +85,9 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"), false)
 	c.Assert(err, NotNil)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"), false)
 	c.Assert(err, NotNil)
 
 	c.Assert(tb.UpdateRecord(ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
@@ -118,7 +118,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
 	// Make sure index data is also removed after tb.RemoveRecord().
 	c.Assert(indexCnt(), Equals, 0)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
 	handle, found, err := tb.Seek(ctx, 0)
@@ -209,9 +209,9 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 	c.Assert(ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, nil))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, nil), false)
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(2, nil))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, nil), false)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Txn().Rollback(), IsNil)
 	_, err = ts.se.Execute("drop table test.t")
@@ -269,7 +269,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	c.Assert(err, IsNil)
 	c.Assert(ctx.NewTxn(), IsNil)
-	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)

@@ -25,7 +25,7 @@ import (
 
 // VirtualDataSource is used to extract data from the struct in memory.
 type VirtualDataSource interface {
-	// GetRows, do the actual job
+	// GetRows do the actual job
 	GetRows(ctx context.Context) (fullRows [][]types.Datum, err error)
 	// Meta return the meta of table
 	Meta() *model.TableInfo
@@ -124,7 +124,7 @@ func (vt *VirtualTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table Type interface.
-func (vt *VirtualTable) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
+func (vt *VirtualTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
