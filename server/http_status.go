@@ -53,6 +53,7 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/key/{db}/{table}/{recordID}", mvccTxnHandler{tikvHandler, opMvccGetByKey})
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
+		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandler, opMvccGetByHex})
 	}
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
