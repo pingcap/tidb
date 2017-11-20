@@ -417,17 +417,9 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	skipCheck := ctx.GetSessionVars().SkipConstraintCheck
 	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
-		// Check key exists.
-		recordKey := t.RecordKey(recordID)
-		e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
-		txn.SetOption(kv.PresumeKeyNotExistsError, e)
-		_, err := txn.Get(recordKey)
-		if err == nil {
-			return recordID, errors.Trace(e)
-		} else if !kv.ErrNotExist.Equal(err) {
-			return 0, errors.Trace(err)
+		if err := CheckHandleExists(ctx, t, recordID); err != nil {
+			return recordID, errors.Trace(err)
 		}
-		txn.DelOption(kv.PresumeKeyNotExistsError)
 	}
 
 	for _, v := range t.WritableIndices() {
@@ -806,6 +798,24 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 		if len(idx.Meta().Columns) == 1 && strings.EqualFold(idx.Meta().Columns[0].Name.L, name) {
 			return idx
 		}
+	}
+	return nil
+}
+
+// CheckHandleExists check whether recordID key exists. if not exists, return nil,
+// otherwise return kv.ErrKeyExists error.
+func CheckHandleExists(ctx context.Context, t table.Table, recordID int64) error {
+	txn := ctx.Txn()
+	// Check key exists.
+	recordKey := t.RecordKey(recordID)
+	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
+	txn.SetOption(kv.PresumeKeyNotExistsError, e)
+	defer txn.DelOption(kv.PresumeKeyNotExistsError)
+	_, err := txn.Get(recordKey)
+	if err == nil {
+		return errors.Trace(e)
+	} else if !kv.ErrNotExist.Equal(err) {
+		return errors.Trace(err)
 	}
 	return nil
 }
