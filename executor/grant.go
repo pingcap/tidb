@@ -73,7 +73,11 @@ func (e *GrantExec) Next() (Row, error) {
 				if user.AuthOpt.ByAuthString {
 					pwd = auth.EncodePassword(user.AuthOpt.AuthString)
 				} else {
-					pwd = auth.EncodePassword(user.AuthOpt.HashString)
+					if len(user.AuthOpt.HashString) == 41 && strings.HasPrefix(user.AuthOpt.HashString, "*") {
+						pwd = user.AuthOpt.HashString
+					} else {
+						return nil, errors.Trace(ErrPasswordFormat)
+					}
 				}
 			}
 
