@@ -222,7 +222,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	// To drop a table with reorgTableDeleteLimit+10 records.
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= reorgTableDeleteLimit+10; i++ {
-		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
 

@@ -62,11 +62,11 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	// insert t values (1, 1), (2, 2), (3, 3)
-	_, err = originTable.AddRecord(ctx, types.MakeDatums(1, 1))
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(1, 1), false)
 	c.Assert(err, IsNil)
-	_, err = originTable.AddRecord(ctx, types.MakeDatums(2, 2))
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(2, 2), false)
 	c.Assert(err, IsNil)
-	_, err = originTable.AddRecord(ctx, types.MakeDatums(3, 3))
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(3, 3), false)
 	c.Assert(err, IsNil)
 
 	err = ctx.Txn().Commit()
@@ -186,7 +186,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, de
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = delOnlyTbl.AddRecord(ctx, types.MakeDatums(4, 4))
+	_, err = delOnlyTbl.AddRecord(ctx, types.MakeDatums(4, 4), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -196,7 +196,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, de
 	}
 
 	// WriteOnlyTable: insert t values (5, 5);
-	_, err = writeOnlyTbl.AddRecord(ctx, types.MakeDatums(5, 5))
+	_, err = writeOnlyTbl.AddRecord(ctx, types.MakeDatums(5, 5), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -259,7 +259,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(6, 6))
+	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(6, 6), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -268,7 +268,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 		return errors.Trace(err)
 	}
 	// PublicTable: insert t values (7, 7)
-	_, err = publicTbl.AddRecord(ctx, types.MakeDatums(7, 7))
+	_, err = publicTbl.AddRecord(ctx, types.MakeDatums(7, 7), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -326,7 +326,7 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, p
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(8, 8))
+	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(8, 8), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -366,7 +366,7 @@ func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(9, 9))
+	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(9, 9), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -377,7 +377,7 @@ func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, 
 	}
 
 	// DeleteOnlyTable insert t values (10, 10)
-	_, err = delTbl.AddRecord(ctx, types.MakeDatums(10, 10))
+	_, err = delTbl.AddRecord(ctx, types.MakeDatums(10, 10), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
