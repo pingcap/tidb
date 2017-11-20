@@ -15,6 +15,7 @@ package aggregation
 
 import (
 	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
