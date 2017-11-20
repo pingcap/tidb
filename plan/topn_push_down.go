@@ -131,7 +131,11 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *TopN, idx int) LogicalPlan {
 				ByItems: make([]*ByItems, len(topN.ByItems)),
 				partial: true,
 			}.init(topN.allocator, topN.ctx)
-			copy(newTopN.ByItems, topN.ByItems)
+			// The old topN should be maintained upon Join,
+			// so we clone TopN here and push down a newTopN.
+			for i := range topN.ByItems {
+				newTopN.ByItems[i] = topN.ByItems[i].Clone()
+			}
 		}
 	}
 	return p.children[idx].(LogicalPlan).pushDownTopN(newTopN)
