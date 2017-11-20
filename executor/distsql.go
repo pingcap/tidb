@@ -343,7 +343,7 @@ func timeZoneOffset(ctx context.Context) int64 {
 // Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
 const (
 	// FlagIgnoreTruncate indicates if truncate error should be ignored.
-	// NextChunk-only statements should ignore truncate error, write statements should not ignore truncate error.
+	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
 	FlagIgnoreTruncate uint64 = 1
 	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should

@@ -792,7 +792,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	defer terror.Call(rs.Close)
 	if rs.SupportChunk() {
 		columns := rs.Columns()
-		err := cc.writeColumns(columns)
+		err := cc.writeColumnInfo(columns)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -809,7 +809,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		return errors.Trace(err)
 	}
 	columns := rs.Columns()
-	err = cc.writeColumns(columns)
+	err = cc.writeColumnInfo(columns)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -848,7 +848,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) writeColumns(columns []*ColumnInfo) error {
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	data := make([]byte, 4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
