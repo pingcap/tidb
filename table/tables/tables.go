@@ -802,7 +802,7 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 	return nil
 }
 
-// CheckHandleExists Check if recordID key exists. if not exists, return nil,
+// CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
 func CheckHandleExists(ctx context.Context, t table.Table, recordID int64) error {
 	txn := ctx.Txn()
