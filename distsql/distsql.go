@@ -45,8 +45,8 @@ type SelectResult interface {
 	Next() (PartialResult, error)
 	// NextRaw gets the next raw result.
 	NextRaw() ([]byte, error)
-	// Read reads the data into chunk.
-	Read(*chunk.Chunk) error
+	// NextChunk reads the data into chunk.
+	NextChunk(*chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -136,7 +136,7 @@ func (r *selectResult) NextRaw() ([]byte, error) {
 	return re.result, errors.Trace(re.err)
 }
 
-// Read reads data to the chunk.
+// NextChunk reads data to the chunk.
 func (r *selectResult) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	re := <-r.results

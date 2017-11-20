@@ -92,7 +92,7 @@ func (a *recordSet) Next() (types.Row, error) {
 }
 
 func (a *recordSet) NextChunk(chk *chunk.Chunk) error {
-	err := a.executor.Read(chk)
+	err := a.executor.NextChunk(chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)

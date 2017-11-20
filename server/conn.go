@@ -871,7 +871,7 @@ func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	for {
-		err := rs.Read(chk)
+		err := rs.NextChunk(chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

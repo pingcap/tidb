@@ -457,7 +457,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *TableReaderExecutor) NextChunk(chk *chunk.Chunk) error {
-	return e.result.Read(chk)
+	return e.result.NextChunk(chk)
 }
 
 // Open implements the Executor Open interface.
@@ -561,7 +561,7 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *IndexReaderExecutor) NextChunk(chk *chunk.Chunk) error {
-	return e.result.Read(chk)
+	return e.result.NextChunk(chk)
 }
 
 // Open implements the Executor Open interface.
