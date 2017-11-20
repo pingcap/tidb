@@ -317,6 +317,7 @@ func (do *Domain) Reload() error {
 }
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
+	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
 	// TODO: Reset ticker or make interval longer.
@@ -496,6 +497,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
+		d.wg.Add(1)
 		// Local store needs to get the change information for every DDL state in each session.
 		go d.loadSchemaInLoop(ddlLease)
 	}
