@@ -64,7 +64,7 @@ func (bf *bitAndFunction) Update(ctx *AggEvaluateContext, sc *variable.Statement
 		if len(bf.Args) == 0 {
 			return nil
 		} else if len(bf.Args) != 1 {
-			return errors.New("Wrong number of args for AggFuncBitXor")
+			return errors.New("Wrong number of args for AggFuncBitAnd")
 		}
 		a := bf.Args[0]
 		value, err := a.Eval(row)
