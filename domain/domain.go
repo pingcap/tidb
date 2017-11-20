@@ -340,7 +340,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
 			do.SchemaValidator.Stop()
-			err := syncer.Restart(goctx.Background())
+			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
@@ -349,6 +349,28 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-do.exit:
 			return
 		}
+	}
+}
+
+func (do *Domain) mustRestartSyncer() error {
+	ctx := goctx.Background()
+	syncer := do.ddl.SchemaSyncer()
+	timeout := 5 * time.Second
+
+	for {
+		childCtx, cancel := goctx.WithTimeout(ctx, timeout)
+		err := syncer.Restart(childCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		// If the domain exits, we return this function.
+		select {
+		case <-do.exit:
+			return errors.Trace(err)
+		default:
+		}
+		time.Sleep(time.Second)
 	}
 }
 
