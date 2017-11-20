@@ -57,7 +57,7 @@ Read the [Quick Start](https://pingcap.com/doc-QUICKSTART).
 Contributions are welcomed and greatly appreciated. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for details on submitting patches and the contribution workflow.
 
-## Connect with us
+## Contact us
 
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - **Reddit**: https://www.reddit.com/r/TiDB/
