@@ -76,7 +76,7 @@ type selectResult struct {
 	loc        *time.Location
 
 	selectResp *tipb.SelectResponse
-	reapChkIdx int
+	respChkIdx int
 }
 
 type newResultWithErr struct {
@@ -149,16 +149,16 @@ func (r *selectResult) NextChunk(chk *chunk.Chunk) error {
 	if selectResp == nil {
 		return nil
 	}
-	err = r.readRowsData(chk, selectResp.Chunks[r.reapChkIdx].RowsData)
+	err = r.readRowsData(chk, selectResp.Chunks[r.respChkIdx].RowsData)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	r.reapChkIdx++
+	r.respChkIdx++
 	return nil
 }
 
 func (r *selectResult) getSelectResp() (*tipb.SelectResponse, error) {
-	if r.selectResp != nil && r.reapChkIdx < len(r.selectResp.Chunks) {
+	if r.selectResp != nil && r.respChkIdx < len(r.selectResp.Chunks) {
 		return r.selectResp, nil
 	}
 	for {
@@ -178,7 +178,7 @@ func (r *selectResult) getSelectResp() (*tipb.SelectResponse, error) {
 			continue
 		}
 		r.selectResp = resp
-		r.reapChkIdx = 0
+		r.respChkIdx = 0
 		return resp, nil
 	}
 }
