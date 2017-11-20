@@ -315,7 +315,7 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched []bool, 
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
+func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
 	for _, col := range t.Cols() {
 		if col.IsPKHandleColumn(t.meta) {
@@ -340,7 +340,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	}
 
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, bs)
+	h, err := t.addIndices(ctx, recordID, r, bs, skipHandleCheck)
 	if err != nil {
 		return h, errors.Trace(err)
 	}
@@ -411,12 +411,12 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 }
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
-func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore) (int64, error) {
+func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore, skipHandleCheck bool) (int64, error) {
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	skipCheck := ctx.GetSessionVars().SkipConstraintCheck
-	if t.meta.PKIsHandle && !skipCheck {
+	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
 		// Check key exists.
 		recordKey := t.RecordKey(recordID)
 		e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
