@@ -69,7 +69,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select a from t where a between 1 and 2 order by c",
 			best: "TableReader(Table(t))->Sort->Projection",
 		},
-		// Test DNF condition + Double NextChunk.
+		// Test DNF condition + Double Read.
 		// FIXME: Some bugs still exist in selectivity.
 		//{
 		//	sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
@@ -635,7 +635,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		sql  string
 		best string
 	}{
-		// NextChunk table.
+		// Read table.
 		{
 			sql:  "select * from t",
 			best: "TableReader(Table(t))->UnionScan([])",

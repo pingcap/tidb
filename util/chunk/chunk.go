@@ -32,13 +32,17 @@ type Chunk struct {
 	columns []*column
 }
 
-const initialCapacity = 32
+// Capacity constants.
+const (
+	InitialCapacity = 32
+	MaxCapacity     = 1024
+)
 
 // NewChunk creates a new chunk with field types.
 func NewChunk(fields []*types.FieldType) *Chunk {
 	chk := new(Chunk)
 	for _, f := range fields {
-		chk.addColumnByFieldType(f, initialCapacity)
+		chk.addColumnByFieldType(f, InitialCapacity)
 	}
 	return chk
 }

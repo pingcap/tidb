@@ -74,6 +74,9 @@ type selectResult struct {
 	rowLen     int
 	fieldTypes []*types.FieldType
 	loc        *time.Location
+
+	selectResp *tipb.SelectResponse
+	reapChkIdx int
 }
 
 type newResultWithErr struct {
@@ -139,26 +142,49 @@ func (r *selectResult) NextRaw() ([]byte, error) {
 // NextChunk reads data to the chunk.
 func (r *selectResult) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
-	re := <-r.results
-	if re.err != nil {
-		return errors.Trace(re.err)
-	}
-	if re.result == nil {
-		return nil
-	}
-	// As we will use streaming soon, we can just write all data to a single *chunk.Chunk.
-	resp := new(tipb.SelectResponse)
-	err := resp.Unmarshal(re.result)
+	selectResp, err := r.getSelectResp()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := range resp.Chunks {
-		err = r.readRowsData(chk, resp.Chunks[i].RowsData)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	if selectResp == nil {
+		return nil
 	}
+	err = r.readRowsData(chk, selectResp.Chunks[r.reapChkIdx].RowsData)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	r.reapChkIdx++
 	return nil
+}
+
+func (r *selectResult) getSelectResp() (*tipb.SelectResponse, error) {
+	if r.selectResp != nil && r.reapChkIdx < len(r.selectResp.Chunks) {
+		return r.selectResp, nil
+	}
+	for {
+		re := <-r.results
+		if re.err != nil {
+			return nil, errors.Trace(re.err)
+		}
+		if re.result == nil {
+			return nil, nil
+		}
+		resp := new(tipb.SelectResponse)
+		err := resp.Unmarshal(re.result)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(resp.Chunks) == 0 {
+			continue
+		}
+		r.selectResp = resp
+		r.reapChkIdx = 0
+		return resp, nil
+	}
+}
+
+func (r *selectResult) readRespChunk(chk *chunk.Chunk, rChkIdx int) {
+	r.readRowsData(chk, r.selectResp.Chunks[rChkIdx].RowsData)
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk, rowsData []byte) error {
