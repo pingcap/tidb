@@ -125,7 +125,7 @@ func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex
 
 func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -138,18 +138,21 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 		NullCount:         nullCount,
 	}
 	for i := 0; i < bucketSize; i++ {
-		bucketID := rows[i].Data[0].GetInt64()
-		count := rows[i].Data[1].GetInt64()
-		repeats := rows[i].Data[2].GetInt64()
+		bucketID := rows[i].GetInt64(0)
+		count := rows[i].GetInt64(1)
+		repeats := rows[i].GetInt64(2)
 		var upperBound, lowerBound types.Datum
 		if isIndex == 1 {
-			lowerBound, upperBound = rows[i].Data[3], rows[i].Data[4]
+			lowerBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			upperBound = rows[i].GetDatum(4, &fields[4].Column.FieldType)
 		} else {
-			lowerBound, err = rows[i].Data[3].ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			d := rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			lowerBound, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			upperBound, err = rows[i].Data[4].ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			d = rows[i].GetDatum(4, &fields[4].Column.FieldType)
+			upperBound, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -177,10 +180,10 @@ func columnCountFromStorage(ctx context.Context, tableID, colID int64) (int64, e
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if rows[0].Data[0].IsNull() {
+	if rows[0].IsNull(0) {
 		return 0, nil
 	}
-	return rows[0].Data[0].GetMysqlDecimal().ToInt()
+	return rows[0].GetMyDecimal(0).ToInt()
 }
 
 func (hg *Histogram) toString(isIndex bool) string {
@@ -306,7 +309,7 @@ func (hg *Histogram) betweenRowCount(sc *variable.StatementContext, a, b types.D
 		return 0, errors.Trace(err)
 	}
 	if lessCountA >= lessCountB {
-		return hg.inBucketBetweenCount(), nil
+		return hg.totalRowCount() / float64(hg.NDV), nil
 	}
 	return lessCountB - lessCountA, nil
 }
@@ -316,15 +319,6 @@ func (hg *Histogram) totalRowCount() float64 {
 		return 0
 	}
 	return float64(hg.Buckets[len(hg.Buckets)-1].Count)
-}
-
-func (hg *Histogram) bucketRowCount() float64 {
-	return hg.totalRowCount() / float64(len(hg.Buckets))
-}
-
-func (hg *Histogram) inBucketBetweenCount() float64 {
-	// TODO: Make this estimation more accurate using uniform spread assumption.
-	return hg.bucketRowCount()/3 + 1
 }
 
 func (hg *Histogram) lowerBound(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {

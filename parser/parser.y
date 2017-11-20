@@ -380,6 +380,8 @@ import (
 
 	/* The following tokens belong to NotKeywordToken. */
 	addDate		"ADDDATE"
+	bitAnd		"BIT_AND"
+	bitOr		"BIT_OR"
 	bitXor		"BIT_XOR"
 	cast		"CAST"
 	count		"COUNT"
@@ -521,6 +523,7 @@ import (
 	CastType			"Cast function target type"
 	CharsetName			"Character set name"
 	ColumnDef			"table column definition"
+	ColumnDefList			"table column definition list"
 	ColumnName			"column name"
 	ColumnNameList			"column name list"
 	ColumnNameListOpt		"column name list opt"
@@ -837,16 +840,16 @@ AlterTableSpec:
 |	"ADD" ColumnKeywordOpt ColumnDef ColumnPosition
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp: 		ast.AlterTableAddColumn,
-			NewColumn:	$3.(*ast.ColumnDef),
+			Tp: 		ast.AlterTableAddColumns,
+			NewColumns:	[]*ast.ColumnDef{$3.(*ast.ColumnDef)},
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
-|	"ADD" ColumnKeywordOpt '(' ColumnDef ')'
+|	"ADD" ColumnKeywordOpt '(' ColumnDefList ')'
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp: 		ast.AlterTableAddColumn,
-			NewColumn:	$4.(*ast.ColumnDef),
+			Tp: 		ast.AlterTableAddColumns,
+			NewColumns:	$4.([]*ast.ColumnDef),
 		}
 	}
 |	"ADD" Constraint
@@ -894,7 +897,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableModifyColumn,
-			NewColumn:	$3.(*ast.ColumnDef),
+			NewColumns:	[]*ast.ColumnDef{$3.(*ast.ColumnDef)},
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
@@ -903,28 +906,30 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableChangeColumn,
 			OldColumnName:	$3.(*ast.ColumnName),
-			NewColumn: 	$4.(*ast.ColumnDef),
+			NewColumns:	[]*ast.ColumnDef{$4.(*ast.ColumnDef)},
 			Position:	$5.(*ast.ColumnPosition),
 		}
 	}
 |	"ALTER" ColumnKeywordOpt ColumnName "SET" "DEFAULT" SignedLiteral
 	{
 		option := &ast.ColumnOption{Expr: $6}
+		colDef := &ast.ColumnDef{
+			Name: 	 $3.(*ast.ColumnName),
+			Options: []*ast.ColumnOption{option},
+		}
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableAlterColumn,
-			NewColumn:	&ast.ColumnDef{
-						Name: 	 $3.(*ast.ColumnName),
-						Options: []*ast.ColumnOption{option},
-			},
+			NewColumns:	[]*ast.ColumnDef{colDef},
 		}
 	}
 |	"ALTER" ColumnKeywordOpt ColumnName "DROP" "DEFAULT"
 	{
+		colDef := &ast.ColumnDef{
+			Name: 	 $3.(*ast.ColumnName),
+		}
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableAlterColumn,
-			NewColumn:	&ast.ColumnDef{
-						Name: 	 $3.(*ast.ColumnName),
-			},
+			NewColumns:	[]*ast.ColumnDef{colDef},
 		}
 	}
 |	"RENAME" "TO" TableName
@@ -1120,6 +1125,16 @@ BinlogStmt:
 	"BINLOG" stringLit
 	{
 		$$ = &ast.BinlogStmt{Str: $2}
+	}
+
+ColumnDefList:
+	ColumnDef
+	{
+		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}	
+	}
+|	ColumnDefList ',' ColumnDef
+	{
+		$$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
 	}
 
 ColumnDef:
@@ -2327,7 +2342,7 @@ TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
 | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
 
 /************************************************************************************
@@ -3210,6 +3225,14 @@ SumExpr:
 	"AVG" '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+|	"BIT_AND" '(' Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
+	}
+|	"BIT_OR" '(' Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
 |	"BIT_XOR" '(' Expression ')'
 	{

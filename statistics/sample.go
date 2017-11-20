@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"fmt"
 	"math/rand"
 
 	"github.com/juju/errors"
@@ -157,14 +158,18 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		if row == nil {
 			return collectors, pkBuilder, nil
 		}
+		if len(s.RecordSet.Fields()) == 0 {
+			panic(fmt.Sprintf("%T", s.RecordSet))
+		}
+		datums := ast.RowToDatums(row, s.RecordSet.Fields())
 		if s.PkID != -1 {
-			err = pkBuilder.Iterate(row.Data[0])
+			err = pkBuilder.Iterate(datums[0])
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			row.Data = row.Data[1:]
+			datums = datums[1:]
 		}
-		for i, val := range row.Data {
+		for i, val := range datums {
 			err = collectors[i].collect(val)
 			if err != nil {
 				return nil, nil, errors.Trace(err)

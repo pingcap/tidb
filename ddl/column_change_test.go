@@ -362,7 +362,7 @@ func checkResult(ctx context.Context, t table.Table, cols []*table.Column, rows 
 }
 
 func datumsToInterfaces(datums []types.Datum) []interface{} {
-	var ifs []interface{}
+	ifs := make([]interface{}, 0, len(datums))
 	for _, d := range datums {
 		ifs = append(ifs, d.GetValue())
 	}

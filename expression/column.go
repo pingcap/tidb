@@ -208,26 +208,26 @@ func (col *Column) EvalInt(row types.Row, sc *variable.StatementContext) (int64,
 		res, err := val.ToInt64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
-	val, isNull := row.GetInt64(col.Index)
-	return val, isNull, nil
+	if row.IsNull(col.Index) {
+		return 0, true, nil
+	}
+	return row.GetInt64(col.Index), false, nil
 }
 
 // EvalReal returns real representation of Column.
 func (col *Column) EvalReal(row types.Row, sc *variable.StatementContext) (float64, bool, error) {
+	if row.IsNull(col.Index) {
+		return 0, true, nil
+	}
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
-		if val.IsNull() {
-			return 0, true, nil
-		}
 		res, err := val.ToFloat64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
 	if col.GetType().Tp == mysql.TypeFloat {
-		val, isNull := row.GetFloat32(col.Index)
-		return float64(val), isNull, nil
+		return float64(row.GetFloat32(col.Index)), false, nil
 	}
-	val, isNull := row.GetFloat64(col.Index)
-	return val, isNull, nil
+	return row.GetFloat64(col.Index), false, nil
 }
 
 // EvalString returns string representation of Column.
@@ -240,8 +240,10 @@ func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (str
 		res, err := val.ToString()
 		return res, err != nil, errors.Trace(err)
 	}
-	val, isNull := row.GetString(col.Index)
-	return val, isNull, nil
+	if row.IsNull(col.Index) {
+		return "", true, nil
+	}
+	return row.GetString(col.Index), false, nil
 }
 
 // EvalDecimal returns decimal representation of Column.
@@ -264,20 +266,26 @@ func (col *Column) EvalDecimal(row types.Row, sc *variable.StatementContext) (*t
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
 func (col *Column) EvalTime(row types.Row, sc *variable.StatementContext) (types.Time, bool, error) {
-	t, isNull := row.GetTime(col.Index)
-	return t, isNull, nil
+	if row.IsNull(col.Index) {
+		return types.Time{}, true, nil
+	}
+	return row.GetTime(col.Index), false, nil
 }
 
 // EvalDuration returns Duration representation of Column.
 func (col *Column) EvalDuration(row types.Row, sc *variable.StatementContext) (types.Duration, bool, error) {
-	dur, isNull := row.GetDuration(col.Index)
-	return dur, isNull, nil
+	if row.IsNull(col.Index) {
+		return types.Duration{}, true, nil
+	}
+	return row.GetDuration(col.Index), false, nil
 }
 
 // EvalJSON returns JSON representation of Column.
 func (col *Column) EvalJSON(row types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
-	j, isNull := row.GetJSON(col.Index)
-	return j, isNull, nil
+	if row.IsNull(col.Index) {
+		return json.JSON{}, true, nil
+	}
+	return row.GetJSON(col.Index), false, nil
 }
 
 // Clone implements Expression interface.

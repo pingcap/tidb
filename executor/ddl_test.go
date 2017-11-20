@@ -65,7 +65,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 		if row == nil {
 			break
 		}
-		c.Assert(row.Data[1].GetString(), Equals, "float")
+		c.Assert(row.GetString(1), Equals, "float")
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
@@ -75,7 +75,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 		if row == nil {
 			break
 		}
-		c.Assert(row.Data[1].GetString(), Equals, "double")
+		c.Assert(row.GetString(1), Equals, "double")
 	}
 
 	// table option is auto-increment
@@ -143,9 +143,8 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(len(row.Data), Equals, 1)
-	t := row.Data[0].GetMysqlTime()
-	c.Assert(now, GreaterEqual, t.String())
+	c.Assert(row.Len(), Equals, 1)
+	c.Assert(now, GreaterEqual, row.GetTime(0).String())
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 }
