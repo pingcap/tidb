@@ -94,21 +94,21 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 
 func checkTooLongSchema(schema model.CIStr) error {
 	if len(schema.L) > mysql.MaxDatabaseNameLength {
-		return ErrTooLongIdent.Gen("too long schema %s", schema)
+		return ErrTooLongIdent.GenByArgs(schema)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
 	if len(table.L) > mysql.MaxTableNameLength {
-		return ErrTooLongIdent.Gen("too long table %s", table)
+		return ErrTooLongIdent.GenByArgs(table)
 	}
 	return nil
 }
 
 func checkTooLongIndex(index model.CIStr) error {
 	if len(index.L) > mysql.MaxIndexIdentifierLen {
-		return ErrTooLongIdent.Gen("too long index %s", index)
+		return ErrTooLongIdent.GenByArgs(index)
 	}
 	return nil
 }
@@ -506,7 +506,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name)
+			return ErrTooLongIdent.GenByArgs(colDef.Name.Name)
 		}
 	}
 	return nil
@@ -950,7 +950,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	if len(colName) > mysql.MaxColumnNameLength {
-		return ErrTooLongIdent.Gen("too long column %s", colName)
+		return ErrTooLongIdent.GenByArgs(colName)
 	}
 
 	// Ingore table constraints now, maybe return error later.
