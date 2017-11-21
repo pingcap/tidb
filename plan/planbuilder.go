@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -44,7 +43,7 @@ var (
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
 	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
-	ErrHintMissIndex        = terror.ClassOptimizerPlan.New(CodeHintMissIndex, mysql.MySQLErrName[mysql.ErrHintMissIndex])
+	ErrKeyDoesNotExits      = terror.ClassOptimizerPlan.New(CodeKeyDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyDoesNotExits])
 )
 
 // Error codes.
@@ -60,7 +59,7 @@ const (
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
 	CodeBadTable                          = mysql.ErrBadTable
-	CodeHintMissIndex                     = mysql.ErrHintMissIndex
+	CodeKeyDoesNotExits                   = mysql.ErrKeyDoesNotExits
 )
 
 func init() {
@@ -72,7 +71,7 @@ func init() {
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
 		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
 		CodeBadTable:           mysql.ErrBadTable,
-		CodeHintMissIndex:      mysql.ErrHintMissIndex,
+		CodeKeyDoesNotExits:    mysql.ErrKeyDoesNotExits,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
@@ -331,7 +330,7 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 				if idx != nil {
 					indices = append(indices, idx)
 				} else {
-					return nil, true, ErrHintMissIndex.GenByArgs(idxName, tableInfo.Name)
+					return nil, true, ErrKeyDoesNotExits.GenByArgs(idxName, tableInfo.Name)
 				}
 			}
 		case ast.HintIgnore:
@@ -341,7 +340,7 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 				if idx != nil {
 					ignores = append(ignores, idx)
 				} else {
-					return nil, true, ErrAnalyzeMissIndex.GenByArgs(idxName, tableInfo.Name)
+					return nil, true, ErrKeyDoesNotExits.GenByArgs(idxName, tableInfo.Name)
 				}
 			}
 		}
