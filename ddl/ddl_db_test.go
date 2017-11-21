@@ -207,11 +207,11 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
-	domain := domain.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := domain.Reload()
+	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
 	c.Assert(err, IsNil)
 	return tbl
 }
@@ -1168,8 +1168,8 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	tk.MustExec("create table t2 (c1 int, c2 int)")
 	tk.MustExec("insert t2 values (1, 3), (2, 5)")
 	ctx := tk.Se.(context.Context)
-	domain := domain.GetDomain(ctx)
-	is := domain.InfoSchema()
+	dom := domain.GetDomain(ctx)
+	is := dom.InfoSchema()
 	db, ok := is.SchemaByName(model.NewCIStr("test"))
 	c.Assert(ok, IsTrue)
 	t1Tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -1195,7 +1195,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
 		return nil
 	})
-	err = domain.Reload()
+	err = dom.Reload()
 	c.Assert(err, IsNil)
 
 	tk.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
@@ -1211,7 +1211,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
 		return nil
 	})
-	err = domain.Reload()
+	err = dom.Reload()
 	c.Assert(err, IsNil)
 
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
