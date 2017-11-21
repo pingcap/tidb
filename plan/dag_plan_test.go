@@ -185,40 +185,6 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestDAGPlanBuilderOptimizeError(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	se, err := tidb.CreateSession(store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
-	c.Assert(err, IsNil)
-	tests := []struct {
-		sql     string
-		errRegx string
-	}{
-		// Test non-exist index hint.
-		{
-			sql:     "select * from t t1 use index(e)",
-			errRegx: "*Key 'e' doesn't exist in table 't'",
-		},
-	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-
-		err = se.NewTxn()
-		c.Assert(err, IsNil)
-		_, err = plan.Optimize(se, stmt, s.is)
-		c.Assert(err, ErrorMatches, tt.errRegx)
-	}
-}
-
 func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

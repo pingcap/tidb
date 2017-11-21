@@ -660,6 +660,28 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestPlanBuilderError(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql string
+		err string
+	}{
+		{
+			sql: "select * from t t1 use index(e)",
+			err: "[plan:1176]Key 'e' doesn't exist in table 't'",
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		Preprocess(s.ctx, stmt, s.is, false)
+		_, err = BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err.Error(), Equals, ca.err)
+	}
+}
+
 func (s *testPlanSuite) TestJoinReOrder(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
