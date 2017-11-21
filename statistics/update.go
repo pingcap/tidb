@@ -28,13 +28,13 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-// SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
+// SessionStatsCollector is a list item that holds the delta updater. If you want to write or read updater, you must lock it.
 type SessionStatsCollector struct {
 	sync.Mutex
 
-	mapper update.Updater
-	prev   *SessionStatsCollector
-	next   *SessionStatsCollector
+	updater update.Updater
+	prev    *SessionStatsCollector
+	next    *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
@@ -49,7 +49,7 @@ func (s *SessionStatsCollector) Delete() {
 // Merge merges the updater into session collector's updater.
 func (s *SessionStatsCollector) Merge(upd update.Updater) {
 	s.Lock()
-	s.mapper.Merge(upd)
+	s.updater.Merge(upd)
 	s.Unlock()
 }
 
@@ -73,9 +73,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper: update.NewUpdater(),
-		next:   h.listHead.next,
-		prev:   h.listHead,
+		updater: update.NewUpdater(),
+		next:    h.listHead.next,
+		prev:    h.listHead,
 	}
 	if h.listHead.next != nil {
 		h.listHead.next.prev = newCollector
@@ -90,15 +90,15 @@ func (h *Handle) DumpStatsDeltaToKV() {
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
 		collector.Lock()
-		h.globalMap.Merge(collector.mapper)
-		collector.mapper = update.NewUpdater()
+		h.globalUpdater.Merge(collector.updater)
+		collector.updater = update.NewUpdater()
 		collector.Unlock()
 	}
 	h.listHead.Unlock()
-	for id, item := range h.globalMap {
+	for id, item := range h.globalUpdater {
 		err := h.dumpTableStatDeltaToKV(id, item)
 		if err == nil {
-			delete(h.globalMap, id)
+			delete(h.globalUpdater, id)
 		} else {
 			log.Warnf("Error happens when updating stats table, the error message is %s.", err.Error())
 		}

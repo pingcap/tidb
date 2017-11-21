@@ -49,7 +49,7 @@ type Handle struct {
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
 	// globalUpdater contains all the updater from collectors when we dump them to KV.
-	globalMap update.Updater
+	globalUpdater update.Updater
 
 	Lease time.Duration
 }
@@ -65,8 +65,8 @@ func (h *Handle) Clear() {
 	for len(h.analyzeResultCh) > 0 {
 		<-h.analyzeResultCh
 	}
-	h.listHead = &SessionStatsCollector{mapper: update.NewUpdater()}
-	h.globalMap = update.NewUpdater()
+	h.listHead = &SessionStatsCollector{updater: update.NewUpdater()}
+	h.globalUpdater = update.NewUpdater()
 }
 
 // NewHandle creates a Handle for update stats.
@@ -75,8 +75,8 @@ func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 		ctx:             ctx,
 		ddlEventCh:      make(chan *util.Event, 100),
 		analyzeResultCh: make(chan *AnalyzeResult, 100),
-		listHead:        &SessionStatsCollector{mapper: update.NewUpdater()},
-		globalMap:       update.NewUpdater(),
+		listHead:        &SessionStatsCollector{updater: update.NewUpdater()},
+		globalUpdater:   update.NewUpdater(),
 		Lease:           lease,
 	}
 	handle.statsCache.Store(statsCache{})
