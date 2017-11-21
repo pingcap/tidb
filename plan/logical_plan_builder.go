@@ -1424,10 +1424,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 
-	if sel.LockTp == ast.SelectLockForUpdate {
-		b.needColHandle++
-	}
-
 	var (
 		p                             LogicalPlan
 		aggFuncs                      []*ast.AggregateFuncExpr
@@ -1515,9 +1511,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	sel.Fields.Fields = originalFields
-	if sel.LockTp == ast.SelectLockForUpdate {
-		b.needColHandle--
-	}
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
 		setParentAndChildren(proj, p)
@@ -1536,6 +1529,18 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 	dual := TableDual{RowCount: 1}.init(b.ctx)
 	dual.SetSchema(expression.NewSchema())
 	return dual
+}
+
+func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
+	return &expression.Column{
+		FromID:   ds.id,
+		DBName:   ds.DBName,
+		TblName:  ds.tableInfo.Name,
+		ColName:  model.ExtraHandleName,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Position: len(ds.tableInfo.Columns), // set a unique position
+		ID:       model.ExtraHandleID,
+	}
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
@@ -1564,7 +1569,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable: statisticTable,
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
-		NeedColHandle:  b.needColHandle > 0,
 	}.init(b.ctx)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
@@ -1591,29 +1595,16 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			handleCol = schema.Columns[schema.Len()-1]
 		}
 	}
+	ds.SetSchema(schema)
 	if handleCol == nil {
-		handleCol = &expression.Column{
-			FromID:   ds.id,
-			DBName:   schemaName,
-			TblName:  tableInfo.Name,
-			ColName:  model.NewCIStr("_rowid"),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Position: schema.Len(),
-			Index:    schema.Len(),
-			ID:       model.ExtraHandleID,
-		}
-		ds.Columns = append(ds.Columns, &model.ColumnInfo{
-			ID:   model.ExtraHandleID,
-			Name: model.NewCIStr("_rowid"),
-		})
+		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
+		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
 	}
 	schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
-	ds.SetSchema(schema)
 	// make plan as DS -> US -> Proj
 	var result LogicalPlan = ds
 	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
-		ds.NeedColHandle = true
 		us := LogicalUnionScan{}.init(b.ctx)
 		us.SetSchema(ds.Schema().Clone())
 		setParentAndChildren(us, result)
@@ -1775,7 +1766,6 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	b.inUpdateStmt = true
-	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1937,7 +1927,6 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
-	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
