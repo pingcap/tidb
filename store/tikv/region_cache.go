@@ -102,7 +102,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	meta, peer := region.meta, region.peer
 	c.mu.RUnlock()
 
-	addr, err := c.GetStoreAddr(bo, region.peer.GetStoreId())
+	addr, err := c.GetStoreAddr(bo, peer.GetStoreId())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
