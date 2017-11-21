@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -419,14 +418,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	// Get the handle column index of the below plan.
 	// We can guarantee that there must be only one col in the map.
 	for _, cols := range v.Children()[0].Schema().TblID2Handle {
-		for _, col := range cols {
-			us.belowHandleIndex = col.Index
-			// If we don't found the handle column in the union scan's schema,
-			// we need to remove it when output.
-			if us.schema.ColumnIndex(col) != -1 {
-				us.handleColIsUsed = true
-			}
-		}
+		us.belowHandleIndex = cols[0].Index
 	}
 	switch x := src.(type) {
 	case *TableReaderExecutor:
@@ -1071,27 +1063,9 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
-	var (
-		handleCol         *expression.Column
-		tableReaderSchema *expression.Schema
-	)
 	table, _ := b.is.TableByID(is.Table.ID)
-	length := v.Schema().Len()
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
-	} else if !is.OutOfOrder {
-		tableReaderSchema = v.Schema().Clone()
-		handleCol = &expression.Column{
-			ID:      model.ExtraHandleID,
-			ColName: model.NewCIStr("_rowid"),
-			Index:   v.Schema().Len(),
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		}
-		tableReaderSchema.Append(handleCol)
-		length = tableReaderSchema.Len()
-	}
 
-	for i := 0; i < length; i++ {
+	for i := 0; i < v.Schema().Len(); i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
@@ -1105,11 +1079,12 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		desc:              is.Desc,
 		tableRequest:      tableReq,
 		columns:           is.Columns,
-		handleCol:         handleCol,
 		priority:          b.priority,
-		tableReaderSchema: tableReaderSchema,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		batchSize:         128,
+	}
+	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
+		e.handleIdx = cols[0].Index
 	}
 	if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
 		e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
