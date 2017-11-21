@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -120,7 +121,10 @@ type PreparedStatement interface {
 
 // ResultSet is the result set of an query.
 type ResultSet interface {
-	Columns() ([]*ColumnInfo, error)
+	Columns() []*ColumnInfo
 	Next() (types.Row, error)
+	SupportChunk() bool
+	NewChunk() *chunk.Chunk
+	NextChunk(chk *chunk.Chunk) error
 	Close() error
 }
