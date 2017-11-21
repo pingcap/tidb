@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -57,6 +58,18 @@ func (r *recordSet) Next() (types.Row, error) {
 	}
 	r.cursor++
 	return types.DatumRow{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}, nil
+}
+
+func (r *recordSet) NextChunk(chk *chunk.Chunk) error {
+	return nil
+}
+
+func (r *recordSet) NewChunk() *chunk.Chunk {
+	return nil
+}
+
+func (r *recordSet) SupportChunk() bool {
+	return false
 }
 
 func (r *recordSet) Close() error {
