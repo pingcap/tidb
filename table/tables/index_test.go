@@ -34,6 +34,7 @@ type testIndexSuite struct {
 }
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
@@ -42,10 +43,10 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 func (s *testIndexSuite) TearDownSuite(c *C) {
 	err := s.s.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func (s *testIndexSuite) TestIndex(c *C) {
-	defer testleak.AfterTest(c)()
 	tblInfo := &model.TableInfo{
 		ID: 1,
 		Indices: []*model.IndexInfo{
@@ -184,7 +185,6 @@ func (s *testIndexSuite) TestIndex(c *C) {
 }
 
 func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
-	defer testleak.AfterTest(c)()
 	tblInfo := &model.TableInfo{
 		ID: 1,
 		Indices: []*model.IndexInfo{
