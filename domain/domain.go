@@ -352,6 +352,8 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	}
 }
 
+// mustRestartSyncer tries to restart the SchemaSyncer.
+// It returns until it's successful or the domain is stoped.
 func (do *Domain) mustRestartSyncer() error {
 	ctx := goctx.Background()
 	syncer := do.ddl.SchemaSyncer()
@@ -371,6 +373,7 @@ func (do *Domain) mustRestartSyncer() error {
 		default:
 		}
 		time.Sleep(time.Second)
+		log.Infof("[ddl] restart the schema syncer failed %v", err)
 	}
 }
 
