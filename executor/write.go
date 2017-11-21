@@ -119,6 +119,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 				return false, errors.Trace(errGT)
 			}
 			newData[i] = v
+			modified[i] = true
 		}
 	}
 
