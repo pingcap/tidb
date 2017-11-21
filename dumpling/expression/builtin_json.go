@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -466,7 +466,7 @@ func (b *builtinJSONArraySig) evalJSON(row types.Row) (res json.JSON, isNull boo
 	return json.CreateJSON(jsons), false, nil
 }
 
-func jsonModify(args []Expression, row types.Row, mt json.ModifyType, sc *variable.StatementContext) (res json.JSON, isNull bool, err error) {
+func jsonModify(args []Expression, row types.Row, mt json.ModifyType, sc *stmtctx.StatementContext) (res json.JSON, isNull bool, err error) {
 	res, isNull, err = args[0].EvalJSON(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
