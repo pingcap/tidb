@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -164,7 +164,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	}
 
 	var err error
-	ownerManager := sessionctx.GetDomain(e.ctx).DDL().OwnerManager()
+	ownerManager := domain.GetDomain(e.ctx).DDL().OwnerManager()
 	ctx, cancel := goctx.WithTimeout(goctx.Background(), 3*time.Second)
 	e.ddlOwnerID, err = ownerManager.GetOwnerID(ctx)
 	cancel()
