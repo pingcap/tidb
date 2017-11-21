@@ -225,7 +225,7 @@ import:
   - suite
 - package: github.com/crossdock/crossdock-go
 - package: github.com/uber/jaeger-lib
-  version: ^1.0.0
+  version: v1.1.0
   subpackages:
   - metrics
 - package: github.com/uber/jaeger-client-go
