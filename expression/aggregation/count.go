@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -59,7 +59,7 @@ func (cf *countFunction) GetType() *types.FieldType {
 }
 
 // Update implements Aggregation interface.
-func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	var datumBuf []types.Datum
 	if cf.Distinct {
 		datumBuf = make([]types.Datum, 0, len(cf.Args))

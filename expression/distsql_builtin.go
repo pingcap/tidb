@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -507,7 +507,7 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 	return f, nil
 }
 
-func newDistSQLFunctionBySig(sc *variable.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
+func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
 	f, err := getSignatureByPB(ctx, sigCode, tp, args)
@@ -522,7 +522,7 @@ func newDistSQLFunctionBySig(sc *variable.StatementContext, sigCode tipb.ScalarF
 }
 
 // newDistSQLFunction only creates function for mock-tikv.
-func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, args []Expression) (Expression, error) {
+func newDistSQLFunction(sc *stmtctx.StatementContext, exprType tipb.ExprType, args []Expression) (Expression, error) {
 	name, ok := distFuncs[exprType]
 	if !ok {
 		return nil, errFunctionNotExists.GenByArgs("FUNCTION", exprType)
@@ -534,7 +534,7 @@ func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, a
 }
 
 // PBToExpr converts pb structure to expression.
-func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementContext) (Expression, error) {
+func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementContext) (Expression, error) {
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)
