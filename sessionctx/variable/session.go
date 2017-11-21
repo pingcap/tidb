@@ -357,6 +357,7 @@ type StatementContext struct {
 	OverflowAsWarning      bool
 	InShowWarning          bool
 	UseCache               bool
+	PadCharToFullLength    bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {

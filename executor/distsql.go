@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -284,6 +285,9 @@ const (
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
 	FlagTruncateAsWarning uint64 = 1 << 1
+
+	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
+	FlagPadCharToFullLength uint64 = 1 << 2
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
@@ -293,6 +297,9 @@ func statementContextToFlags(sc *variable.StatementContext) uint64 {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.PadCharToFullLength {
+		flags |= FlagPadCharToFullLength
 	}
 	return flags
 }
@@ -390,6 +397,11 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableReaderExecutor) NextChunk(chk *chunk.Chunk) error {
+	return e.result.NextChunk(chk)
+}
+
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
 	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
@@ -406,7 +418,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -489,6 +501,11 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *IndexReaderExecutor) NextChunk(chk *chunk.Chunk) error {
+	return e.result.NextChunk(chk)
+}
+
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open() error {
 	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader.Open")
@@ -505,7 +522,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -563,7 +580,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, 1)
+	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
