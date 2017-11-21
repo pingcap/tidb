@@ -388,7 +388,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 		}
 	}
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
+	ctx.GetStatsUpdater().UpdateDelta(t.ID, 1, 1)
 	return recordID, nil
 }
 

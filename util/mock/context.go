@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/update"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	goctx "golang.org/x/net/context"
@@ -40,6 +41,7 @@ type Context struct {
 	cancel      goctx.CancelFunc
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
+	updater     update.Updater
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -179,6 +181,11 @@ func (c *Context) GoCtx() goctx.Context {
 	return c.ctx
 }
 
+// GetStatsUpdater implements the context.Context interface.
+func (c *Context) GetStatsUpdater() update.Updater {
+	return c.updater
+}
+
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	ctx, cancel := goctx.WithCancel(goctx.Background())
@@ -187,5 +194,6 @@ func NewContext() *Context {
 		sessionVars: variable.NewSessionVars(),
 		ctx:         ctx,
 		cancel:      cancel,
+		updater:     update.NewUpdater(),
 	}
 }

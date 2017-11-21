@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/statistics/update"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -47,8 +48,8 @@ type Handle struct {
 	analyzeResultCh chan *AnalyzeResult
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
-	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap tableDeltaMap
+	// globalUpdater contains all the updater from collectors when we dump them to KV.
+	globalMap update.Updater
 
 	Lease time.Duration
 }
@@ -64,8 +65,8 @@ func (h *Handle) Clear() {
 	for len(h.analyzeResultCh) > 0 {
 		<-h.analyzeResultCh
 	}
-	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
-	h.globalMap = make(tableDeltaMap)
+	h.listHead = &SessionStatsCollector{mapper: update.NewUpdater()}
+	h.globalMap = update.NewUpdater()
 }
 
 // NewHandle creates a Handle for update stats.
@@ -74,8 +75,8 @@ func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 		ctx:             ctx,
 		ddlEventCh:      make(chan *util.Event, 100),
 		analyzeResultCh: make(chan *AnalyzeResult, 100),
-		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
-		globalMap:       make(tableDeltaMap),
+		listHead:        &SessionStatsCollector{mapper: update.NewUpdater()},
+		globalMap:       update.NewUpdater(),
 		Lease:           lease,
 	}
 	handle.statsCache.Store(statsCache{})

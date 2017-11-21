@@ -22,35 +22,17 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/update"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
 
-type tableDeltaMap map[int64]variable.TableDelta
-
-func (m tableDeltaMap) update(id int64, delta int64, count int64) {
-	item := m[id]
-	item.Delta += delta
-	item.Count += count
-	m[id] = item
-}
-
-func (m tableDeltaMap) merge(handle *SessionStatsCollector) {
-	handle.Lock()
-	defer handle.Unlock()
-	for id, item := range handle.mapper {
-		m.update(id, item.Delta, item.Count)
-	}
-	handle.mapper = make(tableDeltaMap)
-}
-
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
 	sync.Mutex
 
-	mapper tableDeltaMap
+	mapper update.Updater
 	prev   *SessionStatsCollector
 	next   *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
@@ -64,11 +46,11 @@ func (s *SessionStatsCollector) Delete() {
 	s.deleted = true
 }
 
-// Update will updates the delta and count for one table id.
-func (s *SessionStatsCollector) Update(id int64, delta int64, count int64) {
+// Merge merges the updater into session collector's updater.
+func (s *SessionStatsCollector) Merge(upd update.Updater) {
 	s.Lock()
-	defer s.Unlock()
-	s.mapper.update(id, delta, count)
+	s.mapper.Merge(upd)
+	s.Unlock()
 }
 
 // tryToRemoveFromList will remove this collector from the list if it's deleted flag is set.
@@ -91,7 +73,7 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
+		mapper: update.NewUpdater(),
 		next:   h.listHead.next,
 		prev:   h.listHead,
 	}
@@ -107,7 +89,10 @@ func (h *Handle) DumpStatsDeltaToKV() {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
-		h.globalMap.merge(collector)
+		collector.Lock()
+		h.globalMap.Merge(collector.mapper)
+		collector.mapper = update.NewUpdater()
+		collector.Unlock()
 	}
 	h.listHead.Unlock()
 	for id, item := range h.globalMap {
@@ -121,7 +106,7 @@ func (h *Handle) DumpStatsDeltaToKV() {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
+func (h *Handle) dumpTableStatDeltaToKV(id int64, delta update.TableDelta) error {
 	if delta.Count == 0 {
 		return nil
 	}

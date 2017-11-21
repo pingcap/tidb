@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/update"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -137,6 +138,7 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
+	statUpdater    update.Updater
 	statsCollector *statistics.SessionStatsCollector
 }
 
@@ -220,6 +222,10 @@ func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
 }
 
+func (s *session) GetStatsUpdater() update.Updater {
+	return s.statUpdater
+}
+
 type schemaLeaseChecker struct {
 	domain.SchemaValidator
 	schemaVer       int64
@@ -279,17 +285,11 @@ func (s *session) doCommit(ctx goctx.Context) error {
 		}
 	}
 
-	// Get the related table IDs.
-	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
-	tableIDs := make([]int64, 0, len(relatedTables))
-	for id := range relatedTables {
-		tableIDs = append(tableIDs, id)
-	}
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
 		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
-		relatedTableIDs: tableIDs,
+		relatedTableIDs: s.statUpdater.RelatedTableIDs(),
 	})
 	if err := s.txn.Commit(ctx); err != nil {
 		return errors.Trace(err)
@@ -318,11 +318,8 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
-	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
-	if s.statsCollector != nil && mapper != nil {
-		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count)
-		}
+	if s.statsCollector != nil {
+		s.statsCollector.Merge(s.statUpdater)
 	}
 	return nil
 }
@@ -1008,6 +1005,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 	// Add statsUpdateHandle.
 	if do.StatsHandle() != nil {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
+		s.statUpdater = update.NewUpdater()
 	}
 
 	return s, nil
@@ -1242,6 +1240,7 @@ func (s *session) PrepareTxnCtx(ctx goctx.Context) {
 		return
 	}
 
+	s.statUpdater = update.NewUpdater()
 	s.txnFuture = s.getTxnFuture(ctx)
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{

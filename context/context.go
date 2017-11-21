@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/update"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	goctx "golang.org/x/net/context"
@@ -70,6 +71,9 @@ type Context interface {
 
 	// PreparedPlanCache returns the cache of the physical plan
 	PreparedPlanCache() *kvcache.SimpleLRUCache
+
+	// GetStatsUpdater returns the updater for statistics.
+	GetStatsUpdater() update.Updater
 }
 
 type basicCtxType int
