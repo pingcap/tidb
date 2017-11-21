@@ -121,6 +121,9 @@ func (h *Handle) DumpStatsDeltaToKV() {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
+	if delta.Count == 0 {
+		return nil
+	}
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
