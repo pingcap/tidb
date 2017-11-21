@@ -1937,6 +1937,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select from_unixtime(1451606400.999999)")
 	unixTime = time.Unix(1451606400, 999999000).String()[:26]
 	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1511247196661)")
+	result.Check(testkit.Rows("<nil>"))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
