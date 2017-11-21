@@ -120,12 +120,12 @@ type session struct {
 	txn         kv.Transaction // current transaction
 	txnFuture   *txnFuture
 
-	// cancelFunc is used for cancelling the execution of current transaction.
-	cancelFunc goctx.CancelFunc
-
 	mu struct {
 		sync.RWMutex
 		values map[fmt.Stringer]interface{}
+
+		// cancelFunc is used for cancelling the execution of current transaction.
+		cancelFunc goctx.CancelFunc
 	}
 
 	store kv.Storage
@@ -144,7 +144,9 @@ type session struct {
 func (s *session) Cancel() {
 	// TODO: How to wait for the resource to release and make sure
 	// it's not leak?
-	s.cancelFunc()
+	s.mu.RLock()
+	s.mu.cancelFunc()
+	s.mu.RUnlock()
 }
 
 func (s *session) cleanRetryInfo() {
@@ -441,7 +443,7 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
-			_, err = st.Exec(goCtx, s)
+			_, err = st.Exec(goCtx)
 			if err != nil {
 				break
 			}
@@ -703,8 +705,11 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 	span, goCtx1 := opentracing.StartSpanFromContext(goCtx, "session.Execute")
 	defer span.Finish()
 
-	goCtx, s.cancelFunc = goctx.WithCancel(goCtx1)
-	s.PrepareTxnCtx(goCtx)
+	goCtx2, cancelFunc := goctx.WithCancel(goCtx1)
+	s.mu.Lock()
+	s.mu.cancelFunc = cancelFunc
+	s.mu.Unlock()
+	s.PrepareTxnCtx(goCtx2)
 	var (
 		cacheKey      kvcache.Key
 		cacheValue    kvcache.Value
@@ -728,11 +733,12 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
 			Text:       stmtNode.Text(),
 			ReadOnly:   ast.IsReadOnly(stmtNode),
+			Ctx:        s,
 		}
 
-		s.PrepareTxnCtx(goCtx)
+		s.PrepareTxnCtx(goCtx2)
 		executor.ResetStmtCtx(s, stmtNode)
-		if recordSets, err = s.executeStatement(goCtx, connID, stmtNode, stmt, recordSets); err != nil {
+		if recordSets, err = s.executeStatement(goCtx2, connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
@@ -740,25 +746,25 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 
 		// Step1: Compile query string to abstract syntax trees(ASTs).
 		startTS := time.Now()
-		stmtNodes, err := s.ParseSQL(goCtx, sql, charset, collation)
+		stmtNodes, err := s.ParseSQL(goCtx2, sql, charset, collation)
 		if err != nil {
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
 		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
-		compiler := executor.Compiler{}
+		compiler := executor.Compiler{s}
 		for _, stmtNode := range stmtNodes {
-			s.PrepareTxnCtx(goCtx)
+			s.PrepareTxnCtx(goCtx2)
 
 			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 			startTS = time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
 			executor.ResetStmtCtx(s, stmtNode)
-			stmt, err := compiler.Compile(goCtx, s, stmtNode)
+			stmt, err := compiler.Compile(goCtx2, stmtNode)
 			if err != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
-				terror.Log(errors.Trace(s.RollbackTxn(goCtx)))
+				terror.Log(errors.Trace(s.RollbackTxn(goCtx2)))
 				return nil, errors.Trace(err)
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -769,7 +775,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			}
 
 			// Step4: Execute the physical plan.
-			if recordSets, err = s.executeStatement(goCtx, connID, stmtNode, stmt, recordSets); err != nil {
+			if recordSets, err = s.executeStatement(goCtx2, connID, stmtNode, stmt, recordSets); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -846,7 +852,9 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 		return nil, errors.Trace(err)
 	}
 	goCtx, cancelFunc := goctx.WithCancel(goctx.TODO())
-	s.cancelFunc = cancelFunc
+	s.mu.Lock()
+	s.mu.cancelFunc = cancelFunc
+	s.mu.Unlock()
 	s.PrepareTxnCtx(goCtx)
 	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	if err != nil {

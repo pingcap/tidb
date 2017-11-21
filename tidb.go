@@ -138,8 +138,8 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
-	compiler := executor.Compiler{}
-	stmt, err := compiler.Compile(goCtx, ctx, stmtNode)
+	compiler := executor.Compiler{ctx}
+	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }
 
@@ -152,7 +152,7 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 	var err error
 	var rs ast.RecordSet
 	se := ctx.(*session)
-	rs, err = s.Exec(goCtx, ctx)
+	rs, err = s.Exec(goCtx)
 	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)

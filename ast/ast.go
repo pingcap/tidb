@@ -16,7 +16,6 @@
 package ast
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -182,7 +181,7 @@ type Statement interface {
 	OriginText() string
 
 	// Exec executes SQL and gets a Recordset.
-	Exec(goCtx goctx.Context, ctx context.Context) (RecordSet, error)
+	Exec(goCtx goctx.Context) (RecordSet, error)
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool

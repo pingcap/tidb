@@ -244,16 +244,16 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 }
 
 func (t *testExecInfo) compileSQL(idx int) (err error) {
-	compiler := executor.Compiler{}
 	for _, info := range t.sqlInfos {
 		c := info.cases[idx]
+		compiler := executor.Compiler{c.session}
 		se := c.session
 		goCtx := goctx.TODO()
 		se.PrepareTxnCtx(goCtx)
 		ctx := se.(context.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
 
-		c.stmt, err = compiler.Compile(goCtx, ctx, c.rawStmt)
+		c.stmt, err = compiler.Compile(goCtx, c.rawStmt)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -264,8 +264,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
 		c := sqlInfo.cases[idx]
-		ctx := c.session.(context.Context)
-		_, err := c.stmt.Exec(goctx.TODO(), ctx)
+		_, err := c.stmt.Exec(goctx.TODO())
 		if c.expectedErr != nil {
 			if err == nil {
 				err = errors.Errorf("expected error %s but got nil", c.expectedErr)
