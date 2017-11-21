@@ -28,7 +28,7 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-// SessionStatsCollector is a list item that holds the delta updater. If you want to write or read updater, you must lock it.
+// SessionStatsCollector is a list item that holds the updater. If you want to write or read updater, you must lock it.
 type SessionStatsCollector struct {
 	sync.Mutex
 
