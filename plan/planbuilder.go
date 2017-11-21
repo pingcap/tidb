@@ -148,12 +148,11 @@ var clauseMsg = map[clauseCode]string{
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
-	err           error
-	ctx           context.Context
-	is            infoschema.InfoSchema
-	outerSchemas  []*expression.Schema
-	inUpdateStmt  bool
-	needColHandle int
+	err          error
+	ctx          context.Context
+	is           infoschema.InfoSchema
+	outerSchemas []*expression.Schema
+	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.
