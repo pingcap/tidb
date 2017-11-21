@@ -178,23 +178,40 @@ func GetHistory(ctx context.Context) *StmtHistory {
 	return hist
 }
 
-// GetRows gets all the rows from a RecordSet.
+// GetRows gets all the rows from a RecordSet, only used for test.
 func GetRows(rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
 	var rows []types.Row
 	defer terror.Call(rs.Close)
-	// Negative limit means no limit.
-	for {
-		row, err := rs.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
+	if rs.SupportChunk() {
+		for {
+			// Since we collect all the rows, we can not reuse the chunk.
+			chk := rs.NewChunk()
+			err := rs.NextChunk(chk)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			rowCnt := chk.NumRows()
+			if rowCnt == 0 {
+				break
+			}
+			for i := 0; i < rowCnt; i++ {
+				rows = append(rows, chk.GetRow(i))
+			}
 		}
-		if row == nil {
-			break
+	} else {
+		for {
+			row, err := rs.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if row == nil {
+				break
+			}
+			rows = append(rows, row)
 		}
-		rows = append(rows, row)
 	}
 	return rows, nil
 }
