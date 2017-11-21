@@ -705,15 +705,14 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 
 func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 	is := PhysicalIndexScan{
-		Table:               p.tableInfo,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		Columns:             p.Columns,
-		Index:               idx,
-		dataSourceSchema:    p.schema,
-		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
-		Ranges:              ranger.FullIndexRange(),
-		OutOfOrder:          true,
+		Table:            p.tableInfo,
+		TableAsName:      p.TableAsName,
+		DBName:           p.DBName,
+		Columns:          p.Columns,
+		Index:            idx,
+		dataSourceSchema: p.schema,
+		Ranges:           ranger.FullIndexRange(),
+		OutOfOrder:       true,
 	}.init(p.ctx)
 	is.filterCondition = p.pushedDownConds
 	is.profile = p.profile
@@ -731,16 +730,27 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 	return t.plan()
 }
 
+// If there is a table reader which needs to keep order, we should append a pk to table scan.
+func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
+	if len(ds.schema.TblID2Handle) > 0 {
+		return
+	}
+	pkInfo := model.NewExtraHandleColInfo()
+	ts.Columns = append(ts.Columns, pkInfo)
+	handleCol := ds.newExtraHandleSchemaCol()
+	ts.schema.Append(handleCol)
+	ts.schema.TblID2Handle[ds.tableInfo.ID] = []*expression.Column{handleCol}
+}
+
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task task, err error) {
 	is := PhysicalIndexScan{
-		Table:               p.tableInfo,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		Columns:             p.Columns,
-		Index:               idx,
-		dataSourceSchema:    p.schema,
-		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
+		Table:            p.tableInfo,
+		TableAsName:      p.TableAsName,
+		DBName:           p.DBName,
+		Columns:          p.Columns,
+		Index:            idx,
+		dataSourceSchema: p.schema,
 	}.init(p.ctx)
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
@@ -776,7 +786,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.ctx)
-		cop.tablePlan.SetSchema(is.dataSourceSchema.Clone())
+		cop.tablePlan.SetSchema(p.schema.Clone())
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
 			return &copTask{cst: math.MaxFloat64}, nil
@@ -817,12 +827,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
-		if !is.NeedColHandle && cop.tablePlan != nil {
-			tblPlan := cop.tablePlan.(*PhysicalTableScan)
-			tblPlan.Columns = append(tblPlan.Columns, &model.ColumnInfo{
-				ID:   model.ExtraHandleID,
-				Name: model.NewCIStr("_rowid"),
-			})
+		if cop.tablePlan != nil {
+			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(p)
 		}
 		cop.keepOrder = true
 		is.addPushedDownSelection(cop, p, prop.expectedCnt)
@@ -844,6 +850,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	return task, nil
 }
 
+// TODO: refine this.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	var indexCols []*expression.Column
 	for _, col := range idx.Columns {
@@ -958,12 +965,11 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 
 func (p *DataSource) forceToTableScan() PhysicalPlan {
 	ts := PhysicalTableScan{
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
-		Ranges:              ranger.FullIntRange(),
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		DBName:      p.DBName,
+		Ranges:      ranger.FullIntRange(),
 	}.init(p.ctx)
 	ts.SetSchema(p.schema)
 	ts.profile = p.profile
@@ -983,11 +989,10 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		return &copTask{cst: math.MaxFloat64}, nil
 	}
 	ts := PhysicalTableScan{
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		DBName:      p.DBName,
 	}.init(p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx

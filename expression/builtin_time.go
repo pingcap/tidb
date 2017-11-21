@@ -1374,7 +1374,7 @@ func evalFromUnixTime(ctx context.Context, fsp int, row types.Row, arg Expressio
 		return res, true, errors.Trace(err)
 	}
 	if integralPart > int64(math.MaxInt32) {
-		return
+		return res, true, nil
 	}
 	// Split the integral part and fractional part of a decimal timestamp.
 	// e.g. for timestamp 12345.678,

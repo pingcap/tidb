@@ -98,8 +98,6 @@ type UnionScanExec struct {
 
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
-	// handleColIsUsed checks whether this executor need to output handle column in its output row.
-	handleColIsUsed bool
 
 	addedRows   []Row
 	cursor      int
@@ -137,9 +135,6 @@ func (us *UnionScanExec) Next() (Row, error) {
 			us.snapshotRow = nil
 		} else {
 			us.cursor++
-		}
-		if !us.handleColIsUsed {
-			row = append(row[:us.belowHandleIndex], row[us.belowHandleIndex+1:]...)
 		}
 		return row, nil
 	}
