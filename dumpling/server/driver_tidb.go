@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -235,11 +236,7 @@ func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colums, err = rs[0].Columns()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return
+	return rs[0].Columns(), nil
 }
 
 // GetStatement implements QueryCtx GetStatement method.
@@ -290,23 +287,37 @@ func (tc *TiDBContext) Cancel() {
 
 type tidbResultSet struct {
 	recordSet ast.RecordSet
+	columns   []*ColumnInfo
 }
 
 func (trs *tidbResultSet) Next() (types.Row, error) {
 	return trs.recordSet.Next()
 }
 
+func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
+	return trs.recordSet.NewChunk()
+}
+
+func (trs *tidbResultSet) NextChunk(chk *chunk.Chunk) error {
+	return trs.recordSet.NextChunk(chk)
+}
+
+func (trs *tidbResultSet) SupportChunk() bool {
+	return trs.recordSet.SupportChunk()
+}
+
 func (trs *tidbResultSet) Close() error {
 	return trs.recordSet.Close()
 }
 
-func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
-	fields := trs.recordSet.Fields()
-	var columns []*ColumnInfo
-	for _, v := range fields {
-		columns = append(columns, convertColumnInfo(v))
+func (trs *tidbResultSet) Columns() []*ColumnInfo {
+	if trs.columns == nil {
+		fields := trs.recordSet.Fields()
+		for _, v := range fields {
+			trs.columns = append(trs.columns, convertColumnInfo(v))
+		}
 	}
-	return columns, nil
+	return trs.columns
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
