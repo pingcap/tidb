@@ -276,8 +276,8 @@ func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 			break
 		}
 
-		matched, err := expression.EvalBool(e.innerFilter, innerRow, e.ctx)
-		if err != nil {
+		matched, err2 := expression.EvalBool(e.innerFilter, innerRow, e.ctx)
+		if err2 != nil {
 			return errors.Trace(err)
 		} else if matched {
 			e.innerOrderedRows.rows = append(e.innerOrderedRows.rows, innerRow)
@@ -288,8 +288,8 @@ func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 	innerJoinKey := e.buffer4JoinKey[:0]
 	for _, innerRow := range e.innerOrderedRows.rows {
 		for _, innerKey := range e.innerKeys {
-			innerDatum, err := innerKey.Eval(innerRow)
-			if err != nil {
+			innerDatum, err3 := innerKey.Eval(innerRow)
+			if err3 != nil {
 				return errors.Trace(err)
 			}
 			innerJoinKey = append(innerJoinKey, innerDatum)
