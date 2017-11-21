@@ -117,7 +117,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
-
+	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
@@ -125,7 +125,6 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 			}
 		}
 	}
-
 	cc.setConn(conn)
 	cc.salt = util.RandomBuf(20)
 	return cc
@@ -137,7 +136,6 @@ func (s *Server) skipAuth() bool {
 
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
-
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
