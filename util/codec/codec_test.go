@@ -903,14 +903,16 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
 		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
 		{json.CreateJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
-	}
-	chk := new(chunk.Chunk)
-	var datums []types.Datum
-	for _, t := range table {
-		chk.AddColumnByFieldType(t.tp.Tp, 0)
-		datums = append(datums, types.NewDatum(t.value))
+		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
 
+	datums := make([]types.Datum, 0, len(table))
+	tps := make([]*types.FieldType, 0, len(table))
+	for _, t := range table {
+		tps = append(tps, t.tp)
+		datums = append(datums, types.NewDatum(t.value))
+	}
+	chk := chunk.NewChunk(tps)
 	rowCount := 3
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(nil, datums...)

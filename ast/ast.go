@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // Node is the basic element of the AST.
@@ -134,6 +135,15 @@ type RecordSet interface {
 
 	// Next returns the next row, nil row means there is no more to return.
 	Next() (row types.Row, err error)
+
+	// NextChunk reads records into chunk.
+	NextChunk(chk *chunk.Chunk) error
+
+	// NewChunk creates a new chunk with initial capacity.
+	NewChunk() *chunk.Chunk
+
+	// SupportChunk check if the RecordSet supports Chunk structure.
+	SupportChunk() bool
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.

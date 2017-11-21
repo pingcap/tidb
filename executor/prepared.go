@@ -351,6 +351,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
+		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
 	default:
 		sc.IgnoreTruncate = true
 		sc.OverflowAsWarning = false

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
@@ -44,6 +45,8 @@ type SelectResult interface {
 	Next() (PartialResult, error)
 	// NextRaw gets the next raw result.
 	NextRaw() ([]byte, error)
+	// NextChunk reads the data into chunk.
+	NextChunk(*chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -68,7 +71,12 @@ type selectResult struct {
 	results chan newResultWithErr
 	closed  chan struct{}
 
-	rowLen int
+	rowLen     int
+	fieldTypes []*types.FieldType
+	loc        *time.Location
+
+	selectResp *tipb.SelectResponse
+	respChkIdx int
 }
 
 type newResultWithErr struct {
@@ -129,6 +137,63 @@ func (r *selectResult) Next() (PartialResult, error) {
 func (r *selectResult) NextRaw() ([]byte, error) {
 	re := <-r.results
 	return re.result, errors.Trace(re.err)
+}
+
+// NextChunk reads data to the chunk.
+func (r *selectResult) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	selectResp, err := r.getSelectResp()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if selectResp == nil {
+		return nil
+	}
+	err = r.readRowsData(chk, selectResp.Chunks[r.respChkIdx].RowsData)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	r.respChkIdx++
+	return nil
+}
+
+func (r *selectResult) getSelectResp() (*tipb.SelectResponse, error) {
+	if r.selectResp != nil && r.respChkIdx < len(r.selectResp.Chunks) {
+		return r.selectResp, nil
+	}
+	for {
+		re := <-r.results
+		if re.err != nil {
+			return nil, errors.Trace(re.err)
+		}
+		if re.result == nil {
+			return nil, nil
+		}
+		resp := new(tipb.SelectResponse)
+		err := resp.Unmarshal(re.result)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(resp.Chunks) == 0 {
+			continue
+		}
+		r.selectResp = resp
+		r.respChkIdx = 0
+		return resp, nil
+	}
+}
+
+func (r *selectResult) readRowsData(chk *chunk.Chunk, rowsData []byte) error {
+	var err error
+	for len(rowsData) > 0 {
+		for i := 0; i < r.rowLen; i++ {
+			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], r.loc)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
 }
 
 // Close closes selectResult.
@@ -197,7 +262,7 @@ func (pr *partialResult) Close() error {
 
 // SelectDAG sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func SelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen int) (SelectResult, error) {
+func SelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, fieldTypes []*types.FieldType, loc *time.Location) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics.
@@ -214,11 +279,13 @@ func SelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, colLen in
 		return nil, errors.Trace(err)
 	}
 	result := &selectResult{
-		label:   "dag",
-		resp:    resp,
-		results: make(chan newResultWithErr, kvReq.Concurrency),
-		closed:  make(chan struct{}),
-		rowLen:  colLen,
+		label:      "dag",
+		resp:       resp,
+		results:    make(chan newResultWithErr, kvReq.Concurrency),
+		closed:     make(chan struct{}),
+		rowLen:     len(fieldTypes),
+		fieldTypes: fieldTypes,
+		loc:        loc,
 	}
 	return result, nil
 }
