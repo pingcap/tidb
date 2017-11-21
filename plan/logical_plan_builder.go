@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -683,7 +683,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 // getUintForLimitOffset gets uint64 value for limit/offset.
 // For ordinary statement, limit/offset should be uint64 constant value.
 // For prepared statement, limit/offset is string. We should convert it to uint64.
-func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint64, error) {
+func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint64, error) {
 	switch v := val.(type) {
 	case uint64:
 		return v, nil
