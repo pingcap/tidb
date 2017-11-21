@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -328,8 +329,8 @@ func (e *DeleteExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *DeleteExec) Open() error {
-	return e.SelectExec.Open()
+func (e *DeleteExec) Open(goCtx goctx.Context) error {
+	return e.SelectExec.Open(goCtx)
 }
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
@@ -659,7 +660,7 @@ func (e *LoadData) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *LoadData) Open() error {
+func (e *LoadData) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -785,9 +786,9 @@ func (e *InsertExec) Close() error {
 }
 
 // Open implements the Executor Close interface.
-func (e *InsertExec) Open() error {
+func (e *InsertExec) Open(goCtx goctx.Context) error {
 	if e.SelectExec != nil {
-		return e.SelectExec.Open()
+		return e.SelectExec.Open(goCtx)
 	}
 	return nil
 }
@@ -1189,9 +1190,9 @@ func (e *ReplaceExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *ReplaceExec) Open() error {
+func (e *ReplaceExec) Open(goCtx goctx.Context) error {
 	if e.SelectExec != nil {
-		return e.SelectExec.Open()
+		return e.SelectExec.Open(goCtx)
 	}
 	return nil
 }
@@ -1400,6 +1401,6 @@ func (e *UpdateExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *UpdateExec) Open() error {
-	return e.SelectExec.Open()
+func (e *UpdateExec) Open(goCtx goctx.Context) error {
+	return e.SelectExec.Open(goCtx)
 }

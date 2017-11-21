@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	goctx "golang.org/x/net/context"
 )
 
 type keyRowBlock struct {
@@ -107,8 +108,8 @@ type IndexLookUpJoin struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *IndexLookUpJoin) Open() error {
-	if err := e.baseExecutor.Open(); err != nil {
+func (e *IndexLookUpJoin) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -262,7 +263,8 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
-	innerExec, err := e.innerExecBuilder.buildExecutorForDatums(e.ctx.GoCtx(), requestRows)
+	goCtx := goctx.TODO()
+	innerExec, err := e.innerExecBuilder.buildExecutorForDatums(goCtx, requestRows)
 	if err != nil {
 		return errors.Trace(err)
 	}

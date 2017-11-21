@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	goctx "golang.org/x/net/context"
 )
 
 type processinfoSetter interface {
@@ -167,7 +168,7 @@ func (a *ExecStmt) IsReadOnly() bool {
 // This function builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
-func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
+func (a *ExecStmt) Exec(goCtx goctx.Context, ctx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	a.ctx = ctx
 
@@ -193,7 +194,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if err := e.Open(); err != nil {
+	if err := e.Open(goCtx); err != nil {
 		return nil, errors.Trace(err)
 	}
 

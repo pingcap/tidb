@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
+	goctx "golang.org/x/net/context"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -28,12 +29,10 @@ type Compiler struct {
 }
 
 // Compile compiles an ast.StmtNode to a physical plan.
-func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
-	if ctx.GoCtx() != nil {
-		if span := opentracing.SpanFromContext(ctx.GoCtx()); span != nil {
-			span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
-			defer span1.Finish()
-		}
+func (c *Compiler) Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+	if span := opentracing.SpanFromContext(goCtx); span != nil {
+		span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
 	}
 
 	infoSchema := GetInfoSchema(ctx)

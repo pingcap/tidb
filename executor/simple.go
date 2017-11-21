@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 // SimpleExec represents simple statement executor.
@@ -160,7 +161,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(e.ctx.GoCtx(), sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -211,7 +212,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(e.ctx.GoCtx())
+		err := e.ctx.Txn().Commit(goctx.Background())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -242,7 +243,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(e.ctx.GoCtx())
+		err := e.ctx.Txn().Commit(goctx.Background())
 		if err != nil {
 			return errors.Trace(err)
 		}

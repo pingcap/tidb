@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/types"
+	goctx "golang.org/x/net/context"
 )
 
 // DDLExec represents a DDL executor.
@@ -85,7 +86,7 @@ func (e *DDLExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *DDLExec) Open() error {
+func (e *DDLExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 

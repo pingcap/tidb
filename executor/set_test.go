@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/testkit"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestSetVar(c *C) {
@@ -104,7 +105,7 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	// Test session variable states.
 	vars := tk.Se.(context.Context).GetSessionVars()
-	tk.Se.CommitTxn(tk.Se.GoCtx())
+	tk.Se.CommitTxn(goctx.TODO())
 	tk.MustExec("set @@autocommit = 1")
 	c.Assert(vars.InTxn(), IsFalse)
 	c.Assert(vars.IsAutocommit(), IsTrue)

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 /***
@@ -83,7 +84,7 @@ func (e *GrantExec) Next() (Row, error) {
 
 			user := fmt.Sprintf(`("%s", "%s", "%s")`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(e.ctx.GoCtx(), sql)
+			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -136,7 +137,7 @@ func (e *GrantExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *GrantExec) Open() error {
+func (e *GrantExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 

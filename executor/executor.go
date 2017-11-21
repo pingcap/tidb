@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -100,9 +101,9 @@ type baseExecutor struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *baseExecutor) Open() error {
+func (e *baseExecutor) Open(goCtx goctx.Context) error {
 	for _, child := range e.children {
-		err := child.Open()
+		err := child.Open(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -157,7 +158,7 @@ func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ..
 type Executor interface {
 	Next() (Row, error)
 	Close() error
-	Open() error
+	Open(goctx.Context) error
 	Schema() *expression.Schema
 	supportChunk() bool
 	NextChunk(chk *chunk.Chunk) error
@@ -363,9 +364,9 @@ func (e *LimitExec) Next() (Row, error) {
 }
 
 // Open implements the Executor Open interface.
-func (e *LimitExec) Open() error {
+func (e *LimitExec) Open(goCtx goctx.Context) error {
 	e.Idx = 0
-	return errors.Trace(e.children[0].Open())
+	return errors.Trace(e.children[0].Open(goCtx))
 }
 
 func init() {
@@ -382,7 +383,7 @@ func init() {
 		if e.err != nil {
 			return rows, errors.Trace(err)
 		}
-		err = exec.Open()
+		err = exec.Open(goctx.TODO())
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
@@ -442,7 +443,7 @@ type TableDualExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *TableDualExec) Open() error {
+func (e *TableDualExec) Open(goCtx goctx.Context) error {
 	e.returnCnt = 0
 	return nil
 }
@@ -599,7 +600,7 @@ func (e *TableScanExec) getRow(handle int64) (Row, error) {
 }
 
 // Open implements the Executor Open interface.
-func (e *TableScanExec) Open() error {
+func (e *TableScanExec) Open(goCtx goctx.Context) error {
 	e.iter = nil
 	e.cursor = 0
 	return nil
@@ -617,9 +618,9 @@ type ExistsExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *ExistsExec) Open() error {
+func (e *ExistsExec) Open(goCtx goctx.Context) error {
 	e.evaluated = false
-	return errors.Trace(e.children[0].Open())
+	return errors.Trace(e.children[0].Open(goCtx))
 }
 
 // Next implements the Executor Next interface.
@@ -645,9 +646,9 @@ type MaxOneRowExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *MaxOneRowExec) Open() error {
+func (e *MaxOneRowExec) Open(goCtx goctx.Context) error {
 	e.evaluated = false
-	return errors.Trace(e.children[0].Open())
+	return errors.Trace(e.children[0].Open(goCtx))
 }
 
 // Next implements the Executor Next interface.
@@ -742,14 +743,14 @@ func (e *UnionExec) fetchData(idx int) {
 }
 
 // Open implements the Executor Open interface.
-func (e *UnionExec) Open() error {
+func (e *UnionExec) Open(goCtx goctx.Context) error {
 	e.finished.Store(false)
 	e.resultCh = make(chan *execResult, len(e.children))
 	e.closedCh = make(chan struct{})
 	e.cursor = 0
 	var err error
 	for i, child := range e.children {
-		err = child.Open()
+		err = child.Open(goCtx)
 		if err != nil {
 			break
 		}
