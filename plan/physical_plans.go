@@ -112,7 +112,12 @@ func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	physicalTableSource
+	*basePlan
+	basePhysicalPlan
+
+	// AccessCondition is used to calculate range.
+	AccessCondition []expression.Expression
+	filterCondition []expression.Expression
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
@@ -157,17 +162,6 @@ func (p *PhysicalMemTable) Copy() PhysicalPlan {
 	return &np
 }
 
-type physicalTableSource struct {
-	*basePlan
-	basePhysicalPlan
-
-	// AccessCondition is used to calculate range.
-	AccessCondition []expression.Expression
-
-	// filterCondition is only used by new planner.
-	filterCondition []expression.Expression
-}
-
 func needCount(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
 }
@@ -179,7 +173,12 @@ func needValue(af aggregation.Aggregation) bool {
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	physicalTableSource
+	*basePlan
+	basePhysicalPlan
+
+	// AccessCondition is used to calculate range.
+	AccessCondition []expression.Expression
+	filterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
