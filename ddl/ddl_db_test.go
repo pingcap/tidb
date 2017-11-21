@@ -458,7 +458,7 @@ func (s *testDBSuite) testAlterLock(c *C) {
 func (s *testDBSuite) TestAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table test_add_index (c1 int, c2 int, c3 int, primary key(c1))")
+	s.tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 
 	done := make(chan error, 1)
 	start := -10
@@ -483,6 +483,11 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 			otherKeys = append(otherKeys, n)
 		}
 	}
+	// Encounter the value of math.MaxInt64 in middle of
+	v := math.MaxInt64 - defaultBatchSize/2
+	sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v)
+	s.mustExec(c, sql)
+	otherKeys = append(otherKeys, v)
 
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
