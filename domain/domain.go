@@ -320,7 +320,6 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
-	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 	syncer := do.ddl.SchemaSyncer()
@@ -365,7 +364,7 @@ func (do *Domain) mustRestartSyncer() error {
 		if err == nil {
 			return nil
 		}
-		// If the domain exits, we return this function.
+		// If the domain has stopped, we return an error immediately.
 		select {
 		case <-do.exit:
 			return errors.Trace(err)
