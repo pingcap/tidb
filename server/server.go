@@ -110,7 +110,7 @@ func (s *Server) releaseToken(token *Token) {
 
 // newConn creates a new *clientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
-func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
+func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := &clientConn{
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
@@ -127,9 +127,8 @@ func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 	}
 
 	cc.setConn(conn)
-	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	cc.salt = util.RandomBuf(20)
-	return cc, nil
+	return cc
 }
 
 func (s *Server) skipAuth() bool {
@@ -138,16 +137,14 @@ func (s *Server) skipAuth() bool {
 
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
-	var err error
 
 	s := &Server{
-		cfg:                 cfg,
-		driver:              driver,
-		concurrentLimiter:   NewTokenLimiter(cfg.TokenLimit),
-		rwlock:              &sync.RWMutex{},
-		clients:             make(map[uint32]*clientConn),
-		stopListenerCh:      make(chan struct{}, 1),
-		enableProxyProtocol: false,
+		cfg:               cfg,
+		driver:            driver,
+		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
+		rwlock:            &sync.RWMutex{},
+		clients:           make(map[uint32]*clientConn),
+		stopListenerCh:    make(chan struct{}, 1),
 	}
 	s.loadTLSCertificates()
 
@@ -156,6 +153,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
+	var err error
 	if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
 			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
@@ -172,7 +170,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if err != nil {
 			log.Error("ProxyProtocol Networks parameter invalid")
 		} else {
-			s.enableProxyProtocol = true
+			log.Infof("Server is running MySQL Protocol (through PROXY Protocol) at [%s]", s.cfg.Host)
 			s.listener = pplistener
 		}
 	}
@@ -183,13 +181,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
-
-	if s.enableProxyProtocol {
-		log.Infof("Server run MySQL Protocol (through PROXY Protocol) Listen at [%s]", s.cfg.Host)
-	} else {
-		log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Host)
-	}
-
 	return s, nil
 }
 
@@ -305,17 +296,10 @@ func (s *Server) Close() {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
-	conn, err := s.newConn(c)
+	conn := s.newConn(c)
 	defer func() {
 		log.Infof("[%d] close connection", conn.connectionID)
 	}()
-
-	if err != nil {
-		log.Infof("Connection error: %s", errors.ErrorStack(err))
-		err := c.Close()
-		terror.Log(errors.Trace(err))
-		return
-	}
 
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
