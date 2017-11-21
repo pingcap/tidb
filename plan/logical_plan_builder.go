@@ -1538,7 +1538,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		TblName:  ds.tableInfo.Name,
 		ColName:  model.ExtraHandleName,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		Position: ds.schema.Len(),
+		Position: len(ds.tableInfo.Columns), // set a unique position
 		ID:       model.ExtraHandleID,
 	}
 }
