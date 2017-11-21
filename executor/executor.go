@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 var (
@@ -63,6 +64,7 @@ var (
 	ErrBuildExecutor        = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
 	ErrBatchInsertFail      = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
 	ErrWrongValueCountOnRow = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
+	ErrPasswordFormat       = terror.ClassExecutor.New(codePasswordFormat, "The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.")
 )
 
 // Error codes.
@@ -76,6 +78,7 @@ const (
 	CodePasswordNoMatch      terror.ErrCode = 1133 // MySQL error code
 	CodeCannotUser           terror.ErrCode = 1396 // MySQL error code
 	codeWrongValueCountOnRow terror.ErrCode = 1136 // MySQL error code
+	codePasswordFormat       terror.ErrCode = 1827 // MySQL error code
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -90,9 +93,10 @@ const (
 type Row = types.DatumRow
 
 type baseExecutor struct {
-	children []Executor
-	ctx      context.Context
-	schema   *expression.Schema
+	children   []Executor
+	ctx        context.Context
+	schema     *expression.Schema
+	supportChk bool
 }
 
 // Open implements the Executor Open interface.
@@ -126,7 +130,19 @@ func (e *baseExecutor) Schema() *expression.Schema {
 }
 
 func (e *baseExecutor) supportChunk() bool {
-	return false
+	if !e.supportChk {
+		return false
+	}
+	for _, child := range e.children {
+		if !child.supportChunk() {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *baseExecutor) NextChunk(chk *chunk.Chunk) error {
+	return nil
 }
 
 func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
@@ -144,6 +160,7 @@ type Executor interface {
 	Open() error
 	Schema() *expression.Schema
 	supportChunk() bool
+	NextChunk(chk *chunk.Chunk) error
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -384,6 +401,7 @@ func init() {
 		CodeCannotUser:           mysql.ErrCannotUser,
 		CodePasswordNoMatch:      mysql.ErrPasswordNoMatch,
 		codeWrongValueCountOnRow: mysql.ErrWrongValueCountOnRow,
+		codePasswordFormat:       mysql.ErrPasswordFormat,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
