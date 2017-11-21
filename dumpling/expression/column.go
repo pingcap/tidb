@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
@@ -75,6 +76,10 @@ func (col *CorrelatedColumn) EvalString(row types.Row, sc *variable.StatementCon
 		return "", true, nil
 	}
 	res, err := col.Data.ToString()
+	resLen := len([]rune(res))
+	if resLen < col.RetType.Flen && sc.PadCharToFullLength {
+		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+	}
 	return res, err != nil, errors.Trace(err)
 }
 
@@ -238,12 +243,23 @@ func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (str
 			return "", true, nil
 		}
 		res, err := val.ToString()
+		resLen := len([]rune(res))
+		if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
+			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+		}
 		return res, err != nil, errors.Trace(err)
 	}
 	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
-	return row.GetString(col.Index), false, nil
+	val := row.GetString(col.Index)
+	if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
+		valLen := len([]rune(val))
+		if valLen < col.RetType.Flen {
+			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
+		}
+	}
+	return val, false, nil
 }
 
 // EvalDecimal returns decimal representation of Column.

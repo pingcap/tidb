@@ -285,6 +285,9 @@ const (
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
 	FlagTruncateAsWarning uint64 = 1 << 1
+
+	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
+	FlagPadCharToFullLength uint64 = 1 << 2
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
@@ -294,6 +297,9 @@ func statementContextToFlags(sc *variable.StatementContext) uint64 {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.PadCharToFullLength {
+		flags |= FlagPadCharToFullLength
 	}
 	return flags
 }
