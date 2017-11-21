@@ -320,7 +320,7 @@ func (e *SelectLockExec) Next() (Row, error) {
 				return nil, errors.Trace(err)
 			}
 			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(id, 0, 0)
+			e.ctx.GetStatsUpdater().UpdateDelta(id, 0, 0)
 		}
 	}
 	return row, nil
