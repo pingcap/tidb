@@ -1519,17 +1519,16 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	se, err := tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
 	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
-	compiler := &executor.Compiler{}
-	ctx := se.(context.Context)
+	compiler := &executor.Compiler{se}
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
-	stmt, err := compiler.Compile(ctx, stmtNode)
+	stmt, err := compiler.Compile(goctx.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
 	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
-	stmt, err = compiler.Compile(ctx, stmtNode)
+	stmt, err = compiler.Compile(goctx.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }

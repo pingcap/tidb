@@ -167,13 +167,13 @@ func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
 }
 
 // CommitTxn implements QueryCtx CommitTxn method.
-func (tc *TiDBContext) CommitTxn() error {
-	return tc.session.CommitTxn(tc.session.GoCtx())
+func (tc *TiDBContext) CommitTxn(goCtx goctx.Context) error {
+	return tc.session.CommitTxn(goCtx)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.
 func (tc *TiDBContext) RollbackTxn() error {
-	return tc.session.RollbackTxn(tc.session.GoCtx())
+	return tc.session.RollbackTxn(goctx.TODO())
 }
 
 // AffectedRows implements QueryCtx AffectedRows method.

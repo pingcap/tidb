@@ -119,13 +119,13 @@ type session struct {
 	processInfo atomic.Value
 	txn         kv.Transaction // current transaction
 	txnFuture   *txnFuture
-	// goCtx is used for cancelling the execution of current transaction.
-	goCtx      goctx.Context
-	cancelFunc goctx.CancelFunc
 
 	mu struct {
 		sync.RWMutex
 		values map[fmt.Stringer]interface{}
+
+		// cancelFunc is used for cancelling the execution of current transaction.
+		cancelFunc goctx.CancelFunc
 	}
 
 	store kv.Storage
@@ -144,12 +144,9 @@ type session struct {
 func (s *session) Cancel() {
 	// TODO: How to wait for the resource to release and make sure
 	// it's not leak?
-	s.cancelFunc()
-}
-
-// GoCtx returns the standard context.Context that bind with current transaction.
-func (s *session) GoCtx() goctx.Context {
-	return s.goCtx
+	s.mu.RLock()
+	s.mu.cancelFunc()
+	s.mu.RUnlock()
 }
 
 func (s *session) cleanRetryInfo() {
@@ -310,7 +307,7 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit-1)*txnSizeRate)
-			err = s.retry(maxRetryCount, domain.ErrInfoSchemaChanged.Equal(err))
+			err = s.retry(ctx, maxRetryCount, domain.ErrInfoSchemaChanged.Equal(err))
 		}
 	}
 	s.cleanRetryInfo()
@@ -403,8 +400,8 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
-	span, ctx := opentracing.StartSpanFromContext(s.goCtx, "retry")
+func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool) error {
+	span, ctx := opentracing.StartSpanFromContext(goCtx, "retry")
 	defer span.Finish()
 
 	connID := s.sessionVars.ConnectionID
@@ -431,7 +428,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			}
 			txt := st.OriginText()
 			if infoSchemaChanged {
-				st, err = updateStatement(st, s, txt)
+				st, err = updateStatement(goCtx, st, s, txt)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -446,7 +443,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
-			_, err = st.Exec(s)
+			_, err = st.Exec(goCtx)
 			if err != nil {
 				break
 			}
@@ -475,7 +472,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 	return err
 }
 
-func updateStatement(st ast.Statement, s *session, txt string) (ast.Statement, error) {
+func updateStatement(goCtx goctx.Context, st ast.Statement, s *session, txt string) (ast.Statement, error) {
 	// statement maybe stale because of infoschema changed, this function will return the updated one.
 	if st.IsPrepared() {
 		// TODO: Rebuild plan if infoschema changed, reuse the statement otherwise.
@@ -486,7 +483,7 @@ func updateStatement(st ast.Statement, s *session, txt string) (ast.Statement, e
 		if err != nil {
 			return st, errors.Trace(err)
 		}
-		st, err = Compile(s, stmt)
+		st, err = Compile(goCtx, s, stmt)
 		if err != nil {
 			// If a txn is inserting data when DDL is dropping column,
 			// it would fail to commit and retry, and run here then.
@@ -513,10 +510,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
 	var span opentracing.Span
-	goCtx := ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
-	}
+	goCtx := goctx.TODO()
 	span, goCtx = opentracing.StartSpanFromContext(goCtx, "session.ExecRestrictedSQL")
 	defer span.Finish()
 
@@ -657,8 +651,8 @@ func (s *session) SetGlobalSysVar(name string, value string) error {
 	return errors.Trace(err)
 }
 
-func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
-	if span := opentracing.SpanFromContext(s.goCtx); span != nil {
+func (s *session) ParseSQL(goCtx goctx.Context, sql, charset, collation string) ([]ast.StmtNode, error) {
+	if span := opentracing.SpanFromContext(goCtx); span != nil {
 		span1 := opentracing.StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
@@ -682,7 +676,7 @@ func (s *session) SetProcessInfo(sql string) {
 	s.processInfo.Store(pi)
 }
 
-func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
+func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
 	s.SetValue(context.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
 		s.SetValue(context.LastExecuteDDL, true)
@@ -691,7 +685,7 @@ func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt as
 	}
 
 	startTS := time.Now()
-	recordSet, err := runStmt(s, stmt)
+	recordSet, err := runStmt(goCtx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
@@ -711,8 +705,11 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 	span, goCtx1 := opentracing.StartSpanFromContext(goCtx, "session.Execute")
 	defer span.Finish()
 
-	s.goCtx, s.cancelFunc = goctx.WithCancel(goCtx1)
-	s.PrepareTxnCtx(s.goCtx)
+	goCtx2, cancelFunc := goctx.WithCancel(goCtx1)
+	s.mu.Lock()
+	s.mu.cancelFunc = cancelFunc
+	s.mu.Unlock()
+	s.PrepareTxnCtx(goCtx2)
 	var (
 		cacheKey      kvcache.Key
 		cacheValue    kvcache.Value
@@ -736,11 +733,12 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
 			Text:       stmtNode.Text(),
 			ReadOnly:   ast.IsReadOnly(stmtNode),
+			Ctx:        s,
 		}
 
-		s.PrepareTxnCtx(s.goCtx)
+		s.PrepareTxnCtx(goCtx2)
 		executor.ResetStmtCtx(s, stmtNode)
-		if recordSets, err = s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
+		if recordSets, err = s.executeStatement(goCtx2, connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
@@ -748,25 +746,25 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 
 		// Step1: Compile query string to abstract syntax trees(ASTs).
 		startTS := time.Now()
-		stmtNodes, err := s.ParseSQL(sql, charset, collation)
+		stmtNodes, err := s.ParseSQL(goCtx2, sql, charset, collation)
 		if err != nil {
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
 		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
-		compiler := executor.Compiler{}
+		compiler := executor.Compiler{s}
 		for _, stmtNode := range stmtNodes {
-			s.PrepareTxnCtx(s.goCtx)
+			s.PrepareTxnCtx(goCtx2)
 
 			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 			startTS = time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
 			executor.ResetStmtCtx(s, stmtNode)
-			stmt, err := compiler.Compile(s, stmtNode)
+			stmt, err := compiler.Compile(goCtx2, stmtNode)
 			if err != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
-				terror.Log(errors.Trace(s.RollbackTxn(s.goCtx)))
+				terror.Log(errors.Trace(s.RollbackTxn(goCtx2)))
 				return nil, errors.Trace(err)
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -777,7 +775,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			}
 
 			// Step4: Execute the physical plan.
-			if recordSets, err = s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
+			if recordSets, err = s.executeStatement(goCtx2, connID, stmtNode, stmt, recordSets); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -853,12 +851,16 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s.PrepareTxnCtx(s.goCtx)
+	goCtx, cancelFunc := goctx.WithCancel(goctx.TODO())
+	s.mu.Lock()
+	s.mu.cancelFunc = cancelFunc
+	s.mu.Unlock()
+	s.PrepareTxnCtx(goCtx)
 	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	r, err := runStmt(s, st)
+	r, err := runStmt(goCtx, s, st)
 	return r, errors.Trace(err)
 }
 
@@ -877,11 +879,8 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn != nil && s.txn.Valid() {
-		ctx := s.goCtx
-		if ctx == nil {
-			ctx = goctx.Background()
-		}
-		err := s.CommitTxn(ctx)
+		goCtx := goctx.TODO()
+		err := s.CommitTxn(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -919,11 +918,8 @@ func (s *session) Close() {
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
-	ctx := s.goCtx
-	if ctx == nil {
-		ctx = goctx.Background()
-	}
-	if err := s.RollbackTxn(ctx); err != nil {
+	goCtx := goctx.TODO()
+	if err := s.RollbackTxn(goCtx); err != nil {
 		log.Error("session Close error:", errors.ErrorStack(err))
 	}
 }
@@ -1254,8 +1250,8 @@ func (s *session) PrepareTxnCtx(ctx goctx.Context) {
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
-func (s *session) RefreshTxnCtx() error {
-	if err := s.doCommit(s.goCtx); err != nil {
+func (s *session) RefreshTxnCtx(goCtx goctx.Context) error {
+	if err := s.doCommit(goCtx); err != nil {
 		return errors.Trace(err)
 	}
 
