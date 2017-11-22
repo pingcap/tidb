@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
+	goctx "golang.org/x/net/context"
 )
 
 // orderByRow binds a row to its order values, so it can be sorted.
@@ -48,11 +49,11 @@ func (e *SortExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *SortExec) Open() error {
+func (e *SortExec) Open(goCtx goctx.Context) error {
 	e.fetched = false
 	e.Idx = 0
 	e.Rows = nil
-	return errors.Trace(e.children[0].Open())
+	return errors.Trace(e.children[0].Open(goCtx))
 }
 
 // Len returns the number of rows.

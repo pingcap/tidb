@@ -65,10 +65,7 @@ type Bucket struct {
 
 // SaveStatsToStorage saves the stats to storage.
 func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
-	goCtx := ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
-	}
+	goCtx := goctx.TODO()
 	exec := ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(goCtx, "begin")
 	if err != nil {

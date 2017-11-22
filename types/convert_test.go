@@ -448,6 +448,12 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToFloat(c, "11.xx", 11.0, false, nil)
 	testStrToFloat(c, "11.xx", 11.0, true, ErrTruncated)
 	testStrToFloat(c, "xx.11", 0.0, false, nil)
+
+	// for issue #5111
+	testStrToFloat(c, "1e649", math.MaxFloat64, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "1e649", math.MaxFloat64, false, nil)
+	testStrToFloat(c, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "-1e649", -math.MaxFloat64, false, nil)
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
