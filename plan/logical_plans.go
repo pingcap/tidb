@@ -303,6 +303,14 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
+
+	// availableIndices is used for storing result of avalableIndices function.
+	availableIndices *avalableIndices
+}
+
+type avalableIndices struct {
+	indices          []*model.IndexInfo
+	includeTableScan bool
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
