@@ -3017,6 +3017,21 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("insert into tb(v) (select v from tb);")
 	r = tk.MustQuery(`SELECT * FROM tb;`)
 	r.Check(testkit.Rows("1 hello", "2 hello"))
+
+	// for issue #5111
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("create table t(c varchar(32));")
+	tk.MustExec("insert into t values('1e649'),('-1e649');")
+	r = tk.MustQuery(`SELECT * FROM t where c < 1;`)
+	r.Check(testkit.Rows("-1e649"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
+		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
+	r = tk.MustQuery(`SELECT * FROM t where c > 1;`)
+	r.Check(testkit.Rows("1e649"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
+		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
