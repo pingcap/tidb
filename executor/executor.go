@@ -421,7 +421,16 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	exprs []expression.Expression
+	exprs        []expression.Expression
+	vectorizable bool
+}
+
+func (e *ProjectionExec) Open() error {
+	if err := e.baseExecutor.Open(); err != nil {
+		return errors.Trace(err)
+	}
+	e.vectorizable = expression.Vectorizable(e.exprs)
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -450,8 +459,11 @@ func (e *ProjectionExec) NextChunk(chk *chunk.Chunk) error {
 	if err := e.children[0].NextChunk(e.childrenResults[0]); err != nil {
 		return errors.Trace(err)
 	}
-	err := expression.EvalExprsToChunk(e.ctx, e.exprs, e.childrenResults[0], chk)
-	return errors.Trace(err)
+	if e.vectorizable {
+		return errors.Trace(expression.VectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
+	} else {
+		return errors.Trace(expression.UnVectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
+	}
 }
 
 // TableDualExec represents a dual table executor.
