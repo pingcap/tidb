@@ -425,6 +425,7 @@ type ProjectionExec struct {
 	vectorizable bool
 }
 
+// Open implements the Executor Open interface.
 func (e *ProjectionExec) Open() error {
 	if err := e.baseExecutor.Open(); err != nil {
 		return errors.Trace(err)
@@ -461,9 +462,8 @@ func (e *ProjectionExec) NextChunk(chk *chunk.Chunk) error {
 	}
 	if e.vectorizable {
 		return errors.Trace(expression.VectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
-	} else {
-		return errors.Trace(expression.UnVectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
 	}
+	return errors.Trace(expression.UnVectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
 }
 
 // TableDualExec represents a dual table executor.

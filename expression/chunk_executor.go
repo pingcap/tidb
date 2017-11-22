@@ -52,7 +52,7 @@ func hasUnVectorizableFunc(expr Expression) bool {
 	return false
 }
 
-// UnVectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
+// VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
 func VectorizedExecute(ctx context.Context, exprs []Expression, input, output *chunk.Chunk) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	for colID, expr := range exprs {
@@ -103,7 +103,7 @@ func evalOneColumn(sc *stmtctx.StatementContext, expr Expression, input, output 
 		}
 	case types.ETJson:
 		for rowID, length := 0, input.NumRows(); rowID < length; rowID++ {
-			err := executeToJson(sc, expr, fieldType, input, output, rowID, colID)
+			err := executeToJSON(sc, expr, fieldType, input, output, rowID, colID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -161,7 +161,7 @@ func evalOneCell(sc *stmtctx.StatementContext, expr Expression, input, output *c
 			return errors.Trace(err)
 		}
 	case types.ETJson:
-		err := executeToJson(sc, expr, fieldType, input, output, rowID, colID)
+		err := executeToJSON(sc, expr, fieldType, input, output, rowID, colID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -245,7 +245,7 @@ func executeToDuration(sc *stmtctx.StatementContext, expr Expression, fieldType 
 	return nil
 }
 
-func executeToJson(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, input, output *chunk.Chunk, rowID, colID int) error {
+func executeToJSON(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, input, output *chunk.Chunk, rowID, colID int) error {
 	res, isNull, err := expr.EvalJSON(input.GetRow(rowID), sc)
 	if err != nil {
 		return errors.Trace(err)
