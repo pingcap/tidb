@@ -30,11 +30,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -169,14 +171,9 @@ func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRa
 	return krs, nil
 }
 
-func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*types.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(tid, idxID int64, ranges []*types.IndexRange) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
-		err := convertIndexRangeTypes(sc, ran, fieldTypes)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
 		low, err := codec.EncodeKey(nil, ran.LowVal...)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -198,66 +195,7 @@ func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, rang
 	return krs, nil
 }
 
-func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange, fieldTypes []*types.FieldType) error {
-	for i := range ran.LowVal {
-		if ran.LowVal[i].Kind() == types.KindMinNotNull || ran.LowVal[i].Kind() == types.KindMaxValue {
-			continue
-		}
-		converted, err := ran.LowVal[i].ConvertTo(sc, fieldTypes[i])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cmp, err := converted.CompareDatum(sc, &ran.LowVal[i])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		ran.LowVal[i] = converted
-		if cmp == 0 {
-			continue
-		}
-		if cmp < 0 && !ran.LowExclude {
-			// For int column a, a >= 1.1 is converted to a > 1.
-			ran.LowExclude = true
-		} else if cmp > 0 && ran.LowExclude {
-			// For int column a, a > 1.9 is converted to a >= 2.
-			ran.LowExclude = false
-		}
-		// The converted value has changed, the other column values doesn't matter.
-		// For equal condition, converted value changed means there will be no match.
-		// For non equal condition, this column would be the last one to build the range.
-		// Break here to prevent the rest columns modify LowExclude again.
-		break
-	}
-	for i := range ran.HighVal {
-		if ran.HighVal[i].Kind() == types.KindMaxValue || ran.LowVal[i].Kind() == types.KindNull {
-			continue
-		}
-		converted, err := ran.HighVal[i].ConvertTo(sc, fieldTypes[i])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cmp, err := converted.CompareDatum(sc, &ran.HighVal[i])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		ran.HighVal[i] = converted
-		if cmp == 0 {
-			continue
-		}
-		// For int column a, a < 1.1 is converted to a <= 1.
-		if cmp < 0 && ran.HighExclude {
-			ran.HighExclude = false
-		}
-		// For int column a, a <= 1.9 is converted to a < 2.
-		if cmp > 0 && !ran.HighExclude {
-			ran.HighExclude = true
-		}
-		break
-	}
-	return nil
-}
-
-func extractHandlesFromNewIndexResult(idxResult distsql.SelectResult) (handles []int64, finish bool, err error) {
+func extractHandlesFromIndexResult(idxResult distsql.SelectResult) (handles []int64, finish bool, err error) {
 	subResult, e0 := idxResult.Next()
 	if e0 != nil {
 		err = errors.Trace(e0)
@@ -267,14 +205,14 @@ func extractHandlesFromNewIndexResult(idxResult distsql.SelectResult) (handles [
 		finish = true
 		return
 	}
-	handles, err = extractHandlesFromNewIndexSubResult(subResult)
+	handles, err = extractHandlesFromIndexSubResult(subResult)
 	if err != nil {
 		err = errors.Trace(err)
 	}
 	return
 }
 
-func extractHandlesFromNewIndexSubResult(subResult distsql.PartialResult) ([]int64, error) {
+func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64, error) {
 	defer terror.Call(subResult.Close)
 	var (
 		handles     []int64
@@ -348,15 +286,21 @@ const (
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
 	FlagTruncateAsWarning uint64 = 1 << 1
+
+	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
+	FlagPadCharToFullLength uint64 = 1 << 2
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
-func statementContextToFlags(sc *variable.StatementContext) uint64 {
+func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.PadCharToFullLength {
+		flags |= FlagPadCharToFullLength
 	}
 	return flags
 }
@@ -454,6 +398,11 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableReaderExecutor) NextChunk(chk *chunk.Chunk) error {
+	return e.result.NextChunk(chk)
+}
+
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
 	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
@@ -470,7 +419,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -553,17 +502,18 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *IndexReaderExecutor) NextChunk(chk *chunk.Chunk) error {
+	return e.result.NextChunk(chk)
+}
+
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open() error {
 	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader.Open")
 	defer span.Finish()
 
-	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
-	for i, v := range e.index.Columns {
-		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
-	}
 	var builder requestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes).
+	kvReq, err := builder.SetIndexRanges(e.tableID, e.index.ID, e.ranges).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
@@ -573,7 +523,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -592,13 +542,9 @@ type IndexLookUpExecutor struct {
 	desc      bool
 	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
-	// This is the column that represent the handle, we can use handleCol.Index to know its position.
-	handleCol    *expression.Column
+	// handleIdx is the index of handle, which is only used for case of keeping order.
+	handleIdx    int
 	tableRequest *tipb.DAGRequest
-	// When we need to sort the data in the second read, we must use handle to do this,
-	// In this case, schema that the table reader use is different with executor's schema.
-	// TODO: store it in table plan's schema. Not store it here.
-	tableReaderSchema *expression.Schema
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
@@ -635,7 +581,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, 1)
+	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -661,7 +607,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 // at the same time to keep data ordered.
 func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, goCtx goctx.Context, finished <-chan struct{}) {
 	for {
-		handles, finish, err := extractHandlesFromNewIndexResult(result)
+		handles, finish, err := extractHandlesFromIndexResult(result)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- errors.Trace(err)
@@ -763,11 +709,7 @@ func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
 }
 
 func (e *IndexLookUpExecutor) indexRangesToKVRanges() ([]kv.KeyRange, error) {
-	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
-	for i, v := range e.index.Columns {
-		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
-	}
-	return indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes)
+	return indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
 }
 
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
@@ -777,16 +719,10 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
-	var schema *expression.Schema
-	if e.tableReaderSchema != nil {
-		schema = e.tableReaderSchema
-	} else {
-		schema = e.schema
-	}
 
 	var tableReader Executor
 	tableReader, err = e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(schema, e.ctx),
+		baseExecutor: newBaseExecutor(e.schema, e.ctx),
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
@@ -807,13 +743,8 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 	if e.keepOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: e.handleCol.Index}
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: e.handleIdx}
 		sort.Sort(sorter)
-		if e.tableReaderSchema != nil {
-			for i, row := range task.rows {
-				task.rows[i] = row[:len(row)-1]
-			}
-		}
 	}
 }
 
@@ -904,11 +835,11 @@ func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []types.Int
 	return builder
 }
 
-func (builder *requestBuilder) SetIndexRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*types.IndexRange, fieldTypes []*types.FieldType) *requestBuilder {
+func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*types.IndexRange) *requestBuilder {
 	if builder.err != nil {
 		return builder
 	}
-	builder.Request.KeyRanges, builder.err = indexRangesToKVRanges(sc, tid, idxID, ranges, fieldTypes)
+	builder.Request.KeyRanges, builder.err = indexRangesToKVRanges(tid, idxID, ranges)
 	return builder
 }
 

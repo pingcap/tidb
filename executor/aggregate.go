@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -35,7 +35,7 @@ type HashAggExec struct {
 	executed      bool
 	hasGby        bool
 	aggType       plan.AggregationType
-	sc            *variable.StatementContext
+	sc            *stmtctx.StatementContext
 	AggFuncs      []aggregation.Aggregation
 	aggCtxsMap    aggCtxsMapper
 	groupMap      *mvmap.MVMap
@@ -162,7 +162,7 @@ type StreamAggExec struct {
 
 	executed           bool
 	hasData            bool
-	StmtCtx            *variable.StatementContext
+	StmtCtx            *stmtctx.StatementContext
 	AggFuncs           []aggregation.Aggregation
 	aggCtxs            []*aggregation.AggEvaluateContext
 	GroupByItems       []expression.Expression

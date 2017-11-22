@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -150,7 +150,7 @@ func (s *testCompareSuite) TestCompare(c *C) {
 }
 
 func compareForTest(a, b interface{}) (int, error) {
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)
@@ -173,7 +173,7 @@ func (s *testCompareSuite) TestCompareDatum(c *C) {
 		{Datum{}, MinNotNullDatum(), -1},
 		{MinNotNullDatum(), MaxValueDatum(), -1},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for i, t := range cmpTbl {
 		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)

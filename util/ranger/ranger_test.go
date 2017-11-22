@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/ranger"
@@ -209,7 +209,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a IS NULL",
 			accessConds: "[isnull(test.t.a)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-inf)]",
+			resultStr:   "[]",
 		},
 		{
 			exprStr:     "a IS NOT NULL",
@@ -227,7 +227,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a IS NOT TRUE",
 			accessConds: "[not(istrue(test.t.a))]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-inf) [0,0]]",
+			resultStr:   "[[0,0]]",
 		},
 		{
 			exprStr:     "a IS FALSE",
@@ -271,6 +271,30 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			filterConds: "[]",
 			resultStr:   "[(-inf,0] [4,+inf)]",
 		},
+		{
+			exprStr:     "a > 9223372036854775807",
+			accessConds: "[gt(test.t.a, 9223372036854775807)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			exprStr:     "a >= 9223372036854775807",
+			accessConds: "[ge(test.t.a, 9223372036854775807)]",
+			filterConds: "[]",
+			resultStr:   "[[9223372036854775807,+inf)]",
+		},
+		{
+			exprStr:     "a < -9223372036854775807",
+			accessConds: "[lt(test.t.a, -9223372036854775807)]",
+			filterConds: "[]",
+			resultStr:   "[(-inf,-9223372036854775808]]",
+		},
+		{
+			exprStr:     "a < -9223372036854775808",
+			accessConds: "[lt(test.t.a, -9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -304,7 +328,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		conds, filter = ranger.DetachCondsForTableRange(ctx, conds, col)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
+		result, err := ranger.BuildRange(new(stmtctx.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -494,7 +518,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		conds, filter = ranger.DetachIndexConditions(conds, cols, lengths)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
+		result, err := ranger.BuildRange(new(stmtctx.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -746,7 +770,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		conds, filter = ranger.DetachCondsForSelectivity(conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
+		result, err := ranger.BuildRange(new(stmtctx.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%s", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
