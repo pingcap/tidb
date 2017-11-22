@@ -843,6 +843,13 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row types.Row) (res types
 		return res, false, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(string(val.ToString()), b.tp.Decimal)
+	if types.ErrTruncatedWrongVal.Equal(err) {
+		err = sc.HandleTruncate(err)
+		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
+		if res == types.ZeroDuration {
+			return res, true, errors.Trace(err)
+		}
+	}
 	return res, false, errors.Trace(err)
 }
 
@@ -1002,6 +1009,10 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row types.Row) (res types.
 	res, err = types.ParseDuration(val, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
+		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
+		if res == types.ZeroDuration {
+			return res, true, errors.Trace(err)
+		}
 	}
 	return res, false, errors.Trace(err)
 }

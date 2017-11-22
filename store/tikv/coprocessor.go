@@ -528,7 +528,7 @@ func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []cop
 		return nil
 	}
 
-	var ret []copResponse
+	ret := make([]copResponse, 0, len(newTasks))
 	for _, t := range newTasks {
 		resp := it.handleTask(bo, t)
 		ret = append(ret, resp...)
