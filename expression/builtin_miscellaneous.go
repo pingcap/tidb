@@ -121,9 +121,8 @@ func (b *builtinSleepSig) evalInt(row types.Row) (int64, bool, error) {
 	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
 	select {
 	case <-time.After(dur):
-	case <-b.ctx.GoCtx().Done(): // TODO: the channel returned by ctx.Done() is not closed when Ctrl-C is pressed in `mysql` client.
+		// TODO: Handle Ctrl-C is pressed in `mysql` client.
 		// return 1 when SLEEP() is KILLed
-		return 1, false, nil
 	}
 	return 0, false, nil
 }
