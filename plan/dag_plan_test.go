@@ -54,11 +54,6 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		sql  string
 		best string
 	}{
-		// Test unready index hint.
-		{
-			sql:  "select * from t t1 use index(e)",
-			best: "TableReader(Table(t))",
-		},
 		// Test index hint.
 		{
 			sql:  "select * from t t1 use index(c_d_e)",
