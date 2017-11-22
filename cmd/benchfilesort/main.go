@@ -26,7 +26,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -326,7 +326,7 @@ func driveRunCmd() {
 	cLog("Time used: ", time.Since(start))
 	cLog("=================================")
 
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	fsBuilder := new(filesort.Builder)
 	byDesc := make([]bool, keySize)
 	for i := 0; i < keySize; i++ {
