@@ -573,6 +573,9 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if vals == nil {
 			// TODO: check this
 			log.Warning("remove row index %v, txn %d, handle %d, data %v", v.Meta(), ctx.Txn().StartTS, h, rec)
