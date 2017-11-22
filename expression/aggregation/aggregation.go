@@ -127,7 +127,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *variable.S
 		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false)}, nil
 	case tipb.ExprType_First:
 		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
-	case tipb.ExprType_AggBitXor:
+	case tipb.ExprType_Agg_BitXor:
 		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
 	}
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)

@@ -44,7 +44,7 @@ func AggFuncToPBExpr(sc *variable.StatementContext, client kv.Client, aggFunc Ag
 	case ast.AggFuncAvg:
 		tp = tipb.ExprType_Avg
 	case ast.AggFuncBitXor:
-		tp = tipb.ExprType_AggBitXor
+		tp = tipb.ExprType_Agg_BitXor
 	}
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
