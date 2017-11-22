@@ -790,35 +790,30 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error {
 	defer terror.Call(rs.Close)
+	if rs.SupportChunk() {
+		columns := rs.Columns()
+		err := cc.writeColumnInfo(columns)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = cc.writeChunks(rs, binary, more)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(cc.flush())
+	}
 	// We need to call Next before we get columns.
 	// Otherwise, we will get incorrect columns info.
 	row, err := rs.Next()
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	columns, err := rs.Columns()
+	columns := rs.Columns()
+	err = cc.writeColumnInfo(columns)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	data := cc.alloc.AllocWithLen(4, 1024)
-	data = dumpLengthEncodedInt(data, uint64(len(columns)))
-	if err = cc.writePacket(data); err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, v := range columns {
-		data = data[0:4]
-		data = v.Dump(data)
-		if err = cc.writePacket(data); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if err = cc.writeEOF(false); err != nil {
-		return errors.Trace(err)
-	}
+	data := make([]byte, 4, 1024)
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -851,6 +846,55 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	}
 
 	return errors.Trace(cc.flush())
+}
+
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
+	data := make([]byte, 4, 1024)
+	data = dumpLengthEncodedInt(data, uint64(len(columns)))
+	if err := cc.writePacket(data); err != nil {
+		return errors.Trace(err)
+	}
+	for _, v := range columns {
+		data = data[0:4]
+		data = v.Dump(data)
+		if err := cc.writePacket(data); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := cc.writeEOF(false); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
+	data := make([]byte, 4, 1024)
+	chk := rs.NewChunk()
+	for {
+		err := rs.NextChunk(chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rowCount := chk.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		for i := 0; i < rowCount; i++ {
+			data = data[0:4]
+			if binary {
+				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
+			} else {
+				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err = cc.writePacket(data); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return errors.Trace(cc.writeEOF(more))
 }
 
 func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {

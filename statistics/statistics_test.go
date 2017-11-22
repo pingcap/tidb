@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -77,6 +78,18 @@ func (r *recordSet) Next() (types.Row, error) {
 	return types.DatumRow{r.data[r.cursor-1]}, nil
 }
 
+func (r *recordSet) NextChunk(chk *chunk.Chunk) error {
+	return nil
+}
+
+func (r *recordSet) NewChunk() *chunk.Chunk {
+	return nil
+}
+
+func (r *recordSet) SupportChunk() bool {
+	return false
+}
+
 func (r *recordSet) Close() error {
 	r.cursor = 0
 	return nil
@@ -99,7 +112,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	for i := start; i < len(samples); i += 5 {
 		samples[i].SetInt64(samples[i].GetInt64() + 2)
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	err := types.SortDatums(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
@@ -412,7 +425,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti.ID)
 	c.Assert(tbl.Count, Greater, int64(0))
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 3333)

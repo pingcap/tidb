@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 var (
@@ -92,9 +93,10 @@ const (
 type Row = types.DatumRow
 
 type baseExecutor struct {
-	children []Executor
-	ctx      context.Context
-	schema   *expression.Schema
+	children   []Executor
+	ctx        context.Context
+	schema     *expression.Schema
+	supportChk bool
 }
 
 // Open implements the Executor Open interface.
@@ -128,7 +130,19 @@ func (e *baseExecutor) Schema() *expression.Schema {
 }
 
 func (e *baseExecutor) supportChunk() bool {
-	return false
+	if !e.supportChk {
+		return false
+	}
+	for _, child := range e.children {
+		if !child.supportChunk() {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *baseExecutor) NextChunk(chk *chunk.Chunk) error {
+	return nil
 }
 
 func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
@@ -146,6 +160,7 @@ type Executor interface {
 	Open() error
 	Schema() *expression.Schema
 	supportChunk() bool
+	NextChunk(chk *chunk.Chunk) error
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.

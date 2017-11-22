@@ -398,7 +398,7 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	rs, err := ctx.Execute(goctx.Background(), "show create table t1")
 	row, err := rs[0].Next()
 	c.Assert(err, IsNil)
-	cols, err := rs[0].Columns()
+	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
