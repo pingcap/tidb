@@ -131,8 +131,8 @@ var (
 	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
 	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
-	// ErrTooLongIdent returns for too long name of database/table/column.
-	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
+	// ErrTooLongIdent returns for too long name of database/table/column/index.
+	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, mysql.MySQLErrName[mysql.ErrTooLongIdent])
 	// ErrWrongDBName returns for wrong database name.
 	ErrWrongDBName = terror.ClassDDL.New(codeWrongDBName, mysql.MySQLErrName[mysql.ErrWrongDBName])
 	// ErrWrongTableName returns for wrong table name.
