@@ -427,8 +427,8 @@ type ProjectionExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *ProjectionExec) Open() error {
-	if err := e.baseExecutor.Open(); err != nil {
+func (e *ProjectionExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
 	e.vectorizable = expression.Vectorizable(e.exprs)
