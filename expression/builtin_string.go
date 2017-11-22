@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
@@ -1550,7 +1550,7 @@ func trimRight(str, remstr string) string {
 	}
 }
 
-func getFlen4LpadAndRpad(sc *variable.StatementContext, arg Expression) int {
+func getFlen4LpadAndRpad(sc *stmtctx.StatementContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(nil, sc)
 		if err != nil {
@@ -2061,7 +2061,7 @@ type makeSetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *makeSetFunctionClass) getFlen(sc *variable.StatementContext, args []Expression) int {
+func (c *makeSetFunctionClass) getFlen(sc *stmtctx.StatementContext, args []Expression) int {
 	flen, count := 0, 0
 	if constant, ok := args[0].(*Constant); ok {
 		bits, isNull, err := constant.EvalInt(nil, sc)
