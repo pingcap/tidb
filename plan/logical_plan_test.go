@@ -1072,7 +1072,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		//},
 		{
 			sql: "select * from t t1 use index(e)",
-			err: ErrKeyDoesNotExits,
+			err: ErrKeyDoesNotExist,
 		},
 	}
 	for _, tt := range tests {

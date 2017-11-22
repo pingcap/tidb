@@ -43,7 +43,7 @@ var (
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
 	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
-	ErrKeyDoesNotExits      = terror.ClassOptimizerPlan.New(CodeKeyDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyDoesNotExits])
+	ErrKeyDoesNotExist      = terror.ClassOptimizerPlan.New(CodeKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
 )
 
 // Error codes.
@@ -59,7 +59,7 @@ const (
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
 	CodeBadTable                          = mysql.ErrBadTable
-	CodeKeyDoesNotExits                   = mysql.ErrKeyDoesNotExits
+	CodeKeyDoesNotExist                   = mysql.ErrKeyDoesNotExist
 )
 
 func init() {
@@ -71,7 +71,7 @@ func init() {
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
 		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
 		CodeBadTable:           mysql.ErrBadTable,
-		CodeKeyDoesNotExits:    mysql.ErrKeyDoesNotExits,
+		CodeKeyDoesNotExist:    mysql.ErrKeyDoesNotExist,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
@@ -330,7 +330,7 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 				if idx != nil {
 					indices = append(indices, idx)
 				} else {
-					return nil, true, ErrKeyDoesNotExits.GenByArgs(idxName, tableInfo.Name)
+					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
 				}
 			}
 		case ast.HintIgnore:
@@ -340,7 +340,7 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 				if idx != nil {
 					ignores = append(ignores, idx)
 				} else {
-					return nil, true, ErrKeyDoesNotExits.GenByArgs(idxName, tableInfo.Name)
+					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
 				}
 			}
 		}
