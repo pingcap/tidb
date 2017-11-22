@@ -102,7 +102,7 @@ func EvalExprsToChunk(ctx context.Context, exprs []Expression, input, output *ch
 	return nil
 }
 
-func evalOneCell(sc *variable.StatementContext, expr Expression, input, output *chunk.Chunk, rowID, colID int) error {
+func evalOneCell(sc *stmtctx.StatementContext, expr Expression, input, output *chunk.Chunk, rowID, colID int) error {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
 		res, isNull, err := expr.EvalInt(input.GetRow(rowID), sc)
