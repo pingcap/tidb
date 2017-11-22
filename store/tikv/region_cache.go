@@ -38,6 +38,12 @@ type CachedRegion struct {
 	lastAccess int64
 }
 
+func (c *CachedRegion) isValid() bool {
+	lastAccess := atomic.LoadInt64(&c.lastAccess)
+	lastAccessTime := time.Unix(lastAccess, 0)
+	return time.Since(lastAccessTime) < rcDefaultRegionCacheTTL
+}
+
 // RegionCache caches Regions loaded from PD.
 type RegionCache struct {
 	pdClient pd.Client
@@ -80,37 +86,23 @@ func (c *RPCContext) GetStoreID() uint64 {
 	return 0
 }
 
-func (c *CachedRegion) isValid() bool {
-	lastAccess := atomic.LoadInt64(&c.lastAccess)
-	lastAccessTime := time.Unix(lastAccess, 0)
-	return time.Since(lastAccessTime) < rcDefaultRegionCacheTTL
-}
-
-// GetCachedRegion returns a valid region
-func (c *RegionCache) GetCachedRegion(id RegionVerID) *Region {
-	c.mu.RLock()
-	cachedregion, ok := c.mu.regions[id]
-	c.mu.RUnlock()
-	if !ok {
-		return nil
-	}
-	if cachedregion.isValid() {
-		atomic.StoreInt64(&cachedregion.lastAccess, time.Now().Unix())
-		return cachedregion.region
-	}
-	c.DropRegion(id)
-	return nil
-}
-
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
 func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
-	region := c.GetCachedRegion(id)
+	c.mu.RLock()
+	region := c.getCachedRegion(id)
 	if region == nil {
+		c.mu.RUnlock()
 		return nil, nil
 	}
+	// Note: it is safe to use region.meta and region.peer without clone after
+	// unlock, because region cache will never update the content of region's meta
+	// or peer. On the contrary, if we want to use `region` after unlock, then we
+	// need to clone it to avoid data race.
+	meta, peer := region.meta, region.peer
+	c.mu.RUnlock()
 
-	addr, err := c.GetStoreAddr(bo, region.peer.GetStoreId())
+	addr, err := c.GetStoreAddr(bo, peer.GetStoreId())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -121,8 +113,8 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	}
 	return &RPCContext{
 		Region: id,
-		Meta:   region.meta,
-		Peer:   region.peer,
+		Meta:   meta,
+		Peer:   peer,
 		Addr:   addr,
 	}, nil
 }
@@ -142,15 +134,18 @@ func (l *KeyLocation) Contains(key []byte) bool {
 
 // LocateKey searches for the region and range that the key is located.
 func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
-	r := c.getRegionFromCache(key)
+	c.mu.RLock()
+	r := c.searchCachedRegion(key)
 	if r != nil {
 		loc := &KeyLocation{
 			Region:   r.VerID(),
 			StartKey: r.StartKey(),
 			EndKey:   r.EndKey(),
 		}
+		c.mu.RUnlock()
 		return loc, nil
 	}
+	c.mu.RUnlock()
 
 	r, err := c.loadRegion(bo, key)
 	if err != nil {
@@ -158,8 +153,9 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 	}
 
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.insertRegionToCache(r)
-	c.mu.Unlock()
+
 	return &KeyLocation{
 		Region:   r.VerID(),
 		StartKey: r.StartKey(),
@@ -167,8 +163,9 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 	}, nil
 }
 
-// LocateRegionByID searches for the region with ID
+// LocateRegionByID searches for the region with ID.
 func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLocation, error) {
+	c.mu.RLock()
 	r := c.getRegionByIDFromCache(regionID)
 	if r != nil {
 		loc := &KeyLocation{
@@ -176,8 +173,10 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 			StartKey: r.StartKey(),
 			EndKey:   r.EndKey(),
 		}
+		c.mu.RUnlock()
 		return loc, nil
 	}
+	c.mu.RUnlock()
 
 	r, err := c.loadRegionByID(bo, regionID)
 	if err != nil {
@@ -185,8 +184,8 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 	}
 
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.insertRegionToCache(r)
-	c.mu.Unlock()
 	return &KeyLocation{
 		Region:   r.VerID(),
 		StartKey: r.StartKey(),
@@ -243,7 +242,10 @@ func (c *RegionCache) DropRegion(id RegionVerID) {
 
 // UpdateLeader update some region cache with newer leader info.
 func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
-	r := c.GetCachedRegion(regionID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	r := c.getCachedRegion(regionID)
 	if r == nil {
 		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderStoreID)
 		return
@@ -251,26 +253,12 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 
 	if !r.SwitchPeer(leaderStoreID) {
 		log.Debugf("regionCache: cannot find peer when updating leader %d,%d", regionID, leaderStoreID)
-		c.DropRegion(r.VerID())
+		c.dropRegionFromCache(r.VerID())
 	}
-}
-
-func (c *RegionCache) getRegionFromCache(key []byte) *Region {
-	c.mu.RLock()
-	var r *Region
-	c.mu.sorted.DescendLessOrEqual(newRBSearchItem(key), func(item llrb.Item) bool {
-		r = item.(*llrbItem).region
-		return false
-	})
-	c.mu.RUnlock()
-	if r != nil && r.Contains(key) {
-		return c.GetCachedRegion(r.VerID())
-	}
-	return nil
 }
 
 // insertRegionToCache tries to insert the Region to cache.
-func (c *RegionCache) insertRegionToCache(r *Region) *Region {
+func (c *RegionCache) insertRegionToCache(r *Region) {
 	old := c.mu.sorted.ReplaceOrInsert(newRBItem(r))
 	if old != nil {
 		delete(c.mu.regions, old.(*llrbItem).region.VerID())
@@ -279,13 +267,44 @@ func (c *RegionCache) insertRegionToCache(r *Region) *Region {
 		region:     r,
 		lastAccess: time.Now().Unix(),
 	}
-	return r
 }
 
-// getRegionByIDFromCache tries to get region by regionID from cache
+// getCachedRegion loads a region from cache, it drops the cached region if it
+// was not accessed for a long time (maybe out of date).
+// Note that it should be called with c.mu.RLock(), and the returned Region
+// should not be used after c.mu is RUnlock().
+func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
+	cachedRegion, ok := c.mu.regions[id]
+	if !ok {
+		return nil
+	}
+	if cachedRegion.isValid() {
+		atomic.StoreInt64(&cachedRegion.lastAccess, time.Now().Unix())
+		return cachedRegion.region
+	}
+	c.dropRegionFromCache(id)
+	return nil
+}
+
+// searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
+// it should be called with c.mu.RLock(), and the returned Region should not be
+// used after c.mu is RUnlock().
+func (c *RegionCache) searchCachedRegion(key []byte) *Region {
+	var r *Region
+	c.mu.sorted.DescendLessOrEqual(newRBSearchItem(key), func(item llrb.Item) bool {
+		r = item.(*llrbItem).region
+		return false
+	})
+	if r != nil && r.Contains(key) {
+		return c.getCachedRegion(r.VerID())
+	}
+	return nil
+}
+
+// getRegionByIDFromCache tries to get region by regionID from cache. Like
+// `getCachedRegion`, it should be called with c.mu.RLock(), and the returned
+// Region should not be used after c.mu is RUnlock().
 func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	for v, r := range c.mu.regions {
 		if v.id == regionID {
 			return r.region
