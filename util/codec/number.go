@@ -158,7 +158,7 @@ func DecodeUvarint(b []byte) ([]byte, uint64, error) {
 }
 
 const (
-	negativeTagEnd   = 8        // Negative tag is (negativeTagEnd - length).
+	negativeTagEnd   = 8        // negative tag is (negativeTagEnd - length).
 	positiveTagStart = 0xff - 8 // Positive tag is (positiveTagStart + length).
 )
 
@@ -263,7 +263,7 @@ func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 	var v uint64
 	if first < negativeTagEnd {
 		length = negativeTagEnd - int(first)
-		v = math.MaxUint64 // Negative value has all bits on by default.
+		v = math.MaxUint64 // negative value has all bits on by default.
 	} else {
 		length = int(first) - positiveTagStart
 	}
