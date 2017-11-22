@@ -199,6 +199,7 @@ func (e *HashJoinExec) fetchOuterRows() {
 		}
 
 		select {
+		// TODO: Recover the code.
 		// case <-e.ctx.GoCtx().Done():
 		// 	return
 		case e.outerBufferChs[i] <- outerBuffer:
@@ -322,6 +323,7 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 	var outerBuffer *execResult
 	for ok := true; ok; {
 		select {
+		// TODO: Recover the code.
 		// case <-e.ctx.GoCtx().Done():
 		// 	ok = false
 		case outerBuffer, ok = <-e.outerBufferChs[workerID]:
@@ -426,6 +428,7 @@ func (e *HashJoinExec) Next() (Row, error) {
 				return nil, errors.Trace(resultBuffer.err)
 			}
 			e.resultBuffer = resultBuffer.rows
+			// TODO: Recover the code.
 			// case <-e.ctx.GoCtx().Done():
 			// 	return nil, nil
 		}
