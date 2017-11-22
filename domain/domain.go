@@ -317,9 +317,9 @@ func (do *Domain) Reload() error {
 }
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
+	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
-	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 	syncer := do.ddl.SchemaSyncer()
@@ -340,7 +340,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
 			do.SchemaValidator.Stop()
-			err := syncer.Restart(goctx.Background())
+			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
@@ -349,6 +349,31 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-do.exit:
 			return
 		}
+	}
+}
+
+// mustRestartSyncer tries to restart the SchemaSyncer.
+// It returns until it's successful or the domain is stoped.
+func (do *Domain) mustRestartSyncer() error {
+	ctx := goctx.Background()
+	syncer := do.ddl.SchemaSyncer()
+	timeout := 5 * time.Second
+
+	for {
+		childCtx, cancel := goctx.WithTimeout(ctx, timeout)
+		err := syncer.Restart(childCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		// If the domain has stopped, we return an error immediately.
+		select {
+		case <-do.exit:
+			return errors.Trace(err)
+		default:
+		}
+		time.Sleep(time.Second)
+		log.Infof("[ddl] restart the schema syncer failed %v", err)
 	}
 }
 
@@ -474,6 +499,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
+		d.wg.Add(1)
 		// Local store needs to get the change information for every DDL state in each session.
 		go d.loadSchemaInLoop(ddlLease)
 	}

@@ -94,10 +94,11 @@ const (
 type Row = types.DatumRow
 
 type baseExecutor struct {
-	children   []Executor
-	ctx        context.Context
-	schema     *expression.Schema
-	supportChk bool
+	ctx             context.Context
+	schema          *expression.Schema
+	supportChk      bool
+	children        []Executor
+	childrenResults []*chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
@@ -107,6 +108,10 @@ func (e *baseExecutor) Open(goCtx goctx.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
+	for _, child := range e.children {
+		e.childrenResults = append(e.childrenResults, child.newChunk())
 	}
 	return nil
 }
@@ -119,6 +124,7 @@ func (e *baseExecutor) Close() error {
 			return errors.Trace(err)
 		}
 	}
+	e.childrenResults = nil
 	return nil
 }
 
@@ -128,6 +134,10 @@ func (e *baseExecutor) Schema() *expression.Schema {
 		return expression.NewSchema()
 	}
 	return e.schema
+}
+
+func (e *baseExecutor) newChunk() *chunk.Chunk {
+	return chunk.NewChunk(e.Schema().GetTypes())
 }
 
 func (e *baseExecutor) supportChunk() bool {
@@ -161,6 +171,7 @@ type Executor interface {
 	Open(goctx.Context) error
 	Schema() *expression.Schema
 	supportChunk() bool
+	newChunk() *chunk.Chunk
 	NextChunk(chk *chunk.Chunk) error
 }
 
@@ -432,6 +443,16 @@ func (e *ProjectionExec) Next() (retRow Row, err error) {
 		row = append(row, val)
 	}
 	return row, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *ProjectionExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	if err := e.children[0].NextChunk(e.childrenResults[0]); err != nil {
+		return errors.Trace(err)
+	}
+	err := expression.EvalExprsToChunk(e.ctx, e.exprs, e.childrenResults[0], chk)
+	return errors.Trace(err)
 }
 
 // TableDualExec represents a dual table executor.

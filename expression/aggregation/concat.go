@@ -19,7 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -50,7 +50,7 @@ func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
 }
 
 // Update implements Aggregation interface.
-func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
