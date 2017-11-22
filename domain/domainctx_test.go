@@ -11,27 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sessionctx
+package domain
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
+var _ = Suite(&testDomainCtxSuite{})
+
+type testDomainCtxSuite struct {
 }
 
-var _ = Suite(&testSessionCtxSuite{})
-
-type testSessionCtxSuite struct {
-}
-
-func (s *testSessionCtxSuite) TestDomain(c *C) {
+func (s *testDomainCtxSuite) TestDomain(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -207,7 +206,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
@@ -257,7 +256,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
@@ -343,7 +342,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
@@ -381,7 +380,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		stmt := stmts[0]
 
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmt, is, true)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
