@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -26,7 +26,7 @@ import (
 )
 
 func (e *ShowExec) fetchShowStatsMeta() error {
-	do := sessionctx.GetDomain(e.ctx)
+	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
@@ -48,7 +48,7 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 }
 
 func (e *ShowExec) fetchShowStatsHistogram() error {
-	do := sessionctx.GetDomain(e.ctx)
+	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
@@ -85,7 +85,7 @@ func (e *ShowExec) versionToTime(version uint64) types.Time {
 }
 
 func (e *ShowExec) fetchShowStatsBuckets() error {
-	do := sessionctx.GetDomain(e.ctx)
+	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {

@@ -21,11 +21,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -303,7 +303,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
@@ -493,7 +493,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
@@ -744,7 +744,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
