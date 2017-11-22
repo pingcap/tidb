@@ -588,7 +588,7 @@ func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, star
 	s.Lock()
 	defer s.Unlock()
 
-	var errs []error
+	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
 		entry := s.getOrNewEntry(NewMvccKey(m.Key))
 		err := entry.Prewrite(m, startTS, primary, ttl)
