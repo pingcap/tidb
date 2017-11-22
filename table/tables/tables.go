@@ -574,12 +574,8 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec)
 		if err != nil {
+			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
 			return errors.Trace(err)
-		}
-		if vals == nil {
-			// TODO: check this
-			log.Warning("remove row index %v, txn %d, handle %d, data %v", v.Meta(), ctx.Txn().StartTS, h, rec)
-			continue
 		}
 		if err = v.Delete(ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
