@@ -236,8 +236,14 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, t := range cmpTable {
-		t1 := types.Duration{time.Duration(t.lhs), types.DefaultFsp}
-		t2 := types.Duration{time.Duration(t.rhs), types.DefaultFsp}
+		t1 := types.Duration{
+			Duration: time.Duration(t.lhs),
+			Fsp:      types.DefaultFsp,
+		}
+		t2 := types.Duration{
+			Duration: time.Duration(t.rhs),
+			Fsp:      types.DefaultFsp,
+		}
 		ret := t1.Compare(t2)
 		c.Assert(ret, Equals, t.ret)
 	}
@@ -847,8 +853,20 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	}
 
 	for _, test := range tests {
-		t1 := types.Time{test.t1, mysql.TypeDatetime, 6, nil, false}
-		t2 := types.Time{test.t2, mysql.TypeDatetime, 6, nil, false}
+		t1 := types.Time{
+			Time:     test.t1,
+			Type:     mysql.TypeDatetime,
+			Fsp:      6,
+			TimeZone: nil,
+			Negative: false,
+		}
+		t2 := types.Time{
+			Time:     test.t2,
+			Type:     mysql.TypeDatetime,
+			Fsp:      6,
+			TimeZone: nil,
+			Negative: false,
+		}
 		c.Assert(types.TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
