@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -58,9 +58,6 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -82,9 +79,6 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -106,9 +100,6 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -121,7 +112,12 @@ func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	physicalTableSource
+	*basePlan
+	basePhysicalPlan
+
+	// AccessCondition is used to calculate range.
+	AccessCondition []expression.Expression
+	filterCondition []expression.Expression
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
@@ -156,9 +152,6 @@ type PhysicalMemTable struct {
 	Columns     []*model.ColumnInfo
 	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -167,23 +160,6 @@ func (p *PhysicalMemTable) Copy() PhysicalPlan {
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
-}
-
-type physicalTableSource struct {
-	*basePlan
-	basePhysicalPlan
-
-	// AccessCondition is used to calculate range.
-	AccessCondition []expression.Expression
-
-	// filterCondition is only used by new planner.
-	filterCondition []expression.Expression
-
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
-
-	// TODO: This should be removed after old planner was removed.
-	unionScanSchema *expression.Schema
 }
 
 func needCount(af aggregation.Aggregation) bool {
@@ -197,7 +173,12 @@ func needValue(af aggregation.Aggregation) bool {
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	physicalTableSource
+	*basePlan
+	basePhysicalPlan
+
+	// AccessCondition is used to calculate range.
+	AccessCondition []expression.Expression
+	filterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -337,8 +318,7 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	NeedColHandle bool
-	Conditions    []expression.Expression
+	Conditions []expression.Expression
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -349,13 +329,8 @@ func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	return &np
 }
 
-// SourceSchema returns the original schema of DataSource
-func (p *PhysicalIndexScan) SourceSchema() *expression.Schema {
-	return p.dataSourceSchema
-}
-
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *variable.StatementContext) bool {
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
@@ -600,7 +575,7 @@ func rebuildSchema(p PhysicalPlan) bool {
 		buildSchema(p)
 	}
 	switch p.(type) {
-	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin:
+	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexLookUpReader:
 		needRebuild = true
 	case *Projection, *PhysicalAggregation:
 		needRebuild = false

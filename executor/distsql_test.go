@@ -22,9 +22,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -89,7 +89,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	tk.MustExec("insert copclient values " + strings.Join(values, ","))
 
 	// Get table ID for split.
-	dom := sessionctx.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
 	c.Assert(err, IsNil)
@@ -104,7 +104,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	defer rs.Close()
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
@@ -117,7 +117,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	c.Assert(err, IsNil)
 	row, err = rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.

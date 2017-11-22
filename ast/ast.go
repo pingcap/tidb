@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // Node is the basic element of the AST.
@@ -126,11 +127,6 @@ type ResultField struct {
 	Referenced bool
 }
 
-// Row represents a single row from Recordset.
-type Row struct {
-	Data []types.Datum
-}
-
 // RecordSet is an abstract result set interface to help get data from Plan.
 type RecordSet interface {
 
@@ -138,11 +134,29 @@ type RecordSet interface {
 	Fields() []*ResultField
 
 	// Next returns the next row, nil row means there is no more to return.
-	Next() (row *Row, err error)
+	Next() (row types.Row, err error)
+
+	// NextChunk reads records into chunk.
+	NextChunk(chk *chunk.Chunk) error
+
+	// NewChunk creates a new chunk with initial capacity.
+	NewChunk() *chunk.Chunk
+
+	// SupportChunk check if the RecordSet supports Chunk structure.
+	SupportChunk() bool
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
+}
+
+// RowToDatums converts row to datum slice.
+func RowToDatums(row types.Row, fields []*ResultField) []types.Datum {
+	datums := make([]types.Datum, len(fields))
+	for i, f := range fields {
+		datums[i] = row.GetDatum(i, &f.Column.FieldType)
+	}
+	return datums
 }
 
 // ResultSetNode interface has a ResultFields property, represents a Node that returns result set.

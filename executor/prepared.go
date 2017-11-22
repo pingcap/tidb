@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -164,7 +165,11 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
-	err = plan.Preprocess(e.ctx, stmt, e.IS, true)
+	// We try to build the real statement of preparedStmt.
+	for i := range prepared.Params {
+		prepared.Params[i].SetDatum(types.NewIntDatum(0))
+	}
+	_, err = plan.BuildLogicalPlan(e.ctx, stmt, e.IS)
 	if err != nil {
 		e.Err = errors.Trace(err)
 		return
@@ -296,7 +301,7 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 // Before every execution, we must clear statement context.
 func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
 
 	switch stmt := s.(type) {
@@ -346,6 +351,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
+		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
 	default:
 		sc.IgnoreTruncate = true
 		sc.OverflowAsWarning = false

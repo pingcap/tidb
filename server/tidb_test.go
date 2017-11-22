@@ -398,12 +398,11 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	rs, err := ctx.Execute(goctx.Background(), "show create table t1")
 	row, err := rs[0].Next()
 	c.Assert(err, IsNil)
-	cols, err := rs[0].Columns()
+	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
-	str, _ := row.GetString(1)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(str)*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(row.GetString(1))*tmysql.MaxBytesOfCharacter)
 }
 
 func (ts *TidbTestSuite) TestSumAvg(c *C) {

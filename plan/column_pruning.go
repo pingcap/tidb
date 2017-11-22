@@ -69,7 +69,7 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
-	var selfUsedCols []*expression.Column
+	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	for _, expr := range p.Exprs {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
@@ -157,16 +157,17 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
+func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
+	for _, col := range p.schema.TblID2Handle {
+		parentUsedCols = append(parentUsedCols, col[0])
+	}
+	p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
+	p.SetSchema(p.children[0].Schema())
+}
+
+// PruneColumns implements LogicalPlan interface.
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
-	p.pruneUnionScanSchema(used)
-	handleIdx := -1 // -1 for not found.
-	for _, col := range p.schema.TblID2Handle {
-		handleIdx = col[0].Index
-	}
-	if p.unionScanSchema != nil {
-		used[handleIdx] = true
-	}
 	firstCol, firstColInfo := p.schema.Columns[0], p.Columns[0]
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -174,26 +175,17 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
 	}
-	if handleIdx != -1 && !used[handleIdx] {
-		p.schema.TblID2Handle = nil
-		p.NeedColHandle = false
+	for _, cols := range p.schema.TblID2Handle {
+		if p.schema.ColumnIndex(cols[0]) == -1 {
+			p.schema.TblID2Handle = nil
+			break
+		}
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if p.schema.Len() == 0 {
 		p.schema.Append(firstCol)
 		p.Columns = append(p.Columns, firstColInfo)
-	}
-}
-
-func (p *DataSource) pruneUnionScanSchema(usedMask []bool) {
-	if p.unionScanSchema == nil {
-		return
-	}
-	for i := p.unionScanSchema.Len() - 1; i >= 0; i-- {
-		if !usedMask[i] {
-			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns[:i], p.unionScanSchema.Columns[i+1:]...)
-		}
 	}
 }
 
@@ -290,15 +282,8 @@ func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
 	if p.Lock != ast.SelectLockForUpdate {
 		p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	} else {
-		used := getUsedList(parentUsedCols, p.schema)
 		for _, cols := range p.children[0].Schema().TblID2Handle {
-			for _, col := range cols {
-				col.ResolveIndices(p.children[0].Schema())
-				if !used[col.Index] {
-					used[col.Index] = true
-					parentUsedCols = append(parentUsedCols, col)
-				}
-			}
+			parentUsedCols = append(parentUsedCols, cols...)
 		}
 		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
 	}

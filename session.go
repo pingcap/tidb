@@ -42,8 +42,8 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
@@ -88,14 +88,13 @@ type Session interface {
 }
 
 var (
-	_         Session = (*session)(nil)
-	sessionMu sync.Mutex
+	_ Session = (*session)(nil)
 )
 
 type stmtRecord struct {
 	stmtID  uint32
 	st      ast.Statement
-	stmtCtx *variable.StatementContext
+	stmtCtx *stmtctx.StatementContext
 	params  []interface{}
 }
 
@@ -105,7 +104,7 @@ type StmtHistory struct {
 }
 
 // Add appends a stmt to history list.
-func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
+func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *stmtctx.StatementContext, params ...interface{}) {
 	s := &stmtRecord{
 		stmtID:  stmtID,
 		st:      st,
@@ -288,7 +287,7 @@ func (s *session) doCommit(ctx goctx.Context) error {
 	}
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
-		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
+		SchemaValidator: domain.GetDomain(s).SchemaValidator,
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 		relatedTableIDs: tableIDs,
 	})
@@ -505,14 +504,14 @@ func sqlForLog(sql string) string {
 }
 
 func (s *session) sysSessionPool() *pools.ResourcePool {
-	return sessionctx.GetDomain(s).SysSessionPool()
+	return domain.GetDomain(s).SysSessionPool()
 }
 
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
 	var span opentracing.Span
 	goCtx := ctx.GoCtx()
 	if goCtx == nil {
@@ -535,7 +534,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 	}
 
 	var (
-		rows   []*ast.Row
+		rows   []types.Row
 		fields []*ast.ResultField
 	)
 	// Execute all recordset, take out the first one as result.
@@ -588,8 +587,8 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
-	var rows []*ast.Row
+func drainRecordSet(rs ast.RecordSet) ([]types.Row, error) {
+	var rows []types.Row
 	for {
 		row, err := rs.Next()
 		if err != nil {
@@ -606,14 +605,15 @@ func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
-	rows, _, err := s.ExecRestrictedSQL(ctx, sql)
+	rows, fields, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
 	if len(rows) == 0 {
 		return "", executor.ErrResultIsEmpty
 	}
-	value, err := types.ToString(rows[0].Data[0].GetValue())
+	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
+	value, err := d.ToString()
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -721,7 +721,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 	)
 
 	if plan.PlanCacheEnabled {
-		schemaVersion := sessionctx.GetDomain(s).InfoSchema().SchemaMetaVersion()
+		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
 		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
 
 		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
@@ -794,7 +794,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
-		s.sessionVars.TxnCtx.InfoSchema = sessionctx.GetDomain(s).InfoSchema()
+		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
 	}
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	prepareExec.DoPrepare()
@@ -926,7 +926,6 @@ func (s *session) Close() {
 	if err := s.RollbackTxn(ctx); err != nil {
 		log.Error("session Close error:", errors.ErrorStack(err))
 	}
-	return
 }
 
 // GetSessionVars implements the context.Context interface.
@@ -982,11 +981,6 @@ func getHostByIP(ip string) []string {
 	return addrs
 }
 
-// Some vars name for debug.
-const (
-	retryEmptyHistoryList = "RetryEmptyHistoryList"
-)
-
 func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
 	if n1 <= n2 {
 		return n1
@@ -1032,7 +1026,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	dom := sessionctx.GetDomain(se)
+	dom := domain.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1075,13 +1069,13 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	finishBootstrap(store)
 	s.ClearValue(context.Initing)
 
-	dom := sessionctx.GetDomain(s)
+	dom := domain.GetDomain(s)
 	dom.Close()
 	domap.Delete(store)
 }
 
 func createSession(store kv.Storage) (*session, error) {
-	domain, err := domap.Get(store)
+	dom, err := domap.Get(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1094,7 +1088,7 @@ func createSession(store kv.Storage) (*session, error) {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
-	sessionctx.BindDomain(s, domain)
+	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpClient()
@@ -1115,7 +1109,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
-	sessionctx.BindDomain(s, dom)
+	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	return s, nil
@@ -1193,16 +1187,17 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	// Set the variable to true to prevent cyclic recursive call.
 	vars.CommonGlobalLoaded = true
-	rows, _, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+	rows, fields, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
 	if err != nil {
 		vars.CommonGlobalLoaded = false
 		log.Errorf("Failed to load common global variables.")
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		varName := row.Data[0].GetString()
+		varName := row.GetString(0)
+		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
 		if _, ok := vars.Systems[varName]; !ok {
-			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
+			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1248,7 +1243,7 @@ func (s *session) PrepareTxnCtx(ctx goctx.Context) {
 	}
 
 	s.txnFuture = s.getTxnFuture(ctx)
-	is := sessionctx.GetDomain(s).InfoSchema()
+	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),

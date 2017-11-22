@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -70,7 +72,7 @@ func (a *recordSet) Fields() []*ast.ResultField {
 	return a.fields
 }
 
-func (a *recordSet) Next() (*ast.Row, error) {
+func (a *recordSet) Next() (types.Row, error) {
 	row, err := a.executor.Next()
 	if err != nil {
 		a.lastErr = err
@@ -86,7 +88,34 @@ func (a *recordSet) Next() (*ast.Row, error) {
 	if a.stmt != nil {
 		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
-	return &ast.Row{Data: row}, nil
+	return row, nil
+}
+
+func (a *recordSet) NextChunk(chk *chunk.Chunk) error {
+	err := a.executor.NextChunk(chk)
+	if err != nil {
+		a.lastErr = err
+		return errors.Trace(err)
+	}
+	numRows := chk.NumRows()
+	if numRows == 0 {
+		if a.stmt != nil {
+			a.stmt.ctx.GetSessionVars().LastFoundRows = a.stmt.ctx.GetSessionVars().StmtCtx.FoundRows()
+		}
+		return nil
+	}
+	if a.stmt != nil {
+		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
+	}
+	return nil
+}
+
+func (a *recordSet) NewChunk() *chunk.Chunk {
+	return chunk.NewChunk(a.executor.Schema().GetTypes())
+}
+
+func (a *recordSet) SupportChunk() bool {
+	return a.executor.supportChunk()
 }
 
 func (a *recordSet) Close() error {

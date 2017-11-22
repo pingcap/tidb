@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -1972,6 +1971,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select from_unixtime(1451606400.999999)")
 	unixTime = time.Unix(1451606400, 999999000).String()[:26]
 	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1511247196661)")
+	result.Check(testkit.Rows("<nil>"))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
@@ -2937,6 +2938,10 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 
 	r = tk.MustQuery(`select json_extract(json_object(1,2,3,4), '$."1"')`)
 	r.Check(testkit.Rows("2"))
+
+	tk.MustExec(`update table_json set a=json_set(a,'$.a',json_object('a',1,'b',2)) where json_extract(a,'$.a[1]') = '2'`)
+	r = tk.MustQuery(`select json_extract(a, '$.a.a'), json_extract(a, '$.a.b') from table_json`)
+	r.Check(testkit.Rows("1 2", "<nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
@@ -2947,7 +2952,7 @@ func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
 	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
 	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
 	ctx := testKit.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
 	c.Assert(col.Tp, Equals, mysql.TypeLong)

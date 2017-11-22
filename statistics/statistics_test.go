@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -52,18 +53,41 @@ type recordSet struct {
 	data   []types.Datum
 	count  int64
 	cursor int64
+	fields []*ast.ResultField
 }
 
 func (r *recordSet) Fields() []*ast.ResultField {
-	return nil
+	return r.fields
 }
 
-func (r *recordSet) Next() (*ast.Row, error) {
+func (r *recordSet) setFields(tps ...uint8) {
+	r.fields = make([]*ast.ResultField, len(tps))
+	for i := 0; i < len(tps); i++ {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *types.NewFieldType(tps[i])
+		r.fields[i] = rf
+	}
+}
+
+func (r *recordSet) Next() (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
 	r.cursor++
-	return &ast.Row{Data: []types.Datum{r.data[r.cursor-1]}}, nil
+	return types.DatumRow{r.data[r.cursor-1]}, nil
+}
+
+func (r *recordSet) NextChunk(chk *chunk.Chunk) error {
+	return nil
+}
+
+func (r *recordSet) NewChunk() *chunk.Chunk {
+	return nil
+}
+
+func (r *recordSet) SupportChunk() bool {
+	return false
 }
 
 func (r *recordSet) Close() error {
@@ -88,7 +112,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	for i := start; i < len(samples); i += 5 {
 		samples[i].SetInt64(samples[i].GetInt64() + 2)
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	err := types.SortDatums(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
@@ -98,6 +122,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		count:  s.count,
 		cursor: 0,
 	}
+	rc.setFields(mysql.TypeLonglong)
 	rc.data[0].SetInt64(0)
 	for i := 1; i < start; i++ {
 		rc.data[i].SetInt64(2)
@@ -120,6 +145,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		count:  s.count,
 		cursor: 0,
 	}
+	pk.setFields(mysql.TypeLonglong)
 	for i := int64(0); i < rc.count; i++ {
 		pk.data[i].SetInt64(int64(i))
 	}
@@ -141,7 +167,8 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 		if row == nil {
 			break
 		}
-		err = b.Iterate(row.Data[0])
+		datums := ast.RowToDatums(row, records.Fields())
+		err = b.Iterate(datums[0])
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -160,7 +187,8 @@ func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 		if row == nil {
 			break
 		}
-		bytes, err := codec.EncodeKey(nil, row.Data...)
+		datums := ast.RowToDatums(row, records.Fields())
+		bytes, err := codec.EncodeKey(nil, datums...)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
@@ -397,7 +425,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti.ID)
 	c.Assert(tbl.Count, Greater, int64(0))
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 3333)

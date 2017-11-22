@@ -32,7 +32,7 @@ import (
 
 // Error instances.
 var (
-	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
+	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type %T")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
 	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
@@ -148,12 +148,11 @@ var clauseMsg = map[clauseCode]string{
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
-	err           error
-	ctx           context.Context
-	is            infoschema.InfoSchema
-	outerSchemas  []*expression.Schema
-	inUpdateStmt  bool
-	needColHandle int
+	err          error
+	ctx          context.Context
+	is           infoschema.InfoSchema
+	outerSchemas []*expression.Schema
+	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.
@@ -429,16 +428,12 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 			}
 		}
 	}
-	indices, _ := availableIndices(tn.IndexHints, tn.TableInfo)
-	for _, index := range indices {
-		for _, idx := range tn.TableInfo.Indices {
-			if index.Name.L == idx.Name.L {
-				indicesInfo = append(indicesInfo, idx)
-				break
+	for _, idx := range tn.TableInfo.Indices {
+		if idx.State == model.StatePublic {
+			indicesInfo = append(indicesInfo, idx)
+			if len(idx.Columns) == 1 {
+				idxNames = append(idxNames, idx.Columns[0].Name.L)
 			}
-		}
-		if len(index.Columns) == 1 {
-			idxNames = append(idxNames, index.Columns[0].Name.L)
 		}
 	}
 	for _, col := range tbl.Columns {

@@ -21,7 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -703,7 +703,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{uint64(math.MaxUint64), uint64(0), 1},
 		{uint64(0), uint64(math.MaxUint64), -1},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, t := range tblCmp {
 		d1 := types.NewDatum(t.Arg1)
 		dec1, err := d1.ToDecimal(sc)
@@ -729,7 +729,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
 		-0.0099, 0, 0.001, 0.0012, 0.12, 1.2, 1.23, 123.3, 2424.242424}
-	var decs [][]byte
+	decs := make([][]byte, 0, len(floats))
 	for i := range floats {
 		dec := types.NewDecFromFloatForTest(floats[i])
 		var d types.Datum
@@ -899,18 +899,20 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 			TimeZone: time.Local,
 		}, types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
-		{types.Enum{"a", 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
-		{types.Set{"a", 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
+		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
+		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
 		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
 		{json.CreateJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
-	}
-	chk := new(chunk.Chunk)
-	var datums []types.Datum
-	for _, t := range table {
-		chk.AddColumnByFieldType(t.tp.Tp, 0)
-		datums = append(datums, types.NewDatum(t.value))
+		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
 
+	datums := make([]types.Datum, 0, len(table))
+	tps := make([]*types.FieldType, 0, len(table))
+	for _, t := range table {
+		tps = append(tps, t.tp)
+		datums = append(datums, types.NewDatum(t.value))
+	}
+	chk := chunk.NewChunk(tps)
 	rowCount := 3
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(nil, datums...)
@@ -921,7 +923,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		}
 	}
 
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for colIdx, t := range table {
 		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 			got := chk.GetRow(rowIdx).GetDatum(colIdx, t.tp)

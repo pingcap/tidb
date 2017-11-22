@@ -22,9 +22,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
@@ -180,7 +180,7 @@ func validateSnapshot(ctx context.Context, snapshotTS uint64) error {
 	if len(rows) != 1 {
 		return errors.New("can not get 'tikv_gc_safe_point'")
 	}
-	safePointString := rows[0].Data[0].GetString()
+	safePointString := rows[0].GetString(0)
 	const gcTimeFormat = "20060102-15:04:05 -0700 MST"
 	safePointTime, err := time.Parse(gcTimeFormat, safePointString)
 	if err != nil {
@@ -239,7 +239,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 		return nil
 	}
 	log.Infof("[%d] loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
-	dom := sessionctx.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {
 		return errors.Trace(err)

@@ -15,12 +15,14 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -65,7 +67,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 		if row == nil {
 			break
 		}
-		c.Assert(row.Data[1].GetString(), Equals, "float")
+		c.Assert(row.GetString(1), Equals, "float")
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
@@ -75,7 +77,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 		if row == nil {
 			break
 		}
-		c.Assert(row.Data[1].GetString(), Equals, "double")
+		c.Assert(row.GetString(1), Equals, "double")
 	}
 
 	// table option is auto-increment
@@ -143,9 +145,8 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(len(row.Data), Equals, 1)
-	t := row.Data[0].GetMysqlTime()
-	c.Assert(now, GreaterEqual, t.String())
+	c.Assert(row.Len(), Equals, 1)
+	c.Assert(now, GreaterEqual, row.GetTime(0).String())
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 }
@@ -157,7 +158,7 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustExec("insert nn values (1), (2)")
 	tk.MustExec("alter table nn add column c2 int not null")
 
-	tbl, err := sessionctx.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
 	c.Assert(err, IsNil)
 	col2 := tbl.Meta().Columns[1]
 	c.Assert(col2.DefaultValue, IsNil)
@@ -282,4 +283,39 @@ func (s *testSuite) TestUnsupportedCharset(c *C) {
 		}
 	}
 	tk.MustExec("drop database " + dbName)
+}
+
+func (s *testSuite) TestTooLargeIdentifierLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// for database.
+	dbName1, dbName2 := strings.Repeat("a", mysql.MaxDatabaseNameLength), strings.Repeat("a", mysql.MaxDatabaseNameLength+1)
+	tk.MustExec(fmt.Sprintf("create database %s", dbName1))
+	tk.MustExec(fmt.Sprintf("drop database %s", dbName1))
+	_, err := tk.Exec(fmt.Sprintf("create database %s", dbName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", dbName2))
+
+	// for table.
+	tk.MustExec("use test")
+	tableName1, tableName2 := strings.Repeat("b", mysql.MaxTableNameLength), strings.Repeat("b", mysql.MaxTableNameLength+1)
+	tk.MustExec(fmt.Sprintf("create table %s(c int)", tableName1))
+	tk.MustExec(fmt.Sprintf("drop table %s", tableName1))
+	_, err = tk.Exec(fmt.Sprintf("create table %s(c int)", tableName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", tableName2))
+
+	// for column.
+	tk.MustExec("drop table if exists t;")
+	columnName1, columnName2 := strings.Repeat("c", mysql.MaxColumnNameLength), strings.Repeat("c", mysql.MaxColumnNameLength+1)
+	tk.MustExec(fmt.Sprintf("create table t(%s int)", columnName1))
+	tk.MustExec("drop table t")
+	_, err = tk.Exec(fmt.Sprintf("create table t(%s int)", columnName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", columnName2))
+
+	// for index.
+	tk.MustExec("create table t(c int);")
+	indexName1, indexName2 := strings.Repeat("d", mysql.MaxIndexIdentifierLen), strings.Repeat("d", mysql.MaxIndexIdentifierLen+1)
+	tk.MustExec(fmt.Sprintf("create index %s on t(c)", indexName1))
+	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
+	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
