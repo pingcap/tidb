@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
@@ -172,7 +172,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 0.0)
@@ -191,7 +191,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(1))

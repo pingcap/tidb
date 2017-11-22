@@ -428,16 +428,12 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 			}
 		}
 	}
-	indices, _ := availableIndices(tn.IndexHints, tn.TableInfo)
-	for _, index := range indices {
-		for _, idx := range tn.TableInfo.Indices {
-			if index.Name.L == idx.Name.L {
-				indicesInfo = append(indicesInfo, idx)
-				break
+	for _, idx := range tn.TableInfo.Indices {
+		if idx.State == model.StatePublic {
+			indicesInfo = append(indicesInfo, idx)
+			if len(idx.Columns) == 1 {
+				idxNames = append(idxNames, idx.Columns[0].Name.L)
 			}
-		}
-		if len(index.Columns) == 1 {
-			idxNames = append(idxNames, index.Columns[0].Name.L)
 		}
 	}
 	for _, col := range tbl.Columns {

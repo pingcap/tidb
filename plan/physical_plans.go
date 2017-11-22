@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -112,7 +112,12 @@ func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	physicalTableSource
+	*basePlan
+	basePhysicalPlan
+
+	// AccessCondition is used to calculate range.
+	AccessCondition []expression.Expression
+	filterCondition []expression.Expression
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
@@ -157,17 +162,6 @@ func (p *PhysicalMemTable) Copy() PhysicalPlan {
 	return &np
 }
 
-type physicalTableSource struct {
-	*basePlan
-	basePhysicalPlan
-
-	// AccessCondition is used to calculate range.
-	AccessCondition []expression.Expression
-
-	// filterCondition is only used by new planner.
-	filterCondition []expression.Expression
-}
-
 func needCount(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
 }
@@ -180,7 +174,12 @@ func needValue(af aggregation.Aggregation) bool {
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	physicalTableSource
+	*basePlan
+	basePhysicalPlan
+
+	// AccessCondition is used to calculate range.
+	AccessCondition []expression.Expression
+	filterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -332,7 +331,7 @@ func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *variable.StatementContext) bool {
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&

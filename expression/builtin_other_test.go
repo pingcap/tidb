@@ -21,7 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -66,7 +66,7 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 			c.Assert(test.count, IsNil)
 			continue
 		}
-		sc := new(variable.StatementContext)
+		sc := new(stmtctx.StatementContext)
 		sc.IgnoreTruncate = true
 		res, err := count.ToInt64(sc)
 		c.Assert(err, IsNil)

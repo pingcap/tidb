@@ -16,7 +16,7 @@ package aggregation
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -42,7 +42,7 @@ func (af *avgFunction) GetType() *types.FieldType {
 	return ft
 }
 
-func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := af.Args[1]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -73,7 +73,7 @@ func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.Statement
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	if af.mode == FinalMode {
 		return af.updateAvg(ctx, sc, row)
 	}

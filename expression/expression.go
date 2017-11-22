@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -40,25 +40,25 @@ type Expression interface {
 	Eval(row types.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(row types.Row, sc *variable.StatementContext) (val int64, isNull bool, err error)
+	EvalInt(row types.Row, sc *stmtctx.StatementContext) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(row types.Row, sc *variable.StatementContext) (val float64, isNull bool, err error)
+	EvalReal(row types.Row, sc *stmtctx.StatementContext) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(row types.Row, sc *variable.StatementContext) (val string, isNull bool, err error)
+	EvalString(row types.Row, sc *stmtctx.StatementContext) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(row types.Row, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(row types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
+	EvalTime(row types.Row, sc *stmtctx.StatementContext) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(row types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
+	EvalDuration(row types.Row, sc *stmtctx.StatementContext) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(row types.Row, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
+	EvalJSON(row types.Row, sc *stmtctx.StatementContext) (val json.JSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
