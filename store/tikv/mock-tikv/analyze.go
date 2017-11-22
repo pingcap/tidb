@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -194,6 +195,18 @@ func (e *analyzeColumnsExec) Next() (row types.Row, err error) {
 		datumRow = append(datumRow, d)
 	}
 	return datumRow, nil
+}
+
+func (e *analyzeColumnsExec) NextChunk(chk *chunk.Chunk) error {
+	return nil
+}
+
+func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+	return nil
+}
+
+func (e *analyzeColumnsExec) SupportChunk() bool {
+	return false
 }
 
 // Close implements the ast.RecordSet Close interface.

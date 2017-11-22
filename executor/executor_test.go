@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -176,7 +175,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, NotNil)
 	// different index values
 	ctx := tk.Se.(context.Context)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
@@ -741,6 +740,18 @@ func (s *testSuite) TestIssue345(c *C) {
 
 	_, err := tk.Exec(`update t1 as a, t2 set t1.c1 = 10;`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestIssue5055(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1 (a int);`)
+	tk.MustExec(`create table t2 (a int);`)
+	tk.MustExec(`insert into t1 values(1);`)
+	tk.MustExec(`insert into t2 values(1);`)
+	result := tk.MustQuery("select tbl1.* from (select t1.a, 1 from t1) tbl1 left join t2 tbl2 on tbl1.a = tbl2.a order by tbl1.a desc limit 1;")
+	result.Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestUnion(c *C) {
@@ -1507,7 +1518,7 @@ func (s *testSuite) TestTableScan(c *C) {
 func (s *testSuite) TestAdapterStatement(c *C) {
 	se, err := tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
-	se.GetSessionVars().TxnCtx.InfoSchema = sessionctx.GetDomain(se).InfoSchema()
+	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")

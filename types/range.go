@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // Range is the interface of the three type of range.
@@ -51,9 +51,6 @@ func (tr IntColumnRange) String() string {
 	}
 	if tr.HighVal == math.MaxInt64 {
 		r = "+inf)"
-	} else if tr.HighVal == math.MinInt64 {
-		// This branch is for nil
-		r = "-inf)"
 	} else {
 		r = strconv.FormatInt(tr.HighVal, 10) + "]"
 	}
@@ -140,7 +137,7 @@ func (ir *IndexRange) Clone() *IndexRange {
 }
 
 // IsPoint returns if the index range is a point.
-func (ir *IndexRange) IsPoint(sc *variable.StatementContext) bool {
+func (ir *IndexRange) IsPoint(sc *stmtctx.StatementContext) bool {
 	if len(ir.LowVal) != len(ir.HighVal) {
 		return false
 	}
@@ -216,7 +213,7 @@ func (ir *IndexRange) Align(numColumns int) {
 
 // PrefixEqualLen tells you how long the prefix of the range is a point.
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
-func (ir *IndexRange) PrefixEqualLen(sc *variable.StatementContext) (int, error) {
+func (ir *IndexRange) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	// Here, len(ir.LowVal) always equal to len(ir.HighVal)
 	for i := 0; i < len(ir.LowVal); i++ {
 		cmp, err := ir.LowVal[i].CompareDatum(sc, &ir.HighVal[i])

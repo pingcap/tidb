@@ -11,11 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sessionctx
+package domain
 
 import (
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/domain"
 )
 
 // domainKeyType is a dummy type to avoid naming collision in context.
@@ -29,13 +28,13 @@ func (k domainKeyType) String() string {
 const domainKey domainKeyType = 0
 
 // BindDomain binds domain to context.
-func BindDomain(ctx context.Context, domain *domain.Domain) {
+func BindDomain(ctx context.Context, domain *Domain) {
 	ctx.SetValue(domainKey, domain)
 }
 
 // GetDomain gets domain from context.
-func GetDomain(ctx context.Context) *domain.Domain {
-	v, ok := ctx.Value(domainKey).(*domain.Domain)
+func GetDomain(ctx context.Context) *Domain {
+	v, ok := ctx.Value(domainKey).(*Domain)
 	if !ok {
 		return nil
 	}

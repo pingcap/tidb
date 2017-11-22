@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -911,7 +911,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
+func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
 	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
@@ -936,7 +936,7 @@ func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byt
 	return
 }
 
-func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
+func convertToTime(sc *stmtctx.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
 	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
 }
 

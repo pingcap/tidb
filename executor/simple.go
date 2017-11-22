@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
@@ -164,7 +164,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
 }
 
@@ -280,7 +280,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	// update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), s.User.Username, s.User.Hostname)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
 }
 
@@ -300,7 +300,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	case ast.FlushTables:
 		// TODO: A dummy implement
 	case ast.FlushPrivileges:
-		dom := sessionctx.GetDomain(e.ctx)
+		dom := domain.GetDomain(e.ctx)
 		sysSessionPool := dom.SysSessionPool()
 		ctx, err := sysSessionPool.Get()
 		if err != nil {
@@ -314,7 +314,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 }
 
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
-	h := sessionctx.GetDomain(e.ctx).StatsHandle()
+	h := domain.GetDomain(e.ctx).StatsHandle()
 	if h.Lease <= 0 {
 		err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
 		if err != nil {
