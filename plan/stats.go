@@ -138,6 +138,17 @@ func (p *Limit) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
+func (p *WindowFunction) prepareStatsProfile() *statsProfile {
+	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
+	p.profile = &statsProfile{
+		count:       childProfile.count,
+		cardinality: make([]float64, len(childProfile.cardinality)+1),
+	}
+	copy(p.profile.cardinality, childProfile.cardinality)
+	p.profile.cardinality[len(childProfile.cardinality)] = childProfile.count
+	return p.profile
+}
+
 func (p *TopN) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{

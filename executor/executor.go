@@ -346,6 +346,39 @@ func (e *LimitExec) Open() error {
 	return errors.Trace(e.children[0].Open())
 }
 
+// WindowFunctionExec represents a window function executor.
+type WindowFunctionExec struct {
+	baseExecutor
+
+	F   string
+	Idx int64
+}
+
+// Next implements the Executor Next interface.
+func (e *WindowFunctionExec) Next() (Row, error) {
+	row, err := e.children[0].Next()
+	if row == nil {
+		return nil, err
+	}
+	switch e.F {
+	case ast.WindowFuncRowNumber:
+		e.Idx++
+		row = append(row, types.NewIntDatum(e.Idx))
+	case ast.WindowFuncRank:
+		row = append(row, types.NewIntDatum(1))
+	}
+	return row, err
+}
+
+// Open implements the Executor Open interface.
+func (e *WindowFunctionExec) Open() error {
+	switch e.F {
+	case ast.WindowFuncRowNumber:
+		e.Idx = 0
+	}
+	return errors.Trace(e.children[0].Open())
+}
+
 func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.

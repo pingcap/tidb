@@ -264,10 +264,18 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, col.RetType, er.ctx))
 		return inNode, true
+	case *ast.WindowFuncExpr:
+		return er.handleWindowFunction(v)
 	default:
 		er.asScalar = true
 	}
 	return inNode, false
+}
+
+func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.Node, bool) {
+	er.p = er.b.buildWindowFunction(er.p, v)
+	er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
+	return v, true
 }
 
 func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) (ast.Node, bool) {
@@ -677,7 +685,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
-		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr,
+		*ast.WindowFuncExpr:
 	case *ast.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)

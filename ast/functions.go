@@ -439,6 +439,13 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+const (
+	// WindowFuncRowNumber is the name of row_number function.
+	WindowFuncRowNumber = "row_number"
+	// WindowFuncRank is the name of rank function.
+	WindowFuncRank = "rank"
+)
+
 // WindowFuncExpr represents window function expression.
 type WindowFuncExpr struct {
 	funcNode

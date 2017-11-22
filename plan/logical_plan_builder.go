@@ -731,6 +731,27 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	return li
 }
 
+func (b *planBuilder) buildWindowFunction(src LogicalPlan, expr *ast.WindowFuncExpr) LogicalPlan {
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	ft.Flen = 21
+	types.SetBinChsClnFlag(ft)
+
+	window := WindowFunction{
+		F: strings.ToLower(expr.F),
+	}.init(b.allocator, b.ctx)
+	schema := src.Schema().Clone()
+	schema.Append(&expression.Column{
+		IsAggOrSubq: true,
+		FromID:      window.id,
+		Position:    src.Schema().Len(),
+		ColName:     model.NewCIStr(expr.Text()),
+		RetType:     ft,
+	})
+	setParentAndChildren(window, src)
+	window.SetSchema(schema)
+	return window
+}
+
 // colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {

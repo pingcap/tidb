@@ -133,6 +133,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildIndexReader(v)
 	case *plan.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
+	case *plan.WindowFunction:
+		return b.buildWindowFunction(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -236,6 +238,14 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		Offset:       v.Offset,
 		Count:        v.Count,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildWindowFunction(v *plan.WindowFunction) Executor {
+	e := &WindowFunctionExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		F:            v.F,
 	}
 	return e
 }

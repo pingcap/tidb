@@ -136,6 +136,21 @@ func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
+func (p *WindowFunction) PruneColumns(parentUsedCols []*expression.Column) {
+	child := p.children[0].(LogicalPlan)
+	var selfUsedCols []*expression.Column
+	for _, col := range parentUsedCols {
+		if p.schema.ColumnIndex(col) != p.schema.Len()-1 {
+			selfUsedCols = append(selfUsedCols, col)
+		}
+	}
+	windowColumn := p.schema.Columns[p.schema.Len()-1]
+	child.PruneColumns(selfUsedCols)
+	p.SetSchema(child.Schema().Clone())
+	p.Schema().Append(windowColumn)
+}
+
+// PruneColumns implements LogicalPlan interface.
 func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.Schema())
 	for i := len(used) - 1; i >= 0; i-- {

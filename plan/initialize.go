@@ -51,6 +51,8 @@ const (
 	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
+	// TypeWindowFunction is the type of window function.
+	TypeWindowFunction = "WindowFunction"
 	// TypeHashSemiJoin is the type of hash semi join.
 	TypeHashSemiJoin = "HashSemiJoin"
 	// TypeHashLeftJoin is the type of left hash join.
@@ -146,6 +148,13 @@ func (p TopN) init(allocator *idAllocator, ctx context.Context) *TopN {
 
 func (p Limit) init(allocator *idAllocator, ctx context.Context) *Limit {
 	p.basePlan = newBasePlan(TypeLimit, allocator, ctx, &p)
+	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p WindowFunction) init(allocator *idAllocator, ctx context.Context) *WindowFunction {
+	p.basePlan = newBasePlan(TypeWindowFunction, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p

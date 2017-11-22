@@ -388,6 +388,16 @@ type Limit struct {
 	expectedProp *requiredProp
 }
 
+// WindowFunction represents a window function plan.
+type WindowFunction struct {
+	*basePlan
+	baseLogicalPlan
+	basePhysicalPlan
+
+	// F is the function name.
+	F string
+}
+
 // Update represents Update plan.
 type Update struct {
 	*basePlan
