@@ -19,10 +19,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
@@ -119,9 +119,9 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	}
 	ss.mu.values = make(map[fmt.Stringer]interface{})
 	ss.SetValue(context.Initing, true)
-	domain, err := domap.Get(store)
+	dom, err := domap.Get(store)
 	c.Assert(err, IsNil)
-	sessionctx.BindDomain(ss, domain)
+	domain.BindDomain(ss, dom)
 	b, err := checkBootstrapped(ss)
 	c.Assert(b, IsFalse)
 	c.Assert(err, IsNil)

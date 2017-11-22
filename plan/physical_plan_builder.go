@@ -190,7 +190,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 	if !ok {
 		return nil
 	}
-	indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
+	indices := x.availableIndices.indices
+	includeTableScan := x.availableIndices.includeTableScan
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
@@ -657,7 +658,8 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		return t, nil
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
-	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
+	indices := p.availableIndices.indices
+	includeTableScan := p.availableIndices.includeTableScan
 	t = invalidTask
 	if includeTableScan {
 		t, err = p.convertToTableScan(prop)
