@@ -21,10 +21,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
@@ -626,6 +626,18 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("update tt1 set a=5 where c='b';")
 	r = tk.MustQuery("select * from tt1;")
 	r.Check(testkit.Rows("1 a a", "5 d b"))
+
+	// Automatic Updating for TIMESTAMP
+	tk.MustExec("CREATE TABLE `tsup` (" +
+		"`a` int," +
+		"`ts` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
+		"KEY `idx` (`ts`)" +
+		");")
+	tk.MustExec("insert into tsup values(1, '0000-00-00 00:00:00');")
+	tk.MustExec("update tsup set a=5;")
+	r1 := tk.MustQuery("select ts from tsup use index (idx);")
+	r2 := tk.MustQuery("select ts from tsup;")
+	r1.Check(r2.Rows())
 }
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
@@ -1027,8 +1039,8 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 }
 
 func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
-	domain := sessionctx.GetDomain(ctx)
-	is := domain.InfoSchema()
+	dom := domain.GetDomain(ctx)
+	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
 	c.Assert(err, IsNil)

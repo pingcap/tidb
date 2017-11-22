@@ -120,6 +120,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 				return false, errors.Trace(errGT)
 			}
 			newData[i] = v
+			modified[i] = true
 		}
 	}
 
@@ -1356,9 +1357,7 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range assignList {
 		idx := v.Col.Index
-		if v != nil {
-			assignFlag[idx] = true
-		}
+		assignFlag[idx] = true
 	}
 	return assignFlag, nil
 }

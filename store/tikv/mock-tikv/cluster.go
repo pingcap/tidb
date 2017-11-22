@@ -432,7 +432,7 @@ func newRegion(regionID uint64, storeIDs, peerIDs []uint64, leaderPeerID uint64)
 	if len(storeIDs) != len(peerIDs) {
 		panic("len(storeIDs) != len(peerIds)")
 	}
-	var peers []*metapb.Peer
+	peers := make([]*metapb.Peer, 0, len(storeIDs))
 	for i := range storeIDs {
 		peers = append(peers, newPeerMeta(peerIDs[i], storeIDs[i]))
 	}
@@ -481,7 +481,7 @@ func (r *Region) split(newRegionID uint64, key MvccKey, peerIDs []uint64, leader
 	if len(r.Meta.Peers) != len(peerIDs) {
 		panic("len(r.meta.Peers) != len(peerIDs)")
 	}
-	var storeIDs []uint64
+	storeIDs := make([]uint64, 0, len(r.Meta.Peers))
 	for _, peer := range r.Meta.Peers {
 		storeIDs = append(storeIDs, peer.GetStoreId())
 	}

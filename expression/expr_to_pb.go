@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -29,7 +29,7 @@ import (
 )
 
 // ExpressionsToPB converts expression to tipb.Expr.
-func ExpressionsToPB(sc *variable.StatementContext, exprs []Expression, client kv.Client) (pbExpr *tipb.Expr, pushed []Expression, remained []Expression) {
+func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr *tipb.Expr, pushed []Expression, remained []Expression) {
 	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
@@ -51,7 +51,7 @@ func ExpressionsToPB(sc *variable.StatementContext, exprs []Expression, client k
 }
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(sc *variable.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr) {
+func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr) {
 	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
@@ -63,11 +63,11 @@ func ExpressionsToPBList(sc *variable.StatementContext, exprs []Expression, clie
 // PbConverter supplys methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
-	sc     *variable.StatementContext
+	sc     *stmtctx.StatementContext
 }
 
 // NewPBConverter creates a PbConverter.
-func NewPBConverter(client kv.Client, sc *variable.StatementContext) PbConverter {
+func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter {
 	return PbConverter{client: client, sc: sc}
 }
 
@@ -307,7 +307,7 @@ func (pc PbConverter) jsonFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 // GroupByItemToPB converts group by items to pb.
-func GroupByItemToPB(sc *variable.StatementContext, client kv.Client, expr Expression) *tipb.ByItem {
+func GroupByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression) *tipb.ByItem {
 	pc := PbConverter{client: client, sc: sc}
 	e := pc.ExprToPB(expr)
 	if e == nil {
@@ -317,7 +317,7 @@ func GroupByItemToPB(sc *variable.StatementContext, client kv.Client, expr Expre
 }
 
 // SortByItemToPB converts order by items to pb.
-func SortByItemToPB(sc *variable.StatementContext, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
+func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
 	pc := PbConverter{client: client, sc: sc}
 	e := pc.ExprToPB(expr)
 	if e == nil {
