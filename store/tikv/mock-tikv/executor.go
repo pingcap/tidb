@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -273,7 +273,7 @@ func (e *selectionExec) SetSrcExec(exec executor) {
 }
 
 // evalBool evaluates expression to a boolean value.
-func evalBool(exprs []expression.Expression, row types.DatumRow, ctx *variable.StatementContext) (bool, error) {
+func evalBool(exprs []expression.Expression, row types.DatumRow, ctx *stmtctx.StatementContext) (bool, error) {
 	for _, expr := range exprs {
 		data, err := expr.Eval(row)
 		if err != nil {
@@ -621,7 +621,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	return values, nil
 }
 
-func convertToExprs(sc *variable.StatementContext, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
 		e, err := expression.PBToExpr(expr, fieldTps, sc)

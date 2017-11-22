@@ -71,7 +71,7 @@ func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
 }
 
 func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
-	var kvPairs []*kvrpcpb.KvPair
+	kvPairs := make([]*kvrpcpb.KvPair, 0, len(pairs))
 	for _, p := range pairs {
 		var kvPair *kvrpcpb.KvPair
 		if p.Err == nil {
