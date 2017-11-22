@@ -575,14 +575,14 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 		vals, err := v.FetchValues(rec)
 		if vals == nil {
 			// TODO: check this
-			log.Infof("remove row index %v, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS, h)
+			log.Warning("remove row index %v, txn %d, handle %d, data %v", v.Meta(), ctx.Txn().StartTS, h, rec)
 			continue
 		}
 		if err = v.Delete(ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				log.Infof("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS, h)
+				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS, h)
 				continue
 			}
 			return errors.Trace(err)
