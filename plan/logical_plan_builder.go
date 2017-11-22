@@ -23,6 +23,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -1554,7 +1554,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	tableInfo := tbl.Meta()
-	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
+	handle := domain.GetDomain(b.ctx).StatsHandle()
 	var statisticTable *statistics.Table
 	if handle == nil {
 		// When the first session is created, the handle hasn't been initialized.

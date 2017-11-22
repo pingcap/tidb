@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -1351,11 +1350,11 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
-	err := sessionctx.GetDomain(tk.Se).Reload()
+	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	err := domain.GetDomain(tk.Se).Reload()
 	c.Assert(err, NotNil)
 
-	lease := sessionctx.GetDomain(tk.Se).DDL().GetLease()
+	lease := domain.GetDomain(tk.Se).DDL().GetLease()
 	time.Sleep(lease * 2)
 
 	// Make sure executing insert statement is failed when server is invalid.
@@ -1372,7 +1371,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -1475,7 +1474,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
-	tbl, err := sessionctx.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
 	c.Assert(err, IsNil)
 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 10)
 
