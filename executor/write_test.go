@@ -626,6 +626,18 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("update tt1 set a=5 where c='b';")
 	r = tk.MustQuery("select * from tt1;")
 	r.Check(testkit.Rows("1 a a", "5 d b"))
+
+	// Automatic Updating for TIMESTAMP
+	tk.MustExec("CREATE TABLE `tsup` (" +
+		"`a` int," +
+		"`ts` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
+		"KEY `idx` (`ts`)" +
+		");")
+	tk.MustExec("insert into tsup values(1, '0000-00-00 00:00:00');")
+	tk.MustExec("update tsup set a=5;")
+	r1 := tk.MustQuery("select ts from tsup use index (idx);")
+	r2 := tk.MustQuery("select ts from tsup;")
+	r1.Check(r2.Rows())
 }
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
