@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&pkgTestSuite{})
@@ -43,7 +44,7 @@ func (m *MockExec) Close() error {
 	return nil
 }
 
-func (m *MockExec) Open() error {
+func (m *MockExec) Open(goCtx goctx.Context) error {
 	m.curRowIdx = 0
 	return nil
 }

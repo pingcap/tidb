@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -51,7 +52,7 @@ const (
 )
 
 // Open implements the Executor Open interface.
-func (e *AnalyzeExec) Open() error {
+func (e *AnalyzeExec) Open(goctx.Context) error {
 	return nil
 }
 
@@ -193,11 +194,12 @@ func (e *AnalyzeIndexExec) open() error {
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
-	e.result, err = distsql.Analyze(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
+	goCtx := goctx.TODO()
+	e.result, err = distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(e.ctx.GoCtx())
+	e.result.Fetch(goCtx)
 	return nil
 }
 
@@ -286,11 +288,12 @@ func (e *AnalyzeColumnsExec) open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Analyze(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
+	goCtx := goctx.TODO()
+	e.result, err = distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(e.ctx.GoCtx())
+	e.result.Fetch(goCtx)
 	return nil
 }
 

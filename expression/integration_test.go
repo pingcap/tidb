@@ -1806,6 +1806,41 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
 	result.Check(testkit.Rows("-838:59:59"))
 
+	// fix issue #4324. cast decimal/int/string to time compability.
+	invalidTimes := []string{
+		"10009010",
+		"239010",
+		"233070",
+		"23:90:10",
+		"23:30:70",
+		"239010.2",
+		"233070.8",
+	}
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (ix TIME);")
+	tk.MustExec("SET SQL_MODE='';")
+	for _, invalidTime := range invalidTimes {
+		msg := fmt.Sprintf("Warning 1292 Truncated incorrect time value: '%s'", invalidTime)
+		result = tk.MustQuery(fmt.Sprintf("select cast('%s' as time);", invalidTime))
+		result.Check(testkit.Rows("<nil>"))
+		result = tk.MustQuery("show warnings")
+		result.Check(testkit.Rows(msg))
+		_, err := tk.Exec(fmt.Sprintf("insert into t select cast('%s' as time);", invalidTime))
+		c.Assert(err, IsNil)
+		result = tk.MustQuery("show warnings")
+		result.Check(testkit.Rows(msg))
+	}
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	for _, invalidTime := range invalidTimes {
+		msg := fmt.Sprintf("Warning 1292 Truncated incorrect time value: '%s'", invalidTime)
+		result = tk.MustQuery(fmt.Sprintf("select cast('%s' as time);", invalidTime))
+		result.Check(testkit.Rows("<nil>"))
+		result = tk.MustQuery("show warnings")
+		result.Check(testkit.Rows(msg))
+		_, err := tk.Exec(fmt.Sprintf("insert into t select cast('%s' as time);", invalidTime))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[types:1292]Truncated incorrect time value: '%s'", invalidTime))
+	}
+
 	// Fix issue #3691, cast compatibility.
 	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
 	result.Check(testkit.Rows("18446744073709551615"))
@@ -2982,6 +3017,21 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("insert into tb(v) (select v from tb);")
 	r = tk.MustQuery(`SELECT * FROM tb;`)
 	r.Check(testkit.Rows("1 hello", "2 hello"))
+
+	// for issue #5111
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("create table t(c varchar(32));")
+	tk.MustExec("insert into t values('1e649'),('-1e649');")
+	r = tk.MustQuery(`SELECT * FROM t where c < 1;`)
+	r.Check(testkit.Rows("-1e649"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
+		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
+	r = tk.MustQuery(`SELECT * FROM t where c > 1;`)
+	r.Check(testkit.Rows("1e649"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
+		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
