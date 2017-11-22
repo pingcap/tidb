@@ -631,10 +631,12 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
-	return &ProjectionExec{
+	e := &ProjectionExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		exprs:        v.Exprs,
 	}
+	e.baseExecutor.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
