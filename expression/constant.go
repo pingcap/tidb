@@ -21,7 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -112,7 +112,7 @@ func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of Constant.
-func (c *Constant) EvalInt(_ types.Row, sc *variable.StatementContext) (int64, bool, error) {
+func (c *Constant) EvalInt(_ types.Row, sc *stmtctx.StatementContext) (int64, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -139,7 +139,7 @@ func (c *Constant) EvalInt(_ types.Row, sc *variable.StatementContext) (int64, b
 }
 
 // EvalReal returns real representation of Constant.
-func (c *Constant) EvalReal(_ types.Row, sc *variable.StatementContext) (float64, bool, error) {
+func (c *Constant) EvalReal(_ types.Row, sc *stmtctx.StatementContext) (float64, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -166,7 +166,7 @@ func (c *Constant) EvalReal(_ types.Row, sc *variable.StatementContext) (float64
 }
 
 // EvalString returns string representation of Constant.
-func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (string, bool, error) {
+func (c *Constant) EvalString(_ types.Row, sc *stmtctx.StatementContext) (string, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -190,7 +190,7 @@ func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (strin
 }
 
 // EvalDecimal returns decimal representation of Constant.
-func (c *Constant) EvalDecimal(_ types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+func (c *Constant) EvalDecimal(_ types.Row, sc *stmtctx.StatementContext) (*types.MyDecimal, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -210,7 +210,7 @@ func (c *Constant) EvalDecimal(_ types.Row, sc *variable.StatementContext) (*typ
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
+func (c *Constant) EvalTime(_ types.Row, sc *stmtctx.StatementContext) (val types.Time, isNull bool, err error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -237,7 +237,7 @@ func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val typ
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(_ types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
+func (c *Constant) EvalDuration(_ types.Row, sc *stmtctx.StatementContext) (val types.Duration, isNull bool, err error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -264,7 +264,7 @@ func (c *Constant) EvalDuration(_ types.Row, sc *variable.StatementContext) (val
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(_ types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
+func (c *Constant) EvalJSON(_ types.Row, sc *stmtctx.StatementContext) (json.JSON, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {

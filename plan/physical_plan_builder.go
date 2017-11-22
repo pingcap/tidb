@@ -69,6 +69,16 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context) task {
 	return sort.attach2Task(task)
 }
 
+func (p *PhysicalUnionScan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	return [][]*requiredProp{{prop}}
+}
+
+func (p *LogicalUnionScan) generatePhysicalPlans() []PhysicalPlan {
+	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx)
+	us.SetSchema(p.schema)
+	return []PhysicalPlan{us}
+}
+
 // getChildrenPossibleProps will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
@@ -177,10 +187,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 		outerJoinKeys = p.RightJoinKeys
 	}
 	x, ok := innerChild.(*DataSource)
-	if !ok || x.unionScanSchema != nil {
+	if !ok {
 		return nil
 	}
-	indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
+	indices := x.availableIndices.indices
+	includeTableScan := x.availableIndices.includeTableScan
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
@@ -567,17 +578,6 @@ func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp Phys
 	return bestTask, nil
 }
 
-func addUnionScan(cop *copTask, ds *DataSource) task {
-	t := finishCopTask(cop, ds.ctx)
-	us := PhysicalUnionScan{
-		Conditions:    ds.pushedDownConds,
-		NeedColHandle: ds.NeedColHandle,
-	}.init(ds.ctx)
-	us.SetSchema(ds.unionScanSchema)
-	us.profile = t.plan().statsProfile()
-	return us.attach2Task(t)
-}
-
 // tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
 func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) {
 	client := p.ctx.GetClient()
@@ -658,7 +658,8 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		return t, nil
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
-	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
+	indices := p.availableIndices.indices
+	includeTableScan := p.availableIndices.includeTableScan
 	t = invalidTask
 	if includeTableScan {
 		t, err = p.convertToTableScan(prop)
@@ -706,15 +707,14 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 
 func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 	is := PhysicalIndexScan{
-		Table:               p.tableInfo,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		Columns:             p.Columns,
-		Index:               idx,
-		dataSourceSchema:    p.schema,
-		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
-		Ranges:              ranger.FullIndexRange(),
-		OutOfOrder:          true,
+		Table:            p.tableInfo,
+		TableAsName:      p.TableAsName,
+		DBName:           p.DBName,
+		Columns:          p.Columns,
+		Index:            idx,
+		dataSourceSchema: p.schema,
+		Ranges:           ranger.FullIndexRange(),
+		OutOfOrder:       true,
 	}.init(p.ctx)
 	is.filterCondition = p.pushedDownConds
 	is.profile = p.profile
@@ -732,16 +732,27 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 	return t.plan()
 }
 
+// If there is a table reader which needs to keep order, we should append a pk to table scan.
+func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
+	if len(ds.schema.TblID2Handle) > 0 {
+		return
+	}
+	pkInfo := model.NewExtraHandleColInfo()
+	ts.Columns = append(ts.Columns, pkInfo)
+	handleCol := ds.newExtraHandleSchemaCol()
+	ts.schema.Append(handleCol)
+	ts.schema.TblID2Handle[ds.tableInfo.ID] = []*expression.Column{handleCol}
+}
+
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task task, err error) {
 	is := PhysicalIndexScan{
-		Table:               p.tableInfo,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		Columns:             p.Columns,
-		Index:               idx,
-		dataSourceSchema:    p.schema,
-		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || p.unionScanSchema != nil},
+		Table:            p.tableInfo,
+		TableAsName:      p.TableAsName,
+		DBName:           p.DBName,
+		Columns:          p.Columns,
+		Index:            idx,
+		dataSourceSchema: p.schema,
 	}.init(p.ctx)
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
@@ -777,7 +788,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.ctx)
-		cop.tablePlan.SetSchema(is.dataSourceSchema.Clone())
+		cop.tablePlan.SetSchema(p.schema.Clone())
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
 			return &copTask{cst: math.MaxFloat64}, nil
@@ -818,18 +829,11 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
-		if !is.NeedColHandle && cop.tablePlan != nil {
-			tblPlan := cop.tablePlan.(*PhysicalTableScan)
-			tblPlan.Columns = append(tblPlan.Columns, &model.ColumnInfo{
-				ID:   model.ExtraHandleID,
-				Name: model.NewCIStr("_rowid"),
-			})
+		if cop.tablePlan != nil {
+			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(p)
 		}
 		cop.keepOrder = true
 		is.addPushedDownSelection(cop, p, prop.expectedCnt)
-		if p.unionScanSchema != nil {
-			task = addUnionScan(cop, p)
-		}
 	} else {
 		is.OutOfOrder = true
 		expectedCnt := math.MaxFloat64
@@ -839,9 +843,6 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			return invalidTask, nil
 		}
 		is.addPushedDownSelection(cop, p, expectedCnt)
-		if p.unionScanSchema != nil {
-			task = addUnionScan(cop, p)
-		}
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx)
@@ -851,6 +852,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	return task, nil
 }
 
+// TODO: refine this.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	var indexCols []*expression.Column
 	for _, col := range idx.Columns {
@@ -965,12 +967,11 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 
 func (p *DataSource) forceToTableScan() PhysicalPlan {
 	ts := PhysicalTableScan{
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
-		Ranges:              ranger.FullIntRange(),
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		DBName:      p.DBName,
+		Ranges:      ranger.FullIntRange(),
 	}.init(p.ctx)
 	ts.SetSchema(p.schema)
 	ts.profile = p.profile
@@ -990,11 +991,10 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		return &copTask{cst: math.MaxFloat64}, nil
 	}
 	ts := PhysicalTableScan{
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || p.unionScanSchema != nil},
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		DBName:      p.DBName,
 	}.init(p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
@@ -1056,9 +1056,6 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		ts.KeepOrder = true
 		copTask.keepOrder = true
 		ts.addPushedDownSelection(copTask, p.profile, prop.expectedCnt)
-		if p.unionScanSchema != nil {
-			task = addUnionScan(copTask, p)
-		}
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -1067,9 +1064,6 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			return invalidTask, nil
 		}
 		ts.addPushedDownSelection(copTask, p.profile, expectedCnt)
-		if p.unionScanSchema != nil {
-			task = addUnionScan(copTask, p)
-		}
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx)

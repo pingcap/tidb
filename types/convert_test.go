@@ -22,7 +22,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
@@ -40,7 +40,7 @@ type invalidMockType struct {
 // Convert converts the val with type tp.
 func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	d := NewDatum(val)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = time.UTC
 	ret, err := d.ConvertTo(sc, target)
 	if err != nil {
@@ -245,7 +245,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	v, err = d.ToDecimal(sc)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue)
 
@@ -364,7 +364,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 		ft.Flen = tt.flen
 		ft.Charset = tt.charset
 		inputDatum := NewStringDatum(tt.input)
-		sc := new(variable.StatementContext)
+		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if tt.input != tt.output {
 			c.Assert(ErrDataTooLong.Equal(err), IsTrue)
@@ -376,7 +376,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 }
 
 func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str)
 	if expectErr != nil {
@@ -388,7 +388,7 @@ func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr 
 }
 
 func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectErr error) {
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToUint(sc, str)
 	if expectErr != nil {
@@ -400,7 +400,7 @@ func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectEr
 }
 
 func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expectErr error) {
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToFloat(sc, str)
 	if expectErr != nil {
@@ -448,6 +448,12 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToFloat(c, "11.xx", 11.0, false, nil)
 	testStrToFloat(c, "11.xx", 11.0, true, ErrTruncated)
 	testStrToFloat(c, "xx.11", 0.0, false, nil)
+
+	// for issue #5111
+	testStrToFloat(c, "1e649", math.MaxFloat64, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "1e649", math.MaxFloat64, false, nil)
+	testStrToFloat(c, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
+	testStrToFloat(c, "-1e649", -math.MaxFloat64, false, nil)
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
@@ -466,7 +472,7 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 		ft.Flag |= mysql.UnsignedFlag
 	}
 	d := NewDatum(value)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, IsNil, Commentf("%v", ft))
@@ -493,7 +499,7 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 		ft.Flag |= mysql.UnsignedFlag
 	}
 	d := NewDatum(value)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, NotNil)
 	if casted.IsNull() {
@@ -665,7 +671,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"123e+", "123"},
 		{"123.e", "123."},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		prefix, _ := getValidFloatPrefix(sc, tt.origin)
 		c.Assert(prefix, Equals, tt.valid)
@@ -689,14 +695,14 @@ func (s *testTypeConvertSuite) TestConvertTime(c *C) {
 	}
 
 	for _, timezone := range timezones {
-		sc := &variable.StatementContext{
+		sc := &stmtctx.StatementContext{
 			TimeZone: timezone,
 		}
 		testConvertTimeTimeZone(c, sc)
 	}
 }
 
-func testConvertTimeTimeZone(c *C, sc *variable.StatementContext) {
+func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
 	tests := []struct {
 		input  Time
@@ -760,7 +766,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		j, err := json.ParseFromString(tt.In)
 		c.Assert(err, IsNil)
 
-		casted, _ := ConvertJSONToInt(new(variable.StatementContext), j, false)
+		casted, _ := ConvertJSONToInt(new(stmtctx.StatementContext), j, false)
 		c.Assert(casted, Equals, tt.Out)
 	}
 }
@@ -785,7 +791,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 	for _, tt := range tests {
 		j, err := json.ParseFromString(tt.In)
 		c.Assert(err, IsNil)
-		casted, _ := ConvertJSONToFloat(new(variable.StatementContext), j)
+		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
 	}
 }

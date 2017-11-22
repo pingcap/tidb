@@ -21,10 +21,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
@@ -610,9 +610,37 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2000-10-01 01:01:01 2017-01-01 10:10:10"))
 	tk.MustExec("update t set t1 = '2017-10-01 10:10:11', t2 = date_add(t1, INTERVAL 10 MINUTE) where id = 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2017-10-01 10:20:11"))
+
+	// for issue #5132
+	tk.MustExec("CREATE TABLE `tt1` (" +
+		"`a` int(11) NOT NULL," +
+		"`b` varchar(32) DEFAULT NULL," +
+		"`c` varchar(32) DEFAULT NULL," +
+		"PRIMARY KEY (`a`)," +
+		"UNIQUE KEY `b_idx` (`b`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("insert into tt1 values(1, 'a', 'a');")
+	tk.MustExec("insert into tt1 values(2, 'd', 'b');")
+	r = tk.MustQuery("select * from tt1;")
+	r.Check(testkit.Rows("1 a a", "2 d b"))
+	tk.MustExec("update tt1 set a=5 where c='b';")
+	r = tk.MustQuery("select * from tt1;")
+	r.Check(testkit.Rows("1 a a", "5 d b"))
+
+	// Automatic Updating for TIMESTAMP
+	tk.MustExec("CREATE TABLE `tsup` (" +
+		"`a` int," +
+		"`ts` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
+		"KEY `idx` (`ts`)" +
+		");")
+	tk.MustExec("insert into tsup values(1, '0000-00-00 00:00:00');")
+	tk.MustExec("update tsup set a=5;")
+	r1 := tk.MustQuery("select ts from tsup use index (idx);")
+	r2 := tk.MustQuery("select ts from tsup;")
+	r1.Check(r2.Rows())
 }
 
-// For issue #4514.
+// TestUpdateCastOnlyModifiedValues for issue #4514.
 func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -987,7 +1015,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-// reuse TestLoadDataEscape's test case :-)
+// TestLoadDataSpecifiedCoumns reuse TestLoadDataEscape's test case :-)
 func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -1011,8 +1039,8 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 }
 
 func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
-	domain := sessionctx.GetDomain(ctx)
-	is := domain.InfoSchema()
+	dom := domain.GetDomain(ctx)
+	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
 	c.Assert(err, IsNil)
@@ -1189,7 +1217,7 @@ func assertEqualStrings(c *C, got []string, expect []string) {
 	}
 }
 
-// Test issue https://github.com/pingcap/tidb/issues/4067
+// TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
 func (s *testSuite) TestIssue4067(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

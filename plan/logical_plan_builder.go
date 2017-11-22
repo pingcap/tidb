@@ -23,6 +23,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,8 +31,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -126,8 +126,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		case *ast.TableName:
 			p = b.buildDataSource(v)
 		default:
-			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", v)
-			return nil
+			b.err = ErrUnsupportedType.GenByArgs(v)
 		}
 		if b.err != nil {
 			return nil
@@ -218,15 +217,8 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 }
 
 func extractTableAlias(p LogicalPlan) *model.CIStr {
-	if dataSource, ok := p.(*DataSource); ok {
-		if dataSource.TableAsName.L != "" {
-			return dataSource.TableAsName
-		}
-		return &dataSource.tableInfo.Name
-	} else if len(p.Schema().Columns) > 0 {
-		if p.Schema().Columns[0].TblName.L != "" {
-			return &(p.Schema().Columns[0].TblName)
-		}
+	if p.Schema().Len() > 0 && p.Schema().Columns[0].TblName.L != "" {
+		return &(p.Schema().Columns[0].TblName)
 	}
 	return nil
 }
@@ -691,7 +683,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 // getUintForLimitOffset gets uint64 value for limit/offset.
 // For ordinary statement, limit/offset should be uint64 constant value.
 // For prepared statement, limit/offset is string. We should convert it to uint64.
-func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint64, error) {
+func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint64, error) {
 	switch v := val.(type) {
 	case uint64:
 		return v, nil
@@ -1432,10 +1424,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 
-	if sel.LockTp == ast.SelectLockForUpdate {
-		b.needColHandle++
-	}
-
 	var (
 		p                             LogicalPlan
 		aggFuncs                      []*ast.AggregateFuncExpr
@@ -1523,9 +1511,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	sel.Fields.Fields = originalFields
-	if sel.LockTp == ast.SelectLockForUpdate {
-		b.needColHandle--
-	}
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
 		setParentAndChildren(proj, p)
@@ -1546,6 +1531,18 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 	return dual
 }
 
+func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
+	return &expression.Column{
+		FromID:   ds.id,
+		DBName:   ds.DBName,
+		TblName:  ds.tableInfo.Name,
+		ColName:  model.ExtraHandleName,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Position: len(ds.tableInfo.Columns), // set a unique position
+		ID:       model.ExtraHandleID,
+	}
+}
+
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	schemaName := tn.Schema
 	if schemaName.L == "" {
@@ -1557,7 +1554,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		return nil
 	}
 	tableInfo := tbl.Meta()
-	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
+	handle := domain.GetDomain(b.ctx).StatsHandle()
 	var statisticTable *statistics.Table
 	if handle == nil {
 		// When the first session is created, the handle hasn't been initialized.
@@ -1565,14 +1562,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		statisticTable = handle.GetTableStats(tableInfo.ID)
 	}
+	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	avalableIndices := avalableIndices{indices: indices, includeTableScan: includeTableScan}
 
-	p := DataSource{
-		indexHints:     tn.IndexHints,
-		tableInfo:      tableInfo,
-		statisticTable: statisticTable,
-		DBName:         schemaName,
-		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
-		NeedColHandle:  b.needColHandle > 0,
+	ds := DataSource{
+		indexHints:       tn.IndexHints,
+		tableInfo:        tableInfo,
+		statisticTable:   statisticTable,
+		DBName:           schemaName,
+		Columns:          make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		availableIndices: &avalableIndices,
 	}.init(b.ctx)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
@@ -1582,13 +1585,13 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		columns = tbl.Cols()
 	}
-	var pkCol *expression.Column
-	p.Columns = make([]*model.ColumnInfo, 0, len(columns))
+	var handleCol *expression.Column
+	ds.Columns = make([]*model.ColumnInfo, 0, len(columns))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
-		p.Columns = append(p.Columns, col.ToInfo())
+		ds.Columns = append(ds.Columns, col.ToInfo())
 		schema.Append(&expression.Column{
-			FromID:   p.id,
+			FromID:   ds.id,
 			ColName:  col.Name,
 			TblName:  tableInfo.Name,
 			DBName:   schemaName,
@@ -1596,55 +1599,36 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			Position: i,
 			ID:       col.ID})
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			pkCol = schema.Columns[schema.Len()-1]
+			handleCol = schema.Columns[schema.Len()-1]
 		}
 	}
-	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
-	if b.needColHandle == 0 && !needUnionScan {
-		p.SetSchema(schema)
-		return b.projectVirtualColumns(p, columns)
+	ds.SetSchema(schema)
+	if handleCol == nil {
+		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
+		handleCol = ds.newExtraHandleSchemaCol()
+		schema.Append(handleCol)
 	}
-	if needUnionScan {
-		p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-		for _, col := range schema.Columns {
-			p.unionScanSchema.Append(col)
-		}
+	schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+	// make plan as DS -> US -> Proj
+	var result LogicalPlan = ds
+	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
+		us := LogicalUnionScan{}.init(b.ctx)
+		us.SetSchema(ds.Schema().Clone())
+		setParentAndChildren(us, result)
+		result = us
 	}
-	if pkCol == nil {
-		idCol := &expression.Column{
-			FromID:   p.id,
-			DBName:   schemaName,
-			TblName:  tableInfo.Name,
-			ColName:  model.NewCIStr("_rowid"),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Position: schema.Len(),
-			Index:    schema.Len(),
-			ID:       model.ExtraHandleID,
-		}
-		if needUnionScan && b.needColHandle > 0 {
-			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
-			p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
-		}
-		p.Columns = append(p.Columns, &model.ColumnInfo{
-			ID:   model.ExtraHandleID,
-			Name: model.NewCIStr("_rowid"),
-		})
-		schema.Append(idCol)
-		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
-	} else {
-		if needUnionScan && b.needColHandle > 0 {
-			p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
-		}
-		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+	proj := b.projectVirtualColumns(ds, columns)
+	if proj != nil {
+		setParentAndChildren(proj, result)
+		result = proj
 	}
-	p.SetSchema(schema)
-	return b.projectVirtualColumns(p, columns)
+	return result
 }
 
 // projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
 // we add a projection on the original DataSource, and calculate those columns in the projection
 // so that plans above it can reference generated columns by their name.
-func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
+func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) *Projection {
 	var hasVirtualGeneratedColumn = false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
@@ -1653,7 +1637,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		}
 	}
 	if !hasVirtualGeneratedColumn {
-		return ds
+		return nil
 	}
 	var proj = Projection{
 		Exprs:            make([]expression.Expression, 0, len(columns)),
@@ -1683,7 +1667,6 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		proj.Exprs = append(proj.Exprs, expr)
 	}
 	proj.SetSchema(ds.Schema().Clone())
-	setParentAndChildren(proj, ds)
 	return proj
 }
 
@@ -1790,7 +1773,6 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	b.inUpdateStmt = true
-	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1952,7 +1934,6 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
-	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {

@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 )
 
@@ -47,7 +47,7 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 func testDatumToBool(c *C, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	b, err := datum.ToBool(sc)
 	c.Assert(err, IsNil)
@@ -82,7 +82,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	c.Assert(err, IsNil)
 	testDatumToBool(c, v, 0)
 	d := NewDatum(&invalidMockType{})
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	_, err = d.ToBool(sc)
 	c.Assert(err, NotNil)
@@ -99,7 +99,7 @@ func (ts *testDatumSuite) TestEqualDatums(c *C) {
 		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
 		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
 
-		// Negative cases
+		// negative cases
 		{[]interface{}{1}, []interface{}{2}, false},
 		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
 		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
@@ -117,7 +117,7 @@ func (ts *testDatumSuite) TestEqualDatums(c *C) {
 }
 
 func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	res, err := EqualDatums(sc, MakeDatums(a...), MakeDatums(b...))
 	c.Assert(err, IsNil)
@@ -126,7 +126,7 @@ func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
 
 func testDatumToInt64(c *C, val interface{}, expect int64) {
 	d := NewDatum(val)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	b, err := d.ToInt64(sc)
 	c.Assert(err, IsNil)
@@ -163,7 +163,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	ft := NewFieldType(mysql.TypeFloat)
 	var datum = NewFloat64Datum(281.37)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	converted, err := datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
@@ -198,7 +198,7 @@ func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
 
 func (ts *testDatumSuite) TestToJSON(c *C) {
 	ft := NewFieldType(mysql.TypeJSON)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	tests := []struct {
 		datum    Datum
 		expected string
@@ -267,7 +267,7 @@ func (ts *testDatumSuite) TestCoerceDatum(c *C) {
 		{NewFloat64Datum(1), NewDecimalDatum(NewDecFromInt(1)), KindFloat64},
 		{NewFloat64Datum(1), NewFloat64Datum(1), KindFloat64},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		x, y, err := CoerceDatum(sc, tt.a, tt.b)
@@ -330,7 +330,7 @@ func (ts *testDatumSuite) TestBitOps(c *C) {
 			result Datum
 			err    error
 		)
-		sc := new(variable.StatementContext)
+		sc := new(stmtctx.StatementContext)
 		sc.IgnoreTruncate = true
 		switch tt.bitop {
 		case "And":
@@ -361,7 +361,7 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 		{NewFloat64Datum(1.23), []byte("1.23")},
 		{NewStringDatum("abc"), []byte("abc")},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		bin, err := tt.a.ToBytes()
@@ -379,7 +379,7 @@ func mustParseDurationDatum(str string, fsp int) Datum {
 }
 
 func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
-	sc := &variable.StatementContext{TimeZone: time.UTC}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		input  Datum
 		expect Datum
@@ -410,7 +410,7 @@ func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
-	sc := &variable.StatementContext{TimeZone: time.UTC}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -444,7 +444,7 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputeMul(c *C) {
-	sc := &variable.StatementContext{TimeZone: time.UTC}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -471,7 +471,7 @@ func (ts *testDatumSuite) TestComputeMul(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputeDiv(c *C) {
-	sc := &variable.StatementContext{TimeZone: time.UTC}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -500,7 +500,7 @@ func (ts *testDatumSuite) TestComputeDiv(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputeMod(c *C) {
-	sc := &variable.StatementContext{TimeZone: time.UTC}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -534,7 +534,7 @@ func (ts *testDatumSuite) TestComputeMod(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputeIntDiv(c *C) {
-	sc := &variable.StatementContext{TimeZone: time.UTC}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -574,7 +574,7 @@ func (ts *testDatumSuite) TestCopyDatum(c *C) {
 		raw,
 	}
 
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		tt1 := CopyDatum(tt)

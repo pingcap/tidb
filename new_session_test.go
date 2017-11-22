@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -268,7 +268,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue1)
-	c.Assert(tk.Se.CommitTxn(tk.Se.GoCtx()), IsNil)
+	c.Assert(tk.Se.CommitTxn(goctx.TODO()), IsNil)
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	se1 := tk1.Se.(variable.GlobalVarAccessor)
@@ -280,7 +280,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
-	c.Assert(tk1.Se.CommitTxn(tk.Se.GoCtx()), IsNil)
+	c.Assert(tk1.Se.CommitTxn(goctx.TODO()), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
 	v, err = se.GetGlobalSysVar(varName)
@@ -299,7 +299,7 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
 
-	err := tk.Se.CommitTxn(tk.Se.GoCtx())
+	err := tk.Se.CommitTxn(goctx.TODO())
 	c.Assert(err, IsNil)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
 }
@@ -319,7 +319,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history := tidb.GetHistory(tk.Se)
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
-	stmt, _ := tidb.Compile(tk.Se, stmtNode)
+	stmt, _ := tidb.Compile(goctx.TODO(), tk.Se, stmtNode)
 	executor.ResetStmtCtx(tk.Se, stmtNode)
 	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
@@ -1351,11 +1351,11 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
-	err := sessionctx.GetDomain(tk.Se).Reload()
+	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	err := domain.GetDomain(tk.Se).Reload()
 	c.Assert(err, NotNil)
 
-	lease := sessionctx.GetDomain(tk.Se).DDL().GetLease()
+	lease := domain.GetDomain(tk.Se).DDL().GetLease()
 	time.Sleep(lease * 2)
 
 	// Make sure executing insert statement is failed when server is invalid.
@@ -1372,7 +1372,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -1465,4 +1465,39 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+}
+
+func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
+	// Since normally a single region mock tikv only returns one partial result we need to manually split the
+	// table to test multiple chunks.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk (a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
+	}
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	c.Assert(err, IsNil)
+	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 10)
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+	chk := rs.NewChunk()
+	var count int
+	var numChunks int
+	for {
+		err = rs.NextChunk(chk)
+		c.Assert(err, IsNil)
+		numRows := chk.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			count++
+		}
+		numChunks++
+	}
+	c.Assert(count, Equals, 100)
+	c.Assert(numChunks, Equals, 10)
 }

@@ -54,11 +54,6 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		sql  string
 		best string
 	}{
-		// Test unready index hint.
-		{
-			sql:  "select * from t t1 use index(e)",
-			best: "TableReader(Table(t))",
-		},
 		// Test index hint.
 		{
 			sql:  "select * from t t1 use index(c_d_e)",
@@ -666,7 +661,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		},
 		{
 			sql:  "select c from t where c = 1",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]])->UnionScan([eq(test.t.c, 1)])",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->UnionScan([eq(test.t.c, 1)])->Projection",
 		},
 	}
 	for _, tt := range tests {

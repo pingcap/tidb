@@ -277,6 +277,14 @@ type TableDual struct {
 	RowCount int
 }
 
+// LogicalUnionScan is only used in non read-only txn.
+type LogicalUnionScan struct {
+	*basePlan
+	baseLogicalPlan
+
+	conditions []expression.Expression
+}
+
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
 	*basePlan
@@ -296,11 +304,13 @@ type DataSource struct {
 
 	statisticTable *statistics.Table
 
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
+	// availableIndices is used for storing result of avalableIndices function.
+	availableIndices *avalableIndices
+}
 
-	// This is schema the PhysicalUnionScan should be.
-	unionScanSchema *expression.Schema
+type avalableIndices struct {
+	indices          []*model.IndexInfo
+	includeTableScan bool
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
@@ -318,14 +328,6 @@ func (p *DataSource) getPKIsHandleCol() *expression.Column {
 // TableInfo returns the *TableInfo of data source.
 func (p *DataSource) TableInfo() *model.TableInfo {
 	return p.tableInfo
-}
-
-// Schema implements the plan interface.
-func (p *DataSource) Schema() *expression.Schema {
-	if p.unionScanSchema != nil {
-		return p.unionScanSchema
-	}
-	return p.schema
 }
 
 // Union represents Union plan.

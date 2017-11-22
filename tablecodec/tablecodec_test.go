@@ -20,7 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
@@ -85,7 +85,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
@@ -175,7 +175,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, colLen)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
