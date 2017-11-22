@@ -1186,7 +1186,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, e.schema.GetTypes(), builder.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), builder.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1203,6 +1203,6 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Co
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = e.open(kvRanges)
+	err = e.open(goCtx, kvRanges)
 	return e, errors.Trace(err)
 }

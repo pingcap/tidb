@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	goctx "golang.org/x/net/context"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -134,8 +135,8 @@ func (e *MergeJoinExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *MergeJoinExec) Open() error {
-	if err := e.baseExecutor.Open(); err != nil {
+func (e *MergeJoinExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
 	e.prepared = false

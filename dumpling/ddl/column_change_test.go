@@ -172,7 +172,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 				checkErr = errors.Trace(err)
 			}
 		}
-		err = hookCtx.Txn().Commit(ctx.GoCtx())
+		err = hookCtx.Txn().Commit(goctx.TODO())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}

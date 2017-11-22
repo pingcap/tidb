@@ -21,27 +21,27 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
+	goctx "golang.org/x/net/context"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
+	Ctx context.Context
 }
 
 // Compile compiles an ast.StmtNode to a physical plan.
-func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
-	if ctx.GoCtx() != nil {
-		if span := opentracing.SpanFromContext(ctx.GoCtx()); span != nil {
-			span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
-			defer span1.Finish()
-		}
+func (c *Compiler) Compile(goCtx goctx.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+	if span := opentracing.SpanFromContext(goCtx); span != nil {
+		span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
 	}
 
-	infoSchema := GetInfoSchema(ctx)
-	if err := plan.Preprocess(ctx, stmtNode, infoSchema, false); err != nil {
+	infoSchema := GetInfoSchema(c.Ctx)
+	if err := plan.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	finalPlan, err := plan.Optimize(ctx, stmtNode, infoSchema)
+	finalPlan, err := plan.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -54,10 +54,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	return &ExecStmt{
 		InfoSchema: infoSchema,
 		Plan:       finalPlan,
-		Expensive:  stmtCount(stmtNode, finalPlan, ctx.GetSessionVars().InRestrictedSQL),
+		Expensive:  stmtCount(stmtNode, finalPlan, c.Ctx.GetSessionVars().InRestrictedSQL),
 		Cacheable:  plan.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
 		ReadOnly:   ast.IsReadOnly(readOnlyCheckStmt),
+		Ctx:        c.Ctx,
 	}, nil
 }
 
