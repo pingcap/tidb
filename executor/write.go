@@ -1357,9 +1357,7 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range assignList {
 		idx := v.Col.Index
-		if v != nil {
-			assignFlag[idx] = true
-		}
+		assignFlag[idx] = true
 	}
 	return assignFlag, nil
 }

@@ -233,19 +233,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	for _, col := range t.WritableCols() {
 		var value types.Datum
 		if col.State != model.StatePublic {
-			// If col is in write only or write reorganization state
-			// and the value is not default, keep the original value.
-			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			cmp, errCmp := oldData[col.Offset].CompareDatum(ctx.GetSessionVars().StmtCtx, &value)
-			if errCmp != nil {
-				return errors.Trace(errCmp)
-			}
-			if cmp != 0 {
-				value = oldData[col.Offset]
-			}
+			value = oldData[col.Offset]
 		} else {
 			value = newData[col.Offset]
 		}
