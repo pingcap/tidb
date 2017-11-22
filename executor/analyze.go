@@ -22,9 +22,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
@@ -75,7 +75,7 @@ func (e *AnalyzeExec) Next() (Row, error) {
 		taskCh <- task
 	}
 	close(taskCh)
-	dom := sessionctx.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.ctx)
 	lease := dom.StatsHandle().Lease
 	if lease > 0 {
 		var err1 error
