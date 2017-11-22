@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -384,7 +383,7 @@ func mockContext() context.Context {
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := &domain.Domain{}
 	do.CreateStatsHandle(ctx)
-	sessionctx.BindDomain(ctx, do)
+	domain.BindDomain(ctx, do)
 	return ctx
 }
 

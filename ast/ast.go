@@ -16,10 +16,10 @@
 package ast
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	goctx "golang.org/x/net/context"
 )
 
 // Node is the basic element of the AST.
@@ -129,7 +129,6 @@ type ResultField struct {
 
 // RecordSet is an abstract result set interface to help get data from Plan.
 type RecordSet interface {
-
 	// Fields gets result fields.
 	Fields() []*ResultField
 
@@ -182,7 +181,7 @@ type Statement interface {
 	OriginText() string
 
 	// Exec executes SQL and gets a Recordset.
-	Exec(ctx context.Context) (RecordSet, error)
+	Exec(goCtx goctx.Context) (RecordSet, error)
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool

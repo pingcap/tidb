@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -291,7 +292,7 @@ const (
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
-func statementContextToFlags(sc *variable.StatementContext) uint64 {
+func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate
@@ -403,8 +404,8 @@ func (e *TableReaderExecutor) NextChunk(chk *chunk.Chunk) error {
 }
 
 // Open implements the Executor Open interface.
-func (e *TableReaderExecutor) Open() error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
+func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.TableReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
@@ -507,8 +508,8 @@ func (e *IndexReaderExecutor) NextChunk(chk *chunk.Chunk) error {
 }
 
 // Open implements the Executor Open interface.
-func (e *IndexReaderExecutor) Open() error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader.Open")
+func (e *IndexReaderExecutor) Open(goCtx goctx.Context) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.IndexReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
@@ -679,16 +680,16 @@ func (worker *tableWorker) close() {
 }
 
 // Open implements the Executor Open interface.
-func (e *IndexLookUpExecutor) Open() error {
+func (e *IndexLookUpExecutor) Open(goCtx goctx.Context) error {
 	kvRanges, err := e.indexRangesToKVRanges()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.open(kvRanges)
+	return e.open(goCtx, kvRanges)
 }
 
-func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexLookUp.Open")
+func (e *IndexLookUpExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.IndexLookUp.Open")
 	defer span.Finish()
 
 	e.finished = make(chan struct{})

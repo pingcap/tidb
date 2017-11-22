@@ -19,11 +19,11 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // CoerceArithmetic converts datum to appropriate datum for arithmetic computing.
-func CoerceArithmetic(sc *variable.StatementContext, a Datum) (d Datum, err error) {
+func CoerceArithmetic(sc *stmtctx.StatementContext, a Datum) (d Datum, err error) {
 	switch a.Kind() {
 	case KindString, KindBytes:
 		// MySQL will convert string to float for arithmetic operation
@@ -214,7 +214,7 @@ func ComputeMul(a, b Datum) (d Datum, err error) {
 }
 
 // ComputeDiv computes the result of a/b.
-func ComputeDiv(sc *variable.StatementContext, a, b Datum) (d Datum, err error) {
+func ComputeDiv(sc *stmtctx.StatementContext, a, b Datum) (d Datum, err error) {
 	// MySQL support integer division Div and division operator /
 	// we use opcode.Div for division operator and will use another for integer division later.
 	// for division operator, we will use float64 for calculation.
@@ -258,7 +258,7 @@ func ComputeDiv(sc *variable.StatementContext, a, b Datum) (d Datum, err error) 
 }
 
 // ComputeMod computes the result of a mod b.
-func ComputeMod(sc *variable.StatementContext, a, b Datum) (d Datum, err error) {
+func ComputeMod(sc *stmtctx.StatementContext, a, b Datum) (d Datum, err error) {
 	switch a.Kind() {
 	case KindInt64:
 		x := a.GetInt64()
@@ -336,7 +336,7 @@ func ComputeMod(sc *variable.StatementContext, a, b Datum) (d Datum, err error) 
 }
 
 // ComputeIntDiv computes the result of a / b, both a and b are integer.
-func ComputeIntDiv(sc *variable.StatementContext, a, b Datum) (d Datum, err error) {
+func ComputeIntDiv(sc *stmtctx.StatementContext, a, b Datum) (d Datum, err error) {
 	switch a.Kind() {
 	case KindInt64:
 		x := a.GetInt64()
@@ -428,7 +428,7 @@ func decimal2RoundUint(x *MyDecimal) (uint64, error) {
 }
 
 // ComputeBitAnd computes the result of a & b.
-func ComputeBitAnd(sc *variable.StatementContext, a, b Datum) (d Datum, err error) {
+func ComputeBitAnd(sc *stmtctx.StatementContext, a, b Datum) (d Datum, err error) {
 	aKind, bKind := a.Kind(), b.Kind()
 	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
 		d.SetUint64(a.GetUint64() & b.GetUint64())
@@ -450,7 +450,7 @@ func ComputeBitAnd(sc *variable.StatementContext, a, b Datum) (d Datum, err erro
 }
 
 // ComputeBitOr computes the result of a | b.
-func ComputeBitOr(sc *variable.StatementContext, a, b Datum) (d Datum, err error) {
+func ComputeBitOr(sc *stmtctx.StatementContext, a, b Datum) (d Datum, err error) {
 	aKind, bKind := a.Kind(), b.Kind()
 	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
 		d.SetUint64(a.GetUint64() | b.GetUint64())
@@ -472,7 +472,7 @@ func ComputeBitOr(sc *variable.StatementContext, a, b Datum) (d Datum, err error
 }
 
 // ComputeBitNeg computes the result of ~a.
-func ComputeBitNeg(sc *variable.StatementContext, a Datum) (d Datum, err error) {
+func ComputeBitNeg(sc *stmtctx.StatementContext, a Datum) (d Datum, err error) {
 	aKind := a.Kind()
 	if aKind == KindInt64 || aKind == KindUint64 {
 		d.SetUint64(^a.GetUint64())
@@ -489,7 +489,7 @@ func ComputeBitNeg(sc *variable.StatementContext, a Datum) (d Datum, err error) 
 }
 
 // ComputeBitXor computes the result of a ^ b.
-func ComputeBitXor(sc *variable.StatementContext, a, b Datum) (d Datum, err error) {
+func ComputeBitXor(sc *stmtctx.StatementContext, a, b Datum) (d Datum, err error) {
 	aKind, bKind := a.Kind(), b.Kind()
 	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
 		d.SetUint64(a.GetUint64() ^ b.GetUint64())
@@ -511,7 +511,7 @@ func ComputeBitXor(sc *variable.StatementContext, a, b Datum) (d Datum, err erro
 }
 
 // ComputeLeftShift computes the result of a >> b.
-func ComputeLeftShift(sc *variable.StatementContext, a, b Datum) (d Datum, err error) {
+func ComputeLeftShift(sc *stmtctx.StatementContext, a, b Datum) (d Datum, err error) {
 	aKind, bKind := a.Kind(), b.Kind()
 	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
 		d.SetUint64(a.GetUint64() << b.GetUint64())
@@ -533,7 +533,7 @@ func ComputeLeftShift(sc *variable.StatementContext, a, b Datum) (d Datum, err e
 }
 
 // ComputeRightShift computes the result of a << b.
-func ComputeRightShift(sc *variable.StatementContext, a, b Datum) (d Datum, err error) {
+func ComputeRightShift(sc *stmtctx.StatementContext, a, b Datum) (d Datum, err error) {
 	aKind, bKind := a.Kind(), b.Kind()
 	if (aKind == KindInt64 || aKind == KindUint64) && (bKind == KindInt64 || bKind == KindUint64) {
 		d.SetUint64(a.GetUint64() >> b.GetUint64())
@@ -555,7 +555,7 @@ func ComputeRightShift(sc *variable.StatementContext, a, b Datum) (d Datum, err 
 }
 
 // convertNonInt2RoundUint64 converts a non-integer to an uint64
-func convertNonInt2RoundUint64(sc *variable.StatementContext, x Datum) (d uint64, err error) {
+func convertNonInt2RoundUint64(sc *stmtctx.StatementContext, x Datum) (d uint64, err error) {
 	decimalX, err := x.ToDecimal(sc)
 	if err != nil {
 		return d, errors.Trace(err)

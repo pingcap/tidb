@@ -120,7 +120,7 @@ func (c *Context) NewTxn() error {
 }
 
 // RefreshTxnCtx implements the context.Context interface.
-func (c *Context) RefreshTxnCtx() error {
+func (c *Context) RefreshTxnCtx(goCtx goctx.Context) error {
 	return errors.Trace(c.NewTxn())
 }
 
