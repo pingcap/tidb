@@ -1069,6 +1069,10 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		//	sql: "(select a as b, b from t) union (select a, b from t) order by a",
 		//	err: ErrUnknownColumn,
 		//},
+		{
+			sql: "select * from t t1 use index(e)",
+			err: ErrKeyDoesNotExist,
+		},
 	}
 	for _, tt := range tests {
 		sql := tt.sql
