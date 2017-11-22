@@ -21,10 +21,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1039,8 +1039,8 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 }
 
 func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
-	domain := sessionctx.GetDomain(ctx)
-	is := domain.InfoSchema()
+	dom := domain.GetDomain(ctx)
+	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
 	c.Assert(err, IsNil)
