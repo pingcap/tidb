@@ -67,31 +67,31 @@ func VectorizedExecute(ctx context.Context, exprs []Expression, input, output *c
 func evalOneColumn(sc *stmtctx.StatementContext, expr Expression, input, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
-		for rowID, length := 0, input.NumRows(); rowID < length && err != nil; rowID++ {
+		for rowID, length := 0, input.NumRows(); err == nil && rowID < length; rowID++ {
 			err = executeToInt(sc, expr, fieldType, input, output, rowID, colID)
 		}
 	case types.ETReal:
-		for rowID, length := 0, input.NumRows(); rowID < length && err != nil; rowID++ {
+		for rowID, length := 0, input.NumRows(); err == nil && rowID < length; rowID++ {
 			err = executeToReal(sc, expr, fieldType, input, output, rowID, colID)
 		}
 	case types.ETDecimal:
-		for rowID, length := 0, input.NumRows(); rowID < length && err != nil; rowID++ {
+		for rowID, length := 0, input.NumRows(); err == nil && rowID < length; rowID++ {
 			err = executeToDecimal(sc, expr, fieldType, input, output, rowID, colID)
 		}
 	case types.ETDatetime, types.ETTimestamp:
-		for rowID, length := 0, input.NumRows(); rowID < length && err != nil; rowID++ {
+		for rowID, length := 0, input.NumRows(); err == nil && rowID < length; rowID++ {
 			err = executeToDatetime(sc, expr, fieldType, input, output, rowID, colID)
 		}
 	case types.ETDuration:
-		for rowID, length := 0, input.NumRows(); rowID < length && err != nil; rowID++ {
+		for rowID, length := 0, input.NumRows(); err == nil && rowID < length; rowID++ {
 			err = executeToDuration(sc, expr, fieldType, input, output, rowID, colID)
 		}
 	case types.ETJson:
-		for rowID, length := 0, input.NumRows(); rowID < length && err != nil; rowID++ {
+		for rowID, length := 0, input.NumRows(); err == nil && rowID < length; rowID++ {
 			err = executeToJSON(sc, expr, fieldType, input, output, rowID, colID)
 		}
 	case types.ETString:
-		for rowID, length := 0, input.NumRows(); rowID < length && err != nil; rowID++ {
+		for rowID, length := 0, input.NumRows(); err == nil && rowID < length; rowID++ {
 			err = executeToString(sc, expr, fieldType, input, output, rowID, colID)
 		}
 	}
