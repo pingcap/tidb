@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -102,7 +103,7 @@ func (e *PrepareExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *PrepareExec) Open() error {
+func (e *PrepareExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -206,7 +207,7 @@ func (e *ExecuteExec) Next() (Row, error) {
 }
 
 // Open implements the Executor Open interface.
-func (e *ExecuteExec) Open() error {
+func (e *ExecuteExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -264,7 +265,7 @@ func (e *DeallocateExec) Close() error {
 }
 
 // Open implements Executor Open interface.
-func (e *DeallocateExec) Open() error {
+func (e *DeallocateExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -290,6 +291,7 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
 		ReadOnly:   readOnly,
+		Ctx:        ctx,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
 		stmt.Text = prepared.Stmt.Text()

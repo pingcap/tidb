@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -87,8 +88,8 @@ func (e *HashJoinExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *HashJoinExec) Open() error {
-	if err := e.baseExecutor.Open(); err != nil {
+func (e *HashJoinExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -198,8 +199,9 @@ func (e *HashJoinExec) fetchOuterRows() {
 		}
 
 		select {
-		case <-e.ctx.GoCtx().Done():
-			return
+		// TODO: Recover the code.
+		// case <-e.ctx.GoCtx().Done():
+		// 	return
 		case e.outerBufferChs[i] <- outerBuffer:
 			if !noMoreData && bufferCapacity < maxBufferCapacity {
 				bufferCapacity <<= 1
@@ -321,8 +323,9 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 	var outerBuffer *execResult
 	for ok := true; ok; {
 		select {
-		case <-e.ctx.GoCtx().Done():
-			ok = false
+		// TODO: Recover the code.
+		// case <-e.ctx.GoCtx().Done():
+		// 	ok = false
 		case outerBuffer, ok = <-e.outerBufferChs[workerID]:
 		}
 
@@ -425,8 +428,9 @@ func (e *HashJoinExec) Next() (Row, error) {
 				return nil, errors.Trace(resultBuffer.err)
 			}
 			e.resultBuffer = resultBuffer.rows
-		case <-e.ctx.GoCtx().Done():
-			return nil, nil
+			// TODO: Recover the code.
+			// case <-e.ctx.GoCtx().Done():
+			// 	return nil, nil
 		}
 	}
 
@@ -475,12 +479,12 @@ func (e *NestedLoopJoinExec) Close() error {
 }
 
 // Open implements Executor Open interface.
-func (e *NestedLoopJoinExec) Open() error {
+func (e *NestedLoopJoinExec) Open(goCtx goctx.Context) error {
 	e.cursor = 0
 	e.prepared = false
 	e.resultRows = e.resultRows[:0]
 	e.innerRows = e.innerRows[:0]
-	return errors.Trace(e.BigExec.Open())
+	return errors.Trace(e.BigExec.Open(goCtx))
 }
 
 func (e *NestedLoopJoinExec) fetchBigRow() (Row, bool, error) {
@@ -508,7 +512,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (Row, bool, error) {
 // prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
 func (e *NestedLoopJoinExec) prepare() error {
-	err := e.SmallExec.Open()
+	err := e.SmallExec.Open(goctx.TODO())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -630,18 +634,18 @@ func (e *HashSemiJoinExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *HashSemiJoinExec) Open() error {
+func (e *HashSemiJoinExec) Open(goCtx goctx.Context) error {
 	e.prepared = false
 	e.smallTableHasNull = false
 	e.hashTable = make(map[string][]Row)
 	e.resultRows = make([]Row, 1)
-	return errors.Trace(e.bigExec.Open())
+	return errors.Trace(e.bigExec.Open(goCtx))
 }
 
 // prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
-	err := e.smallExec.Open()
+	err := e.smallExec.Open(goctx.TODO())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -801,10 +805,10 @@ func (e *ApplyJoinExec) Close() error {
 }
 
 // Open implements the Executor interface.
-func (e *ApplyJoinExec) Open() error {
+func (e *ApplyJoinExec) Open(goCtx goctx.Context) error {
 	e.cursor = 0
 	e.resultRows = nil
-	return errors.Trace(e.join.Open())
+	return errors.Trace(e.join.Open(goCtx))
 }
 
 // Next implements the Executor interface.

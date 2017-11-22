@@ -971,6 +971,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		err       error
 		sign      = 0
 		dayExists = false
+		origStr   = str
 	)
 
 	fsp, err = CheckFsp(fsp)
@@ -1040,7 +1041,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 				if err1 == nil {
 					return t.ConvertToDuration()
 				}
-				return ZeroDuration, errors.Trace(ErrInvalidTimeFormat)
+				return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 			}
 		}
 	case 2:
@@ -1055,7 +1056,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			_, err = fmt.Sscanf(str, "%2d:%2d:%2d", &hour, &minute, &second)
 		}
 	default:
-		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat)
+		return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
 
 	if err != nil {
@@ -1065,6 +1066,11 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	if overflow {
 		second++
 		frac = 0
+	}
+	// Invalid TIME values are converted to '00:00:00'.
+	// See https://dev.mysql.com/doc/refman/5.7/en/time.html
+	if minute >= 60 || second >= 60 {
+		return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
 	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
 	if sign == -1 {
