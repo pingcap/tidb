@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -60,7 +60,7 @@ func (bf *bitAndFunction) GetType() *types.FieldType {
 }
 
 // Update implements Aggregation interface.
-func (bf *bitAndFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (bf *bitAndFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	if bf.mode == CompleteMode {
 		if len(bf.Args) == 0 {
 			return nil
