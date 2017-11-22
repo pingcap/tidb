@@ -587,10 +587,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
-	err := statsHandle.Update(do.InfoSchema())
-	if err != nil {
-		return errors.Trace(err)
-	}
 	lease := do.statsLease
 	if lease <= 0 {
 		return nil
