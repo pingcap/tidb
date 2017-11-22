@@ -17,7 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -30,7 +30,7 @@ import (
 type MergeJoinExec struct {
 	baseExecutor
 
-	stmtCtx  *variable.StatementContext
+	stmtCtx  *stmtctx.StatementContext
 	prepared bool
 
 	outerKeys   []*expression.Column
@@ -50,7 +50,7 @@ const rowBufferSize = 4096
 
 // rowBlockIterator represents a row block with the same join keys
 type rowBlockIterator struct {
-	stmtCtx   *variable.StatementContext
+	stmtCtx   *stmtctx.StatementContext
 	ctx       context.Context
 	reader    Executor
 	filter    []expression.Expression
@@ -144,7 +144,7 @@ func (e *MergeJoinExec) Open() error {
 	return nil
 }
 
-func compareKeys(stmtCtx *variable.StatementContext,
+func compareKeys(stmtCtx *stmtctx.StatementContext,
 	leftRow Row, leftKeys []*expression.Column,
 	rightRow Row, rightKeys []*expression.Column) (int, error) {
 	for i, leftKey := range leftKeys {

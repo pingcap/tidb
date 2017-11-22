@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -291,7 +292,7 @@ const (
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
-func statementContextToFlags(sc *variable.StatementContext) uint64 {
+func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate

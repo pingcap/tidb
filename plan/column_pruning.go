@@ -282,15 +282,8 @@ func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
 	if p.Lock != ast.SelectLockForUpdate {
 		p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	} else {
-		used := getUsedList(parentUsedCols, p.schema)
 		for _, cols := range p.children[0].Schema().TblID2Handle {
-			for _, col := range cols {
-				col.ResolveIndices(p.children[0].Schema())
-				if !used[col.Index] {
-					used[col.Index] = true
-					parentUsedCols = append(parentUsedCols, col)
-				}
-			}
+			parentUsedCols = append(parentUsedCols, cols...)
 		}
 		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
 	}

@@ -21,7 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -703,7 +703,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{uint64(math.MaxUint64), uint64(0), 1},
 		{uint64(0), uint64(math.MaxUint64), -1},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, t := range tblCmp {
 		d1 := types.NewDatum(t.Arg1)
 		dec1, err := d1.ToDecimal(sc)
@@ -923,7 +923,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		}
 	}
 
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for colIdx, t := range table {
 		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 			got := chk.GetRow(rowIdx).GetDatum(colIdx, t.tp)

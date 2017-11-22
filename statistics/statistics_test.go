@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -112,7 +112,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	for i := start; i < len(samples); i += 5 {
 		samples[i].SetInt64(samples[i].GetInt64() + 2)
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	err := types.SortDatums(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
@@ -425,7 +425,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti.ID)
 	c.Assert(tbl.Count, Greater, int64(0))
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 3333)
