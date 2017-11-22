@@ -23,7 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
@@ -400,7 +400,7 @@ func (d *Datum) SetValue(val interface{}) {
 
 // CompareDatum compares datum to another datum.
 // TODO: return error properly.
-func (d *Datum) CompareDatum(sc *variable.StatementContext, ad *Datum) (int, error) {
+func (d *Datum) CompareDatum(sc *stmtctx.StatementContext, ad *Datum) (int, error) {
 	if d.k == KindMysqlJSON && ad.k != KindMysqlJSON {
 		cmp, err := ad.CompareDatum(sc, d)
 		return cmp * -1, errors.Trace(err)
@@ -452,7 +452,7 @@ func (d *Datum) CompareDatum(sc *variable.StatementContext, ad *Datum) (int, err
 	}
 }
 
-func (d *Datum) compareInt64(sc *variable.StatementContext, i int64) (int, error) {
+func (d *Datum) compareInt64(sc *stmtctx.StatementContext, i int64) (int, error) {
 	switch d.k {
 	case KindMaxValue:
 		return 1, nil
@@ -468,7 +468,7 @@ func (d *Datum) compareInt64(sc *variable.StatementContext, i int64) (int, error
 	}
 }
 
-func (d *Datum) compareUint64(sc *variable.StatementContext, u uint64) (int, error) {
+func (d *Datum) compareUint64(sc *stmtctx.StatementContext, u uint64) (int, error) {
 	switch d.k {
 	case KindMaxValue:
 		return 1, nil
@@ -484,7 +484,7 @@ func (d *Datum) compareUint64(sc *variable.StatementContext, u uint64) (int, err
 	}
 }
 
-func (d *Datum) compareFloat64(sc *variable.StatementContext, f float64) (int, error) {
+func (d *Datum) compareFloat64(sc *stmtctx.StatementContext, f float64) (int, error) {
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -523,7 +523,7 @@ func (d *Datum) compareFloat64(sc *variable.StatementContext, f float64) (int, e
 	}
 }
 
-func (d *Datum) compareString(sc *variable.StatementContext, s string) (int, error) {
+func (d *Datum) compareString(sc *stmtctx.StatementContext, s string) (int, error) {
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -556,11 +556,11 @@ func (d *Datum) compareString(sc *variable.StatementContext, s string) (int, err
 	}
 }
 
-func (d *Datum) compareBytes(sc *variable.StatementContext, b []byte) (int, error) {
+func (d *Datum) compareBytes(sc *stmtctx.StatementContext, b []byte) (int, error) {
 	return d.compareString(sc, hack.String(b))
 }
 
-func (d *Datum) compareMysqlDecimal(sc *variable.StatementContext, dec *MyDecimal) (int, error) {
+func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (int, error) {
 	switch d.k {
 	case KindMysqlDecimal:
 		return d.GetMysqlDecimal().Compare(dec), nil
@@ -577,7 +577,7 @@ func (d *Datum) compareMysqlDecimal(sc *variable.StatementContext, dec *MyDecima
 	}
 }
 
-func (d *Datum) compareMysqlDuration(sc *variable.StatementContext, dur Duration) (int, error) {
+func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration) (int, error) {
 	switch d.k {
 	case KindMysqlDuration:
 		return d.GetMysqlDuration().Compare(dur), nil
@@ -589,7 +589,7 @@ func (d *Datum) compareMysqlDuration(sc *variable.StatementContext, dur Duration
 	}
 }
 
-func (d *Datum) compareMysqlEnum(sc *variable.StatementContext, enum Enum) (int, error) {
+func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), enum.String()), nil
@@ -598,7 +598,7 @@ func (d *Datum) compareMysqlEnum(sc *variable.StatementContext, enum Enum) (int,
 	}
 }
 
-func (d *Datum) compareBinaryLiteral(sc *variable.StatementContext, b BinaryLiteral) (int, error) {
+func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiteral) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), b.ToString()), nil
@@ -614,7 +614,7 @@ func (d *Datum) compareBinaryLiteral(sc *variable.StatementContext, b BinaryLite
 	}
 }
 
-func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, error) {
+func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), set.String()), nil
@@ -623,7 +623,7 @@ func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, er
 	}
 }
 
-func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON) (int, error) {
+func (d *Datum) compareMysqlJSON(sc *stmtctx.StatementContext, target json.JSON) (int, error) {
 	origin, err := d.ToMysqlJSON()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -631,7 +631,7 @@ func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON
 	return json.CompareJSON(origin, target)
 }
 
-func (d *Datum) compareMysqlTime(sc *variable.StatementContext, time Time) (int, error) {
+func (d *Datum) compareMysqlTime(sc *stmtctx.StatementContext, time Time) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		dt, err := ParseDatetime(sc, d.GetString())
@@ -648,7 +648,7 @@ func (d *Datum) compareMysqlTime(sc *variable.StatementContext, time Time) (int,
 }
 
 // ConvertTo converts a datum to the target field type.
-func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	if d.k == KindNull {
 		return Datum{}, nil
 	}
@@ -689,7 +689,7 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 	}
 }
 
-func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		f   float64
 		ret Datum
@@ -738,7 +738,7 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 }
 
 // ProduceFloatWithSpecifiedTp produces a new float64 according to `flen` and `decimal`.
-func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *variable.StatementContext) (_ float64, err error) {
+func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.StatementContext) (_ float64, err error) {
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
@@ -748,7 +748,7 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *variable.Stat
 	return f, errors.Trace(err)
 }
 
-func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var ret Datum
 	var s string
 	switch d.k {
@@ -788,7 +788,7 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 }
 
 // ProduceStrWithSpecifiedTp produces a new string according to `flen` and `chs`.
-func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementContext) (_ string, err error) {
+func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
 	if flen >= 0 {
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
@@ -825,12 +825,12 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 	return s, errors.Trace(sc.HandleTruncate(err))
 }
 
-func (d *Datum) convertToInt(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToInt(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	i64, err := d.toSignedInteger(sc, target.Tp)
 	return NewIntDatum(i64), errors.Trace(err)
 }
 
-func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
 	upperBound := UnsignedUpperBound[tp]
 	var (
@@ -899,7 +899,7 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret Datum
 		t   Time
@@ -952,7 +952,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *F
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
@@ -996,7 +996,7 @@ func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldT
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlDuration(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
@@ -1033,7 +1033,7 @@ func (d *Datum) convertToMysqlDuration(sc *variable.StatementContext, target *Fi
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var ret Datum
 	ret.SetLength(target.Flen)
 	ret.SetFrac(target.Decimal)
@@ -1081,7 +1081,7 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 }
 
 // ProduceDecWithSpecifiedTp produces a new decimal according to `flen` and `decimal`.
-func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.StatementContext) (_ *MyDecimal, err error) {
+func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.StatementContext) (_ *MyDecimal, err error) {
 	flen, decimal := tp.Flen, tp.Decimal
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		if flen < decimal {
@@ -1117,7 +1117,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 	return dec, errors.Trace(err)
 }
 
-func (d *Datum) convertToMysqlYear(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret Datum
 		y   int64
@@ -1148,7 +1148,7 @@ func (d *Datum) convertToMysqlYear(sc *variable.StatementContext, target *FieldT
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var ret Datum
 	var uintValue uint64
 	var err error
@@ -1167,7 +1167,7 @@ func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldTy
 	return ret, errors.Trace(err)
 }
 
-func (d *Datum) convertToMysqlEnum(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret Datum
 		e   Enum
@@ -1191,7 +1191,7 @@ func (d *Datum) convertToMysqlEnum(sc *variable.StatementContext, target *FieldT
 	return ret, err
 }
 
-func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret Datum
 		s   Set
@@ -1216,7 +1216,7 @@ func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldTy
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldType) (ret Datum, err error) {
+func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.JSON
@@ -1253,7 +1253,7 @@ func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldT
 
 // ToBool converts to a bool.
 // We will use 1 for true, and 0 for false.
-func (d *Datum) ToBool(sc *variable.StatementContext) (int64, error) {
+func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	var err error
 	isZero := false
 	switch d.Kind() {
@@ -1298,7 +1298,7 @@ func (d *Datum) ToBool(sc *variable.StatementContext) (int64, error) {
 }
 
 // ConvertDatumToDecimal converts datum to decimal.
-func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, error) {
+func ConvertDatumToDecimal(sc *stmtctx.StatementContext, d Datum) (*MyDecimal, error) {
 	dec := new(MyDecimal)
 	var err error
 	switch d.Kind() {
@@ -1335,7 +1335,7 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 }
 
 // ToDecimal converts to a decimal.
-func (d *Datum) ToDecimal(sc *variable.StatementContext) (*MyDecimal, error) {
+func (d *Datum) ToDecimal(sc *stmtctx.StatementContext) (*MyDecimal, error) {
 	switch d.Kind() {
 	case KindMysqlTime:
 		return d.GetMysqlTime().ToNumber(), nil
@@ -1347,11 +1347,11 @@ func (d *Datum) ToDecimal(sc *variable.StatementContext) (*MyDecimal, error) {
 }
 
 // ToInt64 converts to a int64.
-func (d *Datum) ToInt64(sc *variable.StatementContext) (int64, error) {
+func (d *Datum) ToInt64(sc *stmtctx.StatementContext) (int64, error) {
 	return d.toSignedInteger(sc, mysql.TypeLonglong)
 }
 
-func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, error) {
+func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, error) {
 	lowerBound := SignedLowerBound[tp]
 	upperBound := SignedUpperBound[tp]
 	switch d.Kind() {
@@ -1425,7 +1425,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 }
 
 // ToFloat64 converts to a float64
-func (d *Datum) ToFloat64(sc *variable.StatementContext) (float64, error) {
+func (d *Datum) ToFloat64(sc *stmtctx.StatementContext) (float64, error) {
 	switch d.Kind() {
 	case KindInt64:
 		return float64(d.GetInt64()), nil
@@ -1567,7 +1567,7 @@ func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
 // If a or b is Float, changes the both to Float.
 // Else if a or b is Decimal, changes the both to Decimal.
 // Else if a or b is Uint and op is not div, mod, or intDiv changes the both to Uint.
-func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err error) {
+func CoerceDatum(sc *stmtctx.StatementContext, a, b Datum) (x, y Datum, err error) {
 	if a.IsNull() || b.IsNull() {
 		return x, y, nil
 	}
@@ -1726,7 +1726,7 @@ func MaxValueDatum() Datum {
 }
 
 // EqualDatums compare if a and b contains the same datum values.
-func EqualDatums(sc *variable.StatementContext, a []Datum, b []Datum) (bool, error) {
+func EqualDatums(sc *stmtctx.StatementContext, a []Datum, b []Datum) (bool, error) {
 	if len(a) != len(b) {
 		return false, nil
 	}
@@ -1749,7 +1749,7 @@ func EqualDatums(sc *variable.StatementContext, a []Datum, b []Datum) (bool, err
 }
 
 // SortDatums sorts a slice of datum.
-func SortDatums(sc *variable.StatementContext, datums []Datum) error {
+func SortDatums(sc *stmtctx.StatementContext, datums []Datum) error {
 	sorter := datumsSorter{datums: datums, sc: sc}
 	sort.Sort(&sorter)
 	return sorter.err
@@ -1757,7 +1757,7 @@ func SortDatums(sc *variable.StatementContext, datums []Datum) error {
 
 type datumsSorter struct {
 	datums []Datum
-	sc     *variable.StatementContext
+	sc     *stmtctx.StatementContext
 	err    error
 }
 
@@ -1778,7 +1778,7 @@ func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
 
-func handleTruncateError(sc *variable.StatementContext) error {
+func handleTruncateError(sc *stmtctx.StatementContext) error {
 	if sc.IgnoreTruncate {
 		return nil
 	}

@@ -21,7 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -74,7 +74,7 @@ func (rp point) String() string {
 type pointSorter struct {
 	points []point
 	err    error
-	sc     *variable.StatementContext
+	sc     *stmtctx.StatementContext
 }
 
 func (r *pointSorter) Len() int {
@@ -91,7 +91,7 @@ func (r *pointSorter) Less(i, j int) bool {
 	return less
 }
 
-func rangePointLess(sc *variable.StatementContext, a, b point) (bool, error) {
+func rangePointLess(sc *stmtctx.StatementContext, a, b point) (bool, error) {
 	cmp, err := a.value.CompareDatum(sc, &b.value)
 	if cmp != 0 {
 		return cmp < 0, nil
@@ -133,7 +133,7 @@ func FullIndexRange() []*types.IndexRange {
 // builder is the range builder struct.
 type builder struct {
 	err error
-	sc  *variable.StatementContext
+	sc  *stmtctx.StatementContext
 }
 
 func (r *builder) build(expr expression.Expression) []point {

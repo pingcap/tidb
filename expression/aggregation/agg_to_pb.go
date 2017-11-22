@@ -17,12 +17,12 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // AggFuncToPBExpr converts aggregate function to pb.
-func AggFuncToPBExpr(sc *variable.StatementContext, client kv.Client, aggFunc Aggregation) *tipb.Expr {
+func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc Aggregation) *tipb.Expr {
 	if aggFunc.IsDistinct() {
 		return nil
 	}
