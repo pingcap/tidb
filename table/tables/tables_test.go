@@ -19,9 +19,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
@@ -60,7 +60,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
@@ -150,7 +150,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	_, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(goctx.Background(), "insert test.t values (1, 2, 3, 4, '5', '6', '7', '10:10:10', null, 1.4)")
@@ -194,7 +194,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
@@ -266,7 +266,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	c.Assert(err, IsNil)
 	c.Assert(ctx.NewTxn(), IsNil)
@@ -288,7 +288,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
@@ -308,7 +308,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
 	tbInfo := tb.Meta()
 	tbInfo.Columns[0].GeneratedExprString = "test"
