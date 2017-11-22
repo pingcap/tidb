@@ -1562,13 +1562,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		statisticTable = handle.GetTableStats(tableInfo.ID)
 	}
+	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	avalableIndices := avalableIndices{indices: indices, includeTableScan: includeTableScan}
 
 	ds := DataSource{
-		indexHints:     tn.IndexHints,
-		tableInfo:      tableInfo,
-		statisticTable: statisticTable,
-		DBName:         schemaName,
-		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		indexHints:       tn.IndexHints,
+		tableInfo:        tableInfo,
+		statisticTable:   statisticTable,
+		DBName:           schemaName,
+		Columns:          make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		availableIndices: &avalableIndices,
 	}.init(b.ctx)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
