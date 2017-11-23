@@ -50,23 +50,26 @@ func NewChunk(fields []*types.FieldType) *Chunk {
 // addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
 func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
 	c.columns = append(c.columns, &column{
-		elemBuf: make([]byte, elemLen),
-		data:    make([]byte, 0, initCap),
+		elemBuf:    make([]byte, elemLen),
+		data:       make([]byte, 0, initCap*elemLen),
+		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
 // addVarLenColumn adds a variable length column with initial data capacity.
 func (c *Chunk) addVarLenColumn(initCap int) {
 	c.columns = append(c.columns, &column{
-		offsets: []int32{0},
-		data:    make([]byte, 0, initCap),
+		offsets:    make([]int32, 1, initCap+1),
+		data:       make([]byte, 0, initCap*4),
+		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
 // addInterfaceColumn adds an interface column which holds element as interface.
-func (c *Chunk) addInterfaceColumn() {
+func (c *Chunk) addInterfaceColumn(initCap int) {
 	c.columns = append(c.columns, &column{
-		ifaces: []interface{}{},
+		ifaces:     make([]interface{}, 0, initCap),
+		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
@@ -83,7 +86,7 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	case mysql.TypeNewDecimal:
 		c.addFixedLenColumn(types.MyDecimalStructSize, initCap)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeJSON:
-		c.addInterfaceColumn()
+		c.addInterfaceColumn(initCap)
 	default:
 		c.addVarLenColumn(initCap)
 	}
@@ -146,7 +149,6 @@ func (c *Chunk) AppendRow(colIdx int, row Row) {
 }
 
 // Copy copys rows ranged ["begin", "end") in "other" to current Chunk.
-// NOTE: c == other is allowed.
 func (c *Chunk) Copy(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
 		dst := c.columns[colID]
@@ -158,41 +160,39 @@ func (c *Chunk) Copy(other *Chunk, begin, end int) {
 			copy(dst.data, src.data[begin*elemLen:end*elemLen])
 			dst.data = dst.data[:elemLen*(end-begin)]
 		} else if src.isVarlen() {
-			var endOffset int32
-			if end >= src.length {
-				endOffset = int32(len(src.data))
-			} else {
-				endOffset = src.offsets[end]
-			}
-			newDataLen := int(endOffset - src.offsets[begin])
+			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
+			newDataLen := int(endOffset - beginOffset)
 			if len(dst.data) < newDataLen {
 				dst.data = make([]byte, newDataLen)
 			}
-			if len(dst.offsets) < end-begin {
-				dst.offsets = make([]int32, end-begin, end-begin)
-			}
-			copy(dst.data, src.data[src.offsets[begin]:endOffset])
+			copy(dst.data, src.data[beginOffset:endOffset])
 			dst.data = dst.data[:newDataLen]
-			copy(dst.offsets, src.offsets[begin:end])
-			dst.offsets = dst.offsets[:end-begin]
+
+			if len(dst.offsets) < end-begin+1 {
+				dst.offsets = make([]int32, end-begin+1)
+				dst.offsets[0] = 0
+			}
+			for i := begin; i < end; i++ {
+				dst.offsets[i-begin+1] = dst.offsets[i-begin] + src.offsets[i+1] - src.offsets[i]
+			}
+			dst.offsets = dst.offsets[:end-begin+1]
 		} else {
 			if len(dst.ifaces) < end-begin {
-				dst.ifaces = make([]interface{}, end-begin, end-begin)
+				dst.ifaces = make([]interface{}, end-begin)
 			}
 			copy(dst.ifaces, src.ifaces[begin:end])
 			dst.ifaces = dst.ifaces[:end-begin]
 		}
-		dst.length = 0
-		dst.nullCount = 0
-		newNullBytes := (end - begin + 7) >> 3
-		if len(dst.nullBitmap) < newNullBytes {
-			dst.nullBitmap = make([]byte, newNullBytes, newNullBytes)
+		dst.length, dst.nullCount = 0, 0
+		numBytesInBitmap := (end - begin + 7) >> 3
+		if len(dst.nullBitmap) < numBytesInBitmap {
+			dst.nullBitmap = make([]byte, numBytesInBitmap)
 		}
 		for i := begin; i < end; i++ {
 			dst.appendNullBitmap(!src.isNull(i))
 			dst.length++
 		}
-		dst.nullBitmap = dst.nullBitmap[:newNullBytes]
+		dst.nullBitmap = dst.nullBitmap[:numBytesInBitmap]
 	}
 }
 

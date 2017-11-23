@@ -394,8 +394,9 @@ func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
 	}
 	batchSize := chk.NumRows()
 	if e.Idx < e.Offset {
-		e.Idx = e.Offset
 		chk.Copy(chk, int(e.Offset-e.Idx), batchSize)
+		batchSize = chk.NumRows()
+		e.Idx = e.Offset
 	}
 	if e.Idx+uint64(batchSize) <= e.Offset+e.Count {
 		e.Idx += uint64(batchSize)

@@ -132,7 +132,7 @@ func newChunk(elemLen ...int) *Chunk {
 		} else if l == 0 {
 			chk.addVarLenColumn(0)
 		} else {
-			chk.addInterfaceColumn()
+			chk.addInterfaceColumn(0)
 		}
 	}
 	return chk
