@@ -374,6 +374,38 @@ func (e *LimitExec) Next() (Row, error) {
 	return srcRow, nil
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	for {
+		err := e.children[0].NextChunk(chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		batchSize := uint64(chk.NumRows())
+		// no more data.
+		if batchSize == 0 {
+			return nil
+		}
+		if e.Idx+batchSize > e.Offset {
+			break
+		}
+		e.Idx += batchSize
+	}
+	batchSize := chk.NumRows()
+	if e.Idx < e.Offset {
+		e.Idx = e.Offset
+		chk.Copy(chk, int(e.Offset-e.Idx), batchSize)
+	}
+	if e.Idx+uint64(batchSize) <= e.Offset+e.Count {
+		e.Idx += uint64(batchSize)
+		return nil
+	}
+	chk.Copy(chk, 0, int(e.Offset+e.Count-e.Idx))
+	e.Idx = e.Offset + e.Count
+	return nil
+}
+
 // Open implements the Executor Open interface.
 func (e *LimitExec) Open(goCtx goctx.Context) error {
 	e.Idx = 0

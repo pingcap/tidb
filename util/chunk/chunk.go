@@ -129,7 +129,7 @@ func (c *Chunk) End() Row {
 func (c *Chunk) AppendRow(colIdx int, row Row) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
-		chkCol.setNullBitmap(!rowCol.isNull(row.idx))
+		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
 			offset := row.idx * elemLen
@@ -142,6 +142,57 @@ func (c *Chunk) AppendRow(colIdx int, row Row) {
 			chkCol.ifaces = append(chkCol.ifaces, rowCol.ifaces[row.idx])
 		}
 		chkCol.length++
+	}
+}
+
+// Copy copys rows ranged ["begin", "end") in "other" to current Chunk.
+// NOTE: c == other is allowed.
+func (c *Chunk) Copy(other *Chunk, begin, end int) {
+	for colID, src := range other.columns {
+		dst := c.columns[colID]
+		if src.isFixed() {
+			elemLen := len(src.elemBuf)
+			if len(dst.data) < elemLen*(end-begin) {
+				dst.data = make([]byte, elemLen*(end-begin), elemLen*(end-begin))
+			}
+			copy(dst.data, src.data[begin*elemLen:end*elemLen])
+			dst.data = dst.data[:elemLen*(end-begin)]
+		} else if src.isVarlen() {
+			var endOffset int32
+			if end >= src.length {
+				endOffset = int32(len(src.data))
+			} else {
+				endOffset = src.offsets[end]
+			}
+			newDataLen := int(endOffset - src.offsets[begin])
+			if len(dst.data) < newDataLen {
+				dst.data = make([]byte, newDataLen)
+			}
+			if len(dst.offsets) < end-begin {
+				dst.offsets = make([]int32, end-begin, end-begin)
+			}
+			copy(dst.data, src.data[src.offsets[begin]:endOffset])
+			dst.data = dst.data[:newDataLen]
+			copy(dst.offsets, src.offsets[begin:end])
+			dst.offsets = dst.offsets[:end-begin]
+		} else {
+			if len(dst.ifaces) < end-begin {
+				dst.ifaces = make([]interface{}, end-begin, end-begin)
+			}
+			copy(dst.ifaces, src.ifaces[begin:end])
+			dst.ifaces = dst.ifaces[:end-begin]
+		}
+		dst.length = 0
+		dst.nullCount = 0
+		newNullBytes := (end - begin + 7) >> 3
+		if len(dst.nullBitmap) < newNullBytes {
+			dst.nullBitmap = make([]byte, newNullBytes, newNullBytes)
+		}
+		for i := begin; i < end; i++ {
+			dst.appendNullBitmap(!src.isNull(i))
+			dst.length++
+		}
+		dst.nullBitmap = dst.nullBitmap[:newNullBytes]
 	}
 }
 
@@ -250,7 +301,7 @@ func (c *column) isNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *column) setNullBitmap(on bool) {
+func (c *column) appendNullBitmap(on bool) {
 	idx := c.length >> 3
 	if idx >= len(c.nullBitmap) {
 		c.nullBitmap = append(c.nullBitmap, 0)
@@ -264,7 +315,7 @@ func (c *column) setNullBitmap(on bool) {
 }
 
 func (c *column) appendNull() {
-	c.setNullBitmap(false)
+	c.appendNullBitmap(false)
 	if c.isFixed() {
 		c.data = append(c.data, c.elemBuf...)
 	} else if c.isVarlen() {
@@ -277,7 +328,7 @@ func (c *column) appendNull() {
 
 func (c *column) finishAppendFixed() {
 	c.data = append(c.data, c.elemBuf...)
-	c.setNullBitmap(true)
+	c.appendNullBitmap(true)
 	c.length++
 }
 
@@ -302,7 +353,7 @@ func (c *column) appendFloat64(f float64) {
 }
 
 func (c *column) finishAppendVar() {
-	c.setNullBitmap(true)
+	c.appendNullBitmap(true)
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	c.length++
 }
@@ -319,7 +370,7 @@ func (c *column) appendBytes(b []byte) {
 
 func (c *column) appendInterface(o interface{}) {
 	c.ifaces = append(c.ifaces, o)
-	c.setNullBitmap(true)
+	c.appendNullBitmap(true)
 	c.length++
 }
 
