@@ -16,7 +16,6 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // EvalAstExpr evaluates ast expression directly.
@@ -85,102 +83,6 @@ type Expression interface {
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
-}
-
-// EvalExprsToChunk evaluates a list of expressions and append their results to "output" Chunk.
-// TODO: Determine whether some of the expressions have internal depencies and implement a vectorized execution method if not.
-func EvalExprsToChunk(ctx context.Context, exprs []Expression, input, output *chunk.Chunk) error {
-	sc := ctx.GetSessionVars().StmtCtx
-	for rowID, length := 0, input.NumRows(); rowID < length; rowID++ {
-		for colID, expr := range exprs {
-			err := evalOneCell(sc, expr, input, output, rowID, colID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
-}
-
-func evalOneCell(sc *stmtctx.StatementContext, expr Expression, input, output *chunk.Chunk, rowID, colID int) error {
-	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
-	case types.ETInt:
-		res, isNull, err := expr.EvalInt(input.GetRow(rowID), sc)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			output.AppendNull(colID)
-		} else if fieldType.Tp == mysql.TypeBit {
-			output.AppendBytes(colID, strconv.AppendUint(make([]byte, 0, 8), uint64(res), 10))
-		} else if mysql.HasUnsignedFlag(fieldType.Flag) {
-			output.AppendUint64(colID, uint64(res))
-		} else {
-			output.AppendInt64(colID, res)
-		}
-	case types.ETReal:
-		res, isNull, err := expr.EvalReal(input.GetRow(rowID), sc)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			output.AppendNull(colID)
-		} else if fieldType.Tp == mysql.TypeFloat {
-			output.AppendFloat32(colID, float32(res))
-		} else {
-			output.AppendFloat64(colID, res)
-		}
-	case types.ETDecimal:
-		res, isNull, err := expr.EvalDecimal(input.GetRow(rowID), sc)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			output.AppendNull(colID)
-		} else {
-			output.AppendMyDecimal(colID, res)
-		}
-	case types.ETDatetime, types.ETTimestamp:
-		res, isNull, err := expr.EvalTime(input.GetRow(rowID), sc)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			output.AppendNull(colID)
-		} else {
-			output.AppendTime(colID, res)
-		}
-	case types.ETDuration:
-		res, isNull, err := expr.EvalDuration(input.GetRow(rowID), sc)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			output.AppendNull(colID)
-		} else {
-			output.AppendDuration(colID, res)
-		}
-	case types.ETJson:
-		res, isNull, err := expr.EvalJSON(input.GetRow(rowID), sc)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			output.AppendNull(colID)
-		} else {
-			output.AppendJSON(colID, res)
-		}
-	case types.ETString:
-		res, isNull, err := expr.EvalString(input.GetRow(rowID), sc)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			output.AppendNull(colID)
-		} else if fieldType.Tp == mysql.TypeEnum {
-			val := types.Enum{Value: uint64(0), Name: res}
-			output.AppendEnum(colID, val)
-		} else if fieldType.Tp == mysql.TypeSet {
-			val := types.Set{Value: uint64(0), Name: res}
-			output.AppendSet(colID, val)
-		} else {
-			output.AppendString(colID, res)
-		}
-	}
-	return nil
 }
 
 // CNFExprs stands for a CNF expression.
