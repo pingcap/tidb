@@ -323,6 +323,9 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 		// fsp -1 use default 0
 		{"00:00:00.777777", -1, "00:00:01"},
 		{"00:00:00.001", 3, "00:00:00.001"},
+		// fsp round overflow 60 seconds
+		{"08:29:59.537368", 0, "08:30:00"},
+		{"08:59:59.537368", 0, "09:00:00"},
 	}
 
 	for _, test := range table {
