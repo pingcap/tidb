@@ -432,6 +432,7 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 				if err != nil {
 					return errors.Trace(err)
 				}
+				nh[i] = st
 			}
 
 			if retryCnt == 0 {
