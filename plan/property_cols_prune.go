@@ -18,7 +18,8 @@ import (
 )
 
 func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
-	indices, includeTS := availableIndices(p.indexHints, p.tableInfo)
+	indices := p.availableIndices.indices
+	includeTS := p.availableIndices.includeTableScan
 	if includeTS {
 		col := p.getPKIsHandleCol()
 		if col != nil {

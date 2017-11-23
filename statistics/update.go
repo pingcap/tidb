@@ -125,10 +125,7 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	if delta.Count == 0 {
 		return nil
 	}
-	goCtx := h.ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
-	}
+	goCtx := goctx.TODO()
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "begin")
 	if err != nil {
 		return errors.Trace(err)

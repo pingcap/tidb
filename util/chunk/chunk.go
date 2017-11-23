@@ -115,6 +115,16 @@ func (c *Chunk) GetRow(idx int) Row {
 	return Row{c: c, idx: idx}
 }
 
+// Begin returns the first valid Row in the Chunk.
+func (c *Chunk) Begin() Row {
+	return c.GetRow(0)
+}
+
+// End returns a Row referring to the past-the-end element in the Chunk.
+func (c *Chunk) End() Row {
+	return c.GetRow(c.NumRows())
+}
+
 // AppendRow appends a row to the chunk.
 func (c *Chunk) AppendRow(colIdx int, row Row) {
 	for i, rowCol := range row.c.columns {
@@ -340,6 +350,11 @@ type Row struct {
 // Len returns the number of values in the row.
 func (r Row) Len() int {
 	return r.c.NumCols()
+}
+
+// Next returns the next valid Row in the same Chunk.
+func (r Row) Next() (next Row) {
+	return Row{c: r.c, idx: r.idx + 1}
 }
 
 // GetInt64 returns the int64 value with the colIdx.

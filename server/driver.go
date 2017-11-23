@@ -48,7 +48,7 @@ type QueryCtx interface {
 	SetValue(key fmt.Stringer, value interface{})
 
 	// CommitTxn commits the transaction operations.
-	CommitTxn() error
+	CommitTxn(goCtx goctx.Context) error
 
 	// RollbackTxn undoes the transaction operations.
 	RollbackTxn() error

@@ -19,7 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -117,7 +117,7 @@ func (c *SampleCollector) collect(d types.Datum) error {
 // SampleBuilder is used to build samples for columns.
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
-	Sc              *variable.StatementContext
+	Sc              *stmtctx.StatementContext
 	RecordSet       ast.RecordSet
 	ColLen          int   // ColLen is the number of columns need to be sampled.
 	PkID            int64 // If primary key is handle, the PkID is the id of the primary key. If not exists, it is -1.

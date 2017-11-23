@@ -304,8 +304,13 @@ type DataSource struct {
 
 	statisticTable *statistics.Table
 
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
+	// availableIndices is used for storing result of avalableIndices function.
+	availableIndices *avalableIndices
+}
+
+type avalableIndices struct {
+	indices          []*model.IndexInfo
+	includeTableScan bool
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {

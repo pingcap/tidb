@@ -116,7 +116,7 @@ var MySQLState = map[uint16]string{
 	ErrPrimaryCantHaveNull:                 "42000",
 	ErrTooManyRows:                         "42000",
 	ErrRequiresPrimaryKey:                  "42000",
-	ErrKeyDoesNotExits:                     "42000",
+	ErrKeyDoesNotExist:                     "42000",
 	ErrCheckNoSuchTable:                    "42000",
 	ErrCheckNotImplemented:                 "42000",
 	ErrCantDoThisDuringAnTransaction:       "25000",
