@@ -29,10 +29,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -642,7 +642,7 @@ func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {
 		err = errors.Trace(err)
 		return nil, err
 	}
-	return sessionctx.GetDomain(session.(context.Context)).InfoSchema(), nil
+	return domain.GetDomain(session.(context.Context)).InfoSchema(), nil
 }
 
 func (t *regionHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {

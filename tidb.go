@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -136,22 +137,22 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
-	compiler := executor.Compiler{}
-	stmt, err := compiler.Compile(ctx, stmtNode)
+func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
+	compiler := executor.Compiler{ctx}
+	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
-	span, ctx1 := opentracing.StartSpanFromContext(ctx.GoCtx(), "runStmt")
+func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
+	span, ctx1 := opentracing.StartSpanFromContext(goCtx, "runStmt")
 	span.LogKV("sql", s.OriginText())
 	defer span.Finish()
 
 	var err error
 	var rs ast.RecordSet
 	se := ctx.(*session)
-	rs, err = s.Exec(ctx)
+	rs, err = s.Exec(goCtx)
 	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
