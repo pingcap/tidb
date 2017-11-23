@@ -48,7 +48,7 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 		accessConditions = append(accessConditions, cond)
 		if checker.shouldReserve {
 			filterConditions = append(filterConditions, cond)
-			checker.shouldReserve = false
+			checker.shouldReserve = checker.length != types.UnspecifiedLength
 		}
 	}
 	return accessConditions, filterConditions
@@ -77,7 +77,7 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 			accessConditions = append(accessConditions, cond)
 			if checker.shouldReserve {
 				hasResidualConditions = true
-				checker.shouldReserve = false
+				checker.shouldReserve = checker.length != types.UnspecifiedLength
 			}
 		} else {
 			return nil, true
@@ -86,7 +86,77 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 	return accessConditions, hasResidualConditions
 }
 
+// getEqOrInColOffset checks if the expression is a eq function that one side is constant and another is column or an
+// in function which is `column in (constant list)`.
+// If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
+func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return -1
+	}
+	if f.FuncName.L == ast.EQ {
+		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+			if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				for i, col := range cols {
+					if col.Equal(c, nil) {
+						return i
+					}
+				}
+			}
+		}
+		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+			if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				for i, col := range cols {
+					if col.Equal(c, nil) {
+						return i
+					}
+				}
+			}
+		}
+	}
+	if f.FuncName.L == ast.In {
+		c, ok := f.GetArgs()[0].(*expression.Column)
+		if !ok {
+			return -1
+		}
+		for _, arg := range f.GetArgs()[1:] {
+			if _, ok := arg.(*expression.Constant); !ok {
+				return -1
+			}
+		}
+		for i, col := range cols {
+			if col.Equal(c, nil) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func extractAccessAndFilterConds(conditions, accessConds, filterConds []expression.Expression,
+	col *expression.Column, length int) ([]expression.Expression, []expression.Expression) {
+	checker := &conditionChecker{
+		colName:       col.ColName,
+		length:        length,
+		shouldReserve: length != types.UnspecifiedLength,
+	}
+	for _, cond := range conditions {
+		if !checker.check(cond) {
+			filterConds = append(filterConds, cond)
+			continue
+		}
+		accessConds = append(accessConds, cond)
+		// TODO: It will lead to repeated computation cost.
+		if checker.shouldReserve {
+			filterConds = append(filterConds, cond)
+			checker.shouldReserve = checker.length != types.UnspecifiedLength
+		}
+	}
+	return accessConds, filterConds
+}
+
 // DetachIndexConditions will detach the index filters from table filters.
+// It will first find the point query column and then extract the range query column.
 func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accessConds []expression.Expression, filterConds []expression.Expression) {
 	accessConds = make([]expression.Expression, len(cols))
@@ -94,9 +164,9 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 	for i, cond := range conditions {
 		conditions[i] = expression.PushDownNot(cond, false, nil)
 	}
-	var accessEqualCount int
+	var equalOrInCount int
 	for _, cond := range conditions {
-		offset := getEQColOffset(cond, cols)
+		offset := getEqOrInColOffset(cond, cols)
 		if offset != -1 {
 			accessConds[offset] = cond
 		}
@@ -104,44 +174,24 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 	for i, cond := range accessConds {
 		if cond == nil {
 			accessConds = accessConds[:i]
-			accessEqualCount = i
+			equalOrInCount = i
 			break
 		}
 		if lengths[i] != types.UnspecifiedLength {
 			filterConds = append(filterConds, cond)
 		}
 		if i == len(accessConds)-1 {
-			accessEqualCount = len(accessConds)
+			equalOrInCount = len(accessConds)
 		}
 	}
 	// We should remove all accessConds, so that they will not be added to filter conditions.
 	conditions = removeAccessConditions(conditions, accessConds)
-	var curIndex int
-	for curIndex = accessEqualCount; curIndex < len(cols); curIndex++ {
-		checker := &conditionChecker{
-			cols:         cols,
-			columnOffset: curIndex,
-			length:       lengths[curIndex],
-		}
-		// First of all, we should extract all of in/eq expressions from rest conditions for every continuous index column.
-		// e.g. For index (a,b,c) and conditions a in (1,2) and b < 1 and c in (3,4), we should only extract column a in (1,2).
-		accessIdx := checker.findEqOrInFunc(conditions)
-		// If we fail to find any in or eq expression, we should consider all of other conditions for the next column.
-		if accessIdx == -1 {
-			accessConds, filterConds = checker.extractAccessAndFilterConds(conditions, accessConds, filterConds)
-			break
-		}
-		accessConds = append(accessConds, conditions[accessIdx])
-		if lengths[curIndex] != types.UnspecifiedLength {
-			filterConds = append(filterConds, conditions[accessIdx])
-		}
-		conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
-	}
-	// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
-	if curIndex == len(cols) {
+	if equalOrInCount == len(cols) {
+		// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
 		filterConds = append(filterConds, conditions...)
+		return accessConds, filterConds
 	}
-	return accessConds, filterConds
+	return extractAccessAndFilterConds(conditions, accessConds, filterConds, cols[equalOrInCount], lengths[equalOrInCount])
 }
 
 func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
@@ -188,7 +238,7 @@ func detachColumnConditions(conditions []expression.Expression, colName model.CI
 		// TODO: it will lead to repeated computation cost.
 		if checker.shouldReserve {
 			filterConditions = append(filterConditions, cond)
-			checker.shouldReserve = false
+			checker.shouldReserve = checker.length != types.UnspecifiedLength
 		}
 	}
 

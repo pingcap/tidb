@@ -1890,6 +1890,26 @@ func (s *testParserSuite) TestExplain(c *C) {
 	s.RunTest(c, table)
 }
 
+func (s *testParserSuite) TestView(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"create view v as select * from t", true},
+		{"create or replace view v as select * from t", true},
+		{"create or replace algorithm = undefined view v as select * from t", true},
+		{"create or replace algorithm = merge view v as select * from t", true},
+		{"create or replace algorithm = temptable view v as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' view v as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' sql security definer view v as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true},
+		// fixme: should be true
+		{"create or replace algorithm = merge definer = current_user view v as select * from t", false},
+	}
+	s.RunTest(c, table)
+}
+
 func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	// Test case for timestampdiff unit.
 	// TimeUnit should be unified to upper case.

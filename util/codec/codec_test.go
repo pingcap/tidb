@@ -729,7 +729,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
 		-0.0099, 0, 0.001, 0.0012, 0.12, 1.2, 1.23, 123.3, 2424.242424}
-	var decs [][]byte
+	decs := make([][]byte, 0, len(floats))
 	for i := range floats {
 		dec := types.NewDecFromFloatForTest(floats[i])
 		var d types.Datum
