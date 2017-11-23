@@ -1069,7 +1069,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	}
 	// Invalid TIME values are converted to '00:00:00'.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time.html
-	if minute >= 60 || second >= 60 {
+	if minute >= 60 || second > 60 || (!overflow && second == 60) {
 		return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
 	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
