@@ -416,6 +416,7 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+
 	nh := GetHistory(s)
 	var err error
 	for {
@@ -449,9 +450,9 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 				break
 			}
 		}
-		if ctx.Value("mockRetryForTest") != nil {
-			err = kv.ErrRetryable
-			ctx = goctx.Background()
+		if hook := ctx.Value("preCommitHook"); hook != nil {
+			// For testing purpose.
+			hook.(func())()
 		}
 		if err == nil {
 			err = s.doCommit(ctx)

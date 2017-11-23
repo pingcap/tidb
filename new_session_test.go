@@ -1470,20 +1470,31 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1)")
 
 	tk1.MustExec("begin")
-	tk1.MustExec("insert into t values (1)")
+	tk1.MustExec("update t set b = 5 where a = 1")
 
-	tk.MustExec("alter table t add column (b int)")
+	tk.MustExec("alter table t add index b_i (b)")
 
-	// When tk1 commit, it will find schema already changed.
-	// mockRetryForTest would make retry() fail for one more time,
-	// and retry again, to cover a bug that statement history is not
-	// updated during retry.
+	run := false
+	hook := func() {
+		if run == false {
+			tk.MustExec("update t set b = 3 where a = 1")
+			run = true
+		}
+	}
+
+	// In order to cover a bug that statement history is not updated during retry.
 	// See https://github.com/pingcap/tidb/pull/5202
-	err := tk1.Se.CommitTxn(goctx.WithValue(goctx.Background(), "mockRetryForTest", 1))
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+	// Step1: when tk1 commit, it find schema changed and retry().
+	// Step2: during retry, hook() is called, tk update primary key.
+	// Step3: tk1 continue commit in retry() meet a retryable error(write conflict), retry again.
+	// Step4: tk1 retry() success, if it use the stale statement, data and index will inconsistent.
+	err := tk1.Se.CommitTxn(goctx.WithValue(goctx.Background(), "preCommitHook", hook))
+	c.Assert(err, IsNil)
+	tk.MustQuery("select * from t where t.b = 5").Check(testkit.Rows("1 5"))
 }
 
 func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
