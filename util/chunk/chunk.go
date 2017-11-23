@@ -116,7 +116,6 @@ func (c *Chunk) GetRow(idx int) Row {
 }
 
 // Begin returns the first valid Row in the Chunk.
-// NOTE: The caller must guarantee that c.NumRows() > 0.
 func (c *Chunk) Begin() Row {
 	return c.GetRow(0)
 }
