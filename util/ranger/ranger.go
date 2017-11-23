@@ -383,34 +383,6 @@ func fixRangeDatum(v *types.Datum, length int) {
 	}
 }
 
-// getEQColOffset judge if the expression is a eq function that one side is constant and another is column.
-// If so, it will return the offset of this column in the slice.
-func getEQColOffset(expr expression.Expression, cols []*expression.Column) int {
-	f, ok := expr.(*expression.ScalarFunction)
-	if !ok || f.FuncName.L != ast.EQ {
-		return -1
-	}
-	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
-			for i, col := range cols {
-				if col.Equal(c, nil) {
-					return i
-				}
-			}
-		}
-	}
-	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-		if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
-			for i, col := range cols {
-				if col.Equal(c, nil) {
-					return i
-				}
-			}
-		}
-	}
-	return -1
-}
-
 // BuildRange is a method which can calculate IntColumnRange, ColumnRange, IndexRange.
 func BuildRange(sc *stmtctx.StatementContext, conds []expression.Expression, rangeType int, cols []*expression.Column,
 	lengths []int) (retRanges []types.Range, _ error) {
