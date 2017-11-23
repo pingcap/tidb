@@ -21,9 +21,16 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+func supportPartialAggregation(aggFunc Aggregation) bool {
+	if aggFunc.IsDistinct() || aggFunc.GetName() == ast.AggFuncBitOr {
+		return false
+	}
+	return true
+}
+
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc Aggregation) *tipb.Expr {
-	if aggFunc.IsDistinct() {
+	if !supportPartialAggregation(aggFunc) {
 		return nil
 	}
 	pc := expression.NewPBConverter(client, sc)
@@ -43,9 +50,6 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc Agg
 		tp = tipb.ExprType_Sum
 	case ast.AggFuncAvg:
 		tp = tipb.ExprType_Avg
-	case ast.AggFuncBitOr:
-		tp = tipb.ExprType_Agg_BitOr
-
 	}
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
