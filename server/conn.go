@@ -849,7 +849,7 @@ func (cc *mysqlClientConn) writeResultset(rs ResultSet, binary bool, more bool) 
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
+func (cc *mysqlClientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	data := make([]byte, 4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
@@ -868,7 +868,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	return nil
 }
 
-func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
+func (cc *mysqlClientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	for {

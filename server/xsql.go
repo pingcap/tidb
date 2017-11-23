@@ -241,11 +241,7 @@ func WriteResultSet(r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cols, err := r.Columns()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	cols := r.Columns()
 	// Write column information.
 	if err = writeColumnsInfo(cols, pkt); err != nil {
 		return errors.Trace(err)
