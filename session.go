@@ -449,6 +449,10 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 				break
 			}
 		}
+		if ctx.Value("mockRetryForTest") != nil {
+			err = kv.ErrRetryable
+			ctx = goctx.Background()
+		}
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {

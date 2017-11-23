@@ -1461,9 +1461,28 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 
 	tk.MustExec("alter table t drop column b")
 
-	// When s2 commit, it will find schema already changed.
+	// When tk1 commit, it will find schema already changed.
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+}
+
+func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("insert into t values (1)")
+
+	tk.MustExec("alter table t add column (b int)")
+
+	// When tk1 commit, it will find schema already changed.
+	// mockRetryForTest would make retry() fail for one more time,
+	// and retry again, to cover a bug that statement history is not
+	// updated during retry.
+	// See https://github.com/pingcap/tidb/pull/5202
+	err := tk1.Se.CommitTxn(goctx.WithValue(goctx.Background(), "mockRetryForTest", 1))
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
 }
 
