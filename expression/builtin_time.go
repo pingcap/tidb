@@ -30,7 +30,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -521,7 +521,7 @@ func (b *builtinStringDurationTimeDiffSig) evalDuration(row types.Row) (d types.
 }
 
 // calculateTimeDiff calculates interval difference of two types.Time.
-func calculateTimeDiff(sc *variable.StatementContext, lhs, rhs types.Time) (d types.Duration, isNull bool, err error) {
+func calculateTimeDiff(sc *stmtctx.StatementContext, lhs, rhs types.Time) (d types.Duration, isNull bool, err error) {
 	d = lhs.Sub(&rhs)
 	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
 	if types.ErrTruncatedWrongVal.Equal(err) {
@@ -531,7 +531,7 @@ func calculateTimeDiff(sc *variable.StatementContext, lhs, rhs types.Time) (d ty
 }
 
 // calculateTimeDiff calculates interval difference of two types.Duration.
-func calculateDurationTimeDiff(sc *variable.StatementContext, lhs, rhs types.Duration) (d types.Duration, isNull bool, err error) {
+func calculateDurationTimeDiff(sc *stmtctx.StatementContext, lhs, rhs types.Duration) (d types.Duration, isNull bool, err error) {
 	d, err = lhs.Sub(rhs)
 	if err != nil {
 		return d, true, errors.Trace(err)
@@ -652,7 +652,7 @@ func (b *builtinNullTimeDiffSig) evalDuration(row types.Row) (d types.Duration, 
 
 // convertStringToDuration converts string to duration, it return types.Time because in some case
 // it will converts string to datetime.
-func convertStringToDuration(sc *variable.StatementContext, str string, fsp int) (d types.Duration, t types.Time,
+func convertStringToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d types.Duration, t types.Time,
 	isDuration bool, err error) {
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		lenStrFsp := len(str[n+1:])
@@ -1374,7 +1374,7 @@ func evalFromUnixTime(ctx context.Context, fsp int, row types.Row, arg Expressio
 		return res, true, errors.Trace(err)
 	}
 	if integralPart > int64(math.MaxInt32) {
-		return
+		return res, true, nil
 	}
 	// Split the integral part and fractional part of a decimal timestamp.
 	// e.g. for timestamp 12345.678,
@@ -1920,7 +1920,7 @@ type utcTimestampFunctionClass struct {
 	baseFunctionClass
 }
 
-func getFlenAndDecimal4UTCTimestampAndNow(sc *variable.StatementContext, arg Expression) (flen, decimal int) {
+func getFlenAndDecimal4UTCTimestampAndNow(sc *stmtctx.StatementContext, arg Expression) (flen, decimal int) {
 	if constant, ok := arg.(*Constant); ok {
 		fsp, isNull, err := constant.EvalInt(nil, sc)
 		if isNull || err != nil || fsp > int64(types.MaxFsp) {
@@ -3192,7 +3192,7 @@ func isDuration(str string) bool {
 }
 
 // strDatetimeAddDuration adds duration to datetime string, returns a string value.
-func strDatetimeAddDuration(sc *variable.StatementContext, d string, arg1 types.Duration) (string, error) {
+func strDatetimeAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (string, error) {
 	arg0, err := types.ParseTime(sc, d, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -3210,7 +3210,7 @@ func strDatetimeAddDuration(sc *variable.StatementContext, d string, arg1 types.
 }
 
 // strDurationAddDuration adds duration to duration string, returns a string value.
-func strDurationAddDuration(sc *variable.StatementContext, d string, arg1 types.Duration) (string, error) {
+func strDurationAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (string, error) {
 	arg0, err := types.ParseDuration(d, types.MaxFsp)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -3227,7 +3227,7 @@ func strDurationAddDuration(sc *variable.StatementContext, d string, arg1 types.
 }
 
 // strDatetimeSubDuration subtracts duration from datetime string, returns a string value.
-func strDatetimeSubDuration(sc *variable.StatementContext, d string, arg1 types.Duration) (string, error) {
+func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (string, error) {
 	arg0, err := types.ParseTime(sc, d, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -3250,7 +3250,7 @@ func strDatetimeSubDuration(sc *variable.StatementContext, d string, arg1 types.
 }
 
 // strDurationSubDuration subtracts duration from duration string, returns a string value.
-func strDurationSubDuration(sc *variable.StatementContext, d string, arg1 types.Duration) (string, error) {
+func strDurationSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (string, error) {
 	arg0, err := types.ParseDuration(d, types.MaxFsp)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -4565,7 +4565,7 @@ type utcTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *utcTimeFunctionClass) getFlenAndDecimal4UTCTime(sc *variable.StatementContext, args []Expression) (flen, decimal int) {
+func (c *utcTimeFunctionClass) getFlenAndDecimal4UTCTime(sc *stmtctx.StatementContext, args []Expression) (flen, decimal int) {
 	if len(args) == 0 {
 		flen, decimal = 8, 0
 		return

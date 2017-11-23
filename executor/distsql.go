@@ -30,11 +30,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -284,15 +286,21 @@ const (
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
 	FlagTruncateAsWarning uint64 = 1 << 1
+
+	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
+	FlagPadCharToFullLength uint64 = 1 << 2
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
-func statementContextToFlags(sc *variable.StatementContext) uint64 {
+func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.PadCharToFullLength {
+		flags |= FlagPadCharToFullLength
 	}
 	return flags
 }
@@ -390,9 +398,14 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableReaderExecutor) NextChunk(chk *chunk.Chunk) error {
+	return e.result.NextChunk(chk)
+}
+
 // Open implements the Executor Open interface.
-func (e *TableReaderExecutor) Open() error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
+func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.TableReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
@@ -406,7 +419,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -489,9 +502,14 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *IndexReaderExecutor) NextChunk(chk *chunk.Chunk) error {
+	return e.result.NextChunk(chk)
+}
+
 // Open implements the Executor Open interface.
-func (e *IndexReaderExecutor) Open() error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader.Open")
+func (e *IndexReaderExecutor) Open(goCtx goctx.Context) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.IndexReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
@@ -505,7 +523,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -524,13 +542,9 @@ type IndexLookUpExecutor struct {
 	desc      bool
 	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
-	// This is the column that represent the handle, we can use handleCol.Index to know its position.
-	handleCol    *expression.Column
+	// handleIdx is the index of handle, which is only used for case of keeping order.
+	handleIdx    int
 	tableRequest *tipb.DAGRequest
-	// When we need to sort the data in the second read, we must use handle to do this,
-	// In this case, schema that the table reader use is different with executor's schema.
-	// TODO: store it in table plan's schema. Not store it here.
-	tableReaderSchema *expression.Schema
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
@@ -567,7 +581,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, 1)
+	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -666,16 +680,16 @@ func (worker *tableWorker) close() {
 }
 
 // Open implements the Executor Open interface.
-func (e *IndexLookUpExecutor) Open() error {
+func (e *IndexLookUpExecutor) Open(goCtx goctx.Context) error {
 	kvRanges, err := e.indexRangesToKVRanges()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.open(kvRanges)
+	return e.open(goCtx, kvRanges)
 }
 
-func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexLookUp.Open")
+func (e *IndexLookUpExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.IndexLookUp.Open")
 	defer span.Finish()
 
 	e.finished = make(chan struct{})
@@ -705,16 +719,10 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
-	var schema *expression.Schema
-	if e.tableReaderSchema != nil {
-		schema = e.tableReaderSchema
-	} else {
-		schema = e.schema
-	}
 
 	var tableReader Executor
 	tableReader, err = e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(schema, e.ctx),
+		baseExecutor: newBaseExecutor(e.schema, e.ctx),
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
@@ -735,13 +743,8 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 	if e.keepOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: e.handleCol.Index}
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: e.handleIdx}
 		sort.Sort(sorter)
-		if e.tableReaderSchema != nil {
-			for i, row := range task.rows {
-				task.rows[i] = row[:len(row)-1]
-			}
-		}
 	}
 }
 

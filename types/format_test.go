@@ -11,11 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package types_test
 
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -65,7 +66,7 @@ func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 		},
 	}
 	for i, t := range tblDate {
-		tm, err := ParseTime(sc, t.Input, mysql.TypeDatetime, 6)
+		tm, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, 6)
 		c.Assert(err, IsNil, Commentf("parse time fail: %s", t.Input))
 
 		str, err := tm.DateFormat(t.Format)
@@ -81,30 +82,30 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	tests := []struct {
 		input  string
 		format string
-		expect TimeInternal
+		expect types.TimeInternal
 	}{
-		{`01,05,2013`, `%d,%m,%Y`, FromDate(2013, 5, 1, 0, 0, 0, 0)},
-		{`May 01, 2013`, `%M %d,%Y`, FromDate(2013, 5, 1, 0, 0, 0, 0)},
-		{`a09:30:17`, `a%h:%i:%s`, FromDate(0, 0, 0, 9, 30, 17, 0)},
-		{`09:30:17a`, `%h:%i:%s`, FromDate(0, 0, 0, 9, 30, 17, 0)},
-		{`abc`, `abc`, ZeroTime},
-		{`09`, `%m`, FromDate(0, 9, 0, 0, 0, 0, 0)},
-		{`09`, `%s`, FromDate(0, 0, 0, 0, 0, 9, 0)},
-		{`12:43:24 AM`, `%r`, FromDate(0, 0, 0, 12, 43, 24, 0)},
-		{`11:43:24 PM`, `%r`, FromDate(0, 0, 0, 23, 43, 24, 0)},
-		{`00:12:13`, `%T`, FromDate(0, 0, 0, 0, 12, 13, 0)},
-		{`23:59:59`, `%T`, FromDate(0, 0, 0, 23, 59, 59, 0)},
-		{`00/00/0000`, `%m/%d/%Y`, ZeroTime},
-		{`04/30/2004`, `%m/%d/%Y`, FromDate(2004, 4, 30, 0, 0, 0, 0)},
-		{`15:35:00`, `%H:%i:%s`, FromDate(0, 0, 0, 15, 35, 0, 0)},
-		{`Jul 17 33`, `%b %k %S`, FromDate(0, 7, 0, 17, 0, 33, 0)},
-		{`2016-January:7 432101`, `%Y-%M:%l %f`, FromDate(2016, 1, 0, 7, 0, 0, 432101)},
-		{`10:13 PM`, `%l:%i %p`, FromDate(0, 0, 0, 22, 13, 0, 0)},
-		{`12:00:00 AM`, `%h:%i:%s %p`, FromDate(0, 0, 0, 0, 0, 0, 0)},
-		{`12:00:00 PM`, `%h:%i:%s %p`, FromDate(0, 0, 0, 12, 0, 0, 0)},
+		{`01,05,2013`, `%d,%m,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
+		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
+		{`a09:30:17`, `a%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
+		{`09:30:17a`, `%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
+		{`abc`, `abc`, types.ZeroTime},
+		{`09`, `%m`, types.FromDate(0, 9, 0, 0, 0, 0, 0)},
+		{`09`, `%s`, types.FromDate(0, 0, 0, 0, 0, 9, 0)},
+		{`12:43:24 AM`, `%r`, types.FromDate(0, 0, 0, 12, 43, 24, 0)},
+		{`11:43:24 PM`, `%r`, types.FromDate(0, 0, 0, 23, 43, 24, 0)},
+		{`00:12:13`, `%T`, types.FromDate(0, 0, 0, 0, 12, 13, 0)},
+		{`23:59:59`, `%T`, types.FromDate(0, 0, 0, 23, 59, 59, 0)},
+		{`00/00/0000`, `%m/%d/%Y`, types.ZeroTime},
+		{`04/30/2004`, `%m/%d/%Y`, types.FromDate(2004, 4, 30, 0, 0, 0, 0)},
+		{`15:35:00`, `%H:%i:%s`, types.FromDate(0, 0, 0, 15, 35, 0, 0)},
+		{`Jul 17 33`, `%b %k %S`, types.FromDate(0, 7, 0, 17, 0, 33, 0)},
+		{`2016-January:7 432101`, `%Y-%M:%l %f`, types.FromDate(2016, 1, 0, 7, 0, 0, 432101)},
+		{`10:13 PM`, `%l:%i %p`, types.FromDate(0, 0, 0, 22, 13, 0, 0)},
+		{`12:00:00 AM`, `%h:%i:%s %p`, types.FromDate(0, 0, 0, 0, 0, 0, 0)},
+		{`12:00:00 PM`, `%h:%i:%s %p`, types.FromDate(0, 0, 0, 12, 0, 0, 0)},
 	}
 	for i, tt := range tests {
-		var t Time
+		var t types.Time
 		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed", i))
 		c.Assert(t.Time, Equals, tt.expect, Commentf("no.%d failed", i))
 	}
@@ -122,7 +123,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`00:21:22 AM`, `%h:%i:%s %p`},
 	}
 	for _, tt := range errTests {
-		var t Time
+		var t types.Time
 		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse)
 	}
 }

@@ -655,7 +655,7 @@ func (cc *mysqlClientConn) writeReq(filePath string) error {
 
 var defaultLoadDataBatchCnt = 20000
 
-func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
+func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
 	var reachLimit bool
 	for {
@@ -667,7 +667,7 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 			break
 		}
 		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.RefreshTxnCtx(); err != nil {
+		if err = loadDataInfo.Ctx.RefreshTxnCtx(goCtx); err != nil {
 			return nil, errors.Trace(err)
 		}
 		curData = prevData
@@ -678,7 +678,7 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *mysqlClientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
+func (cc *mysqlClientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor.LoadDataInfo) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
@@ -714,7 +714,7 @@ func (cc *mysqlClientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) e
 				break
 			}
 		}
-		prevData, err = insertDataWithCommit(prevData, curData, loadDataInfo)
+		prevData, err = insertDataWithCommit(goCtx, prevData, curData, loadDataInfo)
 		if err != nil {
 			break
 		}
@@ -732,7 +732,7 @@ func (cc *mysqlClientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) e
 		}
 		return errors.Trace(err)
 	}
-	return errors.Trace(txn.Commit(loadDataInfo.Ctx.GoCtx()))
+	return errors.Trace(txn.Commit(goCtx))
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
@@ -754,7 +754,7 @@ func (cc *mysqlClientConn) handleQuery(goCtx goctx.Context, sql string) (err err
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			if err = cc.handleLoadData(goCtx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -791,35 +791,30 @@ func (cc *mysqlClientConn) handleFieldList(sql string) (err error) {
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *mysqlClientConn) writeResultset(rs ResultSet, binary bool, more bool) error {
 	defer terror.Call(rs.Close)
+	if rs.SupportChunk() {
+		columns := rs.Columns()
+		err := cc.writeColumnInfo(columns)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = cc.writeChunks(rs, binary, more)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(cc.flush())
+	}
 	// We need to call Next before we get columns.
 	// Otherwise, we will get incorrect columns info.
 	row, err := rs.Next()
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	columns, err := rs.Columns()
+	columns := rs.Columns()
+	err = cc.writeColumnInfo(columns)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	data := cc.alloc.AllocWithLen(4, 1024)
-	data = dumpLengthEncodedInt(data, uint64(len(columns)))
-	if err = cc.writePacket(data); err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, v := range columns {
-		data = data[0:4]
-		data = v.Dump(data)
-		if err = cc.writePacket(data); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if err = cc.writeEOF(false); err != nil {
-		return errors.Trace(err)
-	}
+	data := make([]byte, 4, 1024)
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -852,6 +847,55 @@ func (cc *mysqlClientConn) writeResultset(rs ResultSet, binary bool, more bool) 
 	}
 
 	return errors.Trace(cc.flush())
+}
+
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
+	data := make([]byte, 4, 1024)
+	data = dumpLengthEncodedInt(data, uint64(len(columns)))
+	if err := cc.writePacket(data); err != nil {
+		return errors.Trace(err)
+	}
+	for _, v := range columns {
+		data = data[0:4]
+		data = v.Dump(data)
+		if err := cc.writePacket(data); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := cc.writeEOF(false); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
+	data := make([]byte, 4, 1024)
+	chk := rs.NewChunk()
+	for {
+		err := rs.NextChunk(chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rowCount := chk.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		for i := 0; i < rowCount; i++ {
+			data = data[0:4]
+			if binary {
+				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
+			} else {
+				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err = cc.writePacket(data); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return errors.Trace(cc.writeEOF(more))
 }
 
 func (cc *mysqlClientConn) writeMultiResultset(rss []ResultSet, binary bool) error {

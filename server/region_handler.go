@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -28,10 +29,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -46,6 +47,7 @@ const (
 	pRegionID  = "regionID"
 	pRecordID  = "recordID"
 	pStartTS   = "startTS"
+	pHexKey    = "hexKey"
 )
 
 const (
@@ -84,6 +86,7 @@ type mvccTxnHandler struct {
 const (
 	opMvccGetByKey = "key"
 	opMvccGetByTxn = "txn"
+	opMvccGetByHex = "hex"
 )
 
 // newRegionHandler checks and prepares for region handler.
@@ -507,8 +510,10 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var err error
 	if rh.op == opMvccGetByKey {
 		data, err = rh.handleMvccGetByKey(params)
-	} else {
+	} else if rh.op == opMvccGetByTxn {
 		data, err = rh.handleMvccGetByTxn(params)
+	} else {
+		data, err = rh.handleMvccGetByHex(params)
 	}
 	if err != nil {
 		rh.writeError(w, err)
@@ -637,5 +642,28 @@ func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {
 		err = errors.Trace(err)
 		return nil, err
 	}
-	return sessionctx.GetDomain(session.(context.Context)).InfoSchema(), nil
+	return domain.GetDomain(session.(context.Context)).InfoSchema(), nil
+}
+
+func (t *regionHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
+	encodeKey, err := hex.DecodeString(params[pHexKey])
+	if err != nil {
+		return nil, err
+	}
+	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
+	if err != nil {
+		return nil, err
+	}
+	tikvReq := &tikvrpc.Request{
+		Type: tikvrpc.CmdMvccGetByKey,
+		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
+			Key: encodeKey,
+		},
+	}
+	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
+	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
+	if err != nil {
+		return nil, err
+	}
+	return kvResp.MvccGetByKey, nil
 }

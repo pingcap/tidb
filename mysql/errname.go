@@ -191,7 +191,7 @@ var MySQLErrName = map[uint16]string{
 	ErrRequiresPrimaryKey:                       "This table type requires a primary key",
 	ErrNoRaidCompiled:                           "This version of MySQL is not compiled with RAID support",
 	ErrUpdateWithoutKeyInSafeMode:               "You are using safe update mode and you tried to update a table without a WHERE that uses a KEY column",
-	ErrKeyDoesNotExits:                          "Key '%-.192s' doesn't exist in table '%-.192s'",
+	ErrKeyDoesNotExist:                          "Key '%-.192s' doesn't exist in table '%-.192s'",
 	ErrCheckNoSuchTable:                         "Can't open table",
 	ErrCheckNotImplemented:                      "The storage engine for the table doesn't support %s",
 	ErrCantDoThisDuringAnTransaction:            "You are not allowed to execute this command in a transaction",

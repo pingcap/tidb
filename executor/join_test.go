@@ -477,6 +477,8 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) not in (select * from t)")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t A inner join t B on A.c = B.c and A.c > 100")
+	result.Check(testkit.Rows())
 	// = all empty set is true
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t where d > 1000)")
 	result.Check(testkit.Rows("1", "2", "3"))

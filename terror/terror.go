@@ -40,7 +40,7 @@ const (
 	// CodeUnknown is for errors of unknown reason.
 	CodeUnknown ErrCode = -1
 	// CodeExecResultIsEmpty indicates execution result is empty.
-	CodeExecResultIsEmpty = 3
+	CodeExecResultIsEmpty ErrCode = 3
 
 	// Expression error codes.
 

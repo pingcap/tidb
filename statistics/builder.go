@@ -16,13 +16,13 @@ package statistics
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
 type SortedBuilder struct {
-	sc              *variable.StatementContext
+	sc              *stmtctx.StatementContext
 	numBuckets      int64
 	valuesPerBucket int64
 	lastNumber      int64
@@ -32,7 +32,7 @@ type SortedBuilder struct {
 }
 
 // NewSortedBuilder creates a new SortedBuilder.
-func NewSortedBuilder(sc *variable.StatementContext, numBuckets, id int64) *SortedBuilder {
+func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64) *SortedBuilder {
 	return &SortedBuilder{
 		sc:              sc,
 		numBuckets:      numBuckets,

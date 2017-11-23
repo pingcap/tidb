@@ -193,7 +193,7 @@ const (
 	ErrRequiresPrimaryKey                                           = 1173
 	ErrNoRaidCompiled                                               = 1174
 	ErrUpdateWithoutKeyInSafeMode                                   = 1175
-	ErrKeyDoesNotExits                                              = 1176
+	ErrKeyDoesNotExist                                              = 1176
 	ErrCheckNoSuchTable                                             = 1177
 	ErrCheckNotImplemented                                          = 1178
 	ErrCantDoThisDuringAnTransaction                                = 1179
