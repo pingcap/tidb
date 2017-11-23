@@ -269,8 +269,9 @@ func (c *RegionCache) insertRegionToCache(r *Region) {
 	}
 }
 
-// getCachedRegion loads a region from cache, it drops the cached region if it
-// was not accessed for a long time (maybe out of date).
+// getCachedRegion loads a region from cache. It also checks if the region has
+// not been accessed for a long time (maybe out of date). In this case, it
+// returns nil so the region will be loaded from PD again.
 // Note that it should be called with c.mu.RLock(), and the returned Region
 // should not be used after c.mu is RUnlock().
 func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
@@ -282,7 +283,6 @@ func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
 		atomic.StoreInt64(&cachedRegion.lastAccess, time.Now().Unix())
 		return cachedRegion.region
 	}
-	c.dropRegionFromCache(id)
 	return nil
 }
 
