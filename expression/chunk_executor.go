@@ -67,31 +67,31 @@ func VectorizedExecute(ctx context.Context, exprs []Expression, input, output *c
 func evalOneColumn(sc *stmtctx.StatementContext, expr Expression, input, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
-		for row := input.Begin(); row != input.End(); row = row.Next() {
+		for row := input.Begin(); err == nil && row != input.End(); row = row.Next() {
 			err = executeToInt(sc, expr, fieldType, row, output, colID)
 		}
 	case types.ETReal:
-		for row := input.Begin(); row != input.End(); row = row.Next() {
+		for row := input.Begin(); err == nil && row != input.End(); row = row.Next() {
 			err = executeToReal(sc, expr, fieldType, row, output, colID)
 		}
 	case types.ETDecimal:
-		for row := input.Begin(); row != input.End(); row = row.Next() {
+		for row := input.Begin(); err == nil && row != input.End(); row = row.Next() {
 			err = executeToDecimal(sc, expr, fieldType, row, output, colID)
 		}
 	case types.ETDatetime, types.ETTimestamp:
-		for row := input.Begin(); row != input.End(); row = row.Next() {
+		for row := input.Begin(); err == nil && row != input.End(); row = row.Next() {
 			err = executeToDatetime(sc, expr, fieldType, row, output, colID)
 		}
 	case types.ETDuration:
-		for row := input.Begin(); row != input.End(); row = row.Next() {
+		for row := input.Begin(); err == nil && row != input.End(); row = row.Next() {
 			err = executeToDuration(sc, expr, fieldType, row, output, colID)
 		}
 	case types.ETJson:
-		for row := input.Begin(); row != input.End(); row = row.Next() {
+		for row := input.Begin(); err == nil && row != input.End(); row = row.Next() {
 			err = executeToJSON(sc, expr, fieldType, row, output, colID)
 		}
 	case types.ETString:
-		for row := input.Begin(); row != input.End(); row = row.Next() {
+		for row := input.Begin(); err == nil && row != input.End(); row = row.Next() {
 			err = executeToString(sc, expr, fieldType, row, output, colID)
 		}
 	}
