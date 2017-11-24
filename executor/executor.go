@@ -543,7 +543,6 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
-			fmt.Printf("e.childrenResults[0].NumRows()=%v, len(e.filterResult)=%v, e.inputRow.ID()=%v\n", e.childrenResults[0].NumRows(), len(e.filterResult), e.inputRow.ID())
 			if !e.filterResult[e.inputRow.ID()] {
 				continue
 			}
@@ -567,7 +566,6 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 	}
-	return nil
 }
 
 // TableScanExec is a table scan executor without result fields.
