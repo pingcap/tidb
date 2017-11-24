@@ -1470,8 +1470,39 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 
 	tk.MustExec("alter table t drop column b")
 
-	// When s2 commit, it will find schema already changed.
+	// When tk1 commit, it will find schema already changed.
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+}
+
+func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set b = 5 where a = 1")
+
+	tk.MustExec("alter table t add index b_i (b)")
+
+	run := false
+	hook := func() {
+		if run == false {
+			tk.MustExec("update t set b = 3 where a = 1")
+			run = true
+		}
+	}
+
+	// In order to cover a bug that statement history is not updated during retry.
+	// See https://github.com/pingcap/tidb/pull/5202
+	// Step1: when tk1 commit, it find schema changed and retry().
+	// Step2: during retry, hook() is called, tk update primary key.
+	// Step3: tk1 continue commit in retry() meet a retryable error(write conflict), retry again.
+	// Step4: tk1 retry() success, if it use the stale statement, data and index will inconsistent.
+	tk1.Se.SetValue(tidb.PreCommitHook{}, hook)
+	err := tk1.Se.CommitTxn()
+	c.Assert(err, IsNil)
+	tk.MustQuery("select * from t where t.b = 5").Check(testkit.Rows("1 5"))
 }

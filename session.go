@@ -400,6 +400,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+
 	nh := GetHistory(s)
 	var err error
 	for {
@@ -416,6 +417,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 				if err != nil {
 					return errors.Trace(err)
 				}
+				nh.history[i].st = st
 			}
 
 			if retryCnt == 0 {
@@ -431,6 +433,10 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			if err != nil {
 				break
 			}
+		}
+		if hook := s.Value(PreCommitHook{}); hook != nil {
+			// For testing purpose.
+			hook.(func())()
 		}
 		if err == nil {
 			err = s.doCommit()
@@ -1296,4 +1302,11 @@ func logCrucialStmt(node ast.StmtNode, user *auth.UserIdentity) {
 			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
 		}
 	}
+}
+
+// PreCommitHook implements the fmt.Stringer interface.
+type PreCommitHook struct{}
+
+func (h PreCommitHook) String() string {
+	return "preCommitHook"
 }
