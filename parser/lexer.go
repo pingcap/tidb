@@ -25,41 +25,6 @@ import (
 
 var _ = yyLexer(&Scanner{})
 
-var ignoreSpaceFuncMap = map[string]int{
-	"adddate":      builtinAddDate,
-	"bit_and":      builtinBitAnd,
-	"bit_or":       builtinBitOr,
-	"bit_xor":      builtinBitXor,
-	"cast":         builtinCast,
-	"count":        builtinCount,
-	"curdate":      builtinCurDate,
-	"curtime":      builtinCurTime,
-	"date_add":     builtinDateAdd,
-	"date_sub":     builtinDateSub,
-	"extract":      builtinExtract,
-	"group_concat": builtinGroupConcat,
-	"max":          builtinMax,
-	"mid":          builtinSubstring,
-	"min":          builtinMin,
-	"now":          builtinNow,
-	"position":     builtinPosition,
-	"session_user": builtinUser,
-	"std":          builtinStd,
-	"stddev":       builtinStddev,
-	"stddev_pop":   builtinStddevPop,
-	"stddev_samp":  builtinStddevSamp,
-	"subdate":      builtinSubDate,
-	"substr":       builtinSubstring,
-	"substring":    builtinSubstring,
-	"sum":          builtinSum,
-	"sysdate":      builtinSysDate,
-	"system_user":  builtinUser,
-	"trim":         builtinTrim,
-	"variance":     builtinVariance,
-	"var_Pop":      builtinVarPop,
-	"var_samp":     builtinVarSamp,
-}
-
 // Pos represents the position of a token.
 type Pos struct {
 	Line   int
@@ -470,16 +435,7 @@ func scanIdentifier(s *Scanner) (int, Pos, string) {
 	pos := s.r.pos()
 	s.r.inc()
 	s.r.incAsLongAs(isIdentChar)
-	lit := s.r.data(&pos)
-	if t, ok := ignoreSpaceFuncMap[strings.ToLower(lit)]; ok {
-		if s.sqlMode.HasIgnoreSpaceMode() {
-			s.skipWhitespace()
-		}
-		if s.r.peek() == '(' {
-			return t, pos, lit
-		}
-	}
-	return identifier, pos, lit
+	return identifier, pos, s.r.data(&pos)
 }
 
 var (

@@ -440,17 +440,13 @@ import (
 	builtinMin
 	builtinNow
 	builtinPosition
-	builtinStd
-	builtinStddev
 	builtinStddevPop
-	builtinStddevSamp
 	builtinSubDate
 	builtinSubstring
 	builtinSum
 	builtinSysDate
 	builtinTrim
 	builtinUser
-	builtinVariance
 	builtinVarPop
 	builtinVarSamp
 
@@ -3402,15 +3398,15 @@ SumExpr:
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
-|	"BIT_AND" '(' Expression ')'
+|	builtinBitAnd '(' Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
-|	"BIT_OR" '(' Expression ')'
+|	builtinBitOr '(' Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
-|	"BIT_XOR" '(' Expression ')'
+|	builtinBitXor '(' Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}

@@ -203,6 +203,26 @@ func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
 	tk.MustExec("DROP TABLE COUNT;")
 	_, err := tk.Exec("CREATE TABLE COUNT(a bigint);")
 	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE test.COUNT(a bigint);")
+	tk.MustExec("DROP TABLE COUNT;")
+
+	tk.MustExec("CREATE TABLE BIT_AND (a bigint);")
+	tk.MustExec("DROP TABLE BIT_AND;")
+	tk.MustExec("CREATE TABLE `BIT_AND` (a bigint);")
+	tk.MustExec("DROP TABLE BIT_AND;")
+	_, err = tk.Exec("CREATE TABLE BIT_AND(a bigint);")
+	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE test.BIT_AND(a bigint);")
+	tk.MustExec("DROP TABLE BIT_AND;")
+
+	tk.MustExec("CREATE TABLE NOW (a bigint);")
+	tk.MustExec("DROP TABLE NOW;")
+	tk.MustExec("CREATE TABLE `NOW` (a bigint);")
+	tk.MustExec("DROP TABLE NOW;")
+	_, err = tk.Exec("CREATE TABLE NOW(a bigint);")
+	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE test.NOW(a bigint);")
+	tk.MustExec("DROP TABLE NOW;")
 
 	tk.MustExec("set sql_mode='IGNORE_SPACE'")
 	_, err = tk.Exec("CREATE TABLE COUNT (a bigint);")
@@ -211,6 +231,27 @@ func (s *testMySQLConstSuite) TestIgnoreSpaceMode(c *C) {
 	tk.MustExec("DROP TABLE COUNT;")
 	_, err = tk.Exec("CREATE TABLE COUNT(a bigint);")
 	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE test.COUNT(a bigint);")
+	tk.MustExec("DROP TABLE COUNT;")
+
+	_, err = tk.Exec("CREATE TABLE BIT_AND (a bigint);")
+	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE `BIT_AND` (a bigint);")
+	tk.MustExec("DROP TABLE BIT_AND;")
+	_, err = tk.Exec("CREATE TABLE BIT_AND(a bigint);")
+	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE test.BIT_AND(a bigint);")
+	tk.MustExec("DROP TABLE BIT_AND;")
+
+	_, err = tk.Exec("CREATE TABLE NOW (a bigint);")
+	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE `NOW` (a bigint);")
+	tk.MustExec("DROP TABLE NOW;")
+	_, err = tk.Exec("CREATE TABLE NOW(a bigint);")
+	c.Assert(err, NotNil)
+	tk.MustExec("CREATE TABLE test.NOW(a bigint);")
+	tk.MustExec("DROP TABLE NOW;")
+
 }
 
 func (s *testMySQLConstSuite) TestPadCharToFullLengthMode(c *C) {
