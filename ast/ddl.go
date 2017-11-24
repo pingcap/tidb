@@ -23,6 +23,7 @@ var (
 	_ DDLNode = &CreateDatabaseStmt{}
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
+	_ DDLNode = &CreateViewStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
@@ -528,6 +529,23 @@ func (n *TableToTable) Accept(v Visitor) (Node, bool) {
 	}
 	n.NewTable = node.(*TableName)
 	return v.Leave(n)
+}
+
+// CreateViewStmt is a statement to create a View.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-view.html
+type CreateViewStmt struct {
+	ddlNode
+
+	OrReplace bool
+	ViewName  *TableName
+	Cols      []model.CIStr
+	Select    StmtNode
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
+	// TODO: implement the details.
+	return n, true
 }
 
 // CreateIndexStmt is a statement to create an index.
