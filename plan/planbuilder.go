@@ -43,6 +43,7 @@ var (
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
 	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
+	ErrKeyDoesNotExist      = terror.ClassOptimizerPlan.New(CodeKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
 )
 
 // Error codes.
@@ -58,6 +59,7 @@ const (
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
 	CodeBadTable                          = mysql.ErrBadTable
+	CodeKeyDoesNotExist                   = mysql.ErrKeyDoesNotExist
 )
 
 func init() {
@@ -69,6 +71,7 @@ func init() {
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
 		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
 		CodeBadTable:           mysql.ErrBadTable,
+		CodeKeyDoesNotExist:    mysql.ErrKeyDoesNotExist,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
@@ -299,7 +302,7 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool) {
+func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool, err error) {
 	var usableHints []*ast.IndexHint
 	for _, hint := range hints {
 		if hint.HintScope == ast.HintForScan {
@@ -313,7 +316,7 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 		}
 	}
 	if len(usableHints) == 0 {
-		return publicIndices, true
+		return publicIndices, true, nil
 	}
 	var hasUse bool
 	var ignores []*model.IndexInfo
@@ -326,6 +329,8 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 				idx := findIndexByName(publicIndices, idxName)
 				if idx != nil {
 					indices = append(indices, idx)
+				} else {
+					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
 				}
 			}
 		case ast.HintIgnore:
@@ -334,6 +339,8 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 				idx := findIndexByName(publicIndices, idxName)
 				if idx != nil {
 					ignores = append(ignores, idx)
+				} else {
+					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
 				}
 			}
 		}
@@ -341,13 +348,13 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 	indices = removeIgnores(indices, ignores)
 	// If we have got FORCE or USE index hint, table scan is excluded.
 	if len(indices) != 0 {
-		return indices, false
+		return indices, false, nil
 	}
 	if hasUse {
 		// Empty use hint means don't use any index.
-		return nil, true
+		return nil, true, nil
 	}
-	return removeIgnores(publicIndices, ignores), true
+	return removeIgnores(publicIndices, ignores), true, nil
 }
 
 func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
