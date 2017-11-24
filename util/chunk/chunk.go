@@ -148,6 +148,7 @@ func (c *Chunk) AppendRow(colIdx int, row Row) {
 	}
 }
 
+// Append appends rows in [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
 		dst := c.columns[colID]
@@ -170,6 +171,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 	}
 }
 
+// Truncate truncates "tailRows" rows from the tail..
 func (c *Chunk) Truncate(tailRows int) {
 	for _, col := range c.columns {
 		if col.isFixed() {
