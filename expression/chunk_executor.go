@@ -234,3 +234,23 @@ func executeToString(sc *stmtctx.StatementContext, expr Expression, fieldType *t
 	}
 	return nil
 }
+
+func FilterChunk(ctx context.Context, filters []Expression, input *chunk.Chunk, selected []bool) ([]bool, error) {
+	selected = selected[:0]
+	for i, numRows := 0, input.NumRows(); i < numRows; i++ {
+		selected = append(selected, true)
+	}
+	for _, filter := range filters {
+		for row := input.Begin(); row != input.End(); row = row.Next() {
+			if !selected[row.ID()] {
+				continue
+			}
+			filterResult, isNull, err := filter.EvalInt(row, ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			selected[row.ID()] = selected[row.ID()] && !isNull && (filterResult != 0)
+		}
+	}
+	return selected, nil
+}

@@ -494,7 +494,28 @@ func (e *TableDualExec) Next() (Row, error) {
 type SelectionExec struct {
 	baseExecutor
 
-	Conditions []expression.Expression
+	Conditions   []expression.Expression
+	filterResult []bool
+	inputRow     chunk.Row
+}
+
+// Open implements the Executor Open interface.
+func (e *SelectionExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
+	e.filterResult = make([]bool, 0, chunk.InitialCapacity)
+	e.inputRow = e.childrenResults[0].End()
+	return nil
+}
+
+// Close implements plan.Plan Close interface.
+func (e *SelectionExec) Close() error {
+	if err := e.baseExecutor.Close(); err != nil {
+		return errors.Trace(err)
+	}
+	e.filterResult = nil
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -515,6 +536,38 @@ func (e *SelectionExec) Next() (Row, error) {
 			return srcRow, nil
 		}
 	}
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	for {
+		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+			fmt.Printf("e.childrenResults[0].NumRows()=%v, len(e.filterResult)=%v, e.inputRow.ID()=%v\n", e.childrenResults[0].NumRows(), len(e.filterResult), e.inputRow.ID())
+			if !e.filterResult[e.inputRow.ID()] {
+				continue
+			}
+			chk.AppendRow(0, e.inputRow)
+			if chk.NumRows() == chunk.MaxCapacity {
+				return nil
+			}
+		}
+		err := e.children[0].NextChunk(e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.inputRow = e.childrenResults[0].Begin()
+		// no more data.
+		if e.childrenResults[0].NumRows() == 0 {
+			return nil
+		}
+		e.filterResult = e.filterResult[:0]
+		e.filterResult, err = expression.FilterChunk(e.ctx, e.Conditions, e.childrenResults[0], e.filterResult)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // TableScanExec is a table scan executor without result fields.

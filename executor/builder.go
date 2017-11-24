@@ -623,11 +623,17 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
-	exec := &SelectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+	e := &SelectionExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 		Conditions:   v.Conditions,
 	}
-	return exec
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {

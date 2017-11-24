@@ -347,6 +347,10 @@ type Row struct {
 	idx int
 }
 
+func (r Row) ID() int {
+	return r.idx
+}
+
 // Len returns the number of values in the row.
 func (r Row) Len() int {
 	return r.c.NumCols()
