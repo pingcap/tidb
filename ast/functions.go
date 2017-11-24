@@ -408,6 +408,8 @@ const (
 	AggFuncGroupConcat = "group_concat"
 	// AggFuncBitXor is the name of bit_xor function.
 	AggFuncBitXor = "bit_xor"
+	// AggFuncBitAnd is the name of bit_and function.
+	AggFuncBitAnd = "bit_and"
 )
 
 // AggregateFuncExpr represents aggregate function expression.
