@@ -148,51 +148,46 @@ func (c *Chunk) AppendRow(colIdx int, row Row) {
 	}
 }
 
-// Copy copys rows ranged ["begin", "end") in "other" to current Chunk.
-func (c *Chunk) Copy(other *Chunk, begin, end int) {
+func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
 		dst := c.columns[colID]
 		if src.isFixed() {
 			elemLen := len(src.elemBuf)
-			if len(dst.data) < elemLen*(end-begin) {
-				dst.data = make([]byte, elemLen*(end-begin), elemLen*(end-begin))
-			}
-			copy(dst.data, src.data[begin*elemLen:end*elemLen])
-			dst.data = dst.data[:elemLen*(end-begin)]
+			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
 		} else if src.isVarlen() {
 			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
-			newDataLen := int(endOffset - beginOffset)
-			if len(dst.data) < newDataLen {
-				dst.data = make([]byte, newDataLen)
-			}
-			copy(dst.data, src.data[beginOffset:endOffset])
-			dst.data = dst.data[:newDataLen]
-
-			if len(dst.offsets) < end-begin+1 {
-				dst.offsets = make([]int32, end-begin+1)
-				dst.offsets[0] = 0
-			}
+			dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
 			for i := begin; i < end; i++ {
-				dst.offsets[i-begin+1] = dst.offsets[i-begin] + src.offsets[i+1] - src.offsets[i]
+				dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
 			}
-			dst.offsets = dst.offsets[:end-begin+1]
 		} else {
-			if len(dst.ifaces) < end-begin {
-				dst.ifaces = make([]interface{}, end-begin)
-			}
-			copy(dst.ifaces, src.ifaces[begin:end])
-			dst.ifaces = dst.ifaces[:end-begin]
-		}
-		dst.length, dst.nullCount = 0, 0
-		numBytesInBitmap := (end - begin + 7) >> 3
-		if len(dst.nullBitmap) < numBytesInBitmap {
-			dst.nullBitmap = make([]byte, numBytesInBitmap)
+			dst.ifaces = append(dst.ifaces, src.ifaces[begin:end]...)
 		}
 		for i := begin; i < end; i++ {
 			dst.appendNullBitmap(!src.isNull(i))
 			dst.length++
 		}
-		dst.nullBitmap = dst.nullBitmap[:numBytesInBitmap]
+	}
+}
+
+func (c *Chunk) Truncate(tailRows int) {
+	for _, col := range c.columns {
+		if col.isFixed() {
+			elemLen := len(col.elemBuf)
+			col.data = col.data[:(col.length-tailRows)*elemLen]
+		} else if col.isVarlen() {
+			col.data = col.data[:col.offsets[col.length-tailRows+1]]
+			col.offsets = col.offsets[:col.length-tailRows]
+		} else {
+			col.ifaces = col.ifaces[:col.length-tailRows]
+		}
+		for i := col.length - tailRows; i < col.length; i++ {
+			if col.isNull(i) {
+				col.nullCount--
+			}
+		}
+		col.length -= tailRows
+		col.nullBitmap = col.nullBitmap[:(col.length>>3)+1]
 	}
 }
 

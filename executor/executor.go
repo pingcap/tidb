@@ -343,14 +343,16 @@ func (e *SelectLockExec) Next() (Row, error) {
 type LimitExec struct {
 	baseExecutor
 
-	Offset uint64
-	Count  uint64
-	Idx    uint64
+	begin  uint64
+	end    uint64
+	cursor uint64
+
+	meetFirstBatch bool
 }
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next() (Row, error) {
-	for e.Idx < e.Offset {
+	for e.cursor < e.begin {
 		srcRow, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -358,9 +360,9 @@ func (e *LimitExec) Next() (Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		e.Idx++
+		e.cursor++
 	}
-	if e.Idx >= e.Count+e.Offset {
+	if e.cursor >= e.end {
 		return nil, nil
 	}
 	srcRow, err := e.children[0].Next()
@@ -370,47 +372,61 @@ func (e *LimitExec) Next() (Row, error) {
 	if srcRow == nil {
 		return nil, nil
 	}
-	e.Idx++
+	e.cursor++
 	return srcRow, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
-	for {
-		err := e.children[0].NextChunk(chk)
+	if e.cursor >= e.end {
+		return nil
+	}
+	for !e.meetFirstBatch {
+		err := e.children[0].NextChunk(e.childrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batchSize := uint64(chk.NumRows())
+		batchSize := uint64(e.childrenResults[0].NumRows())
 		// no more data.
 		if batchSize == 0 {
 			return nil
 		}
-		if e.Idx+batchSize > e.Offset {
-			break
+		e.cursor += batchSize
+		if e.cursor >= e.begin {
+			e.meetFirstBatch = true
+			if e.cursor > e.end {
+				batchSize -= e.cursor - e.end
+			}
+			fmt.Printf("matched, batchSize: %v\n", batchSize)
+			chk.Append(e.childrenResults[0], int(e.begin-(e.cursor-batchSize)), int(batchSize))
+			return nil
 		}
-		e.Idx += batchSize
 	}
-	batchSize := chk.NumRows()
-	if e.Idx < e.Offset {
-		chk.Copy(chk, int(e.Offset-e.Idx), batchSize)
-		batchSize = chk.NumRows()
-		e.Idx = e.Offset
+	err := e.children[0].NextChunk(chk)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	if e.Idx+uint64(batchSize) <= e.Offset+e.Count {
-		e.Idx += uint64(batchSize)
+	batchSize := uint64(chk.NumRows())
+	// no more data.
+	if batchSize == 0 {
 		return nil
 	}
-	chk.Copy(chk, 0, int(e.Offset+e.Count-e.Idx))
-	e.Idx = e.Offset + e.Count
+	e.cursor += batchSize
+	if e.cursor > e.end {
+		chk.Truncate(int(e.cursor - e.end))
+	}
 	return nil
 }
 
 // Open implements the Executor Open interface.
 func (e *LimitExec) Open(goCtx goctx.Context) error {
-	e.Idx = 0
-	return errors.Trace(e.children[0].Open(goCtx))
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
+	e.cursor = 0
+	e.meetFirstBatch = false
+	return nil
 }
 
 func init() {

@@ -241,8 +241,8 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 	}
 	e := &LimitExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
-		Offset:       v.Offset,
-		Count:        v.Count,
+		begin:        v.Offset,
+		end:          v.Offset + v.Count,
 	}
 	e.supportChk = true
 	return e
