@@ -43,7 +43,7 @@ type Config struct {
 	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" toml:"proxy-protocol"`
+	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 }
 
 // Log is the log section of config.
@@ -141,9 +141,9 @@ type ProxyProtocol struct {
 	// PROXY protocol acceptable client networks.
 	// Empty string means disable PROXY protocol,
 	// * means all networks.
-	Networks string `json:"networks" toml:"networks"`
+	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
-	HeaderTimeout int `json:"header-timeout" toml:"header-timeout"`
+	HeaderTimeout int `toml:"header-timeout" json:"header-timeout"`
 }
 
 var defaultConf = Config{
