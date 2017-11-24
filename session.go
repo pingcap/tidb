@@ -371,6 +371,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 				if err != nil {
 					return errors.Trace(err)
 				}
+				nh.history[i].st = st
 			}
 
 			if retryCnt == 0 {
