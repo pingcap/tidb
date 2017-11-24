@@ -1501,7 +1501,8 @@ func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 	// Step2: during retry, hook() is called, tk update primary key.
 	// Step3: tk1 continue commit in retry() meet a retryable error(write conflict), retry again.
 	// Step4: tk1 retry() success, if it use the stale statement, data and index will inconsistent.
-	err := tk1.Se.CommitTxn(goctx.WithValue(goctx.Background(), "preCommitHook", hook))
+	tk1.Se.SetValue(tidb.PreCommitHook{}, hook)
+	err := tk1.Se.CommitTxn()
 	c.Assert(err, IsNil)
 	tk.MustQuery("select * from t where t.b = 5").Check(testkit.Rows("1 5"))
 }

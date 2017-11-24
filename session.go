@@ -434,7 +434,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 				break
 			}
 		}
-		if hook := ctx.Value("preCommitHook"); hook != nil {
+		if hook := s.Value(PreCommitHook{}); hook != nil {
 			// For testing purpose.
 			hook.(func())()
 		}
@@ -1302,4 +1302,11 @@ func logCrucialStmt(node ast.StmtNode, user *auth.UserIdentity) {
 			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
 		}
 	}
+}
+
+// PreCommitHook implements the fmt.Stringer interface.
+type PreCommitHook struct{}
+
+func (h PreCommitHook) String() string {
+	return "preCommitHook"
 }
