@@ -75,15 +75,14 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 
 // Server is the MySQL protocol server
 type Server struct {
-	cfg                 *config.Config
-	tlsConfig           *tls.Config
-	driver              IDriver
-	listener            net.Listener
-	rwlock              *sync.RWMutex
-	concurrentLimiter   *TokenLimiter
-	clients             map[uint32]*clientConn
-	capability          uint32
-	enableProxyProtocol bool
+	cfg               *config.Config
+	tlsConfig         *tls.Config
+	driver            IDriver
+	listener          net.Listener
+	rwlock            *sync.RWMutex
+	concurrentLimiter *TokenLimiter
+	clients           map[uint32]*clientConn
+	capability        uint32
 
 	// When a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
@@ -245,11 +244,10 @@ func (s *Server) Run() error {
 				}
 			}
 
-			if s.enableProxyProtocol {
-				if proxyprotocol.IsProxyProtocolError(err) {
-					log.Errorf("PROXY protocol error: %s", err.Error())
-					continue
-				}
+			// If we got PROXY protocol error, we should continue accept.
+			if proxyprotocol.IsProxyProtocolError(err) {
+				log.Errorf("PROXY protocol error: %s", err.Error())
+				continue
 			}
 
 			log.Errorf("accept error %s", err.Error())

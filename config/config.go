@@ -43,8 +43,7 @@ type Config struct {
 	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
-
-	ProxyProtocol ProxyProtocol `toml:"proxy-protocol" toml:"proxy-protocol"`
+	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" toml:"proxy-protocol"`
 }
 
 // Log is the log section of config.
