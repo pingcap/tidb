@@ -400,6 +400,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+
 	nh := GetHistory(s)
 	var err error
 	for {
@@ -416,6 +417,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 				if err != nil {
 					return errors.Trace(err)
 				}
+				nh.history[i].st = st
 			}
 
 			if retryCnt == 0 {
@@ -431,6 +433,10 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			if err != nil {
 				break
 			}
+		}
+		if hook := ctx.Value("preCommitHook"); hook != nil {
+			// For testing purpose.
+			hook.(func())()
 		}
 		if err == nil {
 			err = s.doCommit()
