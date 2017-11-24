@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
@@ -34,7 +34,7 @@ type Aggregation interface {
 	json.Marshaler
 
 	// Update during executing.
-	Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error
+	Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error
 
 	// GetPartialResult will called by coprocessor to get partial results. For avg function, partial results will return
 	// sum and count values at the same time.
@@ -96,12 +96,14 @@ func NewAggFunction(funcType string, funcArgs []expression.Expression, distinct 
 		return &maxMinFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), isMax: false}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+	case ast.AggFuncBitAnd:
+		return &bitAndFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	}
 	return nil
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
-func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *variable.StatementContext) (Aggregation, error) {
+func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.StatementContext) (Aggregation, error) {
 	args := make([]expression.Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
 		arg, err := expression.PBToExpr(child, fieldTps, sc)
@@ -125,6 +127,8 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *variable.S
 		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false)}, nil
 	case tipb.ExprType_First:
 		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
+	case tipb.ExprType_Agg_BitAnd:
+		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
 	}
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
@@ -245,7 +249,7 @@ func (af *aggFunction) CreateContext() *AggEvaluateContext {
 	return ctx
 }
 
-func (af *aggFunction) updateSum(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (af *aggFunction) updateSum(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {

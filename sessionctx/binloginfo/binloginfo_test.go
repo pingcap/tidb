@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -98,7 +98,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.tk.MustExec("use test")
-	domain := sessionctx.GetDomain(s.tk.Se.(context.Context))
+	domain := domain.GetDomain(s.tk.Se.(context.Context))
 	s.ddl = domain.DDL()
 
 	binlogClient := binlog.NewPumpClient(clientCon)

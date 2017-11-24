@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -114,7 +114,7 @@ func (s *testEvaluatorSuite) TearDownSuite(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 

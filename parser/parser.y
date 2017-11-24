@@ -198,6 +198,7 @@ import (
 	set			"SET"
 	show			"SHOW"
 	smallIntType		"SMALLINT"
+	sql			"SQL"
 	sqlCalcFoundRows	"SQL_CALC_FOUND_ROWS"
 	starting		"STARTING"
 	straightJoin		"STRAIGHT_JOIN"
@@ -240,6 +241,7 @@ import (
 	action		"ACTION"
 	after		"AFTER"
 	always		"ALWAYS"
+	algorithm	"ALGORITHM"
 	any 		"ANY"
 	ascii		"ASCII"
 	autoIncrement	"AUTO_INCREMENT"
@@ -252,6 +254,7 @@ import (
 	boolType	"BOOL"
 	btree		"BTREE"
 	byteType	"BYTE"
+	cascaded	"CASCADED"
 	charsetKwd	"CHARSET"
 	checksum	"CHECKSUM"
 	client		"CLIENT"
@@ -271,6 +274,7 @@ import (
 	dateType	"DATE"
 	datetimeType	"DATETIME"
 	deallocate	"DEALLOCATE"
+	definer		"DEFINER"
 	delayKeyWrite	"DELAY_KEY_WRITE"
 	disable		"DISABLE"
 	do		"DO"
@@ -299,6 +303,7 @@ import (
 	identified	"IDENTIFIED"
 	isolation	"ISOLATION"
 	indexes		"INDEXES"
+	invoker		"INVOKER"
 	jsonType	"JSON"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
@@ -314,6 +319,7 @@ import (
 	maxQueriesPerHour	"MAX_QUERIES_PER_HOUR"
 	maxUpdatesPerHour	"MAX_UPDATES_PER_HOUR"
 	maxUserConnections	"MAX_USER_CONNECTIONS"
+	merge		"MERGE"
 	minRows		"MIN_ROWS"
 	names		"NAMES"
 	national	"NATIONAL"
@@ -344,6 +350,7 @@ import (
 	rowCount	"ROW_COUNT"
 	rowFormat	"ROW_FORMAT"
 	second		"SECOND"
+	security	"SECURITY"
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	share		"SHARE"
@@ -361,6 +368,7 @@ import (
 	global		"GLOBAL"
 	tables		"TABLES"
 	temporary	"TEMPORARY"
+	temptable	"TEMPTABLE"
 	textType	"TEXT"
 	than		"THAN"
 	timeType	"TIME"
@@ -371,6 +379,7 @@ import (
 	uncommitted	"UNCOMMITTED"
 	unknown 	"UNKNOWN"
 	user		"USER"
+	undefined	"UNDEFINED"
 	value		"VALUE"
 	variables	"VARIABLES"
 	view		"VIEW"
@@ -472,6 +481,7 @@ import (
 	BinlogStmt			"Binlog base64 statement"
 	CommitStmt			"COMMIT statement"
 	CreateTableStmt			"CREATE TABLE statement"
+	CreateViewStmt			"CREATE VIEW  stetement"
 	CreateUserStmt			"CREATE User statement"
 	CreateDatabaseStmt		"Create Database Statement"
 	CreateIndexStmt			"CREATE INDEX statement"
@@ -526,6 +536,7 @@ import (
 	ColumnDefList			"table column definition list"
 	ColumnName			"column name"
 	ColumnNameList			"column name list"
+	ColumnList			"column list"
 	ColumnNameListOpt		"column name list opt"
 	ColumnNameListOptWithBrackets 	"column name list opt with brackets"
 	ColumnSetValue			"insert statement set value by column name"
@@ -604,6 +615,7 @@ import (
 	OptFull				"Full or empty"
 	Order				"ORDER BY clause optional collation specification"
 	OrderBy				"ORDER BY clause"
+	OrReplace			"or replace"
 	ByItem				"BY item"
 	OrderByOptional			"Optional ORDER BY clause optional"
 	ByList				"BY list"
@@ -680,6 +692,12 @@ import (
 	ValuesOpt		"values optional"
 	VariableAssignment	"set variable value"
 	VariableAssignmentList	"set variable value list"
+	ViewAlgorithm		"view algorithm"
+	ViewCheckOption		"view check option"
+	ViewDefiner		"view definer"
+	ViewName		"view name"
+	ViewFieldList		"create view statement field list"
+	ViewSQLSecurity		"view sql security"
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optional WHERE clause"
 	WhenClause		"When clause"
@@ -1686,6 +1704,122 @@ PartDefStorageOpt:
 |	"ENGINE" eq Identifier
 	{}
 
+/*******************************************************************
+ *
+ *  Create View Statement
+ *
+ *  Example:
+ *      CREATE VIEW OR REPLACE ALGORITHM = MERGE DEFINER="root@localhost" SQL SECURITY = definer view_name (col1,col2)
+ *          as select Col1,Col2 from table WITH LOCAL CHECK OPTION
+ *******************************************************************/
+CreateViewStmt:
+    "CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" SelectStmt ViewCheckOption
+    {
+		startOffset := parser.startOffset(&yyS[yypt])
+		selStmt := $10.(*ast.SelectStmt)
+		selStmt.SetText(string(parser.src[startOffset:]))
+		x := &ast.CreateViewStmt {
+ 			OrReplace:     $2.(bool),
+			ViewName:      $7.(*ast.TableName),
+			Select:        selStmt,
+		}
+		if $8 != nil{
+			x.Cols = $8.([]model.CIStr)
+		}
+		$$ = x
+	}
+
+OrReplace:
+	{
+		$$ = false
+	}
+|	"OR" "REPLACE"
+	{
+		$$ = true
+	}
+
+ViewAlgorithm:
+	/* EMPTY */
+	{
+		$$ = "UNDEFINED"
+	}
+|	"ALGORITHM" "=" "UNDEFINED"
+	{
+		$$ = strings.ToUpper($3)
+	}
+|	"ALGORITHM" "=" "MERGE"
+	{
+		$$ = strings.ToUpper($3)
+	}
+|	"ALGORITHM" "=" "TEMPTABLE"
+	{
+		$$ = strings.ToUpper($3)
+	}
+
+ViewDefiner:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|   "DEFINER" "=" Username
+	{
+		$$ = $3
+	}
+
+ViewSQLSecurity:
+	/* EMPTY */
+	{
+		$$ = "DEFINER"
+	}
+|   "SQL" "SECURITY" "DEFINER"
+	 {
+		 $$ = $3
+	 }
+|   "SQL" "SECURITY" "INVOKER"
+	 {
+		 $$ = $3
+	 }
+
+ViewName:
+	TableName
+	{
+		$$ = $1.(*ast.TableName)
+	}
+
+ViewFieldList:
+	/* Empty */
+	{
+		$$ = nil
+	}
+|   '(' ColumnList ')'
+	{
+		$$ = $2.([]model.CIStr)
+	}
+
+ColumnList:
+	Identifier
+	{
+		$$ = []model.CIStr{model.NewCIStr($1)}
+	}
+|   ColumnList ',' Identifier
+	{
+	$$ = append($1.([]model.CIStr), model.NewCIStr($3))
+	}
+
+ViewCheckOption:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|   "WITH" "CASCADED" "CHECK" "OPTION"
+	{
+		$$ = $2
+	}
+|   "WITH" "LOCAL" "CHECK" "OPTION"
+	{
+		$$ = $2
+	}
+
 /******************************************************************
  * Do statement
  * See https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -2336,7 +2470,7 @@ UnReservedKeyword:
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
-| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 
 TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
@@ -4895,6 +5029,7 @@ Statement:
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
+|	CreateViewStmt
 |	CreateUserStmt
 |	DoStmt
 |	DropDatabaseStmt

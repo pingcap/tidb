@@ -44,10 +44,10 @@ func CheckFsp(fsp int) (int, error) {
 	return fsp, nil
 }
 
-// parseFrac parses the input string according to fsp, returns the microsecond,
+// ParseFrac parses the input string according to fsp, returns the microsecond,
 // and also a bool value to indice overflow. eg:
 // "999" fsp=2 will overflow.
-func parseFrac(s string, fsp int) (v int, overflow bool, err error) {
+func ParseFrac(s string, fsp int) (v int, overflow bool, err error) {
 	if len(s) == 0 {
 		return 0, false, nil
 	}

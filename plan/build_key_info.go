@@ -166,7 +166,7 @@ func (p *LogicalJoin) buildKeyInfo() {
 
 func (p *DataSource) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	indices, _ := availableIndices(p.indexHints, p.tableInfo)
+	indices := p.availableIndices.indices
 	for _, idx := range indices {
 		if !idx.Unique {
 			continue
