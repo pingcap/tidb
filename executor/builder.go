@@ -679,6 +679,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
+	sortExec.supportChk = true
 	if v.ExecLimit != nil {
 		return &TopNExec{
 			SortExec: sortExec,
