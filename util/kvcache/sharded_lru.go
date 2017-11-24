@@ -41,9 +41,9 @@ func NewShardedLRUCache(capacity, shardCount int64) *ShardedLRUCache {
 func (s *ShardedLRUCache) Get(key Key) (Value, bool) {
 	id := int(murmur3.Sum32(key.Hash())) % len(s.shards)
 
-	s.locks[id].Lock()
+	s.locks[id].RLock()
 	value, ok := s.shards[id].Get(key)
-	s.locks[id].Unlock()
+	s.locks[id].RUnlock()
 
 	return value, ok
 }
