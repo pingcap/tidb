@@ -57,7 +57,6 @@ type lookupTableTask struct {
 	rows    []chunk.Row
 	cursor  int
 
-	done   bool
 	doneCh chan error
 
 	// indexOrder map is used to save the original index order for the handles.
@@ -68,14 +67,6 @@ type lookupTableTask struct {
 }
 
 func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
-	if !task.done {
-		err := <-task.doneCh
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		task.done = true
-	}
-
 	if task.cursor < len(task.rows) {
 		row := task.rows[task.cursor]
 		task.cursor++
@@ -529,7 +520,7 @@ type indexWorker struct {
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
 
-	// batchSize is for slow startup. It will slowly increase to the max batch size value.
+	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
 	maxBatchSize int
 }
@@ -673,7 +664,7 @@ func (w *tableWorker) pickAndExecTask(goCtx goctx.Context) {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(goCtx goctx.Context) error {
-	kvRanges, err := e.indexRangesToKVRanges()
+	kvRanges, err := indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -698,10 +689,6 @@ func (e *IndexLookUpExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) 
 	return nil
 }
 
-func (e *IndexLookUpExecutor) indexRangesToKVRanges() ([]kv.KeyRange, error) {
-	return indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
-}
-
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
@@ -718,10 +705,11 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 	defer terror.Call(tableReader.Close)
 	if w.keepOrder {
 		task.rows = make([]chunk.Row, len(task.handles))
+	} else {
+		task.rows = make([]chunk.Row, 0, len(task.handles))
 	}
-	tps := tableReader.Schema().GetTypes()
 	for {
-		chk := chunk.NewChunk(tps)
+		chk := tableReader.newChunk()
 		err = tableReader.NextChunk(chk)
 		if err != nil {
 			log.Error(err)
@@ -730,8 +718,7 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < chk.NumRows(); i++ {
-			row := chk.GetRow(i)
+		for row := chk.Begin(); row != chk.End(); row = row.Next() {
 			if w.keepOrder {
 				rowIdx := task.indexOrder[row.GetInt64(w.handleIdx)]
 				task.rows[rowIdx] = row
@@ -777,21 +764,20 @@ func (e *IndexLookUpExecutor) Close() error {
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next() (Row, error) {
 	for {
-		if e.resultCurr == nil {
-			resultCurr, ok := <-e.resultCh
-			if !ok {
-				return nil, nil
-			}
-			e.resultCurr = resultCurr
+		resultTask, err := e.getResultTask()
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		row, err := e.resultCurr.getRow(e.schema)
+		if resultTask == nil {
+			return nil, nil
+		}
+		row, err := resultTask.getRow(e.schema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
 			return row, nil
 		}
-		e.resultCurr = nil
 	}
 }
 
@@ -824,12 +810,9 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if !ok {
 		return nil, nil
 	}
-	if !task.done {
-		err := <-task.doneCh
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		task.done = true
+	err := <-task.doneCh
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	e.resultCurr = task
 	return e.resultCurr, nil
