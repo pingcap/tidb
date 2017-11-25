@@ -109,7 +109,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil && ctxPeer.GetStoreId() != h.storeID {
 		return &errorpb.Error{
-			Message:       proto.String("store not match"),
+			Message:       *proto.String("store not match"),
 			StoreNotMatch: &errorpb.StoreNotMatch{},
 		}
 	}
@@ -117,9 +117,9 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	// No region found.
 	if region == nil {
 		return &errorpb.Error{
-			Message: proto.String("region not found"),
+			Message: *proto.String("region not found"),
 			RegionNotFound: &errorpb.RegionNotFound{
-				RegionId: proto.Uint64(ctx.GetRegionId()),
+				RegionId: *proto.Uint64(ctx.GetRegionId()),
 			},
 		}
 	}
@@ -135,27 +135,27 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	// The Store does not contain a Peer of the Region.
 	if storePeer == nil {
 		return &errorpb.Error{
-			Message: proto.String("region not found"),
+			Message: *proto.String("region not found"),
 			RegionNotFound: &errorpb.RegionNotFound{
-				RegionId: proto.Uint64(ctx.GetRegionId()),
+				RegionId: *proto.Uint64(ctx.GetRegionId()),
 			},
 		}
 	}
 	// No leader.
 	if leaderPeer == nil {
 		return &errorpb.Error{
-			Message: proto.String("no leader"),
+			Message: *proto.String("no leader"),
 			NotLeader: &errorpb.NotLeader{
-				RegionId: proto.Uint64(ctx.GetRegionId()),
+				RegionId: *proto.Uint64(ctx.GetRegionId()),
 			},
 		}
 	}
 	// The Peer on the Store is not leader.
 	if storePeer.GetId() != leaderPeer.GetId() {
 		return &errorpb.Error{
-			Message: proto.String("not leader"),
+			Message: *proto.String("not leader"),
 			NotLeader: &errorpb.NotLeader{
-				RegionId: proto.Uint64(ctx.GetRegionId()),
+				RegionId: *proto.Uint64(ctx.GetRegionId()),
 				Leader:   leaderPeer,
 			},
 		}
@@ -168,7 +168,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			newRegions = append(newRegions, nextRegion)
 		}
 		return &errorpb.Error{
-			Message: proto.String("stale epoch"),
+			Message: *proto.String("stale epoch"),
 			StaleEpoch: &errorpb.StaleEpoch{
 				NewRegions: newRegions,
 			},
@@ -387,7 +387,7 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 		errStr := "not implemented"
 		return &kvrpcpb.RawScanResponse{
 			RegionError: &errorpb.Error{
-				Message: &errStr,
+				Message: errStr,
 			},
 		}
 	}
