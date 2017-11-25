@@ -179,6 +179,9 @@ type Statement interface {
 
 	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
 	IsReadOnly() bool
+
+	// RebuildPlan rebuilds the plan of the statement.
+	RebuildPlan() error
 }
 
 // Visitor visits a Node.

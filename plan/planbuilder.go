@@ -186,7 +186,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 		}
 		vars = append(vars, newExpr)
 	}
-	exe := &Execute{Name: v.Name, UsingVars: vars}
+	exe := &Execute{Name: v.Name, ExecID: v.ExecID, UsingVars: vars}
 	exe.SetSchema(expression.NewSchema())
 	return exe
 }

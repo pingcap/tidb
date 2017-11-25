@@ -1506,3 +1506,20 @@ func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustQuery("select * from t where t.b = 5").Check(testkit.Rows("1 5"))
 }
+
+func (s *testSchemaSuite) TestRetryMissingUnionScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int primary key, b int unique, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set b = 1, c = 2 where b = 2")
+	tk1.MustExec("update t set b = 1, c = 2 where a = 1")
+
+	// Create a conflict to reproduces the bug that the second update statement in retry
+	// has a dirty table but doesn't use UnionScan.
+	tk.MustExec("update t set b = 2 where a = 1")
+
+	tk1.MustExec("commit")
+}

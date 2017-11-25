@@ -67,6 +67,8 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Cacheable:  plan.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
 		ReadOnly:   readOnly,
+		Ctx:        ctx,
+		StmtNode:   stmtNode,
 	}, nil
 }
 
