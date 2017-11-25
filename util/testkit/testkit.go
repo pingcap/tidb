@@ -48,6 +48,21 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.c.Assert(got, check.Equals, need, res.comment)
 }
 
+// CheckAt asserts the result of selected columns equals the expected results.
+func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
+	var rows [][]string
+	for i := range res.rows {
+		var row []string
+		for _, r := range cols {
+			row = append(row, res.rows[i][r])
+		}
+		rows = append(rows, row)
+	}
+	got := fmt.Sprintf("%s", rows)
+	need := fmt.Sprintf("%s", expected)
+	res.c.Assert(got, check.Equals, need, res.comment)
+}
+
 // Rows returns the result data.
 func (res *Result) Rows() [][]interface{} {
 	ifacesSlice := make([][]interface{}, len(res.rows))
