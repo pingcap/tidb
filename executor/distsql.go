@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -503,7 +504,7 @@ type IndexLookUpExecutor struct {
 	columns  []*model.ColumnInfo
 	priority int
 	*dataReaderBuilder
-	// All fields above is immutable.
+	// All fields above are immutable.
 
 	idxWorkerWg sync.WaitGroup
 	tblWorkerWg sync.WaitGroup
@@ -703,11 +704,7 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 		return
 	}
 	defer terror.Call(tableReader.Close)
-	if w.keepOrder {
-		task.rows = make([]chunk.Row, len(task.handles))
-	} else {
-		task.rows = make([]chunk.Row, 0, len(task.handles))
-	}
+	task.rows = make([]chunk.Row, 0, len(task.handles))
 	for {
 		chk := tableReader.newChunk()
 		err = tableReader.NextChunk(chk)
@@ -719,13 +716,15 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 			break
 		}
 		for row := chk.Begin(); row != chk.End(); row = row.Next() {
-			if w.keepOrder {
-				rowIdx := task.indexOrder[row.GetInt64(w.handleIdx)]
-				task.rows[rowIdx] = row
-			} else {
-				task.rows = append(task.rows, row)
-			}
+			task.rows = append(task.rows, row)
 		}
+	}
+	if w.keepOrder {
+		sort.Slice(task.rows, func(i, j int) bool {
+			hI := task.rows[i].GetInt64(w.handleIdx)
+			hJ := task.rows[i].GetInt64(w.handleIdx)
+			return task.indexOrder[hI] < task.indexOrder[hJ]
+		})
 	}
 }
 

@@ -1584,7 +1584,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	c.Assert(count, Equals, 100)
 	rs.Close()
 
-	rs, err = tk.Exec("select k from chk order by k")
+	rs, err = tk.Exec("select k from chk where c < 90 order by k")
 	c.Assert(err, IsNil)
 	chk = rs.NewChunk()
 	count = 0
@@ -1600,6 +1600,6 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 			count++
 		}
 	}
-	c.Assert(count, Equals, 100)
+	c.Assert(count, Equals, 90)
 	rs.Close()
 }
