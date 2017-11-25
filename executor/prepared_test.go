@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestPrepared(c *C) {
@@ -75,6 +76,16 @@ func (s *testSuite) TestPrepared(c *C) {
 		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
 		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
+
+		// Check that rebuild plan works.
+		tk.Se.PrepareTxnCtx(goctx.Background())
+		err = stmt.RebuildPlan()
+		c.Assert(err, IsNil)
+		rs, err := stmt.Exec(goctx.Background())
+		c.Assert(err, IsNil)
+		_, err = rs.Next()
+		c.Assert(err, IsNil)
+		c.Assert(rs.Close(), IsNil)
 
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")
