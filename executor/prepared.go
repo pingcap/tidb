@@ -312,6 +312,12 @@ func (e *DeallocateExec) Open() error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) ast.Statement {
+	execStmtNode := &ast.ExecuteStmt{ExecID: ID}
+	execStmtNode.UsingVars = make([]ast.ExprNode, len(args))
+	for i, val := range args {
+		execStmtNode.UsingVars[i] = ast.NewValueExpr(val)
+	}
+
 	execPlan := &plan.Execute{ExecID: ID}
 	execPlan.UsingVars = make([]expression.Expression, len(args))
 	for i, val := range args {
@@ -323,6 +329,8 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
 		ReadOnly:   false,
+		Ctx:        ctx,
+		StmtNode:   execStmtNode,
 	}
 
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*Prepared); ok {

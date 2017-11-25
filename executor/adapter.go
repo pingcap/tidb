@@ -51,7 +51,7 @@ func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 		for _, col := range a.executor.Schema().Columns {
 			dbName := col.DBName.O
 			if dbName == "" && col.TblName.L != "" {
-				dbName = a.stmt.ctx.GetSessionVars().CurrentDB
+				dbName = a.stmt.Ctx.GetSessionVars().CurrentDB
 			}
 			rf := &ast.ResultField{
 				ColumnAsName: col.ColName,
@@ -77,13 +77,13 @@ func (a *recordSet) Next() (*ast.Row, error) {
 	}
 	if row == nil {
 		if a.stmt != nil {
-			a.stmt.ctx.GetSessionVars().LastFoundRows = a.stmt.ctx.GetSessionVars().StmtCtx.FoundRows()
+			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
 		}
 		return nil, nil
 	}
 
 	if a.stmt != nil {
-		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
+		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
 	return &ast.Row{Data: row}, nil
 }
@@ -110,7 +110,9 @@ type ExecStmt struct {
 	// Text represents the origin query text.
 	Text string
 
-	ctx            context.Context
+	StmtNode ast.StmtNode
+
+	Ctx            context.Context
 	startTime      time.Time
 	isPreparedStmt bool
 
@@ -133,13 +135,28 @@ func (a *ExecStmt) IsReadOnly() bool {
 	return a.ReadOnly
 }
 
+// RebuildPlan implements ast.Statement interface.
+func (a *ExecStmt) RebuildPlan() error {
+	is := GetInfoSchema(a.Ctx)
+	a.InfoSchema = is
+	if err := plan.Preprocess(a.StmtNode, is, a.Ctx); err != nil {
+		return errors.Trace(err)
+	}
+	p, err := plan.Optimize(a.Ctx, a.StmtNode, is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	a.Plan = p
+	return nil
+}
+
 // Exec implements the ast.Statement Exec interface.
 // This function builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
-	a.ctx = ctx
+	a.Ctx = ctx
 
 	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
 		oriStats := ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency]
@@ -288,8 +305,8 @@ func (a *ExecStmt) logSlowQuery(succ bool) {
 	if len(sql) > cfg.Log.QueryLogMaxLen {
 		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
-	connID := a.ctx.GetSessionVars().ConnectionID
-	currentDB := a.ctx.GetSessionVars().CurrentDB
+	connID := a.Ctx.GetSessionVars().ConnectionID
+	currentDB := a.Ctx.GetSessionVars().CurrentDB
 	logEntry := log.NewEntry(logutil.SlowQueryLogger)
 	logEntry.Data = log.Fields{
 		"connectionId": connID,

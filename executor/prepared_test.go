@@ -67,6 +67,16 @@ func (s *testSuite) TestPrepared(c *C) {
 	stmt := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
 	c.Assert(stmt.OriginText(), Equals, query)
 
+	// Check that rebuild plan works.
+	tk.Se.PrepareTxnCtx()
+	err = stmt.RebuildPlan()
+	c.Assert(err, IsNil)
+	rs, err := stmt.Exec(tk.Se)
+	c.Assert(err, IsNil)
+	_, err = rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(rs.Close(), IsNil)
+
 	// Make schema change.
 	tk.Exec("create table prepare2 (a int)")
 
