@@ -139,12 +139,12 @@ func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 func (p *WindowFunction) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	var selfUsedCols []*expression.Column
+	windowColumn := p.GetWindowResultColumn()
 	for _, col := range parentUsedCols {
-		if p.schema.ColumnIndex(col) != p.schema.Len()-1 {
+		if !windowColumn.Equal(col, nil) {
 			selfUsedCols = append(selfUsedCols, col)
 		}
 	}
-	windowColumn := p.schema.Columns[p.schema.Len()-1]
 	child.PruneColumns(selfUsedCols)
 	p.SetSchema(child.Schema().Clone())
 	p.Schema().Append(windowColumn)

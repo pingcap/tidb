@@ -274,7 +274,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 
 func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.Node, bool) {
 	er.p = er.b.buildWindowFunction(er.p, v)
-	er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
+	er.ctxStack = append(er.ctxStack, er.p.(*WindowFunction).GetWindowResultColumn())
 	return v, true
 }
 

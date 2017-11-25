@@ -398,6 +398,11 @@ type WindowFunction struct {
 	F string
 }
 
+// GetWindowResultColumn returns the column storing the result of the window function.
+func (w *WindowFunction) GetWindowResultColumn() *expression.Column {
+	return w.schema.Columns[w.schema.Len()-1]
+}
+
 // Update represents Update plan.
 type Update struct {
 	*basePlan
