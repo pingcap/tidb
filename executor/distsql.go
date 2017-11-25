@@ -722,7 +722,7 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 	if w.keepOrder {
 		sort.Slice(task.rows, func(i, j int) bool {
 			hI := task.rows[i].GetInt64(w.handleIdx)
-			hJ := task.rows[i].GetInt64(w.handleIdx)
+			hJ := task.rows[j].GetInt64(w.handleIdx)
 			return task.indexOrder[hI] < task.indexOrder[hJ]
 		})
 	}
