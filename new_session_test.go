@@ -1547,4 +1547,59 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}
 	c.Assert(count, Equals, 100)
 	c.Assert(numChunks, Equals, 10)
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
+	// Since normally a single region mock tikv only returns one partial result we need to manually split the
+	// table to test multiple chunks.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists chk")
+	tk.MustExec("create table chk (k int unique, c int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d, %d)", i, i))
+	}
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	c.Assert(err, IsNil)
+	s.cluster.SplitIndex(s.mvccStore, tbl.Meta().ID, tbl.Indices()[0].Meta().ID, 10)
+
+	tk.Se.GetSessionVars().IndexLookupSize = 10
+	rs, err := tk.Exec("select * from chk order by k")
+	c.Assert(err, IsNil)
+	chk := rs.NewChunk()
+	var count int
+	for {
+		err = rs.NextChunk(chk)
+		c.Assert(err, IsNil)
+		numRows := chk.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			c.Assert(chk.GetRow(i).GetInt64(1), Equals, int64(count))
+			count++
+		}
+	}
+	c.Assert(count, Equals, 100)
+	rs.Close()
+
+	rs, err = tk.Exec("select k from chk where c < 90 order by k")
+	c.Assert(err, IsNil)
+	chk = rs.NewChunk()
+	count = 0
+	for {
+		err = rs.NextChunk(chk)
+		c.Assert(err, IsNil)
+		numRows := chk.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			count++
+		}
+	}
+	c.Assert(count, Equals, 90)
+	rs.Close()
 }
