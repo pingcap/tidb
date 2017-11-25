@@ -56,7 +56,6 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	_, err = rs.Next()
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
-	c.Check(checkGoroutineExists(keyword), IsTrue)
 	rs.Close()
 	time.Sleep(time.Millisecond * 50)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
