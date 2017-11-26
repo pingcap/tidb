@@ -141,12 +141,11 @@ type ExecStmt struct {
 	// Text represents the origin query text.
 	Text string
 
+	StmtNode ast.StmtNode
+
 	Ctx            context.Context
 	startTime      time.Time
 	isPreparedStmt bool
-
-	// ReadOnly represents the statement is read-only.
-	ReadOnly bool
 }
 
 // OriginText implements ast.Statement interface.
@@ -161,7 +160,26 @@ func (a *ExecStmt) IsPrepared() bool {
 
 // IsReadOnly implements ast.Statement interface.
 func (a *ExecStmt) IsReadOnly() bool {
-	return a.ReadOnly
+	readOnlyCheckStmt := a.StmtNode
+	if checkPlan, ok := a.Plan.(*plan.Execute); ok {
+		readOnlyCheckStmt = checkPlan.Stmt
+	}
+	return ast.IsReadOnly(readOnlyCheckStmt)
+}
+
+// RebuildPlan implements ast.Statement interface.
+func (a *ExecStmt) RebuildPlan() error {
+	is := GetInfoSchema(a.Ctx)
+	a.InfoSchema = is
+	if err := plan.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
+		return errors.Trace(err)
+	}
+	p, err := plan.Optimize(a.Ctx, a.StmtNode, is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	a.Plan = p
+	return nil
 }
 
 // Exec implements the ast.Statement Exec interface.

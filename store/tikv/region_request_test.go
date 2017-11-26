@@ -227,6 +227,10 @@ func (s *mockTikvGrpcServer) SplitRegion(goctx.Context, *kvrpcpb.SplitRegionRequ
 	return nil, errors.New("unreachable")
 }
 
+func (s *mockTikvGrpcServer) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
+	return errors.New("unreachable")
+}
+
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
 	addr := "localhost:56341"
