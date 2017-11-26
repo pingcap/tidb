@@ -21,7 +21,7 @@ import (
 )
 
 // CompareFunc is a function to compare the two values in Row, the two columns must have the same type.
-type CompareFunc func(a Row, aCol int, b Row, bCol int) int
+type CompareFunc = func(l Row, lCol int, r Row, rCol int) int
 
 // GetCompareFunc gets a compare function for the field type.
 func GetCompareFunc(tp *types.FieldType) CompareFunc {
@@ -54,114 +54,114 @@ func GetCompareFunc(tp *types.FieldType) CompareFunc {
 	return nil
 }
 
-func cmpNull(aNull, bNull bool) int {
-	if aNull && bNull {
+func cmpNull(lNull, rNull bool) int {
+	if lNull && rNull {
 		return 0
 	}
-	if aNull {
+	if lNull {
 		return -1
 	}
 	return 1
 }
 
-func cmpInt64(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpInt64(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	return types.CompareInt64(a.GetInt64(aCol), b.GetInt64(bCol))
+	return types.CompareInt64(l.GetInt64(lCol), r.GetInt64(rCol))
 }
 
-func cmpUint64(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpUint64(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	return types.CompareUint64(a.GetUint64(aCol), b.GetUint64(bCol))
+	return types.CompareUint64(l.GetUint64(lCol), r.GetUint64(rCol))
 }
 
-func cmpString(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpString(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	return types.CompareString(a.GetString(aCol), b.GetString(bCol))
+	return types.CompareString(l.GetString(lCol), r.GetString(rCol))
 }
 
-func cmpFloat32(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpFloat32(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	return types.CompareFloat64(float64(a.GetFloat32(aCol)), float64(b.GetFloat32(bCol)))
+	return types.CompareFloat64(float64(l.GetFloat32(lCol)), float64(r.GetFloat32(rCol)))
 }
 
-func cmpFloat64(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpFloat64(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	return types.CompareFloat64(a.GetFloat64(aCol), b.GetFloat64(bCol))
+	return types.CompareFloat64(l.GetFloat64(lCol), r.GetFloat64(rCol))
 }
 
-func cmpMyDecimal(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpMyDecimal(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	aDec, bDec := a.GetMyDecimal(aCol), b.GetMyDecimal(bCol)
-	return aDec.Compare(bDec)
+	lDec, rDec := l.GetMyDecimal(lCol), r.GetMyDecimal(rCol)
+	return lDec.Compare(rDec)
 }
 
-func cmpTime(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpTime(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	aTime, bTime := a.GetTime(aCol), b.GetTime(bCol)
-	return aTime.Compare(bTime)
+	lTime, rTime := l.GetTime(lCol), r.GetTime(rCol)
+	return lTime.Compare(rTime)
 }
 
-func cmpDuration(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpDuration(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	aDur, bDur := a.GetDuration(aCol), b.GetDuration(bCol)
-	return types.CompareInt64(int64(aDur.Duration), int64(bDur.Duration))
+	lDur, rDur := l.GetDuration(lCol), r.GetDuration(rCol)
+	return types.CompareInt64(int64(lDur.Duration), int64(rDur.Duration))
 }
 
-func cmpNameValue(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpNameValue(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	_, aVal := a.getNameValue(aCol)
-	_, bVal := b.getNameValue(bCol)
-	return types.CompareUint64(aVal, bVal)
+	_, lVal := l.getNameValue(lCol)
+	_, rVal := r.getNameValue(rCol)
+	return types.CompareUint64(lVal, rVal)
 }
 
-func cmpBit(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpBit(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	aBit := types.BinaryLiteral(a.GetBytes(aCol))
-	bBit := types.BinaryLiteral(b.GetBytes(bCol))
-	aUint, err := aBit.ToInt()
+	lBit := types.BinaryLiteral(l.GetBytes(lCol))
+	rBit := types.BinaryLiteral(r.GetBytes(rCol))
+	lUint, err := lBit.ToInt()
 	terror.Log(err)
-	bUint, err := bBit.ToInt()
+	rUint, err := rBit.ToInt()
 	terror.Log(err)
-	return types.CompareUint64(aUint, bUint)
+	return types.CompareUint64(lUint, rUint)
 }
 
-func cmpJSON(a Row, aCol int, b Row, bCol int) int {
-	aNull, bNull := a.IsNull(aCol), b.IsNull(bCol)
-	if aNull || bNull {
-		return cmpNull(aNull, bNull)
+func cmpJSON(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
 	}
-	aJ, bJ := a.GetJSON(aCol), b.GetJSON(bCol)
-	cmp, err := json.CompareJSON(aJ, bJ)
+	lJ, rJ := l.GetJSON(lCol), r.GetJSON(rCol)
+	cmp, err := json.CompareJSON(lJ, rJ)
 	terror.Log(err)
 	return cmp
 }
