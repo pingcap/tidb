@@ -42,10 +42,14 @@ type SortExec struct {
 	err     error
 	schema  *expression.Schema
 
+	// keyColumns is an optimization that when all by items are column, we don't need to evaluate them to keyChunks.
+	// just use the row chunks instead.
+	keyColumns  []int
 	keyCmpFuncs []chunk.CompareFunc
 	keyChunks   []*chunk.Chunk
 	rowChunks   []*chunk.Chunk
 	rowPointers []rowPointer
+	totalCount  int
 }
 
 type rowPointer struct {
@@ -150,11 +154,18 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = e.buildKeyChunks()
-		if err != nil {
-			return errors.Trace(err)
+		e.initPointers()
+		e.initCompareFuncs()
+		allCols := e.tryBuildKeyColumns()
+		if allCols {
+			sort.Slice(e.rowPointers, e.keyColumnsLess)
+		} else {
+			err = e.buildKeyChunks()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			sort.Slice(e.rowPointers, e.keyChunksLess)
 		}
-		sort.Slice(e.rowPointers, e.newLess)
 		e.fetched = true
 	}
 	for chk.NumRows() < chunk.MaxCapacity {
@@ -170,7 +181,6 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 
 func (e *SortExec) fetchRowChunks() error {
 	fields := e.schema.GetTypes()
-	var totalCount int
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(chk)
@@ -182,10 +192,60 @@ func (e *SortExec) fetchRowChunks() error {
 			break
 		}
 		e.rowChunks = append(e.rowChunks, chk)
-		totalCount += rowCount
+		e.totalCount += rowCount
 	}
-	e.rowPointers = make([]rowPointer, 0, totalCount)
 	return nil
+}
+
+func (e *SortExec) initPointers() {
+	e.rowPointers = make([]rowPointer, 0, e.totalCount)
+	for chkIdx, rowChk := range e.rowChunks {
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+			e.rowPointers = append(e.rowPointers, rowPointer{chkidx: uint32(chkIdx), rowIdx: uint32(rowIdx)})
+		}
+	}
+}
+
+func (e *SortExec) initCompareFuncs() {
+	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
+	for i := range e.ByItems {
+		keyType := e.ByItems[i].Expr.GetType()
+		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
+	}
+}
+
+func (e *SortExec) tryBuildKeyColumns() bool {
+	keyColumns := make([]int, 0, len(e.ByItems))
+	for _, by := range e.ByItems {
+		if col, ok := by.Expr.(*expression.Column); ok {
+			keyColumns = append(keyColumns, col.Index)
+		} else {
+			return false
+		}
+	}
+	e.keyColumns = keyColumns
+	return true
+}
+
+// keyColumnsLess is the less function for key columns.
+func (e *SortExec) keyColumnsLess(i, j int) bool {
+	ptrI := e.rowPointers[i]
+	ptrJ := e.rowPointers[j]
+	rowI := e.rowChunks[ptrI.chkidx].GetRow(int(ptrI.rowIdx))
+	rowJ := e.rowChunks[ptrJ.chkidx].GetRow(int(ptrJ.rowIdx))
+	for i, colIdx := range e.keyColumns {
+		cmpFunc := e.keyCmpFuncs[i]
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if e.ByItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp < 0 {
+			return true
+		} else if cmp > 0 {
+			return false
+		}
+	}
+	return false
 }
 
 func (e *SortExec) buildKeyChunks() error {
@@ -208,15 +268,12 @@ func (e *SortExec) buildKeyChunks() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			e.rowPointers = append(e.rowPointers, rowPointer{chkidx: uint32(chkIdx), rowIdx: uint32(rowIdx)})
-		}
 	}
 	return nil
 }
 
-// newLess is the less function for chunk.
-func (e *SortExec) newLess(i, j int) bool {
+// keyChunksLess is the less function for key chunk.
+func (e *SortExec) keyChunksLess(i, j int) bool {
 	ptrI := e.rowPointers[i]
 	ptrJ := e.rowPointers[j]
 	keyRowI := e.keyChunks[ptrI.chkidx].GetRow(int(ptrI.rowIdx))
