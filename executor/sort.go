@@ -53,7 +53,7 @@ type SortExec struct {
 }
 
 type rowPointer struct {
-	chkidx uint32
+	chkIdx uint32
 	rowIdx uint32
 }
 
@@ -173,7 +173,7 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 			return nil
 		}
 		rowPtr := e.rowPointers[e.Idx]
-		chk.AppendRow(0, e.rowChunks[rowPtr.chkidx].GetRow(int(rowPtr.rowIdx)))
+		chk.AppendRow(0, e.rowChunks[rowPtr.chkIdx].GetRow(int(rowPtr.rowIdx)))
 		e.Idx++
 	}
 	return nil
@@ -201,7 +201,7 @@ func (e *SortExec) initPointers() {
 	e.rowPointers = make([]rowPointer, 0, e.totalCount)
 	for chkIdx, rowChk := range e.rowChunks {
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			e.rowPointers = append(e.rowPointers, rowPointer{chkidx: uint32(chkIdx), rowIdx: uint32(rowIdx)})
+			e.rowPointers = append(e.rowPointers, rowPointer{chkIdx: uint32(chkIdx), rowIdx: uint32(rowIdx)})
 		}
 	}
 }
@@ -231,8 +231,8 @@ func (e *SortExec) tryBuildKeyColumns() bool {
 func (e *SortExec) keyColumnsLess(i, j int) bool {
 	ptrI := e.rowPointers[i]
 	ptrJ := e.rowPointers[j]
-	rowI := e.rowChunks[ptrI.chkidx].GetRow(int(ptrI.rowIdx))
-	rowJ := e.rowChunks[ptrJ.chkidx].GetRow(int(ptrJ.rowIdx))
+	rowI := e.rowChunks[ptrI.chkIdx].GetRow(int(ptrI.rowIdx))
+	rowJ := e.rowChunks[ptrJ.chkIdx].GetRow(int(ptrJ.rowIdx))
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
@@ -276,8 +276,8 @@ func (e *SortExec) buildKeyChunks() error {
 func (e *SortExec) keyChunksLess(i, j int) bool {
 	ptrI := e.rowPointers[i]
 	ptrJ := e.rowPointers[j]
-	keyRowI := e.keyChunks[ptrI.chkidx].GetRow(int(ptrI.rowIdx))
-	keyRowJ := e.keyChunks[ptrJ.chkidx].GetRow(int(ptrJ.rowIdx))
+	keyRowI := e.keyChunks[ptrI.chkIdx].GetRow(int(ptrI.rowIdx))
+	keyRowJ := e.keyChunks[ptrJ.chkIdx].GetRow(int(ptrJ.rowIdx))
 	for colIdx := 0; colIdx < keyRowI.Len(); colIdx++ {
 		cmpFunc := e.keyCmpFuncs[colIdx]
 		cmp := cmpFunc(keyRowI, colIdx, keyRowJ, colIdx)
