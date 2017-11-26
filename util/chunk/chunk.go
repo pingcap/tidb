@@ -179,7 +179,7 @@ func (c *Chunk) Truncate(tailRows int) {
 			col.data = col.data[:(col.length-tailRows)*elemLen]
 		} else if col.isVarlen() {
 			col.data = col.data[:col.offsets[col.length-tailRows+1]]
-			col.offsets = col.offsets[:col.length-tailRows]
+			col.offsets = col.offsets[:col.length-tailRows+1]
 		} else {
 			col.ifaces = col.ifaces[:col.length-tailRows]
 		}
