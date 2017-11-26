@@ -92,12 +92,12 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(key, IsNil)
 	err = tb.UpdateRecord(nil, 0, nil, nil, nil)
 	c.Assert(err, NotNil)
-	alc := tb.Allocator()
+	alc := tb.Allocator(nil)
 	c.Assert(alc, NotNil)
-	err = tb.RebaseAutoID(0, false)
+	err = tb.RebaseAutoID(nil, 0, false)
 	c.Assert(err, IsNil)
 
-	autoid, err := tb.AllocAutoID()
+	autoid, err := tb.AllocAutoID(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 

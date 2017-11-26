@@ -138,7 +138,7 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
-	compiler := executor.Compiler{ctx}
+	compiler := executor.Compiler{Ctx: ctx}
 	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }
