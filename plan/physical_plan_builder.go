@@ -272,11 +272,11 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	plans := make([]PhysicalPlan, 0, 2)
 	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
-	// We try to choose join without considering hints.
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
+			// If plan is not nil and match the hint, return it directly.
 			if leftOuter {
 				return join, true
 			}
@@ -285,6 +285,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	case RightOuterJoin:
 		join := p.getIndexJoinByOuterIdx(1)
 		if join != nil {
+			// If plan is not nil and match the hint, return it directly.
 			if rightOuter {
 				return join, true
 			}
@@ -293,6 +294,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	case InnerJoin:
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
+			// If plan is not nil and match the hint, return it directly.
 			if leftOuter {
 				return join, true
 			}
@@ -300,6 +302,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 		}
 		join = p.getIndexJoinByOuterIdx(1)
 		if join != nil {
+			// If plan is not nil and match the hint, return it directly.
 			if rightOuter {
 				return join, true
 			}
