@@ -347,6 +347,7 @@ type Row struct {
 	idx int
 }
 
+// ID returns the row index of Chunk.
 func (r Row) ID() int {
 	return r.idx
 }

@@ -235,6 +235,7 @@ func executeToString(sc *stmtctx.StatementContext, expr Expression, fieldType *t
 	return nil
 }
 
+// FilterChunk applys a list of filters to a Chunk and returns a bool slice, which indicates whether a row is passed the filters.
 func FilterChunk(ctx context.Context, filters []Expression, input *chunk.Chunk, selected []bool) ([]bool, error) {
 	selected = selected[:0]
 	for i, numRows := 0, input.NumRows(); i < numRows; i++ {
