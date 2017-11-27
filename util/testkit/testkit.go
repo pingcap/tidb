@@ -50,6 +50,12 @@ func (res *Result) Check(expected [][]interface{}) {
 
 // CheckAt asserts the result of selected columns equals the expected results.
 func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
+	for _, e := range expected {
+		if len(cols) != len(e) {
+			panic("lens of cols and expected cols should be equal")
+		}
+	}
+
 	rows := make([][]string, 0, len(expected))
 	for i := range res.rows {
 		row := make([]string, 0, len(cols))
