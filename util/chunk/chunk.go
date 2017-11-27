@@ -172,24 +172,24 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 	}
 }
 
-// Truncate truncates "tailRows" rows from the tail..
-func (c *Chunk) Truncate(tailRows int) {
+// TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
+func (c *Chunk) TruncateTo(numRows int) {
 	for _, col := range c.columns {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
-			col.data = col.data[:(col.length-tailRows)*elemLen]
+			col.data = col.data[:numRows*elemLen]
 		} else if col.isVarlen() {
-			col.data = col.data[:col.offsets[col.length-tailRows]]
-			col.offsets = col.offsets[:col.length-tailRows+1]
+			col.data = col.data[:col.offsets[numRows]]
+			col.offsets = col.offsets[:numRows+1]
 		} else {
-			col.ifaces = col.ifaces[:col.length-tailRows]
+			col.ifaces = col.ifaces[:numRows]
 		}
-		for i := col.length - tailRows; i < col.length; i++ {
+		for i := numRows; i < col.length; i++ {
 			if col.isNull(i) {
 				col.nullCount--
 			}
 		}
-		col.length -= tailRows
+		col.length = numRows
 		col.nullBitmap = col.nullBitmap[:(col.length>>3)+1]
 	}
 }

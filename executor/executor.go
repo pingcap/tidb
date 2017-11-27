@@ -413,8 +413,8 @@ func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
 	if batchSize == 0 {
 		return nil
 	}
-	if e.cursor > e.end {
-		chk.Truncate(int(batchSize - (e.end - e.cursor)))
+	if e.cursor+batchSize > e.end {
+		chk.TruncateTo(int(e.end - e.cursor))
 		batchSize = e.end - e.cursor
 	}
 	e.cursor += batchSize
@@ -427,7 +427,7 @@ func (e *LimitExec) Open(goCtx goctx.Context) error {
 		return errors.Trace(err)
 	}
 	e.cursor = 0
-	e.meetFirstBatch = false
+	e.meetFirstBatch = e.begin == 0
 	return nil
 }
 

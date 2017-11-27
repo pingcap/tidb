@@ -184,7 +184,7 @@ func (s *testChunkSuite) TestAppend(c *C) {
 	}
 }
 
-func (s *testChunkSuite) TestTruncate(c *C) {
+func (s *testChunkSuite) TestTruncateTo(c *C) {
 	fieldTypes := make([]*types.FieldType, 0, 3)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
@@ -204,10 +204,10 @@ func (s *testChunkSuite) TestTruncate(c *C) {
 		src.AppendNull(2)
 	}
 
-	src.Truncate(0)
-	src.Truncate(1)
-	src.Truncate(1)
-	src.Truncate(2)
+	src.TruncateTo(16)
+	src.TruncateTo(16)
+	src.TruncateTo(14)
+	src.TruncateTo(12)
 	c.Assert(len(src.columns), Equals, 3)
 
 	c.Assert(src.columns[0].length, Equals, 12)
