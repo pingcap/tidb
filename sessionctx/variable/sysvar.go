@@ -617,6 +617,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
 	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
+	{ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
