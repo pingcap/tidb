@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -70,7 +71,7 @@ func (r *recordSet) setFields(tps ...uint8) {
 	}
 }
 
-func (r *recordSet) Next() (types.Row, error) {
+func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
@@ -159,8 +160,9 @@ func encodeKey(key types.Datum) types.Datum {
 
 func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
+	goCtx := goctx.Background()
 	for {
-		row, err := records.Next()
+		row, err := records.Next(goCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -179,8 +181,9 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
 	cms := NewCMSketch(8, 2048)
+	goCtx := goctx.Background()
 	for {
-		row, err := records.Next()
+		row, err := records.Next(goCtx)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}

@@ -92,7 +92,7 @@ func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next() (Row, error) {
+func (e *PrepareExec) Next(goCtx goctx.Context) (Row, error) {
 	e.DoPrepare()
 	return nil, e.Err
 }
@@ -201,7 +201,7 @@ type ExecuteExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next() (Row, error) {
+func (e *ExecuteExec) Next(goCtx goctx.Context) (Row, error) {
 	// Will never be called.
 	return nil, nil
 }
@@ -248,7 +248,7 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next() (Row, error) {
+func (e *DeallocateExec) Next(goCtx goctx.Context) (Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {

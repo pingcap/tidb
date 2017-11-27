@@ -94,10 +94,10 @@ func (e *SortExec) Less(i, j int) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *SortExec) Next() (Row, error) {
+func (e *SortExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.fetched {
 		for {
-			srcRow, err := e.children[0].Next()
+			srcRow, err := e.children[0].Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -185,7 +185,7 @@ func (e *TopNExec) Pop() interface{} {
 }
 
 // Next implements the Executor Next interface.
-func (e *TopNExec) Next() (Row, error) {
+func (e *TopNExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.fetched {
 		e.Idx = int(e.limit.Offset)
 		e.totalCount = int(e.limit.Offset + e.limit.Count)
@@ -196,7 +196,7 @@ func (e *TopNExec) Next() (Row, error) {
 		e.Rows = make([]*orderByRow, 0, cap)
 		e.heapSize = 0
 		for {
-			srcRow, err := e.children[0].Next()
+			srcRow, err := e.children[0].Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
