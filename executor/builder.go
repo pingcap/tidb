@@ -111,7 +111,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSemiJoin(v)
 	case *plan.PhysicalIndexJoin:
 		return b.buildIndexLookUpJoin(v)
-	case *plan.Selection:
+	case *plan.PhysicalSelection:
 		return b.buildSelection(v)
 	case *plan.PhysicalAggregation:
 		return b.buildAggregation(v)
@@ -622,7 +622,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 	}
 }
 
-func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
+func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
 	exec := &SelectionExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		Conditions:   v.Conditions,
