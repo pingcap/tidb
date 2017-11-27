@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -35,7 +34,7 @@ type exprSet struct {
 	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
 	mask int64
 	// ranges contains all the ranges we got.
-	ranges []types.Range
+	ranges []ranger.Range
 }
 
 // The type of the exprSet.
@@ -152,7 +151,7 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 }
 
 func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType int,
-	lengths []int, cols ...*expression.Column) (int64, []types.Range, error) {
+	lengths []int, cols ...*expression.Column) (int64, []ranger.Range, error) {
 	exprsClone := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		exprsClone = append(exprsClone, expr.Clone())

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 var (
@@ -118,7 +119,7 @@ type PhysicalIndexScan struct {
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
-	Ranges     []*types.IndexRange
+	Ranges     []*ranger.IndexRange
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
 	Desc       bool
@@ -147,7 +148,7 @@ type PhysicalMemTable struct {
 	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
-	Ranges      []types.IntColumnRange
+	Ranges      []ranger.IntColumnRange
 	TableAsName *model.CIStr
 }
 
@@ -182,7 +183,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []types.IntColumnRange
+	Ranges  []ranger.IntColumnRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
