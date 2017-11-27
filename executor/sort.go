@@ -44,14 +44,20 @@ type SortExec struct {
 
 	// keyColumns is an optimization that when all by items are column, we don't need to evaluate them to keyChunks.
 	// just use the row chunks instead.
-	keyColumns  []int
+	keyColumns []int
+	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
-	keyChunks   []*chunk.Chunk
-	rowChunks   []*chunk.Chunk
+	// keyChunks is used to store ByItems values.
+	keyChunks []*chunk.Chunk
+	// rowChunks is the chunks to store row values.
+	rowChunks []*chunk.Chunk
+	// rowPointer store the chunk index and row index for each row.
 	rowPointers []rowPointer
+	// totalCount is calculated from rowChunks and used to initialize rowPointers.
 	totalCount  int
 }
 
+// rowPointer stores the address of a row in rowChunks by its chunk index and row index.
 type rowPointer struct {
 	chkIdx uint32
 	rowIdx uint32
