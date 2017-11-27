@@ -50,9 +50,9 @@ func (res *Result) Check(expected [][]interface{}) {
 
 // CheckAt asserts the result of selected columns equals the expected results.
 func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
-	var rows [][]string
+	rows := make([][]string, 0, len(expected))
 	for i := range res.rows {
-		var row []string
+		row := make([]string, 0, len(cols))
 		for _, r := range cols {
 			row = append(row, res.rows[i][r])
 		}
