@@ -1744,6 +1744,8 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
+	outerAlias := extractTableAlias(outerPlan)
+	innerAlias := extractTableAlias(innerPlan)
 	setParentAndChildren(joinPlan, outerPlan, innerPlan)
 	joinPlan.attachOnConds(onCondition)
 	if asScalar {
@@ -1766,6 +1768,13 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			joinPlan.JoinType = AntiSemiJoin
 		} else {
 			joinPlan.JoinType = SemiJoin
+		}
+	}
+	if b.TableHints() != nil {
+		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias)
+		// semi join's outer is always the left side.
+		if b.TableHints().ifPreferINLJ(outerAlias) {
+			joinPlan.preferINLJ = preferLeftAsOuter
 		}
 	}
 	return joinPlan
