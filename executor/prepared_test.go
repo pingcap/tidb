@@ -114,7 +114,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.Next()
+		exec.Next(goctx.Background())
 		exec.Close()
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable

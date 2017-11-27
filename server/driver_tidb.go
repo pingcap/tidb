@@ -290,8 +290,8 @@ type tidbResultSet struct {
 	columns   []*ColumnInfo
 }
 
-func (trs *tidbResultSet) Next() (types.Row, error) {
-	return trs.recordSet.Next()
+func (trs *tidbResultSet) Next(goCtx goctx.Context) (types.Row, error) {
+	return trs.recordSet.Next(goCtx)
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {

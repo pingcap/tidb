@@ -247,3 +247,5 @@ import:
   subpackages:
   - tags
   - tracing/opentracing
+- package: github.com/blacktear23/go-proxyprotocol
+  version: 62e368e1c4700c34b4b6f77afd49b215211574c2
