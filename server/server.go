@@ -42,6 +42,7 @@ import (
 	_ "net/http/pprof"
 
 	log "github.com/Sirupsen/logrus"
+	proxyprotocol "github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
@@ -160,6 +161,17 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 		}
 	}
+
+	if cfg.ProxyProtocol.Networks != "" {
+		pplistener, err := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks, cfg.ProxyProtocol.HeaderTimeout)
+		if err != nil {
+			log.Error("ProxyProtocol Networks parameter invalid")
+		} else {
+			log.Infof("Server is running MySQL Protocol (through PROXY Protocol) at [%s]", s.cfg.Host)
+			s.listener = pplistener
+		}
+	}
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -231,6 +243,13 @@ func (s *Server) Run() error {
 					return nil
 				}
 			}
+
+			// If we got PROXY protocol error, we should continue accept.
+			if proxyprotocol.IsProxyProtocolError(err) {
+				log.Errorf("PROXY protocol error: %s", err.Error())
+				continue
+			}
+
 			log.Errorf("accept error %s", err.Error())
 			return errors.Trace(err)
 		}
