@@ -3157,7 +3157,7 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
-|   builtinCurDate '(' ')'
+|	builtinCurDate '(' ')'
     {
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
     }
@@ -3220,7 +3220,7 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-| builtinSysDate '(' FuncDatetimePrecListOpt ')'
+|	builtinSysDate '(' FuncDatetimePrecListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
