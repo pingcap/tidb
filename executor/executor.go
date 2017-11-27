@@ -875,7 +875,7 @@ func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
 		e.initialized = true
 	}
 	result, ok := <-e.resultPool
-	if ok {
+	if !ok {
 		return nil
 	}
 	if result.err != nil {
