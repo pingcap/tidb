@@ -398,7 +398,6 @@ func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
 			if e.cursor > e.end {
 				batchSize -= e.cursor - e.end
 			}
-			fmt.Printf("matched, batchSize: %v\n", batchSize)
 			chk.Append(e.childrenResults[0], int(e.begin-(e.cursor-batchSize)), int(batchSize))
 			return nil
 		}
