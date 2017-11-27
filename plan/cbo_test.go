@@ -15,7 +15,6 @@ package plan_test
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -38,7 +37,7 @@ type testAnalyzeSuite struct {
 // CBOWithoutAnalyze tests the plan with stats that only have count info.
 func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrapWithStatsLease(10 * time.Millisecond)
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
@@ -48,9 +47,13 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (a int)")
 	testKit.MustExec("create table t2 (a int)")
+	h := dom.StatsHandle()
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	time.Sleep(1 * time.Second)
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"TableScan_9   cop table:t1, range:(-inf,+inf), keep order:false 6",
 		"TableReader_10 HashLeftJoin_7  root data:TableScan_9 6",
@@ -62,7 +65,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 
 func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrapWithStatsLease(10 * time.Millisecond)
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
@@ -74,12 +77,14 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
-	time.Sleep(1 * time.Second)
+	h := dom.StatsHandle()
+	h.DumpStatsDeltaToKV()
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
-	time.Sleep(1 * time.Second)
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
 		"TableScan_5 HashAgg_4  cop table:t, range:(-inf,+inf), keep order:false 8",
 		"HashAgg_4  TableScan_5 cop type:complete, group by:test.t.a, funcs:count(1) 2",
@@ -399,18 +404,6 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	}
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
-	dom, err := tidb.BootstrapSession(store)
-	return store, dom, errors.Trace(err)
-}
-
-func newStoreWithBootstrapWithStatsLease(lease time.Duration) (kv.Storage, *domain.Domain, error) {
-	store, err := tikv.NewMockTikvStore()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(lease)
-	domain.RunAutoAnalyze = false
 	dom, err := tidb.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
