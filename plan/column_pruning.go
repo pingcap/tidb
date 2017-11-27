@@ -198,15 +198,6 @@ func (p *Exists) PruneColumns(parentUsedCols []*expression.Column) {
 	p.children[0].(LogicalPlan).PruneColumns(nil)
 }
 
-// PruneColumns implements LogicalPlan interface.
-func (p *Insert) PruneColumns(_ []*expression.Column) {
-	if len(p.Children()) == 0 {
-		return
-	}
-	child := p.children[0].(LogicalPlan)
-	child.PruneColumns(child.Schema().Columns)
-}
-
 func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
@@ -287,14 +278,4 @@ func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
 	}
-}
-
-// PruneColumns implements LogicalPlan interface.
-func (p *Update) PruneColumns(parentUsedCols []*expression.Column) {
-	p.baseLogicalPlan.PruneColumns(p.children[0].Schema().Columns)
-}
-
-// PruneColumns implements LogicalPlan interface.
-func (p *Delete) PruneColumns(parentUsedCols []*expression.Column) {
-	p.baseLogicalPlan.PruneColumns(p.children[0].Schema().Columns)
 }

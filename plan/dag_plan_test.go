@@ -519,33 +519,33 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// Test complex update.
 		{
 			sql:  "update t set a = 5 where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Update",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Update",
 		},
 		// Test simple update.
 		{
 			sql:  "update t set a = 5",
-			best: "TableReader(Table(t))->*plan.Update",
+			best: "TableReader(Table(t))->Update",
 		},
 		// TODO: Test delete/update with join.
 		// Test complex delete.
 		{
 			sql:  "delete from t where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Delete",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete",
 		},
 		// Test simple delete.
 		{
 			sql:  "delete from t",
-			best: "TableReader(Table(t))->*plan.Delete",
+			best: "TableReader(Table(t))->Delete",
 		},
 		// Test complex insert.
 		{
 			sql:  "insert into t select * from t where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Insert",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Insert",
 		},
 		// Test simple insert.
 		{
 			sql:  "insert into t values(0,0,0,0,0,0,0)",
-			best: "*plan.Insert",
+			best: "Insert",
 		},
 		// Test dual.
 		{

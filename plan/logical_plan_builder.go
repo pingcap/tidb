@@ -1781,7 +1781,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	return joinPlan
 }
 
-func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
+func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	b.inUpdateStmt = true
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
@@ -1827,8 +1827,8 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		OrderedList: orderedList,
 		IgnoreErr:   update.IgnoreErr,
 	}.init(b.ctx)
-	setParentAndChildren(updt, p)
 	updt.SetSchema(p.Schema())
+	updt.SelectPlan, b.err = doOptimize(b.optFlag, p, b.ctx)
 	return updt
 }
 
@@ -1943,7 +1943,7 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 	}
 }
 
-func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1978,7 +1978,10 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		Tables:       tables,
 		IsMultiTable: delete.IsMultiTable,
 	}.init(b.ctx)
-	setParentAndChildren(del, p)
+	del.SelectPlan, b.err = doOptimize(b.optFlag, p, b.ctx)
+	if b.err != nil {
+		return nil
+	}
 	del.SetSchema(expression.NewSchema())
 
 	var tableList []*ast.TableName

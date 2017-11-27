@@ -313,9 +313,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		GenExprs:              v.GenCols.Exprs,
 		needFillDefaultValues: v.NeedFillDefaultValue,
 	}
-	if len(v.Children()) > 0 {
-		ivs.SelectExec = b.build(v.Children()[0])
-	}
+	ivs.SelectExec = b.build(v.SelectPlan)
 	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -778,12 +776,12 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.Schema().TblID2Handle {
+	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	return &UpdateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
-		SelectExec:   b.build(v.Children()[0]),
+		SelectExec:   b.build(v.SelectPlan),
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
 		IgnoreErr:    v.IgnoreErr,
@@ -792,12 +790,12 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.Schema().TblID2Handle {
+	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	return &DeleteExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
-		SelectExec:   b.build(v.Children()[0]),
+		SelectExec:   b.build(v.SelectPlan),
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 		tblID2Table:  tblID2table,
