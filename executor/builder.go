@@ -1040,6 +1040,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		columns:      is.Columns,
 		priority:     b.priority,
 	}
+	e.supportChk = true
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
@@ -1094,13 +1095,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		columns:           is.Columns,
 		priority:          b.priority,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
-		batchSize:         128,
 	}
+	e.supportChk = true
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
 		e.handleIdx = cols[0].Index
-	}
-	if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
-		e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
 	}
 	return e, nil
 }

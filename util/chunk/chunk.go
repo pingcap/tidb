@@ -41,6 +41,7 @@ const (
 // NewChunk creates a new chunk with field types.
 func NewChunk(fields []*types.FieldType) *Chunk {
 	chk := new(Chunk)
+	chk.columns = make([]*column, 0, len(fields))
 	for _, f := range fields {
 		chk.addColumnByFieldType(f, InitialCapacity)
 	}

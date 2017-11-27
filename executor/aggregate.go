@@ -62,11 +62,11 @@ func (e *HashAggExec) Open(goCtx goctx.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next() (Row, error) {
+func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		for {
-			hasMore, err := e.innerNext()
+			hasMore, err := e.innerNext(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -116,8 +116,8 @@ func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
 
 // innerNext fetches a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
-func (e *HashAggExec) innerNext() (ret bool, err error) {
-	srcRow, err := e.children[0].Next()
+func (e *HashAggExec) innerNext(goCtx goctx.Context) (ret bool, err error) {
+	srcRow, err := e.children[0].Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -181,7 +181,7 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next() (Row, error) {
+func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.executed {
 		return nil, nil
 	}
@@ -192,7 +192,7 @@ func (e *StreamAggExec) Next() (Row, error) {
 	}
 	retRow := make([]types.Datum, 0, len(e.AggFuncs))
 	for {
-		row, err := e.children[0].Next()
+		row, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

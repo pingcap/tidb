@@ -156,7 +156,7 @@ import:
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: 3c5b40fb2000acb6b3441d5695cb470a23e8f1b5
+  version: e33073e1475021e04c795c3de5e1f4e28baa708a
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
@@ -247,3 +247,5 @@ import:
   subpackages:
   - tags
   - tracing/opentracing
+- package: github.com/blacktear23/go-proxyprotocol
+  version: 62e368e1c4700c34b4b6f77afd49b215211574c2
