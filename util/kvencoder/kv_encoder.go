@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
