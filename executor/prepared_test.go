@@ -83,7 +83,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		rs, err := stmt.Exec(goctx.Background())
 		c.Assert(err, IsNil)
-		_, err = rs.Next()
+		_, err = rs.Next(goctx.Background())
 		c.Assert(err, IsNil)
 		c.Assert(rs.Close(), IsNil)
 
