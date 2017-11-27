@@ -685,12 +685,13 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 }
 
 func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, error) {
+	goCtx := goctx.Background()
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := s.Execute(goctx.Background(), stmt)
+	rs, err := s.Execute(goCtx, stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	row, err := rs[0].Next()
+	row, err := rs[0].Next(goCtx)
 	if err != nil {
 		return "", errors.Trace(err)
 	}

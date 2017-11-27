@@ -13,6 +13,8 @@
 
 package executor
 
+import goctx "golang.org/x/net/context"
+
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
 	baseExecutor
@@ -22,7 +24,7 @@ type ExplainExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *ExplainExec) Next() (Row, error) {
+func (e *ExplainExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.cursor >= len(e.rows) {
 		return nil, nil
 	}

@@ -30,11 +30,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 type executor interface {
 	SetSrcExec(executor)
-	Next() ([][]byte, error)
+	Next(goCtx goctx.Context) ([][]byte, error)
 }
 
 type tableScanExec struct {
@@ -54,7 +55,7 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *tableScanExec) Next() (value [][]byte, err error) {
+func (e *tableScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() {
@@ -173,7 +174,7 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *indexScanExec) Next() (value [][]byte, err error) {
+func (e *indexScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		value, err = e.getRowFromRange(ran)
@@ -294,9 +295,9 @@ func evalBool(exprs []expression.Expression, row types.DatumRow, ctx *stmtctx.St
 	return true, nil
 }
 
-func (e *selectionExec) Next() (value [][]byte, err error) {
+func (e *selectionExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 	for {
-		value, err = e.src.Next()
+		value, err = e.src.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -340,8 +341,8 @@ func (e *aggregateExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *aggregateExec) innerNext() (bool, error) {
-	values, err := e.src.Next()
+func (e *aggregateExec) innerNext(goCtx goctx.Context) (bool, error) {
+	values, err := e.src.Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -355,13 +356,13 @@ func (e *aggregateExec) innerNext() (bool, error) {
 	return true, nil
 }
 
-func (e *aggregateExec) Next() (value [][]byte, err error) {
+func (e *aggregateExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 	if e.aggCtxsMap == nil {
 		e.aggCtxsMap = make(aggCtxsMapper, 0)
 	}
 	if !e.executed {
 		for {
-			hasMore, err := e.innerNext()
+			hasMore, err := e.innerNext(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -478,8 +479,8 @@ func (e *topNExec) SetSrcExec(src executor) {
 	e.src = src
 }
 
-func (e *topNExec) innerNext() (bool, error) {
-	value, err := e.src.Next()
+func (e *topNExec) innerNext(goCtx goctx.Context) (bool, error) {
+	value, err := e.src.Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -493,10 +494,10 @@ func (e *topNExec) innerNext() (bool, error) {
 	return true, nil
 }
 
-func (e *topNExec) Next() (value [][]byte, err error) {
+func (e *topNExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 	if !e.executed {
 		for {
-			hasMore, err := e.innerNext()
+			hasMore, err := e.innerNext(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -552,12 +553,12 @@ func (e *limitExec) SetSrcExec(src executor) {
 	e.src = src
 }
 
-func (e *limitExec) Next() (value [][]byte, err error) {
+func (e *limitExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 	if e.cursor >= e.limit {
 		return nil, nil
 	}
 
-	value, err = e.src.Next()
+	value, err = e.src.Next(goCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

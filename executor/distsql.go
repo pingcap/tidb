@@ -319,12 +319,12 @@ func (e *TableReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *TableReaderExecutor) Next() (Row, error) {
+func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
 			var err error
-			e.partialResult, err = e.result.Next()
+			e.partialResult, err = e.result.Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -334,7 +334,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		rowData, err := e.partialResult.Next()
+		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -423,12 +423,12 @@ func (e *IndexReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next() (Row, error) {
+func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
 			var err error
-			e.partialResult, err = e.result.Next()
+			e.partialResult, err = e.result.Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -438,7 +438,7 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		rowData, err := e.partialResult.Next()
+		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -761,7 +761,7 @@ func (e *IndexLookUpExecutor) Close() error {
 }
 
 // Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next() (Row, error) {
+func (e *IndexLookUpExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
