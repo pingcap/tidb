@@ -271,41 +271,41 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	}
 	plans := make([]PhysicalPlan, 0, 2)
 	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
-	if leftOuter && (p.JoinType == LeftOuterJoin || p.JoinType == InnerJoin) {
-		join := p.getIndexJoinByOuterIdx(0)
-		if join != nil {
-			plans = append(plans, join...)
-		}
-	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
-	if rightOuter && (p.JoinType == RightOuterJoin || p.JoinType == InnerJoin) {
-		join := p.getIndexJoinByOuterIdx(1)
-		if join != nil {
-			plans = append(plans, join...)
-		}
-	}
-	if len(plans) > 0 {
-		return plans, true
-	}
-	// We try to choose join without considering hints.
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
+			// If the plan is not nil and matches the hint, return it directly.
+			if leftOuter {
+				return join, true
+			}
 			plans = append(plans, join...)
 		}
 	case RightOuterJoin:
 		join := p.getIndexJoinByOuterIdx(1)
 		if join != nil {
+			// If the plan is not nil and matches the hint, return it directly.
+			if rightOuter {
+				return join, true
+			}
 			plans = append(plans, join...)
 		}
 	case InnerJoin:
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
+			// If the plan is not nil and matches the hint, return it directly.
+			if leftOuter {
+				return join, true
+			}
 			plans = append(plans, join...)
 		}
 		join = p.getIndexJoinByOuterIdx(1)
 		if join != nil {
+			// If the plan is not nil and matches the hint, return it directly.
+			if rightOuter {
+				return join, true
+			}
 			plans = append(plans, join...)
 		}
 	}
@@ -765,7 +765,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			conds = append(conds, cond.Clone())
 		}
 		if len(idxCols) > 0 {
-			var ranges []types.Range
+			var ranges []ranger.Range
 			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(conds, idxCols, colLengths)
 			ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
 			if err != nil {
@@ -1011,7 +1011,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			conds = append(conds, cond.Clone())
 		}
 		if pkCol != nil {
-			var ranges []types.Range
+			var ranges []ranger.Range
 			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, conds, pkCol)
 			ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 			ts.Ranges = ranger.Ranges2IntRanges(ranges)

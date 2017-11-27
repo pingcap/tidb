@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/ranger"
 	goctx "golang.org/x/net/context"
 )
 
@@ -524,7 +525,7 @@ type TableScanExec struct {
 
 	t          table.Table
 	asName     *model.CIStr
-	ranges     []types.IntColumnRange
+	ranges     []ranger.IntColumnRange
 	seekHandle int64
 	iter       kv.Iterator
 	cursor     int
