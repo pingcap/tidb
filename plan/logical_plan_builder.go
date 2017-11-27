@@ -236,8 +236,6 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
-	leftAlias := extractTableAlias(leftPlan)
-	rightAlias := extractTableAlias(rightPlan)
 
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 	joinPlan := LogicalJoin{}.init(b.ctx)
@@ -257,6 +255,8 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
 	if b.TableHints() != nil {
+		leftAlias := extractTableAlias(leftPlan)
+		rightAlias := extractTableAlias(rightPlan)
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
 		if b.TableHints().ifPreferINLJ(leftAlias) {
 			joinPlan.preferINLJ = joinPlan.preferINLJ | preferLeftAsOuter
@@ -1744,8 +1744,6 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
-	outerAlias := extractTableAlias(outerPlan)
-	innerAlias := extractTableAlias(innerPlan)
 	setParentAndChildren(joinPlan, outerPlan, innerPlan)
 	joinPlan.attachOnConds(onCondition)
 	if asScalar {
@@ -1770,7 +1768,10 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			joinPlan.JoinType = SemiJoin
 		}
 	}
+	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	if b.TableHints() != nil {
+		outerAlias := extractTableAlias(outerPlan)
+		innerAlias := extractTableAlias(innerPlan)
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias)
 		// semi join's outer is always the left side.
 		if b.TableHints().ifPreferINLJ(outerAlias) {
