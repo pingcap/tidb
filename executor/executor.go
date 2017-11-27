@@ -352,7 +352,7 @@ type LimitExec struct {
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(goCtx goctx.Context) (Row, error) {
-	for e.Idx < e.Offset {
+	for e.cursor < e.begin {
 		srcRow, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)

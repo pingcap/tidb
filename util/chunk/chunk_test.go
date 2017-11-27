@@ -129,13 +129,14 @@ func (s *testChunkSuite) TestAppend(c *C) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
+	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
+	c.Assert(err, IsNil)
+
 	src := NewChunk(fieldTypes)
 	dst := NewChunk(fieldTypes)
 
 	src.AppendFloat32(0, 12.8)
 	src.AppendString(1, "abc")
-	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
-	c.Assert(err, IsNil)
 	src.AppendJSON(2, jsonObj)
 	src.AppendNull(0)
 	src.AppendNull(1)
@@ -146,6 +147,7 @@ func (s *testChunkSuite) TestAppend(c *C) {
 	dst.Append(src, 0, 2)
 	dst.Append(src, 0, 2)
 	dst.Append(dst, 2, 6)
+	dst.Append(dst, 6, 6)
 
 	c.Assert(len(dst.columns), Equals, 3)
 
@@ -192,14 +194,8 @@ func (s *testChunkSuite) TestTruncate(c *C) {
 	c.Assert(err, IsNil)
 
 	src := NewChunk(fieldTypes)
-	src.AppendFloat32(0, 12.8)
-	src.AppendString(1, "abc")
-	src.AppendJSON(2, jsonObj)
-	src.AppendNull(0)
-	src.AppendNull(1)
-	src.AppendNull(2)
 
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 8; i++ {
 		src.AppendFloat32(0, 12.8)
 		src.AppendString(1, "abc")
 		src.AppendJSON(2, jsonObj)
@@ -208,7 +204,10 @@ func (s *testChunkSuite) TestTruncate(c *C) {
 		src.AppendNull(2)
 	}
 
-	src.Truncate(4)
+	src.Truncate(0)
+	src.Truncate(1)
+	src.Truncate(1)
+	src.Truncate(2)
 	c.Assert(len(src.columns), Equals, 3)
 
 	c.Assert(src.columns[0].length, Equals, 12)
@@ -254,7 +253,7 @@ func newChunk(elemLen ...int) *Chunk {
 		} else if l == 0 {
 			chk.addVarLenColumn(0)
 		} else {
-			chk.addInterfaceColumn()
+			chk.addInterfaceColumn(0)
 		}
 	}
 	return chk
