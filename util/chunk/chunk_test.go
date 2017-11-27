@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -136,6 +137,137 @@ func newChunk(elemLen ...int) *Chunk {
 		}
 	}
 	return chk
+}
+
+var allTypes = []*types.FieldType{
+	types.NewFieldType(mysql.TypeTiny),
+	types.NewFieldType(mysql.TypeShort),
+	types.NewFieldType(mysql.TypeInt24),
+	types.NewFieldType(mysql.TypeLong),
+	types.NewFieldType(mysql.TypeLonglong),
+	{
+		Tp:      mysql.TypeLonglong,
+		Flen:    types.UnspecifiedLength,
+		Decimal: types.UnspecifiedLength,
+		Flag:    mysql.UnsignedFlag,
+	},
+	types.NewFieldType(mysql.TypeYear),
+	types.NewFieldType(mysql.TypeFloat),
+	types.NewFieldType(mysql.TypeDouble),
+	types.NewFieldType(mysql.TypeString),
+	types.NewFieldType(mysql.TypeVarString),
+	types.NewFieldType(mysql.TypeVarchar),
+	types.NewFieldType(mysql.TypeBlob),
+	types.NewFieldType(mysql.TypeTinyBlob),
+	types.NewFieldType(mysql.TypeMediumBlob),
+	types.NewFieldType(mysql.TypeLongBlob),
+	types.NewFieldType(mysql.TypeDate),
+	types.NewFieldType(mysql.TypeDatetime),
+	types.NewFieldType(mysql.TypeTimestamp),
+	types.NewFieldType(mysql.TypeDuration),
+	types.NewFieldType(mysql.TypeNewDecimal),
+	{
+		Tp:      mysql.TypeSet,
+		Flen:    types.UnspecifiedLength,
+		Decimal: types.UnspecifiedLength,
+		Flag:    mysql.UnsignedFlag,
+		Elems:   []string{"a", "b"},
+	},
+	{
+		Tp:      mysql.TypeEnum,
+		Flen:    types.UnspecifiedLength,
+		Decimal: types.UnspecifiedLength,
+		Flag:    mysql.UnsignedFlag,
+		Elems:   []string{"a", "b"},
+	},
+	types.NewFieldType(mysql.TypeBit),
+	types.NewFieldType(mysql.TypeJSON),
+}
+
+func (s *testChunkSuite) TestCompare(c *C) {
+	chunk := NewChunk(allTypes)
+	for i := 0; i < len(allTypes); i++ {
+		chunk.AppendNull(i)
+	}
+	for i := 0; i < len(allTypes); i++ {
+		switch allTypes[i].Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+				chunk.AppendUint64(i, 0)
+			} else {
+				chunk.AppendInt64(i, -1)
+			}
+		case mysql.TypeFloat:
+			chunk.AppendFloat32(i, 0)
+		case mysql.TypeDouble:
+			chunk.AppendFloat64(i, 0)
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			chunk.AppendString(i, "0")
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			chunk.AppendTime(i, types.TimeFromDays(2000*365))
+		case mysql.TypeDuration:
+			chunk.AppendDuration(i, types.ZeroDuration)
+		case mysql.TypeNewDecimal:
+			chunk.AppendMyDecimal(i, types.NewDecFromInt(0))
+		case mysql.TypeSet:
+			chunk.AppendSet(i, types.Set{Name: "a", Value: 0})
+		case mysql.TypeEnum:
+			chunk.AppendEnum(i, types.Enum{Name: "a", Value: 0})
+		case mysql.TypeBit:
+			chunk.AppendBytes(i, []byte{0})
+		case mysql.TypeJSON:
+			chunk.AppendJSON(i, json.CreateJSON(int64(0)))
+		default:
+			c.FailNow()
+		}
+	}
+	for i := 0; i < len(allTypes); i++ {
+		switch allTypes[i].Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+				chunk.AppendUint64(i, math.MaxUint64)
+			} else {
+				chunk.AppendInt64(i, 1)
+			}
+		case mysql.TypeFloat:
+			chunk.AppendFloat32(i, 1)
+		case mysql.TypeDouble:
+			chunk.AppendFloat64(i, 1)
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			chunk.AppendString(i, "1")
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			chunk.AppendTime(i, types.TimeFromDays(2001*365))
+		case mysql.TypeDuration:
+			chunk.AppendDuration(i, types.Duration{Duration: time.Second})
+		case mysql.TypeNewDecimal:
+			chunk.AppendMyDecimal(i, types.NewDecFromInt(1))
+		case mysql.TypeSet:
+			chunk.AppendSet(i, types.Set{Name: "b", Value: 1})
+		case mysql.TypeEnum:
+			chunk.AppendEnum(i, types.Enum{Name: "b", Value: 1})
+		case mysql.TypeBit:
+			chunk.AppendBytes(i, []byte{1})
+		case mysql.TypeJSON:
+			chunk.AppendJSON(i, json.CreateJSON(int64(1)))
+		default:
+			c.FailNow()
+		}
+	}
+	rowNull := chunk.GetRow(0)
+	rowSmall := chunk.GetRow(1)
+	rowBig := chunk.GetRow(2)
+	for i := 0; i < len(allTypes); i++ {
+		cmpFunc := GetCompareFunc(allTypes[i])
+		c.Assert(cmpFunc(rowNull, i, rowNull, i), Equals, 0)
+		c.Assert(cmpFunc(rowNull, i, rowSmall, i), Equals, -1)
+		c.Assert(cmpFunc(rowSmall, i, rowNull, i), Equals, 1)
+		c.Assert(cmpFunc(rowSmall, i, rowSmall, i), Equals, 0)
+		c.Assert(cmpFunc(rowSmall, i, rowBig, i), Equals, -1, Commentf("%d", allTypes[i].Tp))
+		c.Assert(cmpFunc(rowBig, i, rowSmall, i), Equals, 1)
+		c.Assert(cmpFunc(rowBig, i, rowBig, i), Equals, 0)
+	}
 }
 
 func BenchmarkAppendInt(b *testing.B) {
