@@ -53,7 +53,7 @@ type GrantExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *GrantExec) Next() (Row, error) {
+func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}

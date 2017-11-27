@@ -42,7 +42,7 @@ var (
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Next gets the next partial result.
-	Next() (PartialResult, error)
+	Next(goctx.Context) (PartialResult, error)
 	// NextRaw gets the next raw result.
 	NextRaw() ([]byte, error)
 	// NextChunk reads the data into chunk.
@@ -51,14 +51,14 @@ type SelectResult interface {
 	Close() error
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
-	Fetch(ctx goctx.Context)
+	Fetch(goctx.Context)
 }
 
 // PartialResult is the result from a single region server.
 type PartialResult interface {
 	// Next returns the next rowData of the sub result.
 	// If no more row to return, rowData would be nil.
-	Next() (rowData []types.Datum, err error)
+	Next(goctx.Context) (rowData []types.Datum, err error)
 	// Close closes the partial result.
 	Close() error
 }
@@ -90,7 +90,7 @@ func (r *selectResult) Fetch(ctx goctx.Context) {
 	})
 }
 
-func (r *selectResult) fetch(ctx goctx.Context) {
+func (r *selectResult) fetch(goCtx goctx.Context) {
 	startTime := time.Now()
 	defer func() {
 		close(r.results)
@@ -112,14 +112,14 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
 			return
-		case <-ctx.Done():
+		case <-goCtx.Done():
 			return
 		}
 	}
 }
 
 // Next returns the next row.
-func (r *selectResult) Next() (PartialResult, error) {
+func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
 	re := <-r.results
 	if re.err != nil {
 		return nil, errors.Trace(re.err)
@@ -225,7 +225,7 @@ func (pr *partialResult) unmarshal(resultSubset []byte) error {
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (pr *partialResult) Next() (data []types.Datum, err error) {
+func (pr *partialResult) Next(goCtx goctx.Context) (data []types.Datum, err error) {
 	chunk := pr.getChunk()
 	if chunk == nil {
 		return nil, nil
