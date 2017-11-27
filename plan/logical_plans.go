@@ -206,7 +206,7 @@ func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCol
 	return corCols
 }
 
-// Selection means a filter.
+// LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
 	*basePlan
 	baseLogicalPlan
