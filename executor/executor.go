@@ -392,15 +392,17 @@ func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
 		if batchSize == 0 {
 			return nil
 		}
-		e.cursor += batchSize
-		if e.cursor >= e.begin {
+		if newCursor := e.cursor + batchSize; newCursor >= e.begin {
 			e.meetFirstBatch = true
-			if e.cursor > e.end {
-				batchSize -= e.cursor - e.end
+			begin, end := e.begin-e.cursor, batchSize
+			if newCursor > e.end {
+				end = e.end - e.cursor
 			}
-			chk.Append(e.childrenResults[0], int(e.begin-(e.cursor-batchSize)), int(batchSize))
+			chk.Append(e.childrenResults[0], int(begin), int(end))
+			e.cursor += end
 			return nil
 		}
+		e.cursor += batchSize
 	}
 	err := e.children[0].NextChunk(chk)
 	if err != nil {
@@ -411,10 +413,11 @@ func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
 	if batchSize == 0 {
 		return nil
 	}
-	e.cursor += batchSize
 	if e.cursor > e.end {
-		chk.Truncate(int(e.cursor - e.end))
+		chk.Truncate(int(batchSize - (e.end - e.cursor)))
+		batchSize = e.end - e.cursor
 	}
+	e.cursor += batchSize
 	return nil
 }
 
