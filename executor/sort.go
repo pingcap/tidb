@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -40,6 +41,26 @@ type SortExec struct {
 	fetched bool
 	err     error
 	schema  *expression.Schema
+
+	// keyColumns is an optimization that when all by items are column, we don't need to evaluate them to keyChunks.
+	// just use the row chunks instead.
+	keyColumns []int
+	// keyCmpFuncs is used to compare each ByItem.
+	keyCmpFuncs []chunk.CompareFunc
+	// keyChunks is used to store ByItems values.
+	keyChunks []*chunk.Chunk
+	// rowChunks is the chunks to store row values.
+	rowChunks []*chunk.Chunk
+	// rowPointer store the chunk index and row index for each row.
+	rowPointers []rowPointer
+	// totalCount is calculated from rowChunks and used to initialize rowPointers.
+	totalCount int
+}
+
+// rowPointer stores the address of a row in rowChunks by its chunk index and row index.
+type rowPointer struct {
+	chkIdx uint32
+	rowIdx uint32
 }
 
 // Close implements the Executor Close interface.
@@ -94,10 +115,10 @@ func (e *SortExec) Less(i, j int) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *SortExec) Next() (Row, error) {
+func (e *SortExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.fetched {
 		for {
-			srcRow, err := e.children[0].Next()
+			srcRow, err := e.children[0].Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -129,6 +150,153 @@ func (e *SortExec) Next() (Row, error) {
 	row := e.Rows[e.Idx].row
 	e.Idx++
 	return row, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.fetched {
+		err := e.fetchRowChunks()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.initPointers()
+		e.initCompareFuncs()
+		allCols := e.tryBuildKeyColumns()
+		if allCols {
+			sort.Slice(e.rowPointers, e.keyColumnsLess)
+		} else {
+			err = e.buildKeyChunks()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			sort.Slice(e.rowPointers, e.keyChunksLess)
+		}
+		e.fetched = true
+	}
+	for chk.NumRows() < chunk.MaxCapacity {
+		if e.Idx >= len(e.rowPointers) {
+			return nil
+		}
+		rowPtr := e.rowPointers[e.Idx]
+		chk.AppendRow(0, e.rowChunks[rowPtr.chkIdx].GetRow(int(rowPtr.rowIdx)))
+		e.Idx++
+	}
+	return nil
+}
+
+func (e *SortExec) fetchRowChunks() error {
+	fields := e.schema.GetTypes()
+	for {
+		chk := chunk.NewChunk(fields)
+		err := e.children[0].NextChunk(chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rowCount := chk.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		e.rowChunks = append(e.rowChunks, chk)
+		e.totalCount += rowCount
+	}
+	return nil
+}
+
+func (e *SortExec) initPointers() {
+	e.rowPointers = make([]rowPointer, 0, e.totalCount)
+	for chkIdx, rowChk := range e.rowChunks {
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+			e.rowPointers = append(e.rowPointers, rowPointer{chkIdx: uint32(chkIdx), rowIdx: uint32(rowIdx)})
+		}
+	}
+}
+
+func (e *SortExec) initCompareFuncs() {
+	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
+	for i := range e.ByItems {
+		keyType := e.ByItems[i].Expr.GetType()
+		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
+	}
+}
+
+func (e *SortExec) tryBuildKeyColumns() bool {
+	keyColumns := make([]int, 0, len(e.ByItems))
+	for _, by := range e.ByItems {
+		if col, ok := by.Expr.(*expression.Column); ok {
+			keyColumns = append(keyColumns, col.Index)
+		} else {
+			return false
+		}
+	}
+	e.keyColumns = keyColumns
+	return true
+}
+
+// keyColumnsLess is the less function for key columns.
+func (e *SortExec) keyColumnsLess(i, j int) bool {
+	ptrI := e.rowPointers[i]
+	ptrJ := e.rowPointers[j]
+	rowI := e.rowChunks[ptrI.chkIdx].GetRow(int(ptrI.rowIdx))
+	rowJ := e.rowChunks[ptrJ.chkIdx].GetRow(int(ptrJ.rowIdx))
+	for i, colIdx := range e.keyColumns {
+		cmpFunc := e.keyCmpFuncs[i]
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if e.ByItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp < 0 {
+			return true
+		} else if cmp > 0 {
+			return false
+		}
+	}
+	return false
+}
+
+func (e *SortExec) buildKeyChunks() error {
+	e.keyChunks = make([]*chunk.Chunk, len(e.rowChunks))
+	keyLen := len(e.ByItems)
+	keyTypes := make([]*types.FieldType, keyLen)
+	e.keyCmpFuncs = make([]chunk.CompareFunc, keyLen)
+	keyExprs := make([]expression.Expression, keyLen)
+	for keyColIdx := range e.ByItems {
+		keyExpr := e.ByItems[keyColIdx].Expr
+		keyType := keyExpr.GetType()
+		keyExprs[keyColIdx] = keyExpr
+		keyTypes[keyColIdx] = keyType
+		e.keyCmpFuncs[keyColIdx] = chunk.GetCompareFunc(keyType)
+	}
+	for chkIdx, rowChk := range e.rowChunks {
+		keyChk := chunk.NewChunk(keyTypes)
+		e.keyChunks[chkIdx] = keyChk
+		err := expression.VectorizedExecute(e.ctx, keyExprs, rowChk, keyChk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// keyChunksLess is the less function for key chunk.
+func (e *SortExec) keyChunksLess(i, j int) bool {
+	ptrI := e.rowPointers[i]
+	ptrJ := e.rowPointers[j]
+	keyRowI := e.keyChunks[ptrI.chkIdx].GetRow(int(ptrI.rowIdx))
+	keyRowJ := e.keyChunks[ptrJ.chkIdx].GetRow(int(ptrJ.rowIdx))
+	for colIdx := 0; colIdx < keyRowI.Len(); colIdx++ {
+		cmpFunc := e.keyCmpFuncs[colIdx]
+		cmp := cmpFunc(keyRowI, colIdx, keyRowJ, colIdx)
+		if e.ByItems[colIdx].Desc {
+			cmp = -cmp
+		}
+		if cmp < 0 {
+			return true
+		} else if cmp > 0 {
+			return false
+		}
+	}
+	return false
 }
 
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
@@ -185,7 +353,7 @@ func (e *TopNExec) Pop() interface{} {
 }
 
 // Next implements the Executor Next interface.
-func (e *TopNExec) Next() (Row, error) {
+func (e *TopNExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.fetched {
 		e.Idx = int(e.limit.Offset)
 		e.totalCount = int(e.limit.Offset + e.limit.Count)
@@ -196,7 +364,7 @@ func (e *TopNExec) Next() (Row, error) {
 		e.Rows = make([]*orderByRow, 0, cap)
 		e.heapSize = 0
 		for {
-			srcRow, err := e.children[0].Next()
+			srcRow, err := e.children[0].Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

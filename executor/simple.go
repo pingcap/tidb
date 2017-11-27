@@ -47,7 +47,7 @@ type SimpleExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *SimpleExec) Next() (Row, error) {
+func (e *SimpleExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -219,6 +219,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		errMsg := "Operation ALTER USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
 }
 
@@ -250,6 +251,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
 }
 

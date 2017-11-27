@@ -216,17 +216,6 @@ type Selection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
-
-	// onTable means if this selection's child is a table scan or index scan.
-	onTable bool
-
-	// If ScanController is true, then the child of this selection is a scan,
-	// which use pk or index. we will record the accessConditions, idxConditions,
-	// and tblConditions to control the below plan.
-	ScanController bool
-
-	// We will check this at decorrelate phase.
-	controllerStatus int
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {

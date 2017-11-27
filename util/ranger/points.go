@@ -121,13 +121,13 @@ var fullRange = []point{
 }
 
 // FullIntRange is (-∞, +∞) for IntColumnRange.
-func FullIntRange() []types.IntColumnRange {
-	return []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+func FullIntRange() []IntColumnRange {
+	return []IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 }
 
 // FullIndexRange is (-∞, +∞) for IndexRange.
-func FullIndexRange() []*types.IndexRange {
-	return []*types.IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+func FullIndexRange() []*IndexRange {
+	return []*IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
 }
 
 // builder is the range builder struct.

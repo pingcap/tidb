@@ -48,6 +48,25 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.c.Assert(got, check.Equals, need, res.comment)
 }
 
+// CheckAt asserts the result of selected columns equals the expected results.
+func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
+	for _, e := range expected {
+		res.c.Assert(len(cols), check.Equals, len(e))
+	}
+
+	rows := make([][]string, 0, len(expected))
+	for i := range res.rows {
+		row := make([]string, 0, len(cols))
+		for _, r := range cols {
+			row = append(row, res.rows[i][r])
+		}
+		rows = append(rows, row)
+	}
+	got := fmt.Sprintf("%s", rows)
+	need := fmt.Sprintf("%s", expected)
+	res.c.Assert(got, check.Equals, need, res.comment)
+}
+
 // Rows returns the result data.
 func (res *Result) Rows() [][]interface{} {
 	ifacesSlice := make([][]interface{}, len(res.rows))
@@ -150,7 +169,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
-	rows, err := tidb.GetRows(rs)
+	rows, err := tidb.GetRows(goctx.Background(), rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	err = rs.Close()
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)

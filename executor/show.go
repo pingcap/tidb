@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
+	goctx "golang.org/x/net/context"
 )
 
 // ShowExec represents a show executor.
@@ -59,7 +60,7 @@ type ShowExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *ShowExec) Next() (Row, error) {
+func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.rows == nil {
 		err := e.fetchAll()
 		if err != nil {

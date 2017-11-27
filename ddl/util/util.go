@@ -51,7 +51,7 @@ func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeT
 
 	rs := rss[0]
 	for {
-		row, err := rs.Next()
+		row, err := rs.Next(goctx.TODO())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
