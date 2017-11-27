@@ -873,8 +873,8 @@ func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
 		e.initialize(nil, false)
 		e.initialized = true
 	}
-	result, closed := <-e.resultPool
-	if closed {
+	result, ok := <-e.resultPool
+	if ok {
 		return nil
 	}
 	if result.err != nil {
