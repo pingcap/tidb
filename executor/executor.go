@@ -714,12 +714,16 @@ func (e *MaxOneRowExec) Next(goCtx goctx.Context) (Row, error) {
 type UnionExec struct {
 	baseExecutor
 
-	finished atomic.Value
-	resultCh chan *execResult
-	rows     []Row
-	cursor   int
-	wg       sync.WaitGroup
-	closedCh chan struct{}
+	stopFetchData atomic.Value
+	resultCh      chan *execResult
+	rows          []Row
+	cursor        int
+	wg            sync.WaitGroup
+
+	// For chunk execution.
+	resoucePool chan *executorResult
+	resultPool  chan *executorResult
+	initialized bool
 }
 
 type execResult struct {
@@ -727,10 +731,23 @@ type execResult struct {
 	err  error
 }
 
-func (e *UnionExec) waitAllFinished() {
+type executorResult struct {
+	chk *chunk.Chunk
+	err error
+}
+
+func (er *executorResult) reset() {
+	er.chk.Reset()
+	er.err = nil
+}
+
+func (e *UnionExec) waitAllFinished(forChunk bool) {
 	e.wg.Wait()
-	close(e.resultCh)
-	close(e.closedCh)
+	if forChunk {
+		close(e.resultPool)
+	} else {
+		close(e.resultCh)
+	}
 }
 
 func (e *UnionExec) fetchData(goCtx goctx.Context, idx int) {
@@ -742,12 +759,12 @@ func (e *UnionExec) fetchData(goCtx goctx.Context, idx int) {
 			err:  nil,
 		}
 		for i := 0; i < batchSize; i++ {
-			if e.finished.Load().(bool) {
+			if e.stopFetchData.Load().(bool) {
 				return
 			}
 			row, err := e.children[idx].Next(goCtx)
 			if err != nil {
-				e.finished.Store(true)
+				e.stopFetchData.Store(true)
 				result.err = err
 				e.resultCh <- result
 				return
@@ -763,7 +780,7 @@ func (e *UnionExec) fetchData(goCtx goctx.Context, idx int) {
 				col := e.schema.Columns[j]
 				val, err := row[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
 				if err != nil {
-					e.finished.Store(true)
+					e.stopFetchData.Store(true)
 					result.err = err
 					e.resultCh <- result
 					return
@@ -778,25 +795,58 @@ func (e *UnionExec) fetchData(goCtx goctx.Context, idx int) {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(goCtx goctx.Context) error {
-	e.finished.Store(false)
-	e.resultCh = make(chan *execResult, len(e.children))
-	e.closedCh = make(chan struct{})
-	e.cursor = 0
-	var err error
-	for i, child := range e.children {
-		err = child.Open(goCtx)
-		if err != nil {
-			break
-		}
-		e.wg.Add(1)
-		go e.fetchData(goCtx, i)
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
 	}
-	go e.waitAllFinished()
-	return errors.Trace(err)
+	e.stopFetchData.Store(false)
+	e.initialized = false
+	return nil
+}
+
+func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
+	if forChunk {
+		e.resoucePool = make(chan *executorResult, len(e.children))
+		e.resultPool = make(chan *executorResult, len(e.children))
+		for i := range e.children {
+			e.resoucePool <- &executorResult{chk: e.childrenResults[i], err: nil}
+			e.wg.Add(1)
+			go e.resultPuller(i)
+		}
+	} else {
+		e.resultCh = make(chan *execResult, len(e.children))
+		e.cursor = 0
+		for i := range e.children {
+			e.wg.Add(1)
+			go e.fetchData(goCtx, i)
+		}
+	}
+	go e.waitAllFinished(forChunk)
+}
+
+func (e *UnionExec) resultPuller(childID int) {
+	defer e.wg.Done()
+	for {
+		if e.stopFetchData.Load().(bool) {
+			return
+		}
+		resource := <-e.resoucePool
+		resource.err = errors.Trace(e.children[childID].NextChunk(resource.chk))
+		if resource.err != nil || resource.chk.NumRows() == 0 {
+			if resource.err != nil {
+				e.stopFetchData.Store(true)
+			}
+			return
+		}
+		e.resultPool <- resource
+	}
 }
 
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next(goCtx goctx.Context) (Row, error) {
+	if !e.initialized {
+		e.initialize(goCtx, false)
+		e.initialized = true
+	}
 	if e.cursor >= len(e.rows) {
 		result, ok := <-e.resultCh
 		if !ok {
@@ -816,10 +866,32 @@ func (e *UnionExec) Next(goCtx goctx.Context) (Row, error) {
 	return row, nil
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.initialized {
+		e.initialize(nil, false)
+		e.initialized = true
+	}
+	result, closed := <-e.resultPool
+	if closed {
+		return nil
+	}
+	if result.err != nil {
+		return errors.Trace(result.err)
+	}
+
+	chk.SwapColumns(result.chk)
+	result.reset()
+	e.resoucePool <- result
+	return nil
+}
+
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
-	e.finished.Store(true)
-	<-e.closedCh
 	e.rows = nil
+	if e.resoucePool != nil {
+		close(e.resoucePool)
+	}
 	return errors.Trace(e.baseExecutor.Close())
 }
