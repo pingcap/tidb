@@ -76,8 +76,9 @@ func (rb *rowBlockIterator) init() error {
 }
 
 func (rb *rowBlockIterator) nextRow() (Row, error) {
+	goCtx := goctx.TODO()
 	for {
-		row, err := rb.reader.Next()
+		row, err := rb.reader.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -269,7 +270,7 @@ func (e *MergeJoinExec) prepare() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next() (Row, error) {
+func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.prepared {
 		if err := e.prepare(); err != nil {
 			return nil, errors.Trace(err)

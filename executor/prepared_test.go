@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestPrepared(c *C) {
@@ -103,7 +104,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.Next()
+		exec.Next(goctx.Background())
 		exec.Close()
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
