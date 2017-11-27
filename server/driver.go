@@ -122,7 +122,7 @@ type PreparedStatement interface {
 // ResultSet is the result set of an query.
 type ResultSet interface {
 	Columns() []*ColumnInfo
-	Next() (types.Row, error)
+	Next(goctx.Context) (types.Row, error)
 	SupportChunk() bool
 	NewChunk() *chunk.Chunk
 	NextChunk(chk *chunk.Chunk) error

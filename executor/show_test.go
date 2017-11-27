@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestShow(c *C) {
@@ -473,7 +474,7 @@ func (s *testSuite) TestShow2(c *C) {
 
 	r, err := tk.Exec("show table status from test like 't'")
 	c.Assert(err, IsNil)
-	row, err := r.Next()
+	row, err := r.Next(goctx.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 18)
 	c.Assert(row.GetString(0), Equals, "t")
