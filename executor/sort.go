@@ -54,7 +54,7 @@ type SortExec struct {
 	// rowPointer store the chunk index and row index for each row.
 	rowPointers []rowPointer
 	// totalCount is calculated from rowChunks and used to initialize rowPointers.
-	totalCount  int
+	totalCount int
 }
 
 // rowPointer stores the address of a row in rowChunks by its chunk index and row index.
