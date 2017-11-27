@@ -307,7 +307,7 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit-1)*txnSizeRate)
-			err = s.retry(ctx, maxRetryCount, domain.ErrInfoSchemaChanged.Equal(err))
+			err = s.retry(ctx, maxRetryCount)
 		}
 	}
 	s.cleanRetryInfo()
@@ -400,7 +400,7 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool) error {
+func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 	span, ctx := opentracing.StartSpanFromContext(goCtx, "retry")
 	defer span.Finish()
 
@@ -416,6 +416,7 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+
 	nh := GetHistory(s)
 	var err error
 	for {
@@ -426,18 +427,15 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 			if st.IsReadOnly() {
 				continue
 			}
-			txt := st.OriginText()
-			if infoSchemaChanged {
-				st, err = updateStatement(goCtx, st, s, txt)
-				if err != nil {
-					return errors.Trace(err)
-				}
+			err = st.RebuildPlan()
+			if err != nil {
+				return errors.Trace(err)
 			}
 
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(txt))
+				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(st.OriginText()))
 			} else {
 				log.Warnf("[%d] Retry [%d] query [%d]", connID, retryCnt, i)
 			}
@@ -447,6 +445,10 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 			if err != nil {
 				break
 			}
+		}
+		if hook := ctx.Value("preCommitHook"); hook != nil {
+			// For testing purpose.
+			hook.(func())()
 		}
 		if err == nil {
 			err = s.doCommit(ctx)
@@ -459,7 +461,6 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 			return errors.Trace(err)
 		}
 		retryCnt++
-		infoSchemaChanged = domain.ErrInfoSchemaChanged.Equal(err)
 		if retryCnt >= maxCnt {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
@@ -470,27 +471,6 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int, infoSchemaChanged bool)
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}
 	return err
-}
-
-func updateStatement(goCtx goctx.Context, st ast.Statement, s *session, txt string) (ast.Statement, error) {
-	// statement maybe stale because of infoschema changed, this function will return the updated one.
-	if st.IsPrepared() {
-		// TODO: Rebuild plan if infoschema changed, reuse the statement otherwise.
-	} else {
-		// Rebuild plan if infoschema changed, reuse the statement otherwise.
-		charset, collation := s.sessionVars.GetCharsetInfo()
-		stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
-		if err != nil {
-			return st, errors.Trace(err)
-		}
-		st, err = Compile(goCtx, s, stmt)
-		if err != nil {
-			// If a txn is inserting data when DDL is dropping column,
-			// it would fail to commit and retry, and run here then.
-			return st, errors.Trace(err)
-		}
-	}
-	return st, nil
 }
 
 func sqlForLog(sql string) string {
@@ -533,7 +513,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Ro
 	)
 	// Execute all recordset, take out the first one as result.
 	for i, rs := range recordSets {
-		tmp, err := drainRecordSet(rs)
+		tmp, err := drainRecordSet(goCtx, rs)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -581,10 +561,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(rs ast.RecordSet) ([]types.Row, error) {
+func drainRecordSet(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 	var rows []types.Row
 	for {
-		row, err := rs.Next()
+		row, err := rs.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -732,7 +712,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			Plan:       cacheValue.(*plan.SQLCacheValue).Plan,
 			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
 			Text:       stmtNode.Text(),
-			ReadOnly:   ast.IsReadOnly(stmtNode),
+			StmtNode:   stmtNode,
 			Ctx:        s,
 		}
 

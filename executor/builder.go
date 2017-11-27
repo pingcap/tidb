@@ -903,7 +903,7 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGR
 	return dagReq, nil
 }
 
-func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []types.IntColumnRange, err error) {
+func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []ranger.IntColumnRange, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
 	newRanges = ranger.FullIntRange()
@@ -914,7 +914,7 @@ func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newR
 		}
 	}
 	if pkCol != nil {
-		var ranges []types.Range
+		var ranges []ranger.Range
 		ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -924,13 +924,13 @@ func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newR
 	return newRanges, nil
 }
 
-func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newRanges []*types.IndexRange, err error) {
+func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newRanges []*ranger.IndexRange, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
 	newRanges = ranger.FullIndexRange()
 	if len(idxCols) > 0 {
-		var ranges []types.Range
+		var ranges []ranger.Range
 		ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1029,6 +1029,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		columns:      is.Columns,
 		priority:     b.priority,
 	}
+	e.supportChk = true
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
@@ -1083,13 +1084,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		columns:           is.Columns,
 		priority:          b.priority,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
-		batchSize:         128,
 	}
+	e.supportChk = true
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
 		e.handleIdx = cols[0].Index
-	}
-	if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
-		e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
 	}
 	return e, nil
 }
@@ -1107,7 +1105,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		b.err = errors.Trace(err1)
 		return nil
 	}
-	ranges := make([]*types.IndexRange, 0, len(newRanges))
+	ranges := make([]*ranger.IndexRange, 0, len(newRanges))
 	for _, rangeInPlan := range newRanges {
 		ranges = append(ranges, rangeInPlan.Clone())
 	}

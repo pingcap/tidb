@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 var dummySlice = make([]byte, 0)
@@ -77,9 +78,10 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks []tipb.Chunk
 		rowCnt int
 	)
+	goCtx := goctx.TODO()
 	for {
 		var row [][]byte
-		row, err = e.Next()
+		row, err = e.Next(goCtx)
 		if err != nil {
 			break
 		}

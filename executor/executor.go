@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/ranger"
 	goctx "golang.org/x/net/context"
 )
 
@@ -166,7 +167,7 @@ func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ..
 
 // Executor executes a query.
 type Executor interface {
-	Next() (Row, error)
+	Next(goctx.Context) (Row, error)
 	Close() error
 	Open(goctx.Context) error
 	Schema() *expression.Schema
@@ -185,7 +186,7 @@ type CancelDDLJobsExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CancelDDLJobsExec) Next() (Row, error) {
+func (e *CancelDDLJobsExec) Next(goCtx goctx.Context) (Row, error) {
 	var row Row
 	if e.cursor < len(e.JobIDs) {
 		ret := "successful"
@@ -210,7 +211,7 @@ type ShowDDLExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowDDLExec) Next() (Row, error) {
+func (e *ShowDDLExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -240,7 +241,7 @@ type ShowDDLJobsExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowDDLJobsExec) Next() (Row, error) {
+func (e *ShowDDLJobsExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.cursor >= len(e.jobs) {
 		return nil, nil
 	}
@@ -265,7 +266,7 @@ type CheckTableExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CheckTableExec) Next() (Row, error) {
+func (e *CheckTableExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -308,8 +309,8 @@ type SelectLockExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SelectLockExec) Next() (Row, error) {
-	row, err := e.children[0].Next()
+func (e *SelectLockExec) Next(goCtx goctx.Context) (Row, error) {
+	row, err := e.children[0].Next(goCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -349,9 +350,9 @@ type LimitExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *LimitExec) Next() (Row, error) {
+func (e *LimitExec) Next(goCtx goctx.Context) (Row, error) {
 	for e.Idx < e.Offset {
-		srcRow, err := e.children[0].Next()
+		srcRow, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -363,7 +364,7 @@ func (e *LimitExec) Next() (Row, error) {
 	if e.Idx >= e.Count+e.Offset {
 		return nil, nil
 	}
-	srcRow, err := e.children[0].Next()
+	srcRow, err := e.children[0].Next(goCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -394,12 +395,13 @@ func init() {
 		if e.err != nil {
 			return rows, errors.Trace(err)
 		}
-		err = exec.Open(goctx.TODO())
+		goCtx := goctx.TODO()
+		err = exec.Open(goCtx)
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
 		for {
-			row, err := exec.Next()
+			row, err := exec.Next(goCtx)
 			if err != nil {
 				return rows, errors.Trace(err)
 			}
@@ -436,8 +438,8 @@ func (e *ProjectionExec) Open(goCtx goctx.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ProjectionExec) Next() (retRow Row, err error) {
-	srcRow, err := e.children[0].Next()
+func (e *ProjectionExec) Next(goCtx goctx.Context) (retRow Row, err error) {
+	srcRow, err := e.children[0].Next(goCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -482,7 +484,7 @@ func (e *TableDualExec) Open(goCtx goctx.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *TableDualExec) Next() (Row, error) {
+func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.returnCnt >= e.rowCount {
 		return nil, nil
 	}
@@ -498,9 +500,9 @@ type SelectionExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SelectionExec) Next() (Row, error) {
+func (e *SelectionExec) Next(goCtx goctx.Context) (Row, error) {
 	for {
-		srcRow, err := e.children[0].Next()
+		srcRow, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -523,7 +525,7 @@ type TableScanExec struct {
 
 	t          table.Table
 	asName     *model.CIStr
-	ranges     []types.IntColumnRange
+	ranges     []ranger.IntColumnRange
 	seekHandle int64
 	iter       kv.Iterator
 	cursor     int
@@ -535,7 +537,7 @@ type TableScanExec struct {
 }
 
 // Next implements the Executor interface.
-func (e *TableScanExec) Next() (Row, error) {
+func (e *TableScanExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.isVirtualTable {
 		return e.nextForInfoSchema()
 	}
@@ -658,10 +660,10 @@ func (e *ExistsExec) Open(goCtx goctx.Context) error {
 
 // Next implements the Executor Next interface.
 // We always return one row with one column which has true or false value.
-func (e *ExistsExec) Next() (Row, error) {
+func (e *ExistsExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.evaluated {
 		e.evaluated = true
-		srcRow, err := e.children[0].Next()
+		srcRow, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -685,17 +687,17 @@ func (e *MaxOneRowExec) Open(goCtx goctx.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MaxOneRowExec) Next() (Row, error) {
+func (e *MaxOneRowExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.evaluated {
 		e.evaluated = true
-		srcRow, err := e.children[0].Next()
+		srcRow, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if srcRow == nil {
 			return make([]types.Datum, e.schema.Len()), nil
 		}
-		srcRow1, err := e.children[0].Next()
+		srcRow1, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -732,7 +734,7 @@ func (e *UnionExec) waitAllFinished() {
 	close(e.closedCh)
 }
 
-func (e *UnionExec) fetchData(idx int) {
+func (e *UnionExec) fetchData(goCtx goctx.Context, idx int) {
 	batchSize := 128
 	defer e.wg.Done()
 	for {
@@ -744,7 +746,7 @@ func (e *UnionExec) fetchData(idx int) {
 			if e.finished.Load().(bool) {
 				return
 			}
-			row, err := e.children[idx].Next()
+			row, err := e.children[idx].Next(goCtx)
 			if err != nil {
 				e.finished.Store(true)
 				result.err = err
@@ -788,14 +790,14 @@ func (e *UnionExec) Open(goCtx goctx.Context) error {
 			break
 		}
 		e.wg.Add(1)
-		go e.fetchData(i)
+		go e.fetchData(goCtx, i)
 	}
 	go e.waitAllFinished()
 	return errors.Trace(err)
 }
 
 // Next implements the Executor Next interface.
-func (e *UnionExec) Next() (Row, error) {
+func (e *UnionExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.cursor >= len(e.rows) {
 		result, ok := <-e.resultCh
 		if !ok {

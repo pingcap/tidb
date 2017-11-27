@@ -39,7 +39,7 @@ type DDLExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *DDLExec) Next() (Row, error) {
+func (e *DDLExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}

@@ -182,7 +182,7 @@ type DeleteExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeleteExec) Next() (Row, error) {
+func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -191,9 +191,9 @@ func (e *DeleteExec) Next() (Row, error) {
 	}()
 
 	if e.IsMultiTable {
-		return nil, e.deleteMultiTables()
+		return nil, e.deleteMultiTables(goCtx)
 	}
-	return nil, e.deleteSingleTable()
+	return nil, e.deleteSingleTable(goCtx)
 }
 
 type tblColPosInfo struct {
@@ -203,7 +203,7 @@ type tblColPosInfo struct {
 	handleIndex   int
 }
 
-func (e *DeleteExec) deleteMultiTables() error {
+func (e *DeleteExec) deleteMultiTables(goCtx goctx.Context) error {
 	if len(e.Tables) == 0 {
 		return nil
 	}
@@ -229,7 +229,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 	// Map for unique (Table, Row) pair.
 	tblRowMap := make(map[int64]map[int64][]types.Datum)
 	for {
-		joinedRow, err := e.SelectExec.Next()
+		joinedRow, err := e.SelectExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -270,7 +270,7 @@ func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column
 	return false
 }
 
-func (e *DeleteExec) deleteSingleTable() error {
+func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	var (
 		id        int64
 		tbl       table.Table
@@ -292,7 +292,7 @@ func (e *DeleteExec) deleteSingleTable() error {
 			}
 			rowCount = 0
 		}
-		row, err := e.SelectExec.Next()
+		row, err := e.SelectExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -631,7 +631,7 @@ func (k loadDataVarKeyType) String() string {
 const LoadDataVarKey loadDataVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *LoadData) Next() (Row, error) {
+func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return nil, errors.New("Load Data: don't support load data without local field")
@@ -707,7 +707,7 @@ var BatchInsertSize = 20000
 var BatchDeleteSize = 20000
 
 // Next implements the Executor Next interface.
-func (e *InsertExec) Next() (Row, error) {
+func (e *InsertExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -718,7 +718,7 @@ func (e *InsertExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols, e.IgnoreErr)
+		rows, err = e.getRowsSelect(goCtx, cols, e.IgnoreErr)
 	} else {
 		rows, err = e.getRows(cols, e.IgnoreErr)
 	}
@@ -968,14 +968,14 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ign
 	return nil
 }
 
-func (e *InsertValues) getRowsSelect(cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelect(goCtx goctx.Context, cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if e.SelectExec.Schema().Len() != len(cols) {
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
 	var rows [][]types.Datum
 	for {
-		innerRow, err := e.SelectExec.Next()
+		innerRow, err := e.SelectExec.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1199,7 +1199,7 @@ func (e *ReplaceExec) Open(goCtx goctx.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ReplaceExec) Next() (Row, error) {
+func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -1210,7 +1210,7 @@ func (e *ReplaceExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols, false)
+		rows, err = e.getRowsSelect(goCtx, cols, false)
 	} else {
 		rows, err = e.getRows(cols, false)
 	}
@@ -1296,9 +1296,9 @@ type UpdateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next() (Row, error) {
+func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.fetched {
-		err := e.fetchRows()
+		err := e.fetchRows(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1363,9 +1363,9 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 	return assignFlag, nil
 }
 
-func (e *UpdateExec) fetchRows() error {
+func (e *UpdateExec) fetchRows(goCtx goctx.Context) error {
 	for {
-		row, err := e.SelectExec.Next()
+		row, err := e.SelectExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
