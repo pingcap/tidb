@@ -233,14 +233,18 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	var baseID int64
 	newSchemaID := job.SchemaID
 	if newSchemaID != oldSchemaID {
 		err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		if tblInfo.OldSchemaID == 0 {
-			tblInfo.OldSchemaID = oldSchemaID
+		baseID, err = t.GetAutoTableID(oldSchemaID, tblInfo.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
 		}
 	}
 
@@ -254,6 +258,14 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	// Update the table's auto-increment ID.
+	if newSchemaID != oldSchemaID {
+		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, baseID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)

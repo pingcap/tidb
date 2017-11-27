@@ -141,7 +141,7 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 }
 
 // GenAutoTableID adds step to the auto ID of the table and returns the sum.
-func (m *Meta) GenAutoTableID(originalDBID, dbID, tableID, step int64) (int64, error) {
+func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
 	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -153,8 +153,7 @@ func (m *Meta) GenAutoTableID(originalDBID, dbID, tableID, step int64) (int64, e
 		return 0, errors.Trace(err)
 	}
 
-	// Using original DB ID to generate auto ID.
-	return m.txn.HInc(m.dbKey(originalDBID), m.autoTableIDKey(tableID), step)
+	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
 }
 
 // GetAutoTableID gets current auto id with table id.
