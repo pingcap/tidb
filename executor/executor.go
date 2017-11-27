@@ -543,7 +543,7 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
-			if !e.filterResult[e.inputRow.ID()] {
+			if !e.filterResult[e.inputRow.Idx()] {
 				continue
 			}
 			chk.AppendRow(0, e.inputRow)

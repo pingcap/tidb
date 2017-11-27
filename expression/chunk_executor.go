@@ -243,14 +243,14 @@ func FilterChunk(ctx context.Context, filters []Expression, input *chunk.Chunk, 
 	}
 	for _, filter := range filters {
 		for row := input.Begin(); row != input.End(); row = row.Next() {
-			if !selected[row.ID()] {
+			if !selected[row.Idx()] {
 				continue
 			}
 			filterResult, isNull, err := filter.EvalInt(row, ctx.GetSessionVars().StmtCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			selected[row.ID()] = selected[row.ID()] && !isNull && (filterResult != 0)
+			selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
 		}
 	}
 	return selected, nil
