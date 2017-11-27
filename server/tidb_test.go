@@ -366,6 +366,7 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	_, err = ctx.Execute(goctx.Background(), "use test;")
 	c.Assert(err, IsNil)
 
+	goCtx := goctx.Background()
 	testSQL := "CREATE TABLE `t1` (" +
 		"`a` char(36) NOT NULL," +
 		"`b` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
@@ -393,10 +394,10 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 		"`x` varchar(250) DEFAULT ''," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = ctx.Execute(goctx.Background(), testSQL)
+	_, err = ctx.Execute(goCtx, testSQL)
 	c.Assert(err, IsNil)
-	rs, err := ctx.Execute(goctx.Background(), "show create table t1")
-	row, err := rs[0].Next()
+	rs, err := ctx.Execute(goCtx, "show create table t1")
+	row, err := rs[0].Next(goCtx)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)

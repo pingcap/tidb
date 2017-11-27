@@ -259,7 +259,8 @@ func checkBootstrapped(s Session) (bool, error) {
 func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, name)
-	rs, err := s.Execute(goctx.Background(), sql)
+	goCtx := goctx.Background()
+	rs, err := s.Execute(goCtx, sql)
 	if err != nil {
 		return "", true, errors.Trace(err)
 	}
@@ -268,7 +269,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	}
 	r := rs[0]
 	defer terror.Call(r.Close)
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	if err != nil || row == nil {
 		return "", true, errors.Trace(err)
 	}
@@ -467,7 +468,7 @@ func upgradeToVer12(s Session) {
 	r := rs[0]
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	for err == nil && row != nil {
 		user := row.GetString(0)
 		host := row.GetString(1)
@@ -477,7 +478,7 @@ func upgradeToVer12(s Session) {
 		terror.MustNil(err)
 		updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 		sqls = append(sqls, updateSQL)
-		row, err = r.Next()
+		row, err = r.Next(goCtx)
 	}
 	terror.MustNil(err)
 

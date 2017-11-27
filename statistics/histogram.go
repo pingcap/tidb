@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -476,7 +477,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (f
 }
 
 // getIntColumnRowCount estimates the row count by a slice of IntColumnRange.
-func (c *Column) getIntColumnRowCount(sc *stmtctx.StatementContext, intRanges []types.IntColumnRange,
+func (c *Column) getIntColumnRowCount(sc *stmtctx.StatementContext, intRanges []ranger.IntColumnRange,
 	totalRowCount float64) (float64, error) {
 	var rowCount float64
 	for _, rg := range intRanges {
@@ -510,7 +511,7 @@ func (c *Column) getIntColumnRowCount(sc *stmtctx.StatementContext, intRanges []
 }
 
 // getColumnRowCount estimates the row count by a slice of ColumnRange.
-func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*types.ColumnRange) (float64, error) {
+func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.Low.CompareDatum(sc, &rg.High)
@@ -577,7 +578,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) (float64
 	return count, errors.Trace(err)
 }
 
-func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*types.IndexRange) (float64, error) {
+func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.IndexRange) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		indexRange.Align(len(idx.Info.Columns))
