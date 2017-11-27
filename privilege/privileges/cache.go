@@ -183,7 +183,7 @@ func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 
 	fs := rs.Fields()
 	for {
-		row, err := rs.Next()
+		row, err := rs.Next(goctx.TODO())
 		if err != nil {
 			return errors.Trace(err)
 		}

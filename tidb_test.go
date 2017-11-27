@@ -245,7 +245,7 @@ func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
 	r, err := exec(se, sql, args...)
 	if err == nil && r != nil {
 		// sometimes we may meet error after executing first row.
-		_, err = r.Next()
+		_, err = r.Next(goctx.Background())
 	}
 	c.Assert(err, NotNil)
 }

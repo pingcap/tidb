@@ -26,8 +26,8 @@ import (
 // points2IndexRanges build index ranges from range points.
 // Only the first column in the index is built, extra column ranges will be appended by
 // appendPoints2IndexRanges.
-func points2IndexRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*types.IndexRange, error) {
-	indexRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
+func points2IndexRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*IndexRange, error) {
+	indexRanges := make([]*IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], tp)
 		if err != nil {
@@ -44,7 +44,7 @@ func points2IndexRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 		if !less {
 			continue
 		}
-		ir := &types.IndexRange{
+		ir := &IndexRange{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
@@ -104,9 +104,9 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func appendPoints2IndexRanges(sc *stmtctx.StatementContext, origin []*types.IndexRange, rangePoints []point,
-	ft *types.FieldType) ([]*types.IndexRange, error) {
-	var newIndexRanges []*types.IndexRange
+func appendPoints2IndexRanges(sc *stmtctx.StatementContext, origin []*IndexRange, rangePoints []point,
+	ft *types.FieldType) ([]*IndexRange, error) {
+	var newIndexRanges []*IndexRange
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
 		if !oRange.IsPoint(sc) {
@@ -122,9 +122,9 @@ func appendPoints2IndexRanges(sc *stmtctx.StatementContext, origin []*types.Inde
 	return newIndexRanges, nil
 }
 
-func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *types.IndexRange, rangePoints []point,
-	ft *types.FieldType) ([]*types.IndexRange, error) {
-	newRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
+func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *IndexRange, rangePoints []point,
+	ft *types.FieldType) ([]*IndexRange, error) {
+	newRanges := make([]*IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], ft)
 		if err != nil {
@@ -150,7 +150,7 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *types.IndexRa
 		copy(highVal, origin.HighVal)
 		highVal[len(origin.HighVal)] = endPoint.value
 
-		ir := &types.IndexRange{
+		ir := &IndexRange{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,
@@ -162,8 +162,8 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *types.IndexRa
 }
 
 // points2TableRanges will construct the range slice with the given range points
-func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point) ([]types.IntColumnRange, error) {
-	tableRanges := make([]types.IntColumnRange, 0, len(rangePoints)/2)
+func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point) ([]IntColumnRange, error) {
+	tableRanges := make([]IntColumnRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
@@ -211,13 +211,13 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point) ([]ty
 		if startInt > endInt {
 			continue
 		}
-		tableRanges = append(tableRanges, types.IntColumnRange{LowVal: startInt, HighVal: endInt})
+		tableRanges = append(tableRanges, IntColumnRange{LowVal: startInt, HighVal: endInt})
 	}
 	return tableRanges, nil
 }
 
-func points2ColumnRanges(sc *stmtctx.StatementContext, points []point, tp *types.FieldType) ([]*types.ColumnRange, error) {
-	columnRanges := make([]*types.ColumnRange, 0, len(points)/2)
+func points2ColumnRanges(sc *stmtctx.StatementContext, points []point, tp *types.FieldType) ([]*ColumnRange, error) {
+	columnRanges := make([]*ColumnRange, 0, len(points)/2)
 	for i := 0; i < len(points); i += 2 {
 		startPoint, err := convertPoint(sc, points[i], tp)
 		if err != nil {
@@ -234,7 +234,7 @@ func points2ColumnRanges(sc *stmtctx.StatementContext, points []point, tp *types
 		if !less {
 			continue
 		}
-		cr := &types.ColumnRange{
+		cr := &ColumnRange{
 			Low:      startPoint.value,
 			LowExcl:  startPoint.excl,
 			High:     endPoint.value,
@@ -246,7 +246,7 @@ func points2ColumnRanges(sc *stmtctx.StatementContext, points []point, tp *types
 }
 
 // buildTableRange will build range of pk for PhysicalTableScan
-func buildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext) ([]types.IntColumnRange, error) {
+func buildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext) ([]IntColumnRange, error) {
 	if len(accessConditions) == 0 {
 		return FullIntRange(), nil
 	}
@@ -267,9 +267,9 @@ func buildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 }
 
 // buildColumnRange builds the range for sampling histogram to calculate the row count.
-func buildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*types.ColumnRange, error) {
+func buildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*ColumnRange, error) {
 	if len(conds) == 0 {
-		return []*types.ColumnRange{{Low: types.Datum{}, High: types.MaxValueDatum()}}, nil
+		return []*ColumnRange{{Low: types.Datum{}, High: types.MaxValueDatum()}}, nil
 	}
 
 	rb := builder{sc: sc}
@@ -288,10 +288,10 @@ func buildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 }
 
 func buildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
-	accessCondition []expression.Expression) ([]*types.IndexRange, error) {
+	accessCondition []expression.Expression) ([]*IndexRange, error) {
 	rb := builder{sc: sc}
 	var (
-		ranges       []*types.IndexRange
+		ranges       []*IndexRange
 		eqAndInCount int
 		err          error
 	)
@@ -363,7 +363,7 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-func fixPrefixColRange(ranges []*types.IndexRange, lengths []int) {
+func fixPrefixColRange(ranges []*IndexRange, lengths []int) {
 	for _, ran := range ranges {
 		for i := 0; i < len(ran.LowVal); i++ {
 			fixRangeDatum(&ran.LowVal[i], lengths[i])
@@ -385,13 +385,13 @@ func fixRangeDatum(v *types.Datum, length int) {
 
 // BuildRange is a method which can calculate IntColumnRange, ColumnRange, IndexRange.
 func BuildRange(sc *stmtctx.StatementContext, conds []expression.Expression, rangeType int, cols []*expression.Column,
-	lengths []int) (retRanges []types.Range, _ error) {
+	lengths []int) (retRanges []Range, _ error) {
 	if rangeType == IntRangeType {
 		ranges, err := buildTableRange(conds, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		retRanges = make([]types.Range, 0, len(ranges))
+		retRanges = make([]Range, 0, len(ranges))
 		for _, ran := range ranges {
 			retRanges = append(retRanges, ran)
 		}
@@ -400,7 +400,7 @@ func BuildRange(sc *stmtctx.StatementContext, conds []expression.Expression, ran
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		retRanges = make([]types.Range, 0, len(ranges))
+		retRanges = make([]Range, 0, len(ranges))
 		for _, ran := range ranges {
 			retRanges = append(retRanges, ran)
 		}
@@ -409,7 +409,7 @@ func BuildRange(sc *stmtctx.StatementContext, conds []expression.Expression, ran
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		retRanges = make([]types.Range, 0, len(ranges))
+		retRanges = make([]Range, 0, len(ranges))
 		for _, ran := range ranges {
 			retRanges = append(retRanges, ran)
 		}
@@ -417,27 +417,27 @@ func BuildRange(sc *stmtctx.StatementContext, conds []expression.Expression, ran
 	return
 }
 
-// Ranges2IntRanges changes []types.Range to []types.IntColumnRange
-func Ranges2IntRanges(ranges []types.Range) []types.IntColumnRange {
-	retRanges := make([]types.IntColumnRange, 0, len(ranges))
+// Ranges2IntRanges changes []Range to []IntColumnRange
+func Ranges2IntRanges(ranges []Range) []IntColumnRange {
+	retRanges := make([]IntColumnRange, 0, len(ranges))
 	for _, ran := range ranges {
 		retRanges = append(retRanges, ran.Convert2IntRange())
 	}
 	return retRanges
 }
 
-// Ranges2ColumnRanges changes []types.Range to []*types.ColumnRange
-func Ranges2ColumnRanges(ranges []types.Range) []*types.ColumnRange {
-	retRanges := make([]*types.ColumnRange, 0, len(ranges))
+// Ranges2ColumnRanges changes []Range to []*ColumnRange
+func Ranges2ColumnRanges(ranges []Range) []*ColumnRange {
+	retRanges := make([]*ColumnRange, 0, len(ranges))
 	for _, ran := range ranges {
 		retRanges = append(retRanges, ran.Convert2ColumnRange())
 	}
 	return retRanges
 }
 
-// Ranges2IndexRanges changes []types.Range to []*types.IndexRange
-func Ranges2IndexRanges(ranges []types.Range) []*types.IndexRange {
-	retRanges := make([]*types.IndexRange, 0, len(ranges))
+// Ranges2IndexRanges changes []Range to []*IndexRange
+func Ranges2IndexRanges(ranges []Range) []*IndexRange {
+	retRanges := make([]*IndexRange, 0, len(ranges))
 	for _, ran := range ranges {
 		retRanges = append(retRanges, ran.Convert2IndexRange())
 	}

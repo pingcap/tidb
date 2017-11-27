@@ -513,7 +513,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Ro
 	)
 	// Execute all recordset, take out the first one as result.
 	for i, rs := range recordSets {
-		tmp, err := drainRecordSet(rs)
+		tmp, err := drainRecordSet(goCtx, rs)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -561,10 +561,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(rs ast.RecordSet) ([]types.Row, error) {
+func drainRecordSet(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 	var rows []types.Row
 	for {
-		row, err := rs.Next()
+		row, err := rs.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

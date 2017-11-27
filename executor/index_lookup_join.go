@@ -153,7 +153,7 @@ func (e *IndexLookUpJoin) Close() error {
 // Step5: deduplicate "request rows" based on the join keys.
 // Step6: fetch a batch of sorted "inner rows" based on the request rows.
 // Step7: do merge join on the **sorted** outer and inner rows.
-func (e *IndexLookUpJoin) Next() (Row, error) {
+func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 	for ; e.resultCursor == len(e.resultBuffer); e.resultCursor = 0 {
 		if e.curBatchSize < e.maxBatchSize {
 			e.curBatchSize *= 2
@@ -167,7 +167,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 		e.resultBuffer = e.resultBuffer[:0:cap(e.resultBuffer)]
 
 		for i := 0; i < e.curBatchSize; i++ {
-			outerRow, err := e.outerExec.Next()
+			outerRow, err := e.outerExec.Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			} else if outerRow == nil {
@@ -271,7 +271,7 @@ func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 	defer terror.Call(innerExec.Close)
 
 	for {
-		innerRow, err1 := innerExec.Next()
+		innerRow, err1 := innerExec.Next(goCtx)
 		if err1 != nil {
 			return errors.Trace(err1)
 		} else if innerRow == nil {
