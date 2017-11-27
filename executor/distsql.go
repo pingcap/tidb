@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -81,7 +82,7 @@ func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
 	return nil, nil
 }
 
-func tableRangesToKVRanges(tid int64, tableRanges []types.IntColumnRange) []kv.KeyRange {
+func tableRangesToKVRanges(tid int64, tableRanges []ranger.IntColumnRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tableRanges))
 	for _, tableRange := range tableRanges {
 		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
@@ -145,7 +146,7 @@ func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRa
 	return krs, nil
 }
 
-func indexRangesToKVRanges(tid, idxID int64, ranges []*types.IndexRange) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(tid, idxID int64, ranges []*ranger.IndexRange) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		low, err := codec.EncodeKey(nil, ran.LowVal...)
@@ -299,7 +300,7 @@ type TableReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []types.IntColumnRange
+	ranges    []ranger.IntColumnRange
 	dagPB     *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
@@ -403,7 +404,7 @@ type IndexReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*types.IndexRange
+	ranges    []*ranger.IndexRange
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -495,7 +496,7 @@ type IndexLookUpExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*types.IndexRange
+	ranges    []*ranger.IndexRange
 	dagPB     *tipb.DAGRequest
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
@@ -826,12 +827,12 @@ func (builder *requestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, errors.Trace(builder.err)
 }
 
-func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []types.IntColumnRange) *requestBuilder {
+func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []ranger.IntColumnRange) *requestBuilder {
 	builder.Request.KeyRanges = tableRangesToKVRanges(tid, tableRanges)
 	return builder
 }
 
-func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*types.IndexRange) *requestBuilder {
+func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*ranger.IndexRange) *requestBuilder {
 	if builder.err != nil {
 		return builder
 	}
