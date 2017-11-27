@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -120,6 +121,127 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	chk.AppendFloat32(0, 1)
 	chk.AppendFloat32(0, 1)
 	c.Assert(chk.GetRow(2).GetFloat32(0), Equals, float32(1))
+}
+
+func (s *testChunkSuite) TestAppend(c *C) {
+	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+
+	src := NewChunk(fieldTypes)
+	dst := NewChunk(fieldTypes)
+
+	src.AppendFloat32(0, 12.8)
+	src.AppendString(1, "abc")
+	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
+	c.Assert(err, IsNil)
+	src.AppendJSON(2, jsonObj)
+	src.AppendNull(0)
+	src.AppendNull(1)
+	src.AppendNull(2)
+
+	dst.Append(src, 0, 2)
+	dst.Append(src, 0, 2)
+	dst.Append(src, 0, 2)
+	dst.Append(src, 0, 2)
+	dst.Append(dst, 2, 6)
+
+	c.Assert(len(dst.columns), Equals, 3)
+
+	c.Assert(dst.columns[0].length, Equals, 12)
+	c.Assert(dst.columns[0].nullCount, Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
+	c.Assert(len(dst.columns[0].offsets), Equals, 0)
+	c.Assert(len(dst.columns[0].data), Equals, 4*12)
+	c.Assert(len(dst.columns[0].elemBuf), Equals, 4)
+	c.Assert(len(dst.columns[0].ifaces), Equals, 0)
+
+	c.Assert(dst.columns[1].length, Equals, 12)
+	c.Assert(dst.columns[1].nullCount, Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
+	c.Assert(string(dst.columns[1].offsets), Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
+	c.Assert(string(dst.columns[1].data), Equals, "abcabcabcabcabcabc")
+	c.Assert(len(dst.columns[1].elemBuf), Equals, 0)
+	c.Assert(len(dst.columns[1].ifaces), Equals, 0)
+
+	c.Assert(dst.columns[2].length, Equals, 12)
+	c.Assert(dst.columns[2].nullCount, Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
+	c.Assert(len(dst.columns[2].offsets), Equals, 0)
+	c.Assert(len(dst.columns[2].data), Equals, 0)
+	c.Assert(len(dst.columns[2].elemBuf), Equals, 0)
+	c.Assert(len(dst.columns[2].ifaces), Equals, 12)
+	for i := 0; i < 12; i += 2 {
+		elem := dst.columns[2].ifaces[i]
+		jsonElem, ok := elem.(json.JSON)
+		c.Assert(ok, IsTrue)
+		cmpRes, err := json.CompareJSON(jsonElem, jsonObj)
+		c.Assert(err, IsNil)
+		c.Assert(cmpRes, Equals, 0)
+	}
+}
+
+func (s *testChunkSuite) TestTruncate(c *C) {
+	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+
+	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
+	c.Assert(err, IsNil)
+
+	src := NewChunk(fieldTypes)
+	src.AppendFloat32(0, 12.8)
+	src.AppendString(1, "abc")
+	src.AppendJSON(2, jsonObj)
+	src.AppendNull(0)
+	src.AppendNull(1)
+	src.AppendNull(2)
+
+	for i := 0; i < 7; i++ {
+		src.AppendFloat32(0, 12.8)
+		src.AppendString(1, "abc")
+		src.AppendJSON(2, jsonObj)
+		src.AppendNull(0)
+		src.AppendNull(1)
+		src.AppendNull(2)
+	}
+
+	src.Truncate(4)
+	c.Assert(len(src.columns), Equals, 3)
+
+	c.Assert(src.columns[0].length, Equals, 12)
+	c.Assert(src.columns[0].nullCount, Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
+	c.Assert(len(src.columns[0].offsets), Equals, 0)
+	c.Assert(len(src.columns[0].data), Equals, 4*12)
+	c.Assert(len(src.columns[0].elemBuf), Equals, 4)
+	c.Assert(len(src.columns[0].ifaces), Equals, 0)
+
+	c.Assert(src.columns[1].length, Equals, 12)
+	c.Assert(src.columns[1].nullCount, Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
+	c.Assert(string(src.columns[1].offsets), Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
+	c.Assert(string(src.columns[1].data), Equals, "abcabcabcabcabcabc")
+	c.Assert(len(src.columns[1].elemBuf), Equals, 0)
+	c.Assert(len(src.columns[1].ifaces), Equals, 0)
+
+	c.Assert(src.columns[2].length, Equals, 12)
+	c.Assert(src.columns[2].nullCount, Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
+	c.Assert(len(src.columns[2].offsets), Equals, 0)
+	c.Assert(len(src.columns[2].data), Equals, 0)
+	c.Assert(len(src.columns[2].elemBuf), Equals, 0)
+	c.Assert(len(src.columns[2].ifaces), Equals, 12)
+	for i := 0; i < 12; i += 2 {
+		elem := src.columns[2].ifaces[i]
+		jsonElem, ok := elem.(json.JSON)
+		c.Assert(ok, IsTrue)
+		cmpRes, err := json.CompareJSON(jsonElem, jsonObj)
+		c.Assert(err, IsNil)
+		c.Assert(cmpRes, Equals, 0)
+	}
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
