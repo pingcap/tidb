@@ -148,6 +148,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
 	case variable.TiDBCurrentTS:
 		return variable.ErrReadOnly
+	case variable.TiDBMaxChunkSize:
+		vars.MaxChunkSize = tidbOptPositiveInt(sVal, variable.DefMaxChunkSize)
 	}
 	vars.Systems[name] = sVal
 	return nil

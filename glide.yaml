@@ -140,7 +140,7 @@ import:
   subpackages:
   - pd-client
 - package: github.com/pingcap/tipb
-  version: 0d1aa8459be47345e3b7806611f3226300fd1a25
+  version: a497eca3b8920e192aae1a5af81e573f90e59a6b
   subpackages:
   - go-binlog
   - go-mysqlx

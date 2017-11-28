@@ -169,16 +169,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
-		var sel *plan.Selection
-		for _, child := range p.Children() {
-			p, ok := child.(*plan.Selection)
-			if ok {
-				sel = p
-				break
-			}
-		}
-		c.Assert(sel, NotNil, comment)
-		ratio, err := statsTbl.Selectivity(ctx, sel.Conditions)
+		ratio, err := statsTbl.Selectivity(ctx, p.Children()[0].(*plan.LogicalSelection).Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, comment)
 	}

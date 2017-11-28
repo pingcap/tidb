@@ -551,7 +551,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
-		batchSize:    chunk.MaxCapacity,
+		batchSize:    e.ctx.GetSessionVars().MaxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 	}
 	if worker.batchSize > worker.maxBatchSize {
@@ -795,7 +795,7 @@ func (e *IndexLookUpExecutor) NextChunk(chk *chunk.Chunk) error {
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(0, resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= chunk.MaxCapacity {
+			if chk.NumRows() >= e.ctx.GetSessionVars().MaxChunkSize {
 				return nil
 			}
 		}
