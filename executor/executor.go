@@ -548,8 +548,9 @@ func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
 type SelectionExec struct {
 	baseExecutor
 
-	Conditions   []expression.Expression
-	filterResult []bool
+	vectorizable bool
+	filters      []expression.Expression
+	selected     []bool
 	inputRow     chunk.Row
 }
 
@@ -558,8 +559,9 @@ func (e *SelectionExec) Open(goCtx goctx.Context) error {
 	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
-	e.filterResult = make([]bool, 0, chunk.InitialCapacity)
+	e.selected = make([]bool, 0, chunk.InitialCapacity)
 	e.inputRow = e.childrenResults[0].End()
+	e.vectorizable = expression.Vectorizable(e.filters)
 	return nil
 }
 
@@ -568,7 +570,7 @@ func (e *SelectionExec) Close() error {
 	if err := e.baseExecutor.Close(); err != nil {
 		return errors.Trace(err)
 	}
-	e.filterResult = nil
+	e.selected = nil
 	return nil
 }
 
@@ -582,7 +584,7 @@ func (e *SelectionExec) Next(goCtx goctx.Context) (Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		match, err := expression.EvalBool(e.Conditions, srcRow, e.ctx)
+		match, err := expression.EvalBool(e.filters, srcRow, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -597,11 +599,13 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
-			if !e.filterResult[e.inputRow.Idx()] {
+			if !e.selected[e.inputRow.Idx()] {
+
 				continue
 			}
 			chk.AppendRow(0, e.inputRow)
 			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+				e.inputRow = e.inputRow.Next()
 				return nil
 			}
 		}
@@ -614,8 +618,12 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
 		}
-		e.filterResult = e.filterResult[:0]
-		e.filterResult, err = expression.FilterChunk(e.ctx, e.Conditions, e.childrenResults[0], e.filterResult)
+		e.selected = e.selected[:0]
+		if e.vectorizable {
+			e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
+		} else {
+			e.selected, err = expression.UnVectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}

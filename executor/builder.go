@@ -636,7 +636,7 @@ func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
 	}
 	e := &SelectionExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
-		Conditions:   v.Conditions,
+		filters:      v.Conditions,
 	}
 	e.supportChk = true
 	return e

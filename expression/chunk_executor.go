@@ -235,8 +235,9 @@ func executeToString(sc *stmtctx.StatementContext, expr Expression, fieldType *t
 	return nil
 }
 
-// FilterChunk applys a list of filters to a Chunk and returns a bool slice, which indicates whether a row is passed the filters.
-func FilterChunk(ctx context.Context, filters []Expression, input *chunk.Chunk, selected []bool) ([]bool, error) {
+// VectorizedFilter applys a list of filters to a Chunk and returns a bool slice, which indicates whether a row is passed the filters.
+// Filters is executed vectorized.
+func VectorizedFilter(ctx context.Context, filters []Expression, input *chunk.Chunk, selected []bool) ([]bool, error) {
 	selected = selected[:0]
 	for i, numRows := 0, input.NumRows(); i < numRows; i++ {
 		selected = append(selected, true)
@@ -251,6 +252,28 @@ func FilterChunk(ctx context.Context, filters []Expression, input *chunk.Chunk, 
 				return nil, errors.Trace(err)
 			}
 			selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
+		}
+	}
+	return selected, nil
+}
+
+// UnVectorizedFilter applys a list of filters to a Chunk and returns a bool slice, which indicates whether a row is passed the filters.
+// Filters is not executed vectorized.
+func UnVectorizedFilter(ctx context.Context, filters []Expression, input *chunk.Chunk, selected []bool) ([]bool, error) {
+	selected = selected[:0]
+	for i, numRows := 0, input.NumRows(); i < numRows; i++ {
+		selected = append(selected, true)
+	}
+	for row := input.Begin(); row != input.End(); row = row.Next() {
+		for _, filter := range filters {
+			filterResult, isNull, err := filter.EvalInt(row, ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
+			if !selected[row.Idx()] {
+				break
+			}
 		}
 	}
 	return selected, nil
