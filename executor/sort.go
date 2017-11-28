@@ -174,7 +174,7 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	for chk.NumRows() < chunk.MaxCapacity {
+	for chk.NumRows() < e.ctx.GetSessionVars().MaxChunkSize {
 		if e.Idx >= len(e.rowPointers) {
 			return nil
 		}

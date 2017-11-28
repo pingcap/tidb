@@ -35,7 +35,6 @@ type Chunk struct {
 // Capacity constants.
 const (
 	InitialCapacity = 32
-	MaxCapacity     = 1024
 )
 
 // NewChunk creates a new chunk with field types.
