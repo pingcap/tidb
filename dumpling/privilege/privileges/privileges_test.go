@@ -318,7 +318,7 @@ func newStore(c *C, dbPath string) kv.Storage {
 }
 
 func newSession(c *C, store kv.Storage, dbName string) tidb.Session {
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExec(c, se, "create database if not exists "+dbName)
 	mustExec(c, se, "use "+dbName)
