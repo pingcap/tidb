@@ -227,7 +227,7 @@ type SessionVars struct {
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 
-	// MaxChunkSize defines max row count in a Chunk during query execution.
+	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
 }
 
