@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -70,7 +72,7 @@ func (r *recordSet) setFields(tps ...uint8) {
 	}
 }
 
-func (r *recordSet) Next() (types.Row, error) {
+func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
@@ -159,8 +161,9 @@ func encodeKey(key types.Datum) types.Datum {
 
 func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
+	goCtx := goctx.Background()
 	for {
-		row, err := records.Next()
+		row, err := records.Next(goCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -179,8 +182,9 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
 	cms := NewCMSketch(8, 2048)
+	goCtx := goctx.Background()
 	for {
-		row, err := records.Next()
+		row, err := records.Next(goCtx)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
@@ -465,7 +469,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
-	ran := []*types.ColumnRange{{
+	ran := []*ranger.ColumnRange{{
 		Low:  types.Datum{},
 		High: types.MaxValueDatum(),
 	}}
@@ -532,7 +536,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
-	ran := []types.IntColumnRange{{
+	ran := []ranger.IntColumnRange{{
 		LowVal:  math.MinInt64,
 		HighVal: math.MaxInt64,
 	}}
@@ -594,7 +598,7 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 		Count:   int64(idx.totalRowCount()),
 		Indices: make(map[int64]*Index),
 	}
-	ran := []*types.IndexRange{{
+	ran := []*ranger.IndexRange{{
 		LowVal:  []types.Datum{types.MinNotNullDatum()},
 		HighVal: []types.Datum{types.MaxValueDatum()},
 	}}
