@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	goctx "golang.org/x/net/context"
@@ -41,24 +42,96 @@ type HashAggExec struct {
 	aggCtxsMap    aggCtxsMapper
 	groupMap      *mvmap.MVMap
 	groupIterator *mvmap.Iterator
+	inputRow      chunk.Row
 	GroupByItems  []expression.Expression
 }
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
+	if err := e.baseExecutor.Close(); err != nil {
+		return errors.Trace(err)
+	}
 	e.groupMap = nil
 	e.groupIterator = nil
 	e.aggCtxsMap = nil
-	return errors.Trace(e.children[0].Close())
+	return nil
 }
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.executed = false
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
 	e.aggCtxsMap = make(aggCtxsMapper, 0)
-	return errors.Trace(e.children[0].Open(goCtx))
+	e.inputRow = e.childrenResults[0].End()
+	return nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *HashAggExec) NextChunk(chk *chunk.Chunk) error {
+	// In this stage we consider all data from src as a single group.
+	if !e.executed {
+		err := e.innerNextChunk()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if (e.groupMap.Len() == 0) && !e.hasGby {
+			// If no groupby and no data, we should add an empty group.
+			// For example:
+			// "select count(c) from t;" should return one row [0]
+			// "select count(c) from t group by c1;" should return empty result set.
+			e.groupMap.Put([]byte{}, []byte{})
+		}
+		e.executed = true
+	}
+	chk.Reset()
+	for {
+		if chk.NumRows() == chunk.MaxCapacity {
+			return nil
+		}
+		groupKey, _ := e.groupIterator.Next()
+		if groupKey == nil {
+			return nil
+		}
+		aggCtxs := e.getContexts(groupKey)
+		for i, af := range e.AggFuncs {
+			af.SetResultInChunk(chk, i, aggCtxs[i])
+		}
+	}
+}
+
+// innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
+func (e *HashAggExec) innerNextChunk() (err error) {
+	for {
+		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+			groupKey, err := e.getGroupKey(e.inputRow)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if e.groupMap.Get(groupKey) == nil {
+				e.groupMap.Put(groupKey, []byte{})
+			}
+			aggCtxs := e.getContexts(groupKey)
+			for i, af := range e.AggFuncs {
+				err = af.Update(aggCtxs[i], e.sc, e.inputRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+		err := e.children[0].NextChunk(e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.inputRow = e.childrenResults[0].Begin()
+		// no more data.
+		if e.childrenResults[0].NumRows() == 0 {
+			return nil
+		}
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -83,6 +156,7 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 		}
 		e.executed = true
 	}
+
 	groupKey, _ := e.groupIterator.Next()
 	if groupKey == nil {
 		return nil, nil
@@ -95,7 +169,7 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 	return retRow, nil
 }
 
-func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
+func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
 	if !e.hasGby {
 		return []byte{}, nil
 	}
@@ -174,10 +248,13 @@ type StreamAggExec struct {
 
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.executed = false
 	e.hasData = false
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
-	return errors.Trace(e.children[0].Open(goCtx))
+	return nil
 }
 
 // Next implements the Executor Next interface.

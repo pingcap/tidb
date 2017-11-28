@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type sumFunction struct {
@@ -52,6 +53,18 @@ func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 		return
 	}
 	return ctx.Value
+}
+
+//  SetResultInChunk implements Aggregation interface.
+func (sf *sumFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+	if ctx.Value.Kind() == types.KindFloat64 {
+		dec := new(types.MyDecimal)
+		err := dec.FromFloat64(ctx.Value.GetFloat64())
+		terror.Log(errors.Trace(err))
+		chunk.AppendMyDecimal(colIdx, dec)
+		return
+	}
+	chunk.AppendMyDecimal(colIdx, ctx.Value.GetMysqlDecimal())
 }
 
 // GetPartialResult implements Aggregation interface.

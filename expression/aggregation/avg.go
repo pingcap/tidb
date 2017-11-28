@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type avgFunction struct {
@@ -100,6 +101,29 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))
 	d.SetMysqlDecimal(to)
+	return
+}
+
+//  SetResultInChunk implements Aggregation interface.
+func (af *avgFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+	var x *types.MyDecimal
+	switch ctx.Value.Kind() {
+	case types.KindFloat64:
+		x = new(types.MyDecimal)
+		err := x.FromFloat64(ctx.Value.GetFloat64())
+		terror.Log(errors.Trace(err))
+	case types.KindMysqlDecimal:
+		x = ctx.Value.GetMysqlDecimal()
+	default:
+		return
+	}
+	y := types.NewDecFromInt(ctx.Count)
+	to := new(types.MyDecimal)
+	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
+	terror.Log(errors.Trace(err))
+	err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
+	terror.Log(errors.Trace(err))
+	chunk.AppendMyDecimal(colIdx, to)
 	return
 }
 

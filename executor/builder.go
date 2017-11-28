@@ -604,22 +604,31 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 }
 
 func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	if v.AggType == plan.StreamedAgg {
 		return &StreamAggExec{
-			baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+			baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 			StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 			AggFuncs:     v.AggFuncs,
 			GroupByItems: v.GroupByItems,
 		}
+		//e.supportChk = true
+		//return e
 	}
-	return &HashAggExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+	e := &HashAggExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 		aggType:      v.AggType,
 		hasGby:       v.HasGby,
 	}
+	//e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {

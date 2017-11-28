@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type concatFunction struct {
@@ -92,6 +93,11 @@ func (cf *concatFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 		d.SetNull()
 	}
 	return d
+}
+
+//  SetResultInChunk implements Aggregation interface.
+func (cf *concatFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+	chunk.AppendString(colIdx, ctx.Buffer.String())
 }
 
 // GetPartialResult implements Aggregation interface.
