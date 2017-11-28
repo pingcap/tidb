@@ -63,8 +63,10 @@ func (e *tableScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			e.seekKey = nil
 			e.cursor++
+			if value == nil {
+				continue
+			}
 			return value, nil
 		}
 

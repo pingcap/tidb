@@ -234,11 +234,17 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 }
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
-	e := &LimitExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		Offset:       v.Offset,
-		Count:        v.Count,
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
+	e := &LimitExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		begin:        v.Offset,
+		end:          v.Offset + v.Count,
+	}
+	e.supportChk = true
 	return e
 }
 
@@ -631,8 +637,13 @@ func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	e := &ProjectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 		exprs:        v.Exprs,
 	}
 	e.baseExecutor.supportChk = true
