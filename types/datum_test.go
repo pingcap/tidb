@@ -586,3 +586,33 @@ func (ts *testDatumSuite) TestCopyDatum(c *C) {
 		}
 	}
 }
+
+func (ts *testDatumSuite) TestSetMyDecimal(c *C) {
+	cases := []struct {
+		F       float64
+		Length  uint32
+		Decimal uint16
+	}{
+		{-123.5, 4, 1},
+		{-23.45, 4, 2},
+		{-1.43, 3, 2},
+		{-0.4333, 4, 4},
+		{-0.068, 3, 3},
+		{-0.0099, 4, 4},
+		{-0, 1, 0},
+		{0.001, 3, 3},
+		{0.0012, 4, 4},
+		{0.12, 2, 2},
+		{1.2, 2, 1},
+		{1.23, 3, 2},
+		{123.3, 4, 1},
+		{2424.242424, 10, 6},
+	}
+	for _, t := range cases {
+		dec := NewDecFromFloatForTest(t.F)
+		var d Datum
+		d.SetMysqlDecimal(dec)
+		c.Assert(d.length, Equals, t.Length)
+		c.Assert(d.decimal, Equals, t.Decimal)
+	}
+}
