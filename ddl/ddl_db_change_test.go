@@ -51,7 +51,7 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	tidb.SetSchemaLease(s.lease)
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.se, err = tidb.CreateSession(s.store)
+	s.se, err = tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(goctx.Background(), "create database test_db_state")
 	c.Assert(err, IsNil)
@@ -210,7 +210,7 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 	var err error
 	for i, info := range t.sqlInfos {
 		for j, c := range info.cases {
-			c.session, err = tidb.CreateSession(store)
+			c.session, err = tidb.CreateSession4Test(store)
 			if err != nil {
 				return errors.Trace(err)
 			}

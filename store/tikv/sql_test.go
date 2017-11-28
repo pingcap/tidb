@@ -39,7 +39,7 @@ func (s *testSQLSuite) TestBusyServerCop(c *C) {
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	session, err := tidb.CreateSession(s.store)
+	session, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
