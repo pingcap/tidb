@@ -189,9 +189,11 @@ func (r *selectResult) getSelectResp() (*tipb.SelectResponse, error) {
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk, rowsData []byte) (remain []byte, err error) {
-	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize && len(rowsData) > 0 {
+	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
+	timeZone := r.ctx.GetSessionVars().GetTimeZone()
+	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], r.ctx.GetSessionVars().GetTimeZone())
+			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], timeZone)
 			if err != nil {
 				return rowsData, errors.Trace(err)
 			}
