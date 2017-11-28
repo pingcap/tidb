@@ -89,7 +89,7 @@ func (e *HashAggExec) NextChunk(chk *chunk.Chunk) error {
 	}
 	chk.Reset()
 	for {
-		if chk.NumRows() == chunk.MaxCapacity {
+		if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
 			return nil
 		}
 		groupKey, _ := e.groupIterator.Next()
