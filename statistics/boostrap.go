@@ -33,7 +33,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	tables := make(statsCache, len(rows))
 	for _, row := range rows {
 		tableID := row.GetInt64(1)
-		table, ok := is.TableByID(row.GetInt64(1))
+		table, ok := is.TableByID(tableID)
 		if !ok {
 			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
 			continue
@@ -138,14 +138,14 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 			d := row.GetDatum(6, &fields[6].Column.FieldType)
 			lower, err = d.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				terror.Log(errors.Trace(err))
+				log.Debugf("decode bucket lower bound failed: %s", histID, tableID, errors.ErrorStack(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = row.GetDatum(7, &fields[7].Column.FieldType)
 			upper, err = d.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				terror.Log(errors.Trace(err))
+				log.Debugf("decode bucket upper bound failed: %s", histID, tableID, errors.ErrorStack(err))
 				delete(table.Columns, histID)
 				continue
 			}
@@ -182,7 +182,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 	return nil
 }
 
-// InitStats will init the stats cache using a faster strategy than `Update` which is used for delta update.
+// InitStats will init the stats cache using full load strategy.
 func (h *Handle) InitStats(is infoschema.InfoSchema) error {
 	tables, err := h.initStatsMeta(is)
 	if err != nil {
