@@ -193,7 +193,7 @@ func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
 var testConnID uint64
 
 func newSession(c *C, store kv.Storage, dbName string) Session {
-	se, err := CreateSession(store)
+	se, err := CreateSession4Test(store)
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
