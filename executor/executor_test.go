@@ -2270,3 +2270,12 @@ func (s *testSuite) TestMaxInt64Handle(c *C) {
 	tk.MustExec("delete from t where id = 9223372036854775807")
 	tk.MustQuery("select * from t").Check(nil)
 }
+
+func (s *testSuite) TestTableScanWithPointRanges(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t values(1), (5), (10)")
+	tk.MustQuery("select * from t where id in(1, 2, 10)").Check(testkit.Rows("1", "10"))
+}
