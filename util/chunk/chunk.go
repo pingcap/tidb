@@ -553,3 +553,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].isNull(r.idx)
 }
+
+func (r Row) Invalid(colIdx int) bool {
+	return len(r.c.columns[colIdx].nullBitmap) == 0
+}
+
+func (r Row) GetChunk() *Chunk {
+	return r.c
+}
