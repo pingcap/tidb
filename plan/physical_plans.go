@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	_ PhysicalPlan = &Selection{}
+	_ PhysicalPlan = &PhysicalSelection{}
 	_ PhysicalPlan = &Projection{}
 	_ PhysicalPlan = &Exists{}
 	_ PhysicalPlan = &MaxOneRow{}
@@ -387,11 +387,18 @@ func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
 	return &np
 }
 
+// PhysicalSelection represents a filter.
+type PhysicalSelection struct {
+	*basePlan
+	basePhysicalPlan
+
+	Conditions []expression.Expression
+}
+
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Selection) Copy() PhysicalPlan {
+func (p *PhysicalSelection) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
@@ -543,7 +550,7 @@ func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Sche
 
 func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
-	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
+	case *Limit, *TopN, *Sort, *PhysicalSelection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
 		p.SetSchema(buildJoinSchema(x.JoinType, p, x.outerIndex))

@@ -308,15 +308,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		var selection *plan.Selection
-		for _, child := range p.Children() {
-			p, ok := child.(*plan.Selection)
-			if ok {
-				selection = p
-				break
-			}
-		}
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+		selection := p.Children()[0].(*plan.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
@@ -498,14 +490,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		var selection *plan.Selection
-		for _, child := range p.Children() {
-			p, ok := child.(*plan.Selection)
-			if ok {
-				selection = p
-				break
-			}
-		}
+		selection := p.Children()[0].(*plan.LogicalSelection)
 		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
@@ -749,15 +734,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		var sel *plan.Selection
-		for _, child := range p.Children() {
-			plan, ok := child.(*plan.Selection)
-			if ok {
-				sel = plan
-				break
-			}
-		}
-		c.Assert(sel, NotNil, Commentf("expr:%v", tt.exprStr))
+		sel := p.Children()[0].(*plan.LogicalSelection)
 		ds, ok := sel.Children()[0].(*plan.DataSource)
 		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(sel.Conditions))

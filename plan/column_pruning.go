@@ -77,7 +77,7 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Selection) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	for _, cond := range p.Conditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(cond)...)
