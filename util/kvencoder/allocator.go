@@ -29,7 +29,7 @@ func NewAllocator() autoid.Allocator {
 	return &allocator{}
 }
 
-// make sure that only use it in single thread
+// allocator make sure that only use it in single thread
 type allocator struct {
 	base int64
 }

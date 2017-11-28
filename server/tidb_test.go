@@ -359,7 +359,7 @@ func (ts *TidbTestSuite) TestClientWithCollation(c *C) {
 	runTestClientWithCollation(c)
 }
 
-func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
+func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	// issue #4540
 	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
@@ -392,6 +392,8 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 		"`v` varchar(50) DEFAULT ''," +
 		"`w` varchar(300) NOT NULL," +
 		"`x` varchar(250) DEFAULT ''," +
+		"`y` decimal(20)," +
+		"`z` decimal(20, 4)," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
 	_, err = ctx.Execute(goCtx, testSQL)
@@ -404,6 +406,14 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
 	c.Assert(int(cols[1].ColumnLength), Equals, len(row.GetString(1))*tmysql.MaxBytesOfCharacter)
+
+	// for issue#5246
+	rs, err = ctx.Execute(goCtx, "select y, z from t1")
+	c.Assert(err, IsNil)
+	cols = rs[0].Columns()
+	c.Assert(len(cols), Equals, 2)
+	c.Assert(int(cols[0].ColumnLength), Equals, 21)
+	c.Assert(int(cols[1].ColumnLength), Equals, 22)
 }
 
 func (ts *TidbTestSuite) TestSumAvg(c *C) {

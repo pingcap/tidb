@@ -51,7 +51,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 	ts.store = store
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	ts.se, err = tidb.CreateSession(ts.store)
+	ts.se, err = tidb.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 }
 

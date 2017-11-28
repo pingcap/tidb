@@ -231,6 +231,9 @@ type SessionVars struct {
 	// IDAllocator is provided by kvEncoder, if it is provided, we will use it to alloc auto id instead of using
 	// Table.alloc.
 	IDAllocator autoid.Allocator
+
+	// MaxChunkSize defines max row count of a Chunk during query execution.
+	MaxChunkSize int
 }
 
 // NewSessionVars creates a session vars object.
@@ -254,6 +257,7 @@ func NewSessionVars() *SessionVars {
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
+		MaxChunkSize:               DefMaxChunkSize,
 	}
 }
 

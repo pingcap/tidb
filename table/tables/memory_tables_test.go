@@ -39,7 +39,7 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 	store, err := tikv.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
-	ts.se, err = tidb.CreateSession(ts.store)
+	ts.se, err = tidb.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
 	// create table
