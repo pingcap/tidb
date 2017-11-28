@@ -348,6 +348,7 @@ type LimitExec struct {
 	end    uint64
 	cursor uint64
 
+	// meetFirstBatch represents whether we have met the first valid Chunk from child.
 	meetFirstBatch bool
 }
 
