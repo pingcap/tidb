@@ -243,7 +243,7 @@ func (s *testSuite) TestRenameTable(c *C) {
 	// Make sure the drop old database doesn't affect the t1's operations.
 	tk.MustExec("drop database rename1")
 	tk.MustExec("insert rename2.t1 values ()")
-	result := tk.MustQuery("select * from rename2.t1")
+	result = tk.MustQuery("select * from rename2.t1")
 	result.Check(testkit.Rows("1", "2"))
 	tk.MustExec("drop database rename2")
 

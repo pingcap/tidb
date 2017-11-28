@@ -143,9 +143,8 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.DropTable(1, tbInfo2, true)
+	err = t.DropTable(1, tbInfo2.ID)
 	c.Assert(err, IsNil)
-	tbInfo2.OldSchemaID = 1
 	// Make sure auto id key-value entry is gone.
 	n, err = t.GetAutoTableID(1, 2)
 	c.Assert(err, IsNil)

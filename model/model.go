@@ -110,7 +110,17 @@ type TableInfo struct {
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
+	// TODO: Remove it. Now it only uses for compatibility with old version.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+}
+
+// GetDBID returns the current schema ID that is used to create an allocator.
+// TODO: Remove it after removing OldSchemaID.
+func (t *TableInfo) GetDBID(dbID int64) int64 {
+	if t.OldSchemaID != 0 {
+		return t.OldSchemaID
+	}
+	return dbID
 }
 
 // Clone clones TableInfo.
