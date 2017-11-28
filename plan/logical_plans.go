@@ -27,7 +27,7 @@ var (
 	_ LogicalPlan = &LogicalJoin{}
 	_ LogicalPlan = &LogicalAggregation{}
 	_ LogicalPlan = &Projection{}
-	_ LogicalPlan = &Selection{}
+	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
 	_ LogicalPlan = &Exists{}
 	_ LogicalPlan = &MaxOneRow{}
@@ -206,11 +206,10 @@ func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCol
 	return corCols
 }
 
-// Selection means a filter.
-type Selection struct {
+// LogicalSelection represents a where or having predicate.
+type LogicalSelection struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
@@ -218,7 +217,7 @@ type Selection struct {
 	Conditions []expression.Expression
 }
 
-func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalSelection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, cond := range p.Conditions {
 		corCols = append(corCols, extractCorColumns(cond)...)
