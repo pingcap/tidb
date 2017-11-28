@@ -143,7 +143,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[<nil> <nil>,+inf +inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
+			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
