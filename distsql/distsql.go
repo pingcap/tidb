@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -73,7 +74,7 @@ type selectResult struct {
 
 	rowLen     int
 	fieldTypes []*types.FieldType
-	loc        *time.Location
+	ctx        context.Context
 
 	selectResp *tipb.SelectResponse
 	respChkIdx int
@@ -142,18 +143,22 @@ func (r *selectResult) NextRaw() ([]byte, error) {
 // NextChunk reads data to the chunk.
 func (r *selectResult) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
-	selectResp, err := r.getSelectResp()
-	if err != nil {
-		return errors.Trace(err)
+	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
+		selectResp, err := r.getSelectResp()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if selectResp == nil {
+			return nil
+		}
+		selectResp.Chunks[r.respChkIdx].RowsData, err = r.readRowsData(chk, selectResp.Chunks[r.respChkIdx].RowsData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
+			r.respChkIdx++
+		}
 	}
-	if selectResp == nil {
-		return nil
-	}
-	err = r.readRowsData(chk, selectResp.Chunks[r.respChkIdx].RowsData)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	r.respChkIdx++
 	return nil
 }
 
@@ -183,17 +188,16 @@ func (r *selectResult) getSelectResp() (*tipb.SelectResponse, error) {
 	}
 }
 
-func (r *selectResult) readRowsData(chk *chunk.Chunk, rowsData []byte) error {
-	var err error
-	for len(rowsData) > 0 {
+func (r *selectResult) readRowsData(chk *chunk.Chunk, rowsData []byte) (remain []byte, err error) {
+	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], r.loc)
+			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], r.ctx.GetSessionVars().GetTimeZone())
 			if err != nil {
-				return errors.Trace(err)
+				return rowsData, errors.Trace(err)
 			}
 		}
 	}
-	return nil
+	return rowsData, nil
 }
 
 // Close closes selectResult.
@@ -262,7 +266,7 @@ func (pr *partialResult) Close() error {
 
 // SelectDAG sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func SelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, fieldTypes []*types.FieldType, loc *time.Location) (SelectResult, error) {
+func SelectDAG(goCtx goctx.Context, ctx context.Context, client kv.Client, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics.
@@ -273,7 +277,7 @@ func SelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, fieldType
 		}
 	}()
 
-	resp := client.Send(ctx, kvReq)
+	resp := client.Send(goCtx, kvReq)
 	if resp == nil {
 		err = errors.New("client returns nil response")
 		return nil, errors.Trace(err)
@@ -285,7 +289,7 @@ func SelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request, fieldType
 		closed:     make(chan struct{}),
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
-		loc:        loc,
+		ctx:        ctx,
 	}
 	return result, nil
 }
