@@ -28,7 +28,7 @@ type testRangeSuite struct {
 }
 
 func (s *testRangeSuite) TestRange(c *C) {
-	alignedTests := []struct {
+	simpleTests := []struct {
 		ran ranger.IndexRange
 		str string
 	}{
@@ -37,7 +37,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 				LowVal:  []types.Datum{types.NewIntDatum(1)},
 				HighVal: []types.Datum{types.NewIntDatum(1)},
 			},
-			str: "[1 <nil>,1 +inf]",
+			str: "[1,1]",
 		},
 		{
 			ran: ranger.IndexRange{
@@ -45,7 +45,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 				HighVal:     []types.Datum{types.NewIntDatum(1)},
 				HighExclude: true,
 			},
-			str: "[1 <nil>,1 <nil>)",
+			str: "[1,1)",
 		},
 		{
 			ran: ranger.IndexRange{
@@ -54,7 +54,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 				LowExclude:  true,
 				HighExclude: true,
 			},
-			str: "(1 +inf,2 <nil>)",
+			str: "(1,2)",
 		},
 		{
 			ran: ranger.IndexRange{
@@ -62,7 +62,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 				HighVal:     []types.Datum{types.NewFloat64Datum(1.9)},
 				HighExclude: true,
 			},
-			str: "[1.1 <nil>,1.9 <nil>)",
+			str: "[1.1,1.9)",
 		},
 		{
 			ran: ranger.IndexRange{
@@ -70,11 +70,10 @@ func (s *testRangeSuite) TestRange(c *C) {
 				HighVal:     []types.Datum{types.NewIntDatum(1)},
 				HighExclude: true,
 			},
-			str: "[-inf <nil>,1 <nil>)",
+			str: "[-inf,1)",
 		},
 	}
-	for _, t := range alignedTests {
-		t.ran.Align(2)
+	for _, t := range simpleTests {
 		c.Assert(t.ran.String(), Equals, t.str)
 	}
 

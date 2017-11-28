@@ -22,6 +22,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -581,7 +582,6 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) (float64
 func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.IndexRange) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
-		indexRange.Align(len(idx.Info.Columns))
 		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -590,7 +590,8 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if bytes.Equal(lb, rb) {
+		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
+		if fullLen && bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
 				rowCount, err1 := idx.equalRowCount(sc, lb)
 				if err1 != nil {
@@ -601,10 +602,10 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 			continue
 		}
 		if indexRange.LowExclude {
-			lb = append(lb, 0)
+			lb = kv.Key(lb).PrefixNext()
 		}
 		if !indexRange.HighExclude {
-			rb = append(rb, 0)
+			rb = kv.Key(rb).PrefixNext()
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)

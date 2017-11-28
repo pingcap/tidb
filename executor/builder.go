@@ -111,7 +111,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSemiJoin(v)
 	case *plan.PhysicalIndexJoin:
 		return b.buildIndexLookUpJoin(v)
-	case *plan.Selection:
+	case *plan.PhysicalSelection:
 		return b.buildSelection(v)
 	case *plan.PhysicalAggregation:
 		return b.buildAggregation(v)
@@ -234,11 +234,17 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 }
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
-	e := &LimitExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		Offset:       v.Offset,
-		Count:        v.Count,
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
+	e := &LimitExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		begin:        v.Offset,
+		end:          v.Offset + v.Count,
+	}
+	e.supportChk = true
 	return e
 }
 
@@ -622,7 +628,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 	}
 }
 
-func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
+func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
 	exec := &SelectionExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		Conditions:   v.Conditions,
@@ -631,8 +637,13 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	e := &ProjectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 		exprs:        v.Exprs,
 	}
 	e.baseExecutor.supportChk = true
@@ -1166,7 +1177,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), builder.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1190,7 +1201,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), builder.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

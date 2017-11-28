@@ -100,7 +100,7 @@ func (p *DataSource) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *Selection) prepareStatsProfile() *statsProfile {
+func (p *LogicalSelection) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = childProfile.collapse(selectionFactor)
 	return p.profile
