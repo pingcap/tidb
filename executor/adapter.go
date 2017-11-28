@@ -73,8 +73,8 @@ func (a *recordSet) Fields() []*ast.ResultField {
 	return a.fields
 }
 
-func (a *recordSet) Next() (types.Row, error) {
-	row, err := a.executor.Next()
+func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
+	row, err := a.executor.Next(goCtx)
 	if err != nil {
 		a.lastErr = err
 		return nil, errors.Trace(err)
@@ -141,12 +141,11 @@ type ExecStmt struct {
 	// Text represents the origin query text.
 	Text string
 
+	StmtNode ast.StmtNode
+
 	Ctx            context.Context
 	startTime      time.Time
 	isPreparedStmt bool
-
-	// ReadOnly represents the statement is read-only.
-	ReadOnly bool
 }
 
 // OriginText implements ast.Statement interface.
@@ -161,7 +160,26 @@ func (a *ExecStmt) IsPrepared() bool {
 
 // IsReadOnly implements ast.Statement interface.
 func (a *ExecStmt) IsReadOnly() bool {
-	return a.ReadOnly
+	readOnlyCheckStmt := a.StmtNode
+	if checkPlan, ok := a.Plan.(*plan.Execute); ok {
+		readOnlyCheckStmt = checkPlan.Stmt
+	}
+	return ast.IsReadOnly(readOnlyCheckStmt)
+}
+
+// RebuildPlan implements ast.Statement interface.
+func (a *ExecStmt) RebuildPlan() error {
+	is := GetInfoSchema(a.Ctx)
+	a.InfoSchema = is
+	if err := plan.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
+		return errors.Trace(err)
+	}
+	p, err := plan.Optimize(a.Ctx, a.StmtNode, is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	a.Plan = p
+	return nil
 }
 
 // Exec implements the ast.Statement Exec interface.
@@ -212,7 +230,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}
 	// Fields or Schema are only used for statements that return result set.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(e, ctx, pi)
+		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
 	}
 
 	return &recordSet{
@@ -223,7 +241,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -248,7 +266,7 @@ func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi pro
 	}()
 	for {
 		var row Row
-		row, err = e.Next()
+		row, err = e.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

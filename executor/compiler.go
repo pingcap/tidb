@@ -46,18 +46,13 @@ func (c *Compiler) Compile(goCtx goctx.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, errors.Trace(err)
 	}
 
-	readOnlyCheckStmt := stmtNode
-	if checkPlan, ok := finalPlan.(*plan.Execute); ok {
-		readOnlyCheckStmt = checkPlan.Stmt
-	}
-
 	return &ExecStmt{
 		InfoSchema: infoSchema,
 		Plan:       finalPlan,
 		Expensive:  stmtCount(stmtNode, finalPlan, c.Ctx.GetSessionVars().InRestrictedSQL),
 		Cacheable:  plan.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
-		ReadOnly:   ast.IsReadOnly(readOnlyCheckStmt),
+		StmtNode:   stmtNode,
 		Ctx:        c.Ctx,
 	}, nil
 }

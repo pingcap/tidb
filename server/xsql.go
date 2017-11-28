@@ -89,7 +89,7 @@ func (xsql *xSQL) executeStmt(goCtx goctx.Context, sql string) error {
 		return err
 	}
 	for _, r := range rs {
-		if err := WriteResultSet(r, xsql.pkt, xsql.xcc.alloc); err != nil {
+		if err := WriteResultSet(goCtx, r, xsql.pkt, xsql.xcc.alloc); err != nil {
 			return err
 		}
 	}
@@ -235,9 +235,9 @@ func writeColumnsInfo(columns []*ColumnInfo, pkt *xpacketio.XPacketIO) error {
 
 // WriteResultSet write result set message to client
 // @TODO this is important to performance, need to consider carefully and tuning in next pr
-func WriteResultSet(r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator) error {
+func WriteResultSet(goCtx goctx.Context, r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator) error {
 	defer terror.Call(r.Close)
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,7 +271,7 @@ func WriteResultSet(r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator
 		if err = pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_ROW, data); err != nil {
 			return errors.Trace(err)
 		}
-		row, err = r.Next()
+		row, err = r.Next(goCtx)
 	}
 
 	if err := pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_FETCH_DONE, []byte{}); err != nil {

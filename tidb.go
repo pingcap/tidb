@@ -180,7 +180,7 @@ func GetHistory(ctx context.Context) *StmtHistory {
 }
 
 // GetRows gets all the rows from a RecordSet, only used for test.
-func GetRows(rs ast.RecordSet) ([]types.Row, error) {
+func GetRows(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
@@ -204,7 +204,7 @@ func GetRows(rs ast.RecordSet) ([]types.Row, error) {
 		}
 	} else {
 		for {
-			row, err := rs.Next()
+			row, err := rs.Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

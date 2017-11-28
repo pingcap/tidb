@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testSampleSuite{})
@@ -52,7 +53,7 @@ func (r *recordSet) setFields(tps ...uint8) {
 	}
 }
 
-func (r *recordSet) Next() (types.Row, error) {
+func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}

@@ -392,7 +392,7 @@ func (xsql *xSQL) isCollection(goCtx goctx.Context, schema string, collection st
 	}
 
 	defer terror.Call(rs[0].Close)
-	row, err := rs[0].Next()
+	row, err := rs[0].Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

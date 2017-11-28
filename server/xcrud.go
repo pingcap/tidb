@@ -163,7 +163,7 @@ func (crud *xCrud) dealCrudStmtExecute(goCtx goctx.Context, msgType Mysqlx.Clien
 		return err
 	}
 	for _, r := range rs {
-		if err := WriteResultSet(r, crud.pkt, crud.alloc); err != nil {
+		if err := WriteResultSet(goCtx, r, crud.pkt, crud.alloc); err != nil {
 			return err
 		}
 	}

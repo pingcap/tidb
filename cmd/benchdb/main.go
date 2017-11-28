@@ -115,9 +115,10 @@ func (ut *benchDB) mustExec(sql string) {
 		log.Fatal(err)
 	}
 	if len(rss) > 0 {
+		goCtx := goctx.Background()
 		rs := rss[0]
 		for {
-			row, err1 := rs.Next()
+			row, err1 := rs.Next(goCtx)
 			if err1 != nil {
 				log.Fatal(err1)
 			}
