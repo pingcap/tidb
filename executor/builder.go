@@ -674,11 +674,17 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
+	sortExec.supportChk = true
 	if v.ExecLimit != nil {
 		return &TopNExec{
 			SortExec: sortExec,
