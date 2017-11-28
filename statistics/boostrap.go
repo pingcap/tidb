@@ -138,14 +138,14 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 			d := row.GetDatum(6, &fields[6].Column.FieldType)
 			lower, err = d.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				log.Debugf("decode bucket lower bound failed: %s", histID, tableID, errors.ErrorStack(err))
+				log.Debugf("decode bucket lower bound failed: %s", errors.ErrorStack(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = row.GetDatum(7, &fields[7].Column.FieldType)
 			upper, err = d.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				log.Debugf("decode bucket upper bound failed: %s", histID, tableID, errors.ErrorStack(err))
+				log.Debugf("decode bucket upper bound failed: %s", errors.ErrorStack(err))
 				delete(table.Columns, histID)
 				continue
 			}
