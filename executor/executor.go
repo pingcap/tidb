@@ -601,7 +601,7 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 				continue
 			}
 			chk.AppendRow(0, e.inputRow)
-			if chk.NumRows() == chunk.MaxCapacity {
+			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
 				return nil
 			}
 		}
