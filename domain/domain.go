@@ -611,7 +611,7 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	statsHandle := do.StatsHandle()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
-		log.Error("[stats] init stats info fail: ", errors.ErrorStack(err))
+		log.Error("[stats] init stats info failed: ", errors.ErrorStack(err))
 	}
 	for {
 		select {

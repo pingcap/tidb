@@ -27,7 +27,7 @@ import (
 )
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
-	sql := fmt.Sprintf("select version, table_id, modify_count, count from mysql.stats_meta")
+	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -55,7 +55,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
-	sql := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch from mysql.stats_histograms")
+	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch from mysql.stats_histograms"
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -107,7 +107,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 }
 
 func (h *Handle) initStatsBuckets(tables statsCache) error {
-	sql := fmt.Sprintf("select table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets")
+	sql := "select table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets"
 	rows, fields, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
