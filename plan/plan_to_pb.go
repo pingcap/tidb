@@ -105,6 +105,11 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
+	unique := p.Index.Unique
+	if len(p.Ranges) > 0 && len(p.Index.Columns) != len(p.Ranges[0].LowVal) {
+		unique = false
+	}
+	idxExec.Unique = &unique
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 
