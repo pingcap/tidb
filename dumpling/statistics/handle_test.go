@@ -113,13 +113,22 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 	c.Assert(len(a.Columns), Equals, len(b.Columns))
 	for i := range a.Columns {
+		c.Assert(a.Columns[i].Count, Equals, b.Columns[i].Count)
 		assertHistogramEqual(c, a.Columns[i].Histogram, b.Columns[i].Histogram)
-		c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
+		if a.Columns[i].CMSketch == nil {
+			c.Assert(b.Columns[i].CMSketch, IsNil)
+		} else {
+			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
+		}
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
 		assertHistogramEqual(c, a.Indices[i].Histogram, b.Indices[i].Histogram)
-		c.Assert(a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch), IsTrue)
+		if a.Columns[i].CMSketch == nil {
+			c.Assert(b.Columns[i].CMSketch, IsNil)
+		} else {
+			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
+		}
 	}
 }
 
@@ -338,6 +347,31 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 		c.Assert(hist, Equals, newStatsTbl2.Columns[id])
 	}
 	c.Assert(newStatsTbl2.Columns[int64(3)].LastUpdateVersion, Greater, newStatsTbl2.Columns[int64(1)].LastUpdateVersion)
+}
+
+func (s *testStatsCacheSuite) TestInitStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	testKit.MustExec("analyze table t")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.Lease = time.Millisecond
+
+	h.Clear()
+	c.Assert(h.InitStats(is), IsNil)
+	table0 := h.GetTableStats(tbl.Meta().ID)
+	h.Clear()
+	c.Assert(h.Update(is), IsNil)
+	table1 := h.GetTableStats(tbl.Meta().ID)
+	assertTableEqual(c, table0, table1)
+	h.Lease = 0
 }
 
 func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
