@@ -338,10 +338,10 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	}
 	if fld.Column.Tp == mysql.TypeNewDecimal {
 		// Consider the negative sign.
-		ci.ColumnLength += 1
+		ci.ColumnLength++
 		if fld.Column.Decimal > types.DefaultFsp {
 			// Consider the decimal point.
-			ci.ColumnLength += 1
+			ci.ColumnLength++
 		}
 	} else {
 		// Fix issue #4540.
