@@ -596,7 +596,6 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
-	log.Warning("again")
 	if s.Value(context.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
