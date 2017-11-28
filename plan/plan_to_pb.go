@@ -106,6 +106,7 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Desc:    p.Desc,
 	}
 	unique := p.Index.Unique
+	// If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
 	if len(p.Ranges) > 0 && len(p.Index.Columns) != len(p.Ranges[0].LowVal) {
 		unique = false
 	}
