@@ -27,7 +27,7 @@ import (
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *basePhysicalPlan) ToPB(_ context.Context) (*tipb.Executor, error) {
-	return nil, errors.Errorf("plan %d fails converts to PB", p.basePlan.id)
+	return nil, errors.Errorf("plan %s fails converts to PB", p.basePlan.ExplainID())
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -44,7 +44,7 @@ func (p *PhysicalAggregation) ToPB(ctx context.Context) (*tipb.Executor, error) 
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *Selection) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalSelection) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	selExec := &tipb.Selection{
