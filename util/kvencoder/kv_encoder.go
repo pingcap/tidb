@@ -17,6 +17,10 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/tablecodec"
+
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 
@@ -41,39 +45,45 @@ type KvPair struct {
 // KvEncoder is a encoder that transfer sql to key-value pairs.
 type KvEncoder interface {
 	// Encode transfer sql to kv pairs.
+	// before use Encode() method, please make sure you already call Schema() method.
+	// NOTE: now we just support transfer insert statement to kv pairs.
+	// (if we wanna support other statement, we need to add a kv.Storage parameter,
+	// and pass tikv store in.)
 	Encode(sql string) ([]KvPair, error)
+
+	// ExecDDLSQL execute ddl sql, you must use it to create schema infos.
+	ExecDDLSQL(sql string) error
+
+	// SetTableID set KvEncoder's tableID, just for test
+	SetTableID(tableID int64)
 }
 
 type kvEncoder struct {
-	store kv.Storage
-	se    tidb.Session
+	store   kv.Storage
+	dom     *domain.Domain
+	se      tidb.Session
+	tableID int64
 }
 
 // New new a KvEncoder
-func New(store kv.Storage, dbName string, idAlloc autoid.Allocator, skipConstraintCheck bool) (KvEncoder, error) {
+func New(dbName string, tableID int64, idAlloc autoid.Allocator) (KvEncoder, error) {
 	kvEnc := &kvEncoder{}
-	err := kvEnc.initial(store, dbName, idAlloc)
+	err := kvEnc.initial(dbName, idAlloc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	kvEnc.se.GetSessionVars().SkipConstraintCheck = skipConstraintCheck
+	kvEnc.tableID = tableID
 	return kvEnc, nil
 }
 
 func (e *kvEncoder) Encode(sql string) ([]KvPair, error) {
-	if e.se == nil {
-		return nil, errors.Errorf("Please call KvEncoder.Init() first.")
-	}
-
 	e.se.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	_, err := e.se.Execute(goctx.Background(), sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	txn := e.se.Txn()
-	kvPairs := make([]KvPair, 0, txn.Len())
 	defer func() {
 		err1 := e.se.RollbackTxn(goctx.Background())
 		if err1 != nil {
@@ -81,7 +91,12 @@ func (e *kvEncoder) Encode(sql string) ([]KvPair, error) {
 		}
 	}()
 
+	txn := e.se.Txn()
+	kvPairs := make([]KvPair, 0, txn.Len())
 	err = kv.WalkMemBuffer(txn.GetMemBuffer(), func(k kv.Key, v []byte) error {
+		if tablecodec.IsRecordKey(k) {
+			k = tablecodec.ReplaceRecordKeyTableID(k, e.tableID)
+		}
 		kvPairs = append(kvPairs, KvPair{Key: k, Val: v})
 		return nil
 	})
@@ -92,7 +107,34 @@ func (e *kvEncoder) Encode(sql string) ([]KvPair, error) {
 	return kvPairs, nil
 }
 
-func (e *kvEncoder) initial(store kv.Storage, dbName string, idAlloc autoid.Allocator) error {
+func (e *kvEncoder) ExecDDLSQL(sql string) error {
+	_, err := e.se.Execute(goctx.Background(), sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+func (e *kvEncoder) SetTableID(tableID int64) {
+	e.tableID = tableID
+}
+
+func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := tikv.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	tidb.SetSchemaLease(0)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
+}
+
+func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) error {
+	store, dom, err := newMockTikvWithBootstrap()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	se, err := tidb.CreateSession(store)
 	if err != nil {
 		return errors.Trace(err)
@@ -105,7 +147,9 @@ func (e *kvEncoder) initial(store kv.Storage, dbName string, idAlloc autoid.Allo
 	}
 
 	se.GetSessionVars().IDAllocator = idAlloc
+	se.GetSessionVars().SkipConstraintCheck = true
 	e.se = se
 	e.store = store
+	e.dom = dom
 	return nil
 }
