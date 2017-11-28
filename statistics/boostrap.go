@@ -14,8 +14,6 @@
 package statistics
 
 import (
-	"fmt"
-
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
