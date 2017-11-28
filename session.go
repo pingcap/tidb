@@ -964,6 +964,15 @@ func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
 	return n2
 }
 
+func CreateSession4Test(store kv.Storage) (Session, error) {
+	s, err := CreateSession(store)
+	if err != nil {
+		// initialize session variables for test.
+		s.GetSessionVars().MaxChunkSize = 2
+	}
+	return s, errors.Trace(err)
+}
+
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
 	s, err := createSession(store)
