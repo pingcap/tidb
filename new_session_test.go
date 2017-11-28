@@ -1545,7 +1545,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 		numChunks++
 	}
 	c.Assert(count, Equals, 100)
-	c.Assert(numChunks, Equals, 10)
+	c.Assert(numChunks, Equals, 50)
 	rs.Close()
 }
 
