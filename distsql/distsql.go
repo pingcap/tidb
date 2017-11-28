@@ -144,62 +144,60 @@ func (r *selectResult) NextRaw() ([]byte, error) {
 func (r *selectResult) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
-		selectResp, err := r.getSelectResp()
+		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+			err := r.getSelectResp()
+			if err != nil || r.selectResp == nil {
+				return errors.Trace(err)
+			}
+		}
+		err := r.readRowsData(chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if selectResp == nil {
-			return nil
-		}
-		selectResp.Chunks[r.respChkIdx].RowsData, err = r.readRowsData(chk, selectResp.Chunks[r.respChkIdx].RowsData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if len(selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
+		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
 			r.respChkIdx++
 		}
 	}
 	return nil
 }
 
-func (r *selectResult) getSelectResp() (*tipb.SelectResponse, error) {
-	if r.selectResp != nil && r.respChkIdx < len(r.selectResp.Chunks) {
-		return r.selectResp, nil
-	}
+func (r *selectResult) getSelectResp() error {
+	r.respChkIdx = 0
 	for {
 		re := <-r.results
 		if re.err != nil {
-			return nil, errors.Trace(re.err)
+			return errors.Trace(re.err)
 		}
 		if re.result == nil {
-			return nil, nil
+			r.selectResp = nil
+			return nil
 		}
-		resp := new(tipb.SelectResponse)
-		err := resp.Unmarshal(re.result)
+		r.selectResp = new(tipb.SelectResponse)
+		err := r.selectResp.Unmarshal(re.result)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		if len(resp.Chunks) == 0 {
+		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
-		r.selectResp = resp
-		r.respChkIdx = 0
-		return resp, nil
+		return nil
 	}
 }
 
-func (r *selectResult) readRowsData(chk *chunk.Chunk, rowsData []byte) (remain []byte, err error) {
+func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
+	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	timeZone := r.ctx.GetSessionVars().GetTimeZone()
 	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], timeZone)
 			if err != nil {
-				return rowsData, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 	}
-	return rowsData, nil
+	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
+	return nil
 }
 
 // Close closes selectResult.
