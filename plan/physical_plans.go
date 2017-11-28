@@ -387,7 +387,7 @@ func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
 	return &np
 }
 
-// PhysicalSelection means a filter.
+// PhysicalSelection  a filter.
 type PhysicalSelection struct {
 	*basePlan
 	basePhysicalPlan

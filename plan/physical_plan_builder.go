@@ -314,15 +314,6 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	return t, nil
 }
 
-func (p *LogicalSelection) generatePhysicalPlans() []PhysicalPlan {
-	sel := PhysicalSelection{
-		Conditions: p.Conditions,
-	}.init(p.ctx)
-	sel.profile = p.profile
-	sel.SetSchema(p.Schema())
-	return []PhysicalPlan{sel}
-}
-
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
 	// look up the task map
