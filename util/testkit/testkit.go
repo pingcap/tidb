@@ -119,7 +119,7 @@ var connectionID uint64
 func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
-		tk.Se, err = tidb.CreateSession(tk.store)
+		tk.Se, err = tidb.CreateSession4Test(tk.store)
 		tk.c.Assert(err, check.IsNil)
 		id := atomic.AddUint64(&connectionID, 1)
 		tk.Se.SetConnectionID(id)
