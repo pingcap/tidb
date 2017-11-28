@@ -798,6 +798,7 @@ func (e *UnionExec) waitAllFinished(forChunk bool) {
 	e.wg.Wait()
 	if forChunk {
 		close(e.resultPool)
+		close(e.resoucePool)
 	} else {
 		close(e.resultCh)
 	}
@@ -923,7 +924,7 @@ func (e *UnionExec) Next(goCtx goctx.Context) (Row, error) {
 func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.initialized {
-		e.initialize(nil, false)
+		e.initialize(nil, true)
 		e.initialized = true
 	}
 	result, ok := <-e.resultPool
@@ -943,8 +944,5 @@ func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	e.rows = nil
-	if e.resoucePool != nil {
-		close(e.resoucePool)
-	}
 	return errors.Trace(e.baseExecutor.Close())
 }
