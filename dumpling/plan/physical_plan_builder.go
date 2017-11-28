@@ -384,7 +384,7 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 	memTable.profile = p.profile
 	var retPlan PhysicalPlan = memTable
 	if len(p.pushedDownConds) > 0 {
-		sel := Selection{
+		sel := PhysicalSelection{
 			Conditions: p.pushedDownConds,
 		}.init(p.ctx)
 		sel.SetSchema(p.schema)
@@ -675,7 +675,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			for _, cond := range indexConds {
 				condsClone = append(condsClone, cond.Clone())
 			}
-			indexSel := Selection{Conditions: condsClone}.init(is.ctx)
+			indexSel := PhysicalSelection{Conditions: condsClone}.init(is.ctx)
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
 			indexSel.profile = p.getStatsProfileByFilter(append(is.AccessCondition, indexConds...))
@@ -686,7 +686,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		}
 		if tableConds != nil {
 			copTask.finishIndexPlan()
-			tableSel := Selection{Conditions: tableConds}.init(is.ctx)
+			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx)
 			tableSel.SetSchema(copTask.tablePlan.Schema())
 			tableSel.SetChildren(copTask.tablePlan)
 			tableSel.profile = p.profile
@@ -863,7 +863,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *statsProfile, expectedCnt float64) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := Selection{Conditions: ts.filterCondition}.init(ts.ctx)
+		sel := PhysicalSelection{Conditions: ts.filterCondition}.init(ts.ctx)
 		sel.SetSchema(ts.schema)
 		sel.SetChildren(ts)
 		sel.profile = profile
@@ -882,6 +882,11 @@ func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*req
 		props = append(props, prop)
 	}
 	return [][]*requiredProp{props}
+}
+
+func (p *PhysicalSelection) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	return [][]*requiredProp{{prop}}
 }
 
 func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {

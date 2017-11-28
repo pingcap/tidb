@@ -623,7 +623,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		}
 	}
 	if len(conditions) != 0 {
-		sel := Selection{Conditions: conditions}.init(b.ctx)
+		sel := LogicalSelection{Conditions: conditions}.init(b.ctx)
 		setParentAndChildren(sel, p)
 		sel.SetSchema(p.Schema())
 		resultPlan = sel

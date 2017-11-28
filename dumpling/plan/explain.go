@@ -143,7 +143,7 @@ func (p *PhysicalUnionScan) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *Selection) ExplainInfo() string {
+func (p *PhysicalSelection) ExplainInfo() string {
 	return string(expression.ExplainExpressionList(p.Conditions))
 }
 
