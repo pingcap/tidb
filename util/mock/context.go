@@ -181,11 +181,13 @@ func (c *Context) GoCtx() goctx.Context {
 
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
-	ctx, cancel := goctx.WithCancel(goctx.Background())
-	return &Context{
+	goCtx, cancel := goctx.WithCancel(goctx.Background())
+	ctx := &Context{
 		values:      make(map[fmt.Stringer]interface{}),
 		sessionVars: variable.NewSessionVars(),
-		ctx:         ctx,
+		ctx:         goCtx,
 		cancel:      cancel,
 	}
+	ctx.sessionVars.MaxChunkSize = 2
+	return ctx
 }
