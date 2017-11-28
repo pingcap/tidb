@@ -209,7 +209,7 @@ func (s *testSuite) TestKillStmt(c *C) {
 	tk.MustExec("kill 1")
 
 	result := tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Warning 1105 Nothing happened. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
 }
 
 func (s *testSuite) TestFlushPrivileges(c *C) {
