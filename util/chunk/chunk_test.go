@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -122,6 +123,126 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	c.Assert(chk.GetRow(2).GetFloat32(0), Equals, float32(1))
 }
 
+func (s *testChunkSuite) TestAppend(c *C) {
+	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+
+	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
+	c.Assert(err, IsNil)
+
+	src := NewChunk(fieldTypes)
+	dst := NewChunk(fieldTypes)
+
+	src.AppendFloat32(0, 12.8)
+	src.AppendString(1, "abc")
+	src.AppendJSON(2, jsonObj)
+	src.AppendNull(0)
+	src.AppendNull(1)
+	src.AppendNull(2)
+
+	dst.Append(src, 0, 2)
+	dst.Append(src, 0, 2)
+	dst.Append(src, 0, 2)
+	dst.Append(src, 0, 2)
+	dst.Append(dst, 2, 6)
+	dst.Append(dst, 6, 6)
+
+	c.Assert(len(dst.columns), Equals, 3)
+
+	c.Assert(dst.columns[0].length, Equals, 12)
+	c.Assert(dst.columns[0].nullCount, Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
+	c.Assert(len(dst.columns[0].offsets), Equals, 0)
+	c.Assert(len(dst.columns[0].data), Equals, 4*12)
+	c.Assert(len(dst.columns[0].elemBuf), Equals, 4)
+	c.Assert(len(dst.columns[0].ifaces), Equals, 0)
+
+	c.Assert(dst.columns[1].length, Equals, 12)
+	c.Assert(dst.columns[1].nullCount, Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
+	c.Assert(string(dst.columns[1].offsets), Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
+	c.Assert(string(dst.columns[1].data), Equals, "abcabcabcabcabcabc")
+	c.Assert(len(dst.columns[1].elemBuf), Equals, 0)
+	c.Assert(len(dst.columns[1].ifaces), Equals, 0)
+
+	c.Assert(dst.columns[2].length, Equals, 12)
+	c.Assert(dst.columns[2].nullCount, Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
+	c.Assert(len(dst.columns[2].offsets), Equals, 0)
+	c.Assert(len(dst.columns[2].data), Equals, 0)
+	c.Assert(len(dst.columns[2].elemBuf), Equals, 0)
+	c.Assert(len(dst.columns[2].ifaces), Equals, 12)
+	for i := 0; i < 12; i += 2 {
+		elem := dst.columns[2].ifaces[i]
+		jsonElem, ok := elem.(json.JSON)
+		c.Assert(ok, IsTrue)
+		cmpRes, err := json.CompareJSON(jsonElem, jsonObj)
+		c.Assert(err, IsNil)
+		c.Assert(cmpRes, Equals, 0)
+	}
+}
+
+func (s *testChunkSuite) TestTruncateTo(c *C) {
+	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+
+	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
+	c.Assert(err, IsNil)
+
+	src := NewChunk(fieldTypes)
+
+	for i := 0; i < 8; i++ {
+		src.AppendFloat32(0, 12.8)
+		src.AppendString(1, "abc")
+		src.AppendJSON(2, jsonObj)
+		src.AppendNull(0)
+		src.AppendNull(1)
+		src.AppendNull(2)
+	}
+
+	src.TruncateTo(16)
+	src.TruncateTo(16)
+	src.TruncateTo(14)
+	src.TruncateTo(12)
+	c.Assert(len(src.columns), Equals, 3)
+
+	c.Assert(src.columns[0].length, Equals, 12)
+	c.Assert(src.columns[0].nullCount, Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
+	c.Assert(len(src.columns[0].offsets), Equals, 0)
+	c.Assert(len(src.columns[0].data), Equals, 4*12)
+	c.Assert(len(src.columns[0].elemBuf), Equals, 4)
+	c.Assert(len(src.columns[0].ifaces), Equals, 0)
+
+	c.Assert(src.columns[1].length, Equals, 12)
+	c.Assert(src.columns[1].nullCount, Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
+	c.Assert(string(src.columns[1].offsets), Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
+	c.Assert(string(src.columns[1].data), Equals, "abcabcabcabcabcabc")
+	c.Assert(len(src.columns[1].elemBuf), Equals, 0)
+	c.Assert(len(src.columns[1].ifaces), Equals, 0)
+
+	c.Assert(src.columns[2].length, Equals, 12)
+	c.Assert(src.columns[2].nullCount, Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
+	c.Assert(len(src.columns[2].offsets), Equals, 0)
+	c.Assert(len(src.columns[2].data), Equals, 0)
+	c.Assert(len(src.columns[2].elemBuf), Equals, 0)
+	c.Assert(len(src.columns[2].ifaces), Equals, 12)
+	for i := 0; i < 12; i += 2 {
+		elem := src.columns[2].ifaces[i]
+		jsonElem, ok := elem.(json.JSON)
+		c.Assert(ok, IsTrue)
+		cmpRes, err := json.CompareJSON(jsonElem, jsonObj)
+		c.Assert(err, IsNil)
+		c.Assert(cmpRes, Equals, 0)
+	}
+}
+
 // newChunk creates a new chunk and initialize columns with element length.
 // 0 adds an varlen column, positive len add a fixed length column, negative len adds a interface column.
 func newChunk(elemLen ...int) *Chunk {
@@ -132,10 +253,141 @@ func newChunk(elemLen ...int) *Chunk {
 		} else if l == 0 {
 			chk.addVarLenColumn(0)
 		} else {
-			chk.addInterfaceColumn()
+			chk.addInterfaceColumn(0)
 		}
 	}
 	return chk
+}
+
+var allTypes = []*types.FieldType{
+	types.NewFieldType(mysql.TypeTiny),
+	types.NewFieldType(mysql.TypeShort),
+	types.NewFieldType(mysql.TypeInt24),
+	types.NewFieldType(mysql.TypeLong),
+	types.NewFieldType(mysql.TypeLonglong),
+	{
+		Tp:      mysql.TypeLonglong,
+		Flen:    types.UnspecifiedLength,
+		Decimal: types.UnspecifiedLength,
+		Flag:    mysql.UnsignedFlag,
+	},
+	types.NewFieldType(mysql.TypeYear),
+	types.NewFieldType(mysql.TypeFloat),
+	types.NewFieldType(mysql.TypeDouble),
+	types.NewFieldType(mysql.TypeString),
+	types.NewFieldType(mysql.TypeVarString),
+	types.NewFieldType(mysql.TypeVarchar),
+	types.NewFieldType(mysql.TypeBlob),
+	types.NewFieldType(mysql.TypeTinyBlob),
+	types.NewFieldType(mysql.TypeMediumBlob),
+	types.NewFieldType(mysql.TypeLongBlob),
+	types.NewFieldType(mysql.TypeDate),
+	types.NewFieldType(mysql.TypeDatetime),
+	types.NewFieldType(mysql.TypeTimestamp),
+	types.NewFieldType(mysql.TypeDuration),
+	types.NewFieldType(mysql.TypeNewDecimal),
+	{
+		Tp:      mysql.TypeSet,
+		Flen:    types.UnspecifiedLength,
+		Decimal: types.UnspecifiedLength,
+		Flag:    mysql.UnsignedFlag,
+		Elems:   []string{"a", "b"},
+	},
+	{
+		Tp:      mysql.TypeEnum,
+		Flen:    types.UnspecifiedLength,
+		Decimal: types.UnspecifiedLength,
+		Flag:    mysql.UnsignedFlag,
+		Elems:   []string{"a", "b"},
+	},
+	types.NewFieldType(mysql.TypeBit),
+	types.NewFieldType(mysql.TypeJSON),
+}
+
+func (s *testChunkSuite) TestCompare(c *C) {
+	chunk := NewChunk(allTypes)
+	for i := 0; i < len(allTypes); i++ {
+		chunk.AppendNull(i)
+	}
+	for i := 0; i < len(allTypes); i++ {
+		switch allTypes[i].Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+				chunk.AppendUint64(i, 0)
+			} else {
+				chunk.AppendInt64(i, -1)
+			}
+		case mysql.TypeFloat:
+			chunk.AppendFloat32(i, 0)
+		case mysql.TypeDouble:
+			chunk.AppendFloat64(i, 0)
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			chunk.AppendString(i, "0")
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			chunk.AppendTime(i, types.TimeFromDays(2000*365))
+		case mysql.TypeDuration:
+			chunk.AppendDuration(i, types.ZeroDuration)
+		case mysql.TypeNewDecimal:
+			chunk.AppendMyDecimal(i, types.NewDecFromInt(0))
+		case mysql.TypeSet:
+			chunk.AppendSet(i, types.Set{Name: "a", Value: 0})
+		case mysql.TypeEnum:
+			chunk.AppendEnum(i, types.Enum{Name: "a", Value: 0})
+		case mysql.TypeBit:
+			chunk.AppendBytes(i, []byte{0})
+		case mysql.TypeJSON:
+			chunk.AppendJSON(i, json.CreateJSON(int64(0)))
+		default:
+			c.FailNow()
+		}
+	}
+	for i := 0; i < len(allTypes); i++ {
+		switch allTypes[i].Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+				chunk.AppendUint64(i, math.MaxUint64)
+			} else {
+				chunk.AppendInt64(i, 1)
+			}
+		case mysql.TypeFloat:
+			chunk.AppendFloat32(i, 1)
+		case mysql.TypeDouble:
+			chunk.AppendFloat64(i, 1)
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			chunk.AppendString(i, "1")
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			chunk.AppendTime(i, types.TimeFromDays(2001*365))
+		case mysql.TypeDuration:
+			chunk.AppendDuration(i, types.Duration{Duration: time.Second})
+		case mysql.TypeNewDecimal:
+			chunk.AppendMyDecimal(i, types.NewDecFromInt(1))
+		case mysql.TypeSet:
+			chunk.AppendSet(i, types.Set{Name: "b", Value: 1})
+		case mysql.TypeEnum:
+			chunk.AppendEnum(i, types.Enum{Name: "b", Value: 1})
+		case mysql.TypeBit:
+			chunk.AppendBytes(i, []byte{1})
+		case mysql.TypeJSON:
+			chunk.AppendJSON(i, json.CreateJSON(int64(1)))
+		default:
+			c.FailNow()
+		}
+	}
+	rowNull := chunk.GetRow(0)
+	rowSmall := chunk.GetRow(1)
+	rowBig := chunk.GetRow(2)
+	for i := 0; i < len(allTypes); i++ {
+		cmpFunc := GetCompareFunc(allTypes[i])
+		c.Assert(cmpFunc(rowNull, i, rowNull, i), Equals, 0)
+		c.Assert(cmpFunc(rowNull, i, rowSmall, i), Equals, -1)
+		c.Assert(cmpFunc(rowSmall, i, rowNull, i), Equals, 1)
+		c.Assert(cmpFunc(rowSmall, i, rowSmall, i), Equals, 0)
+		c.Assert(cmpFunc(rowSmall, i, rowBig, i), Equals, -1, Commentf("%d", allTypes[i].Tp))
+		c.Assert(cmpFunc(rowBig, i, rowSmall, i), Equals, 1)
+		c.Assert(cmpFunc(rowBig, i, rowBig, i), Equals, 0)
+	}
 }
 
 func BenchmarkAppendInt(b *testing.B) {

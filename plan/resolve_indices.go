@@ -140,7 +140,7 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *Selection) ResolveIndices() {
+func (p *PhysicalSelection) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.children[0].Schema())

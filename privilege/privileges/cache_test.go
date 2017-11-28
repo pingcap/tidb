@@ -45,7 +45,7 @@ func (s *testCacheSuite) TearDown(c *C) {
 }
 
 func (s *testCacheSuite) TestLoadUserTable(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "use mysql;")
@@ -74,7 +74,7 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 }
 
 func (s *testCacheSuite) TestLoadDBTable(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "use mysql;")
@@ -91,7 +91,7 @@ func (s *testCacheSuite) TestLoadDBTable(c *C) {
 }
 
 func (s *testCacheSuite) TestLoadTablesPrivTable(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "use mysql;")
@@ -111,7 +111,7 @@ func (s *testCacheSuite) TestLoadTablesPrivTable(c *C) {
 }
 
 func (s *testCacheSuite) TestLoadColumnsPrivTable(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "use mysql;")
@@ -133,7 +133,7 @@ func (s *testCacheSuite) TestLoadColumnsPrivTable(c *C) {
 }
 
 func (s *testCacheSuite) TestPatternMatch(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "USE MYSQL;")
@@ -167,7 +167,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 }
 
 func (s *testCacheSuite) TestCaseInsensitive(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "CREATE DATABASE TCTrain;")
@@ -193,7 +193,7 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	c.Assert(err, IsNil)
 	defer domain.Close()
 
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 
