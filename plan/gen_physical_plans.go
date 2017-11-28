@@ -267,3 +267,12 @@ func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 
 	return aggs
 }
+
+func (p *LogicalSelection) generatePhysicalPlans() []PhysicalPlan {
+	sel := PhysicalSelection{
+		Conditions: p.Conditions,
+	}.init(p.ctx)
+	sel.profile = p.profile
+	sel.SetSchema(p.Schema())
+	return []PhysicalPlan{sel}
+}
