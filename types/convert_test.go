@@ -189,7 +189,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	// issue 4287.
 	v, err = Convert(math.Pow(2, 63)-1, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(math.MaxInt64))	
+	c.Assert(v, Equals, int64(math.MaxInt64))
 	ft = NewFieldType(mysql.TypeLonglong)
 	ft.Flag |= mysql.UnsignedFlag
 	v, err = Convert("100", ft)
