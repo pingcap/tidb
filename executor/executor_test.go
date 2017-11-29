@@ -119,10 +119,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 
+	goCtx := goctx.Background()
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetInt64(0), Equals, int64(1))
@@ -130,7 +131,7 @@ func (s *testSuite) TestAdmin(c *C) {
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
@@ -143,7 +144,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 	err = txn.Rollback()
@@ -152,7 +153,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
@@ -705,7 +706,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next()
+	row, err := rs.Next(goctx.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
 }
@@ -1516,10 +1517,10 @@ func (s *testSuite) TestTableScan(c *C) {
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
-	compiler := &executor.Compiler{se}
+	compiler := &executor.Compiler{Ctx: se}
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(goctx.TODO(), stmtNode)
@@ -2155,7 +2156,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	row, err := r.Next()
+	row, err := r.Next(goctx.Background())
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
@@ -2268,4 +2269,13 @@ func (s *testSuite) TestMaxInt64Handle(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("delete from t where id = 9223372036854775807")
 	tk.MustQuery("select * from t").Check(nil)
+}
+
+func (s *testSuite) TestTableScanWithPointRanges(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t values(1), (5), (10)")
+	tk.MustQuery("select * from t where id in(1, 2, 10)").Check(testkit.Rows("1", "10"))
 }

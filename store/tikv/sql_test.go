@@ -39,7 +39,7 @@ func (s *testSQLSuite) TestBusyServerCop(c *C) {
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	session, err := tidb.CreateSession(s.store)
+	session, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
@@ -56,7 +56,7 @@ func (s *testSQLSuite) TestBusyServerCop(c *C) {
 		defer wg.Done()
 		rs, err := session.Execute(goctx.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
 		c.Assert(err, IsNil)
-		row, err := rs[0].Next()
+		row, err := rs[0].Next(goctx.Background())
 		c.Assert(err, IsNil)
 		c.Assert(row, NotNil)
 		c.Assert(row.GetString(0), Equals, "True")

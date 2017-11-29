@@ -161,6 +161,10 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.MaxRowCountForINLJ, Equals, 128)
 	SetSessionSystemVar(v, variable.TiDBMaxRowCountForINLJ, types.NewStringDatum("127"))
 	c.Assert(v.MaxRowCountForINLJ, Equals, 127)
+
+	c.Assert(v.MaxChunkSize, Equals, 1024)
+	SetSessionSystemVar(v, variable.TiDBMaxChunkSize, types.NewStringDatum("2"))
+	c.Assert(v.MaxChunkSize, Equals, 2)
 }
 
 type mockGlobalAccessor struct {

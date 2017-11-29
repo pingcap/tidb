@@ -162,7 +162,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	}
 	if alloc == nil {
 		schemaID := roDBInfo.ID
-		alloc = autoid.NewAllocator(b.handle.store, tblInfo.OldSchemaID, schemaID)
+		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID))
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
@@ -264,7 +264,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
 		schemaID := di.ID
-		alloc := autoid.NewAllocator(b.handle.store, t.OldSchemaID, schemaID)
+		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID))
 		var tbl table.Table
 		tbl, err := tables.TableFromMeta(alloc, t)
 		if err != nil {

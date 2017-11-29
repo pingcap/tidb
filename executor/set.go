@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 // SetExecutor executes set statement.
@@ -42,7 +43,7 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next() (Row, error) {
+func (e *SetExecutor) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}

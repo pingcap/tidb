@@ -95,7 +95,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 			outerPlan.SetParents(join)
 			join.self = join
 			p = join
-		} else if sel, ok := innerPlan.(*Selection); ok {
+		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
