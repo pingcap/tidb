@@ -321,6 +321,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 	ivs.SelectExec = b.build(v.SelectPlan)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	ivs.Table = v.Table
@@ -801,6 +802,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	}
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	return &UpdateExec{
@@ -819,6 +821,7 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	}
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	return &DeleteExec{
