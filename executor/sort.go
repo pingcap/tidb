@@ -167,6 +167,7 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 		if allColumnExpr {
 			sort.Slice(e.rowPointers, e.keyColumnsLess)
 		} else {
+			e.buildKeyExprsAndTypes()
 			err = e.buildKeyChunks()
 			if err != nil {
 				return errors.Trace(err)
@@ -476,6 +477,7 @@ func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPointers[i], h.rowPointers[j] = h.rowPointers[j], h.rowPointers[i]
 }
 
+// NextChunk implements the Executor NextChunk interface.
 func (e *TopNExec) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
@@ -523,7 +525,10 @@ func (e *TopNExec) loadChunksUntilTotalLimit() error {
 	allColumnExpr := e.buildKeyColumns()
 	if !allColumnExpr {
 		e.buildKeyExprsAndTypes()
-		e.buildKeyChunks()
+		err := e.buildKeyChunks()
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -554,7 +559,10 @@ func (e *TopNExec) executeTopN() error {
 			return errors.Trace(err)
 		}
 		if e.totalCount > len(e.rowPointers)*topNCompactionfactor {
-			e.doCompaction()
+			err = e.doCompaction()
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	if len(e.keyChunks) != 0 {
@@ -634,7 +642,7 @@ func (e *TopNExec) appendKeyChunk(keyRow chunk.Row) {
 // If we don't do compaction, in a extreme case like the child data is already ascending sorted
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
-func (e *TopNExec) doCompaction() {
+func (e *TopNExec) doCompaction() error {
 	newRowChunks := make([]*chunk.Chunk, 0, len(e.rowChunks))
 	newRowChunks = append(newRowChunks, e.children[0].newChunk())
 	maxChunkSize := e.ctx.GetSessionVars().MaxChunkSize
@@ -650,7 +658,11 @@ func (e *TopNExec) doCompaction() {
 	e.rowChunks = newRowChunks
 	e.initPointers()
 	if len(e.keyChunks) != 0 {
-		e.buildKeyChunks()
+		err := e.buildKeyChunks()
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	e.totalCount = len(e.rowPointers)
+	return nil
 }
