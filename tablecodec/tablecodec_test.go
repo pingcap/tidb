@@ -294,7 +294,7 @@ func (s *testTableCodecSuite) TestRecordKey(c *C) {
 	c.Assert(isRecordKey, IsTrue)
 }
 
-func (s *testTableCodecSuite) ReplaceRecordKeyTableID(c *C) {
+func (s *testTableCodecSuite) TestReplaceRecordKeyTableID(c *C) {
 	tableID := int64(1)
 	tableKey := EncodeRowKeyWithHandle(tableID, 1)
 	tTableID, _, _, err := DecodeKeyHead(tableKey)
@@ -302,14 +302,21 @@ func (s *testTableCodecSuite) ReplaceRecordKeyTableID(c *C) {
 	c.Assert(tTableID, Equals, tableID)
 
 	tableID = 2
-	ReplaceRecordKeyTableID(tableKey, tableID)
+	tableKey = ReplaceRecordKeyTableID(tableKey, tableID)
+	tTableID, _, _, err = DecodeKeyHead(tableKey)
+	c.Assert(err, IsNil)
 	c.Assert(tTableID, Equals, tableID)
 
 	tableID = 3
 	ReplaceRecordKeyTableID(tableKey, tableID)
+	tableKey = ReplaceRecordKeyTableID(tableKey, tableID)
+	tTableID, _, _, err = DecodeKeyHead(tableKey)
+	c.Assert(err, IsNil)
 	c.Assert(tTableID, Equals, tableID)
 
 	tableID = -1
-	ReplaceRecordKeyTableID(tableKey, tableID)
+	tableKey = ReplaceRecordKeyTableID(tableKey, tableID)
+	tTableID, _, _, err = DecodeKeyHead(tableKey)
+	c.Assert(err, IsNil)
 	c.Assert(tTableID, Equals, tableID)
 }

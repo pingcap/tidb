@@ -938,3 +938,28 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		}
 	}
 }
+
+func (s *testCodecSuite) TestPutInt(c *C) {
+	var data [8]byte
+	err := PutInt(data[:], 1)
+	c.Assert(err, IsNil)
+	err = PutInt(data[1:], 1)
+	c.Assert(err, NotNil)
+	_, val, err := DecodeInt(data[:])
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, int64(1))
+
+	err = PutInt(data[:], 200000)
+	c.Assert(err, IsNil)
+
+	_, val, err = DecodeInt(data[:])
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, int64(200000))
+
+	err = PutInt(data[:], math.MaxInt64)
+	c.Assert(err, IsNil)
+
+	_, val, err = DecodeInt(data[:])
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, int64(math.MaxInt64))
+}

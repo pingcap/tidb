@@ -475,7 +475,7 @@ func ReplaceRecordKeyTableID(buf []byte, tableID int64) []byte {
 		return buf
 	}
 
-	_ = codec.EncodeInt(buf[len(tablePrefix):], tableID)
+	_ = codec.PutInt(buf[len(tablePrefix):], tableID)
 	return buf
 }
 
