@@ -350,7 +350,8 @@ func (e *LimitExec) Open() error {
 type WindowFunctionExec struct {
 	baseExecutor
 
-	F   string
+	F string
+	// Idx is the index of current row in row_number() window function.
 	Idx int64
 }
 
