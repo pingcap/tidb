@@ -141,7 +141,7 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 	defer func() {
 		if err != nil {
 			if store != nil {
-				store.Close()
+				_ = store.Close()
 			}
 			if dom != nil {
 				dom.Close()
