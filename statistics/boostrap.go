@@ -16,7 +16,6 @@ package statistics
 import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -136,7 +135,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 	return nil
 }
 
-func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, fields []*ast.ResultField, chk *chunk.Chunk) {
+func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.Chunk) {
 	for row := chk.Begin(); row != chk.End(); row = row.Next() {
 		tableID, isIndex, histID, bucketID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3)
 		table, ok := tables[tableID]
@@ -151,7 +150,7 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, fields []*as
 				continue
 			}
 			hist = &index.Histogram
-			lower, upper = row.GetDatum(6, &fields[6].Column.FieldType), row.GetDatum(7, &fields[7].Column.FieldType)
+			lower, upper = types.NewBytesDatum(row.GetBytes(6)), types.NewBytesDatum(row.GetBytes(7))
 		} else {
 			column, ok := table.Columns[histID]
 			if !ok {
@@ -162,7 +161,7 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, fields []*as
 				continue
 			}
 			hist = &column.Histogram
-			d := row.GetDatum(6, &fields[6].Column.FieldType)
+			d := types.NewBytesDatum(row.GetBytes(6))
 			var err error
 			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
@@ -170,7 +169,7 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, fields []*as
 				delete(table.Columns, histID)
 				continue
 			}
-			d = row.GetDatum(7, &fields[7].Column.FieldType)
+			d = types.NewBytesDatum(row.GetBytes(7))
 			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
 				log.Debugf("decode bucket upper bound failed: %s", errors.ErrorStack(err))
@@ -200,7 +199,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	fields, chk := rc[0].Fields(), rc[0].NewChunk()
+	chk := rc[0].NewChunk()
 	for {
 		err := rc[0].NextChunk(chk)
 		if err != nil {
@@ -209,7 +208,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4Chunk(h.ctx, tables, fields, chk)
+		initStatsBuckets4Chunk(h.ctx, tables, chk)
 	}
 	for _, table := range tables {
 		if h.LastVersion < table.Version {
