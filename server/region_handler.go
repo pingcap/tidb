@@ -43,11 +43,12 @@ import (
 
 const (
 	pDBName    = "db"
-	pTableName = "table"
+	pHexKey    = "hexKey"
 	pRegionID  = "regionID"
 	pRecordID  = "recordID"
 	pStartTS   = "startTS"
-	pHexKey    = "hexKey"
+	pTableID   = "table_id"
+	pTableName = "table"
 )
 
 const (
@@ -70,6 +71,11 @@ type regionHandlerTool struct {
 // some common functions for all handlers.
 type regionHandler struct {
 	*regionHandlerTool
+}
+
+// schemaHandler is the handler for list database or table schemas.
+type schemaHandler struct {
+	*regionHandler
 }
 
 // tableRegionsHandler is the handler for list table's regions.
@@ -225,6 +231,53 @@ func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, er
 
 	}
 	return regions, nil
+}
+
+// ServeHTTP handles request of list a database or table's schemas.
+func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	schema, err := rh.schema()
+	if err != nil {
+		rh.writeError(w, err)
+		return
+	}
+
+	// parse params
+	params := mux.Vars(req)
+
+	if dbName, ok := params[pDBName]; ok {
+		cDBName := model.NewCIStr(dbName)
+		if tableName, ok := params[pTableName]; ok {
+			// table schema of a specified table name
+			cTableName := model.NewCIStr(tableName)
+			if data, err := schema.TableByName(cDBName, cTableName); err != nil {
+				rh.writeError(w, err)
+			} else {
+				rh.writeData(w, data)
+			}
+		} else {
+			// all table schemas in a specified database
+			if schema.SchemaExists(cDBName) {
+				rh.writeData(w, schema.SchemaTables(cDBName))
+			} else {
+				rh.writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+			}
+		}
+	} else if tableID := req.FormValue(pTableID); len(tableID) > 0 {
+		// table schema of a specified tableID
+		tid, err := strconv.Atoi(tableID)
+		if err != nil {
+			rh.writeError(w, err)
+			return
+		}
+		if data, ok := schema.TableByID(int64(tid)); ok {
+			rh.writeData(w, data)
+		} else {
+			rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		}
+	} else {
+		// all databases' schemas
+		rh.writeData(w, schema.AllSchemas())
+	}
 }
 
 // ServeHTTP handles request of list a table's regions.
