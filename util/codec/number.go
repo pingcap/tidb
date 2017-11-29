@@ -40,13 +40,12 @@ func EncodeInt(b []byte, v int64) []byte {
 }
 
 // PutInt put v in b[:8].
-func PutInt(b []byte, v int64) error {
+func PutInt(b []byte, v int64) {
 	if len(b) < 8 {
-		return errors.New("insufficient bytes to PutInt value")
+		return
 	}
 	u := encodeIntToCmpUint(v)
 	binary.BigEndian.PutUint64(b[:8], u)
-	return nil
 }
 
 // EncodeIntDesc appends the encoded value to slice b and returns the appended slice.

@@ -302,3 +302,7 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		}
 	}
 }
+
+func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
+
+}
