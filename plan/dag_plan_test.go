@@ -46,7 +46,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -193,7 +193,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -343,6 +343,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 right outer join t t2 on t1.a = t2.b",
 			best: "RightHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.b)",
 		},
+		// Test Semi Join hint success.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 where t1.a in (select a from t t2)",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
+		// Test Semi Join hint fail.
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
+			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
@@ -363,7 +373,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -433,7 +443,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -490,7 +500,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 
 	_, err = se.Execute(goctx.Background(), "use test")
@@ -572,7 +582,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -621,7 +631,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -687,7 +697,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -827,7 +837,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)

@@ -20,10 +20,11 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 var (
-	_ PhysicalPlan = &Selection{}
+	_ PhysicalPlan = &PhysicalSelection{}
 	_ PhysicalPlan = &Projection{}
 	_ PhysicalPlan = &Exists{}
 	_ PhysicalPlan = &MaxOneRow{}
@@ -121,7 +122,7 @@ type PhysicalIndexScan struct {
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
-	Ranges     []*types.IndexRange
+	Ranges     []*ranger.IndexRange
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
 	Desc       bool
@@ -150,7 +151,7 @@ type PhysicalMemTable struct {
 	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
-	Ranges      []types.IntColumnRange
+	Ranges      []ranger.IntColumnRange
 	TableAsName *model.CIStr
 }
 
@@ -185,7 +186,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []types.IntColumnRange
+	Ranges  []ranger.IntColumnRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
@@ -386,11 +387,18 @@ func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
 	return &np
 }
 
+// PhysicalSelection represents a filter.
+type PhysicalSelection struct {
+	*basePlan
+	basePhysicalPlan
+
+	Conditions []expression.Expression
+}
+
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Selection) Copy() PhysicalPlan {
+func (p *PhysicalSelection) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
@@ -542,7 +550,7 @@ func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Sche
 
 func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
-	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
+	case *Limit, *TopN, *Sort, *PhysicalSelection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
 		p.SetSchema(buildJoinSchema(x.JoinType, p, x.outerIndex))

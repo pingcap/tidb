@@ -540,7 +540,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
-		return cc.handleStmtExecute(data)
+		return cc.handleStmtExecute(goCtx, data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -745,9 +745,9 @@ func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
 	}
 	if rs != nil {
 		if len(rs) == 1 {
-			err = cc.writeResultset(rs[0], false, false)
+			err = cc.writeResultset(goCtx, rs[0], false, false)
 		} else {
-			err = cc.writeMultiResultset(rs, false)
+			err = cc.writeMultiResultset(goCtx, rs, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
@@ -788,7 +788,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // If binary is true, the data would be encoded in BINARY format.
 // If more is true, a flag bit would be set to indicate there are more
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
-func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error {
+func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	defer terror.Call(rs.Close)
 	if rs.SupportChunk() {
 		columns := rs.Columns()
@@ -804,7 +804,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	}
 	// We need to call Next before we get columns.
 	// Otherwise, we will get incorrect columns info.
-	row, err := rs.Next()
+	row, err := rs.Next(goCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -837,7 +837,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		if err = cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
-		row, err = rs.Next()
+		row, err = rs.Next(goCtx)
 	}
 
 	err = cc.writeEOF(more)
@@ -897,9 +897,9 @@ func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
 	return errors.Trace(cc.writeEOF(more))
 }
 
-func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
+func (cc *clientConn) writeMultiResultset(goCtx goctx.Context, rss []ResultSet, binary bool) error {
 	for _, rs := range rss {
-		if err := cc.writeResultset(rs, binary, true); err != nil {
+		if err := cc.writeResultset(goCtx, rs, binary, true); err != nil {
 			return errors.Trace(err)
 		}
 	}

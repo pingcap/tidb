@@ -129,7 +129,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	setParentAndChildren(p, children...)
 
 	switch p.(type) {
-	case *Sort, *TopN, *Limit, *Selection, *MaxOneRow, *Update, *SelectLock:
+	case *Sort, *TopN, *Limit, *LogicalSelection, *MaxOneRow, *Update, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *LogicalJoin, *LogicalApply:
 		var joinTp JoinType
@@ -239,7 +239,7 @@ func (p *LogicalAggregation) replaceExprColumns(replace map[string]*expression.C
 	p.collectGroupByColumns()
 }
 
-func (p *Selection) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
 		resolveExprAndReplace(expr, replace)
 	}

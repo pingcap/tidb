@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -61,8 +62,9 @@ func (s *testSuite) TestCreateTable(c *C) {
 	tk.MustExec(`create table issue312_2 (c float(25));`)
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
+	goCtx := goctx.Background()
 	for {
-		row, err1 := rs.Next()
+		row, err1 := rs.Next(goCtx)
 		c.Assert(err1, IsNil)
 		if row == nil {
 			break
@@ -72,7 +74,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
 	for {
-		row, err1 := rs.Next()
+		row, err1 := rs.Next(goCtx)
 		c.Assert(err1, IsNil)
 		if row == nil {
 			break
@@ -143,7 +145,7 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	row, err := r.Next()
+	row, err := r.Next(goctx.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
@@ -223,12 +225,16 @@ func (s *testSuite) TestRenameTable(c *C) {
 	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
 	tk.MustExec("insert rename1.t values ()")
 	tk.MustExec("rename table rename1.t to rename2.t")
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename1")
 	tk.MustExec("insert rename2.t values ()")
 	tk.MustExec("rename table rename2.t to rename3.t")
 	tk.MustExec("insert rename3.t values ()")
 	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001"))
-	tk.MustExec("drop database rename1")
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
 	tk.MustExec("drop database rename2")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001", "10002"))
 	tk.MustExec("drop database rename3")
 
 	tk.MustExec("create database rename1")
@@ -238,7 +244,16 @@ func (s *testSuite) TestRenameTable(c *C) {
 	tk.MustExec("insert rename2.t1 values ()")
 	result := tk.MustQuery("select * from rename2.t1")
 	result.Check(testkit.Rows("1"))
+	// Make sure the drop old database doesn't affect the t1's operations.
 	tk.MustExec("drop database rename1")
+	tk.MustExec("insert rename2.t1 values ()")
+	result = tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1", "2"))
+	// Rename a table to another table in the same database.
+	tk.MustExec("rename table rename2.t1 to rename2.t2")
+	tk.MustExec("insert rename2.t2 values ()")
+	result = tk.MustQuery("select * from rename2.t2")
+	result.Check(testkit.Rows("1", "2", "5001"))
 	tk.MustExec("drop database rename2")
 
 	tk.MustExec("create database rename1")
