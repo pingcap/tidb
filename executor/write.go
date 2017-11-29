@@ -74,7 +74,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			if errTI != nil {
 				return false, errors.Trace(errTI)
 			}
-			err := t.RebaseAutoID(val, true)
+			err := t.RebaseAutoID(ctx, val, true)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -1110,7 +1110,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.RebaseAutoID(recordID, true)
+		err = e.Table.RebaseAutoID(e.ctx, recordID, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1127,7 +1127,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		recordID, err = e.Table.AllocAutoID()
+		recordID, err = e.Table.AllocAutoID(e.ctx)
 		if e.filterErr(errors.Trace(err), ignoreErr) != nil {
 			return errors.Trace(err)
 		}
