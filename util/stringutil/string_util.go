@@ -240,21 +240,20 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 func RemoveRedundantBlanks(s string) string {
 	var buf = new(bytes.Buffer)
 	var cbuf [6]byte
+	var last_is_blank = false
 	for _, c := range s {
-		if c == rune('\t') || c == rune('\r') || c == rune('\n') {
-			c = rune(' ')
+		if c == ' ' || c == rune('\t') || c == rune('\r') || c == rune('\n') {
+			if !last_is_blank {
+				last_is_blank = true
+			}
+			continue
+		}
+		if last_is_blank {
+			last_is_blank = false
+			buf.WriteByte(' ')
 		}
 		len := utf8.EncodeRune(cbuf[0:], c)
 		buf.Write(cbuf[0:len])
 	}
-	s = buf.String()
-	for {
-		// Replace double blank with one blank.
-		var ss = strings.Replace(s, "  ", " ", -1)
-		if len(s) != len(ss) {
-			s = ss
-			continue
-		}
-		return s
-	}
+	return buf.String()
 }
