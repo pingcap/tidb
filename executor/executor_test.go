@@ -1520,7 +1520,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	se, err := tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
-	compiler := &executor.Compiler{se}
+	compiler := &executor.Compiler{Ctx: se}
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(goctx.TODO(), stmtNode)
