@@ -548,10 +548,10 @@ func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
 type SelectionExec struct {
 	baseExecutor
 
-	vectorizable bool
-	filters      []expression.Expression
-	selected     []bool
-	inputRow     chunk.Row
+	batched  bool
+	filters  []expression.Expression
+	selected []bool
+	inputRow chunk.Row
 }
 
 // Open implements the Executor Open interface.
@@ -561,7 +561,7 @@ func (e *SelectionExec) Open(goCtx goctx.Context) error {
 	}
 	e.selected = make([]bool, 0, chunk.InitialCapacity)
 	e.inputRow = e.childrenResults[0].End()
-	e.vectorizable = expression.Vectorizable(e.filters)
+	e.batched = expression.Vectorizable(e.filters)
 	return nil
 }
 
@@ -599,12 +599,24 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
-			if !e.selected[e.inputRow.Idx()] {
-
-				continue
-			}
-			chk.AppendRow(0, e.inputRow)
-			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+			if e.batched {
+				if !e.selected[e.inputRow.Idx()] {
+					continue
+				}
+				chk.AppendRow(0, e.inputRow)
+				if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+					e.inputRow = e.inputRow.Next()
+					return nil
+				}
+			} else {
+				selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !selected {
+					continue
+				}
+				chk.AppendRow(0, e.inputRow)
 				e.inputRow = e.inputRow.Next()
 				return nil
 			}
@@ -618,14 +630,11 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
 		}
-		e.selected = e.selected[:0]
-		if e.vectorizable {
+		if e.batched {
 			e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
-		} else {
-			e.selected, err = expression.UnVectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
-		}
-		if err != nil {
-			return errors.Trace(err)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 }
