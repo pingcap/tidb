@@ -71,9 +71,9 @@ func (s *testKvEncoderSuite) SetUpSuite(c *C) {
 }
 
 func (s *testKvEncoderSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
 	s.dom.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func getExpectKvPairs(tkExpect *testkit.TestKit, sql string) []KvPair {
