@@ -733,7 +733,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 		}
 		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
-		compiler := executor.Compiler{s}
+		compiler := executor.Compiler{Ctx: s}
 		for _, stmtNode := range stmtNodes {
 			s.PrepareTxnCtx(goCtx2)
 
