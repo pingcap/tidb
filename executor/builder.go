@@ -320,6 +320,9 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		needFillDefaultValues: v.NeedFillDefaultValue,
 	}
 	ivs.SelectExec = b.build(v.SelectPlan)
+	if b.err != nil {
+		return nil
+	}
 	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -796,9 +799,13 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
+	selExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		return nil
+	}
 	return &UpdateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
-		SelectExec:   b.build(v.SelectPlan),
+		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
 		IgnoreErr:    v.IgnoreErr,
@@ -810,9 +817,13 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
+	selExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		return nil
+	}
 	return &DeleteExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
-		SelectExec:   b.build(v.SelectPlan),
+		SelectExec:   selExec,
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 		tblID2Table:  tblID2table,
