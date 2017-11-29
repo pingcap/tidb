@@ -249,6 +249,11 @@ func (s *testSuite) TestRenameTable(c *C) {
 	tk.MustExec("insert rename2.t1 values ()")
 	result = tk.MustQuery("select * from rename2.t1")
 	result.Check(testkit.Rows("1", "2"))
+	// Rename a table to another table in the same database.
+	tk.MustExec("rename table rename2.t1 to rename2.t2")
+	tk.MustExec("insert rename2.t2 values ()")
+	result = tk.MustQuery("select * from rename2.t2")
+	result.Check(testkit.Rows("1", "2", "5001"))
 	tk.MustExec("drop database rename2")
 
 	tk.MustExec("create database rename1")

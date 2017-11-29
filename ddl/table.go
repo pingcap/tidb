@@ -116,7 +116,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTable(job.SchemaID, tableID); err != nil {
+		if err = t.DropTable(job.SchemaID, tableID, true); err != nil {
 			break
 		}
 		// Finish this job.
@@ -197,7 +197,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTable(schemaID, tblInfo.ID)
+	err = t.DropTable(schemaID, tblInfo.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -250,7 +250,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		tblInfo.OldSchemaID = 0
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID)
+	err = t.DropTable(oldSchemaID, tblInfo.ID, false)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
