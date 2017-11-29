@@ -139,16 +139,19 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 		se    tidb.Session
 	)
 	defer func() {
-		if err != nil {
-			if store != nil {
-				_ = store.Close()
+		if err == nil {
+			return
+		}
+		if store != nil {
+			if err1 := store.Close(); err1 != nil {
+				log.Error(errors.ErrorStack(err1))
 			}
-			if dom != nil {
-				dom.Close()
-			}
-			if se != nil {
-				se.Close()
-			}
+		}
+		if dom != nil {
+			dom.Close()
+		}
+		if se != nil {
+			se.Close()
 		}
 	}()
 
