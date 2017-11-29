@@ -243,8 +243,13 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 }
 
 func (b *executorBuilder) buildWindowFunction(v *plan.WindowFunction) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	e := &WindowFunctionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 		F:            v.F,
 	}
 	return e

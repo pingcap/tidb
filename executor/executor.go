@@ -377,7 +377,7 @@ func (e *WindowFunctionExec) Open() error {
 	case ast.WindowFuncRowNumber:
 		e.Idx = 0
 	}
-	return errors.Trace(e.children[0].Open())
+	return errors.Trace(e.baseExecutor.Open())
 }
 
 func init() {
