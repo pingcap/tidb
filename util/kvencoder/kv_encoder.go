@@ -14,6 +14,7 @@
 package kvenc
 
 import (
+	"bytes"
 	"fmt"
 	"sync/atomic"
 
@@ -90,7 +91,7 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 	txn := e.se.Txn()
 	kvPairs = make([]KvPair, 0, txn.Len())
 	err = kv.WalkMemBuffer(txn.GetMemBuffer(), func(k kv.Key, v []byte) error {
-		if tablecodec.IsRecordKey(k) {
+		if bytes.HasPrefix(k, tablecodec.TablePrefix()) {
 			k = tablecodec.ReplaceRecordKeyTableID(k, tableID)
 		}
 		kvPairs = append(kvPairs, KvPair{Key: k, Val: v})

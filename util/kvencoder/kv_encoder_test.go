@@ -96,7 +96,7 @@ func (s *testKvEncoderSuite) runTestSQL(c *C, tkExpect *testkit.TestKit, encoder
 		emptyValCount := 0
 		for i, kv := range kvPairs {
 			expectKey := kvPairsExpect[i].Key
-			if tablecodec.IsRecordKey(kv.Key) {
+			if bytes.HasPrefix(kv.Key, tablecodec.TablePrefix()) {
 				expectKey = tablecodec.ReplaceRecordKeyTableID(expectKey, tableID)
 			}
 			c.Assert(bytes.Compare(kv.Key, expectKey), Equals, 0, Commentf(comment))

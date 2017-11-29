@@ -469,18 +469,6 @@ func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	return buf
 }
 
-// IsRecordKey check whether key is a recordKey.
-func IsRecordKey(key []byte) bool {
-	// prefix is t[tableID]_r
-	prefixTableIDLen := len(tablePrefix) + 8
-	baseLen := prefixTableIDLen + len(recordPrefixSep)
-	if len(key) > baseLen && bytes.HasPrefix(key, tablePrefix) &&
-		bytes.Compare(recordPrefixSep, key[prefixTableIDLen:prefixTableIDLen+2]) == 0 {
-		return true
-	}
-	return false
-}
-
 // ReplaceRecordKeyTableID replace the tableID in the recordKey buf.
 func ReplaceRecordKeyTableID(buf []byte, tableID int64) []byte {
 	if len(buf) < len(tablePrefix)+8 {
