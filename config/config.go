@@ -34,6 +34,7 @@ type Config struct {
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
 	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
+	DisableChunk bool   `toml:"disable-chunk" json:"disable-chunk"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
