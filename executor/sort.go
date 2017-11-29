@@ -48,7 +48,7 @@ type SortExec struct {
 	keyColumns []int
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
-	// keyChunks is used to store ByItems values when all by items are column.
+	// keyChunks is used to store ByItems values when not all ByItems are column.
 	keyChunks []*chunk.Chunk
 	// rowChunks is the chunks to store row values.
 	rowChunks []*chunk.Chunk
