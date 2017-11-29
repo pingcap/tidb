@@ -318,7 +318,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionGenerated:
-				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
+				col.GeneratedExprString = stringutil.RemoveRedundantBlanks(v.Expr.Text())
 				col.GeneratedStored = v.Stored
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
@@ -1135,7 +1135,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
-			col.GeneratedExprString = stringutil.RemoveBlanks(opt.Expr.Text())
+			col.GeneratedExprString = stringutil.RemoveRedundantBlanks(opt.Expr.Text())
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {

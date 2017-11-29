@@ -236,16 +236,25 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 	return sIdx == len(str)
 }
 
-// RemoveBlanks removes all blanks, returns a new string.
-func RemoveBlanks(s string) string {
+// RemoveRedundantBlanks removes all redundant blanks, returns a new string.
+func RemoveRedundantBlanks(s string) string {
 	var buf = new(bytes.Buffer)
 	var cbuf [6]byte
 	for _, c := range s {
-		if c == rune(' ') || c == rune('\t') || c == rune('\r') || c == rune('\n') {
-			continue
+		if c == rune('\t') || c == rune('\r') || c == rune('\n') {
+			c = rune(' ')
 		}
 		len := utf8.EncodeRune(cbuf[0:], c)
 		buf.Write(cbuf[0:len])
 	}
-	return buf.String()
+	s = buf.String()
+	for {
+		// Replace double blank with one blank.
+		var ss = strings.Replace(s, "  ", " ", -1)
+		if len(s) != len(ss) {
+			s = ss
+			continue
+		}
+		return s
+	}
 }

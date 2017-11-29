@@ -1573,6 +1573,9 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
+	// Check generated expression with blanks.
+	s.tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)))")
+
 	genExprTests := []struct {
 		stmt string
 		err  int

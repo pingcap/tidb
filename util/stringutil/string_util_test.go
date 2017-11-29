@@ -125,16 +125,17 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 	}
 }
 
-func (s *testStringUtilSuite) TestRemoveBlanks(c *C) {
+func (s *testStringUtilSuite) TestRemoveRedundantBlanks(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		input  string
 		output string
 	}{
-		{"a\nb\rc d\te", "abcde"},
-		{"hello, 世界\npeace", "hello,世界peace"},
+		{"a\nb\rc d\te", "a b c d e"},
+		{"hello, 世界\npeace", "hello, 世界 peace"},
+		{"cast(a      as \t\n\rchar)", "cast(a as char)"},
 	}
 	for _, tt := range tests {
-		c.Assert(RemoveBlanks(tt.input), Equals, tt.output)
+		c.Assert(RemoveRedundantBlanks(tt.input), Equals, tt.output)
 	}
 }
