@@ -25,7 +25,7 @@ type mockTxn struct {
 	valid bool
 }
 
-// Always returns a retryable error.
+// Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx goctx.Context) error {
 	return ErrRetryable
 }
@@ -93,6 +93,10 @@ func (t *mockTxn) Len() int {
 
 func (t *mockTxn) Size() int {
 	return 0
+}
+
+func (t *mockTxn) GetMemBuffer() MemBuffer {
+	return nil
 }
 
 // mockStorage is used to start a must commit-failed txn.

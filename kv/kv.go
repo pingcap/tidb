@@ -135,6 +135,8 @@ type Transaction interface {
 	// Valid returns if the transaction is valid.
 	// A transaction become invalid after commit or rollback.
 	Valid() bool
+	// GetMemBuffer return the MemBuffer binding to this transaction.
+	GetMemBuffer() MemBuffer
 }
 
 // Client is used to send request to KV layer.

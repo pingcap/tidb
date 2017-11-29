@@ -80,21 +80,7 @@ func (s *BufferStore) SeekReverse(k Key) (Iterator, error) {
 
 // WalkBuffer iterates all buffered kv pairs.
 func (s *BufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
-	iter, err := s.MemBuffer.Seek(nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer iter.Close()
-	for iter.Valid() {
-		if err = f(iter.Key(), iter.Value()); err != nil {
-			return errors.Trace(err)
-		}
-		err = iter.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+	return errors.Trace(WalkMemBuffer(s.MemBuffer, f))
 }
 
 // SaveTo saves all buffered kv pairs into a Mutator.
