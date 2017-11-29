@@ -141,7 +141,7 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 }
 
 // GenAutoTableID adds step to the auto ID of the table and returns the sum.
-func (m *Meta) GenAutoTableID(originalDBID, dbID, tableID, step int64) (int64, error) {
+func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
 	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -153,8 +153,7 @@ func (m *Meta) GenAutoTableID(originalDBID, dbID, tableID, step int64) (int64, e
 		return 0, errors.Trace(err)
 	}
 
-	// Using original DB ID to generate auto ID.
-	return m.txn.HInc(m.dbKey(originalDBID), m.autoTableIDKey(tableID), step)
+	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
 }
 
 // GetAutoTableID gets current auto id with table id.
@@ -294,7 +293,7 @@ func (m *Meta) DropDatabase(dbID int64) error {
 // DropTable drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTable(dbID int64, tblInfo *model.TableInfo, delAutoID bool) error {
+func (m *Meta) DropTable(dbID int64, tblID int64, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -302,7 +301,7 @@ func (m *Meta) DropTable(dbID int64, tblInfo *model.TableInfo, delAutoID bool) e
 	}
 
 	// Check if table exists.
-	tableKey := m.tableKey(tblInfo.ID)
+	tableKey := m.tableKey(tblID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -310,12 +309,8 @@ func (m *Meta) DropTable(dbID int64, tblInfo *model.TableInfo, delAutoID bool) e
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
-
 	if delAutoID {
-		if tblInfo.OldSchemaID != 0 {
-			dbKey = m.dbKey(tblInfo.OldSchemaID)
-		}
-		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblInfo.ID)); err != nil {
+		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
 			return errors.Trace(err)
 		}
 	}

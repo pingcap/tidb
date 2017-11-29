@@ -3,6 +3,30 @@
 TiDB is a community driven open source project and we welcome any contributor. The process of contributing to the TiDB project
 may be different than many other projects you have been involved in. This document outlines some conventions about development workflow, commit message formatting, contact points and other resources to make it easier to get your contribution accepted. This document is the canonical source of truth for things like supported toolchain versions for building and testing TiDB.
 
+## What is a Contributor?
+
+A Contributor refers to the person who contributes to the following projects:
+- TiDB: https://github.com/pingcap/tidb 
+- TiKV: https://github.com/pingcap/tikv 
+- TiSpark: https://github.com/pingcap/tispark 
+- PD: https://github.com/pingcap/pd 
+- Docs: https://github.com/pingcap/docs 
+- Docs-cn: https://github.com/pingcap/docs-cn 
+
+## How to become a TiDB Contributor?
+
+If a PR (Pull Request) submitted to the TiDB / TiKV / TiSpark / PD / Docs／Docs-cn projects by you is approved and merged, then you become a TiDB Contributor. 
+
+You are also encouraged to participate in the projects in the following ways:
+- Actively answer technical questions asked by community users.
+- Help to test the projects.
+- Help to review the pull requests (PRs) submitted by others.
+- Help to improve technical documents.
+- Submit valuable issues.
+- Report or fix known and unknown bugs.
+- Participate in the existing discussion about features in the roadmap, and have interest in implementing a certain feature independently.
+- Write articles about the source code analysis and usage cases for the projects.
+
 ## Pre submit pull request/issue flight checks
 
 Before you move on, please make sure what your issue and/or pull request is, a simple bug fix or an architecture change.
