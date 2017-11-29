@@ -277,7 +277,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
@@ -335,8 +335,9 @@ func (s *testSuite) TestShowFullProcessList(c *C) {
 	fullSQL := "show                                                                                        full processlist"
 	simpSQL := "show                                                                                        processlist"
 
-	tk.MustQuery(fullSQL).Check(testutil.RowsWithSep("|", "223|   Query|0|2|"+fullSQL))
-	tk.MustQuery(simpSQL).Check(testutil.RowsWithSep("|", "223|   Query|0|2|"+simpSQL[:100]))
+	cols := []int{4, 5, 6, 7} // columns to check: Command, Time, State, Info
+	tk.MustQuery(fullSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+fullSQL))
+	tk.MustQuery(simpSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+simpSQL[:100]))
 
 	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }

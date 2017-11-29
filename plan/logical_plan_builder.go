@@ -405,7 +405,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
-	selection := Selection{}.init(b.ctx)
+	selection := LogicalSelection{}.init(b.ctx)
 	for _, cond := range conditions {
 		expr, np, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {

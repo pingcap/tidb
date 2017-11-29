@@ -84,7 +84,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.s, err = tidb.CreateSession(s.store)
+	s.s, err = tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	_, err = s.s.Execute(goctx.Background(), "create database test_db")
@@ -217,7 +217,7 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 }
 
 func backgroundExec(s kv.Storage, sql string, done chan error) {
-	se, err := tidb.CreateSession(s)
+	se, err := tidb.CreateSession4Test(s)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
@@ -775,7 +775,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
-	se, err := tidb.CreateSession(s)
+	se, err := tidb.CreateSession4Test(s)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test_db")
 	c.Assert(err, IsNil)
@@ -787,7 +787,7 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 
 func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
 	go func() {
-		se, err := tidb.CreateSession(s)
+		se, err := tidb.CreateSession4Test(s)
 		if err != nil {
 			done <- errors.Trace(err)
 			return

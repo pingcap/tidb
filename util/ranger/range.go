@@ -194,24 +194,6 @@ func (ir *IndexRange) Convert2IndexRange() *IndexRange {
 	return ir
 }
 
-// Align appends low value and high value up to the number of columns with max value, min not null value or null value.
-func (ir *IndexRange) Align(numColumns int) {
-	for i := len(ir.LowVal); i < numColumns; i++ {
-		if ir.LowExclude {
-			ir.LowVal = append(ir.LowVal, types.MaxValueDatum())
-		} else {
-			ir.LowVal = append(ir.LowVal, types.Datum{})
-		}
-	}
-	for i := len(ir.HighVal); i < numColumns; i++ {
-		if ir.HighExclude {
-			ir.HighVal = append(ir.HighVal, types.Datum{})
-		} else {
-			ir.HighVal = append(ir.HighVal, types.MaxValueDatum())
-		}
-	}
-}
-
 // PrefixEqualLen tells you how long the prefix of the range is a point.
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
 func (ir *IndexRange) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {

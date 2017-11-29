@@ -75,11 +75,11 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "create table t (id int)")
 	delete(storeBootstrapped, store.UUID())
 	se.Close()
-	se, err = CreateSession(store)
+	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se, "USE test;")
 	mustExecSQL(c, se, "insert t values (?)", 3)
-	se, err = CreateSession(store)
+	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se, "USE test;")
 	r = mustExecSQL(c, se, "select * from t")
@@ -93,7 +93,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 
 	// Try to do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
 	// For https://github.com/pingcap/tidb/issues/1096
-	se, err = CreateSession(store)
+	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)
 

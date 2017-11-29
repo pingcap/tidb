@@ -109,9 +109,14 @@ func (p LogicalApply) init(ctx context.Context) *LogicalApply {
 	return &p
 }
 
-func (p Selection) init(ctx context.Context) *Selection {
+func (p LogicalSelection) init(ctx context.Context) *LogicalSelection {
 	p.basePlan = newBasePlan(TypeSel, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalSelection) init(ctx context.Context) *PhysicalSelection {
+	p.basePlan = newBasePlan(TypeSel, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }

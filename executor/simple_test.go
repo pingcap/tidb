@@ -137,7 +137,7 @@ func (s *testSuite) TestUser(c *C) {
 	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
 	_, err = tk.Exec(alterUserSQL)
 	c.Check(err, NotNil)
-	tk.Se, err = tidb.CreateSession(s.store)
+	tk.Se, err = tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(context.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
@@ -189,7 +189,7 @@ func (s *testSuite) TestSetPwd(c *C) {
 	// Session user is empty.
 	_, err := tk.Exec(setPwdSQL)
 	c.Check(err, NotNil)
-	tk.Se, err = tidb.CreateSession(s.store)
+	tk.Se, err = tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(context.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost"}
@@ -214,7 +214,7 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	tk.MustExec(`UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost"`)
 
 	// Create a new session.
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil), IsTrue)
