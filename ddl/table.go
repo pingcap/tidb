@@ -238,7 +238,6 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if newSchemaID != oldSchemaID {
 		err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
 		if err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		baseID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
