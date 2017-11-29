@@ -73,14 +73,19 @@ type testCase struct {
 	// expectEmptyValCnt only check if expectEmptyValCnt > 0
 	expectEmptyValCnt int
 	// expectKvCnt only check if expectKvCnt > 0
-	expectKvCnt int
+	expectKvCnt        int
+	expectAffectedRows int
 }
 
 func (s *testKvEncoderSuite) runTestSQL(c *C, tkExpect *testkit.TestKit, encoder KvEncoder, cases []testCase, tableID int64) {
 	for _, ca := range cases {
 		comment := fmt.Sprintf("sql:%v", ca.sql)
-		kvPairs, err := encoder.Encode(ca.sql, tableID)
+		kvPairs, affectedRows, err := encoder.Encode(ca.sql, tableID)
 		c.Assert(err, IsNil, Commentf(comment))
+
+		if ca.expectAffectedRows > 0 {
+			c.Assert(affectedRows, Equals, uint64(ca.expectAffectedRows))
+		}
 
 		kvPairsExpect := getExpectKvPairs(tkExpect, ca.sql)
 		c.Assert(len(kvPairs), Equals, len(kvPairsExpect), Commentf(comment))
@@ -125,12 +130,13 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	c.Assert(err, IsNil)
 
 	sqls := []testCase{
-		{"insert into t values(1, 'test');", 0, 1},
-		{"insert into t(a) values('test')", 0, 1},
-		{"insert into t(id, a) values(3, 'test')", 0, 1},
-		{"insert into t values(1000000, 'test')", 0, 1},
-		{"insert into t(a) values('test')", 0, 1},
-		{"insert into t(id, a) values(4, 'test')", 0, 1},
+		{"insert into t values(1, 'test');", 0, 1, 1},
+		{"insert into t(a) values('test')", 0, 1, 1},
+		{"insert into t(a) values('test'), ('test1')", 0, 2, 2},
+		{"insert into t(id, a) values(3, 'test')", 0, 1, 1},
+		{"insert into t values(1000000, 'test')", 0, 1, 1},
+		{"insert into t(a) values('test')", 0, 1, 1},
+		{"insert into t(id, a) values(4, 'test')", 0, 1, 1},
 	}
 
 	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
@@ -142,12 +148,12 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 
 	tableID = 2
 	sqls = []testCase{
-		{"insert into t1 values(1, 'test');", 0, 2},
-		{"insert into t1(a) values('test')", 0, 2},
-		{"insert into t1(id, a) values(3, 'test')", 0, 2},
-		{"insert into t1 values(1000000, 'test')", 0, 2},
-		{"insert into t1(a) values('test')", 0, 2},
-		{"insert into t1(id, a) values(4, 'test')", 0, 2},
+		{"insert into t1 values(1, 'test');", 0, 2, 1},
+		{"insert into t1(a) values('test')", 0, 2, 1},
+		{"insert into t1(id, a) values(3, 'test')", 0, 2, 1},
+		{"insert into t1 values(1000000, 'test')", 0, 2, 1},
+		{"insert into t1(a) values('test')", 0, 2, 1},
+		{"insert into t1(id, a) values(4, 'test')", 0, 2, 1},
 	}
 
 	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
@@ -167,9 +173,9 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	c.Assert(err, IsNil)
 
 	sqls = []testCase{
-		{"insert into t2(id, a) values(1, 'test')", 0, 3},
-		{"insert into t2 values(2, 'test', '2017-11-27 23:59:59')", 0, 3},
-		{"insert into t2 values(3, 'test', '2017-11-28 23:59:59')", 0, 3},
+		{"insert into t2(id, a) values(1, 'test')", 0, 3, 1},
+		{"insert into t2 values(2, 'test', '2017-11-27 23:59:59')", 0, 3, 1},
+		{"insert into t2 values(3, 'test', '2017-11-28 23:59:59')", 0, 3, 1},
 	}
 	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
 }
@@ -195,12 +201,13 @@ func (s *testKvEncoderSuite) TestInsertPkIsNotHandle(c *C) {
 	c.Assert(encoder.ExecDDLSQL(schemaSQL), IsNil)
 
 	sqls := []testCase{
-		{"insert into t values(1, 'test');", 0, 2},
-		{"insert into t(id, a) values(2, 'test')", 0, 2},
-		{"insert into t(id, a) values(3, 'test')", 0, 2},
-		{"insert into t values(1000000, 'test')", 0, 2},
-		{"insert into t(id, a) values(5, 'test')", 0, 2},
-		{"insert into t(id, a) values(4, 'test')", 0, 2},
+		{"insert into t values(1, 'test');", 0, 2, 1},
+		{"insert into t(id, a) values(2, 'test')", 0, 2, 1},
+		{"insert into t(id, a) values(3, 'test')", 0, 2, 1},
+		{"insert into t values(1000000, 'test')", 0, 2, 1},
+		{"insert into t(id, a) values(5, 'test')", 0, 2, 1},
+		{"insert into t(id, a) values(4, 'test')", 0, 2, 1},
+		{"insert into t(id, a) values(6, 'test'), (7, 'test'), (8, 'test')", 0, 6, 3},
 	}
 
 	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
@@ -237,10 +244,10 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 
 	for _, sql := range sqls {
 		baseID := alloc.Base()
-		kvPairs, err1 := encoder.Encode(sql, tableID)
+		kvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		alloc.Rebase(tableID, baseID, false)
-		retryKvPairs, err1 := encoder.Encode(sql, tableID)
+		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
 		for i, kv := range kvPairs {
@@ -251,9 +258,9 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 
 	// specify id, it must be the same kv
 	sql := "insert into t(id, a) values(5, 'test')"
-	kvPairs, err := encoder.Encode(sql, tableID)
+	kvPairs, _, err := encoder.Encode(sql, tableID)
 	c.Assert(err, IsNil, Commentf("sql:%s", sql))
-	retryKvPairs, err := encoder.Encode(sql, tableID)
+	retryKvPairs, _, err := encoder.Encode(sql, tableID)
 	c.Assert(err, IsNil, Commentf("sql:%s", sql))
 	c.Assert(len(kvPairs), Equals, len(retryKvPairs))
 	for i, kv := range kvPairs {
@@ -278,14 +285,15 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		"insert into t1(id, a, b) values(1000000, 'test', 'b6')",
 		"insert into t1(id, a, b) values(5, 'test', 'b7')",
 		"insert into t1(id, a, b) values(4, 'test', 'b8')",
+		"insert into t1(a, b) values('test', 'b9');",
 	}
 
 	for _, sql := range sqls {
 		baseID := alloc.Base()
-		kvPairs, err1 := encoder.Encode(sql, tableID)
+		kvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		alloc.Rebase(tableID, baseID, false)
-		retryKvPairs, err1 := encoder.Encode(sql, tableID)
+		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
 		for i, kv := range kvPairs {
