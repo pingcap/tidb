@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -86,6 +87,20 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
 }
 
+// checkUnique checks whether we can pass unique info to TiKV.
+func checkUnique(idx *model.IndexInfo, ranges []*ranger.IndexRange) bool {
+	// If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
+	if !idx.Unique {
+		return false
+	}
+	for _, rg := range ranges {
+		if len(rg.LowVal) != len(idx.Columns) {
+			return false
+		}
+	}
+	return true
+}
+
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
@@ -105,11 +120,7 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	unique := p.Index.Unique
-	// If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
-	if len(p.Ranges) > 0 && len(p.Index.Columns) != len(p.Ranges[0].LowVal) {
-		unique = false
-	}
+	unique := checkUnique(p.Index, p.Ranges)
 	idxExec.Unique = &unique
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
