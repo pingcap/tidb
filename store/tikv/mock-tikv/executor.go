@@ -231,11 +231,11 @@ func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
 			values = append(values, b)
 		}
 	} else {
-		handle, err := decodeHandle(pair.Value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		if e.pkStatus != pkColNotExists {
+			handle, err := decodeHandle(pair.Value)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			var handleDatum types.Datum
 			if e.pkStatus == pkColIsUnsigned {
 				handleDatum = types.NewUintDatum(uint64(handle))
@@ -251,7 +251,6 @@ func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
 	}
 
 	return values, nil
-
 }
 
 func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {

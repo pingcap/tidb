@@ -87,8 +87,9 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
 }
 
-// checkUnique checks whether we can pass unique info to TiKV.
-func checkUnique(idx *model.IndexInfo, ranges []*ranger.IndexRange) bool {
+// checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
+// range and index are equal.
+func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.IndexRange) bool {
 	// If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
 	if !idx.Unique {
 		return false
@@ -120,7 +121,7 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	unique := checkUnique(p.Index, p.Ranges)
+	unique := checkCoverIndex(p.Index, p.Ranges)
 	idxExec.Unique = &unique
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
