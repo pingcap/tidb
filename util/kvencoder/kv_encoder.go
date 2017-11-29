@@ -86,9 +86,9 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 		}
 	}()
 
-	txn := e.se.Txn()
-	kvPairs = make([]KvPair, 0, txn.Len())
-	err = kv.WalkMemBuffer(txn.GetMemBuffer(), func(k kv.Key, v []byte) error {
+	txnMemBuffer := e.se.Txn().GetMemBuffer()
+	kvPairs = make([]KvPair, 0, txnMemBuffer.Len())
+	err = kv.WalkMemBuffer(txnMemBuffer, func(k kv.Key, v []byte) error {
 		if bytes.HasPrefix(k, tablecodec.TablePrefix()) {
 			k = tablecodec.ReplaceRecordKeyTableID(k, tableID)
 		}
