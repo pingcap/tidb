@@ -344,14 +344,17 @@ func (e *SelectLockExec) Next(goCtx goctx.Context) (Row, error) {
 type LimitExec struct {
 	baseExecutor
 
-	Offset uint64
-	Count  uint64
-	Idx    uint64
+	begin  uint64
+	end    uint64
+	cursor uint64
+
+	// meetFirstBatch represents whether we have met the first valid Chunk from child.
+	meetFirstBatch bool
 }
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(goCtx goctx.Context) (Row, error) {
-	for e.Idx < e.Offset {
+	for e.cursor < e.begin {
 		srcRow, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -359,9 +362,9 @@ func (e *LimitExec) Next(goCtx goctx.Context) (Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		e.Idx++
+		e.cursor++
 	}
-	if e.Idx >= e.Count+e.Offset {
+	if e.cursor >= e.end {
 		return nil, nil
 	}
 	srcRow, err := e.children[0].Next(goCtx)
@@ -371,14 +374,63 @@ func (e *LimitExec) Next(goCtx goctx.Context) (Row, error) {
 	if srcRow == nil {
 		return nil, nil
 	}
-	e.Idx++
+	e.cursor++
 	return srcRow, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.cursor >= e.end {
+		return nil
+	}
+	for !e.meetFirstBatch {
+		err := e.children[0].NextChunk(e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		batchSize := uint64(e.childrenResults[0].NumRows())
+		// no more data.
+		if batchSize == 0 {
+			return nil
+		}
+		if newCursor := e.cursor + batchSize; newCursor >= e.begin {
+			e.meetFirstBatch = true
+			begin, end := e.begin-e.cursor, batchSize
+			if newCursor > e.end {
+				end = e.end - e.cursor
+			}
+			chk.Append(e.childrenResults[0], int(begin), int(end))
+			e.cursor += end
+			return nil
+		}
+		e.cursor += batchSize
+	}
+	err := e.children[0].NextChunk(chk)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	batchSize := uint64(chk.NumRows())
+	// no more data.
+	if batchSize == 0 {
+		return nil
+	}
+	if e.cursor+batchSize > e.end {
+		chk.TruncateTo(int(e.end - e.cursor))
+		batchSize = e.end - e.cursor
+	}
+	e.cursor += batchSize
+	return nil
 }
 
 // Open implements the Executor Open interface.
 func (e *LimitExec) Open(goCtx goctx.Context) error {
-	e.Idx = 0
-	return errors.Trace(e.children[0].Open(goCtx))
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
+	e.cursor = 0
+	e.meetFirstBatch = e.begin == 0
+	return nil
 }
 
 func init() {
