@@ -609,9 +609,12 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	loadHistogramTicker := time.NewTicker(lease)
 	defer loadHistogramTicker.Stop()
 	statsHandle := do.StatsHandle()
+	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
 		log.Error("[stats] init stats info failed: ", errors.ErrorStack(err))
+	} else {
+		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
 	for {
 		select {
