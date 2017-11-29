@@ -409,6 +409,14 @@ func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask, taskCh chan<-
 	return
 }
 
+func (it *copIterator) sendToRespCh(goCtx goctx.Context, resp copResponse, respCh chan copResponse) {
+	select {
+	case respCh <- resp:
+	case <-it.finished:
+	case <-goCtx.Done():
+	}
+}
+
 // Next returns next coprocessor result.
 func (it *copIterator) Next() ([]byte, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
@@ -498,7 +506,7 @@ func (it *copIterator) handleTaskOnce(goCtx goctx.Context, bo *Backoffer, task *
 		return nil, errors.Trace(err)
 	}
 	if task.cmdType == tikvrpc.CmdCopStream {
-		return it.handleCopStreamResult(bo, resp.CopStream, task, ch)
+		return it.handleCopStreamResult(goCtx, bo, resp.CopStream, task, ch)
 	}
 
 	tasks, err1 := it.checkCopResponse(bo, resp.Cop, task)
@@ -509,15 +517,11 @@ func (it *copIterator) handleTaskOnce(goCtx goctx.Context, bo *Backoffer, task *
 		return tasks, nil
 	}
 
-	select {
-	case <-goCtx.Done():
-	case <-it.finished:
-	case ch <- copResponse{Response: resp.Cop}:
-	}
+	it.sendToRespCh(goCtx, copResponse{Response: resp.Cop}, ch)
 	return nil, nil
 }
 
-func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleCopStreamResult(goCtx goctx.Context, bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse) ([]*copTask, error) {
 	for {
 		resp, err := stream.Recv()
 		if err != nil {
@@ -532,7 +536,7 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_C
 			return tasks, errors.Trace(err)
 		}
 
-		ch <- copResponse{resp, nil}
+		it.sendToRespCh(goCtx, copResponse{resp, nil}, ch)
 	}
 	return nil, nil
 }
@@ -573,32 +577,49 @@ func buildCopTasksFromRemain(bo *Backoffer, cache *RegionCache, resp *coprocesso
 		return buildCopTasks(bo, cache, task.ranges, desc, streaming)
 	}
 
-	// TODO: it should be kv.Range rather than coprocessor.Range
-	ran := kv.KeyRange{
-		StartKey: resp.Range.Start,
-		EndKey:   resp.Range.End,
-	}
-	ranges := calculateRemain(task.ranges, &ran, desc)
+	ranges := calculateRemain(task.ranges, resp.Range, desc)
 	return buildCopTasks(bo, cache, ranges, desc, streaming)
 }
 
-func calculateRemain(ranges *copRanges, split *kv.KeyRange, desc bool) *copRanges {
+func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) *copRanges {
+	len := ranges.len()
 	if desc {
-		// TODO
-		return nil
+		i := len - 1
+		for ; i >= 0; i-- {
+			r := ranges.at(i)
+			if bytes.Compare(r.StartKey, split.End) < 0 {
+				break
+			}
+		}
+		if i < 0 {
+			log.Error("wrong response from tikv!")
+			return nil
+		}
+		r := ranges.at(i)
+		ret := ranges.slice(0, i)
+		ret.last = &kv.KeyRange{r.StartKey, r.EndKey}
+		if bytes.Compare(split.End, r.EndKey) < 0 {
+			ret.last.EndKey = split.End
+		}
+		return ret
 	}
 
-	key := split.StartKey
-	len := ranges.len()
+	key := split.Start
+	// Binary search for the range r that [r, r+1) is not consumed.
 	n := sort.Search(len, func(i int) bool {
 		r := ranges.at(i)
 		return bytes.Compare(r.EndKey, key) > 0
 	})
-	find := ranges.at(n)
-	if bytes.Compare(find.StartKey, key) < 0 {
-		// split range
+	if n >= len {
+		log.Error("for any valid tikv response, n < len should always hold!")
+		return nil
+	}
+	r := ranges.at(n)
+	// Adjust the start point in range r in this case:
+	// [r.StartKey -- split.Key -- r.EndKey) => [split.Key -- r.EndKey)
+	if bytes.Compare(r.StartKey, key) < 0 {
 		ran := ranges.slice(n+1, len)
-		ran.first = &kv.KeyRange{key, find.EndKey}
+		ran.first = &kv.KeyRange{key, r.EndKey}
 		return ran
 	}
 	return ranges.slice(n, len)

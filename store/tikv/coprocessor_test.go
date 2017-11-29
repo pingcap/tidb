@@ -15,6 +15,7 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	goctx "golang.org/x/net/context"
@@ -160,5 +161,183 @@ func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *copRanges, ranges []k
 				s.checkEqual(c, copRanges.slice(i, j), ranges[i:j], false)
 			}
 		}
+	}
+}
+
+func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
+	first := &kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}
+	mid := []kv.KeyRange{
+		{StartKey: []byte("c"), EndKey: []byte("d")},
+		{StartKey: []byte("e"), EndKey: []byte("g")},
+		{StartKey: []byte("l"), EndKey: []byte("o")},
+	}
+	last := &kv.KeyRange{StartKey: []byte("q"), EndKey: []byte("t")}
+	desc := false
+
+	// range:  [c-d) [e-g) [l-o)
+	//
+	// split:  [c-m)
+	// result: [c-d) [e-g) [l-o)
+	// split:  [d-g)
+	// result: [c-d) [e-g) [l-o)
+	// split:  [f-g)
+	// result: [f-g) [l-o)
+	ranges := &copRanges{mid: mid}
+	s.testZZZ(c, ranges, desc,
+		zzzCase{
+			zzzSplit("c", "m"),
+			buildKeyRanges("c", "d", "e", "g", "l", "o"),
+		},
+		zzzCase{
+			zzzSplit("d", "g"),
+			buildKeyRanges("c", "d", "e", "g", "l", "o"),
+		},
+		zzzCase{
+			zzzSplit("f", "g"),
+			buildKeyRanges("f", "g", "l", "o"),
+		},
+	)
+
+	// range:  [a-b) [c-d) [e-g) [l-o)
+	//
+	// split:  [a-d)
+	// result: [a-b) [c-d) [e-g) [l-o)
+	// split:  [b-d)
+	// result: [c-d) [e-g) [l-o)
+	// split:  [m-o)
+	// result: [l-o)
+	ranges = &copRanges{first: first, mid: mid}
+	s.testZZZ(c, ranges, desc,
+		zzzCase{
+			zzzSplit("a", "d"),
+			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
+		},
+		zzzCase{
+			zzzSplit("b", "d"),
+			buildKeyRanges("c", "d", "e", "g", "l", "o"),
+		},
+		zzzCase{
+			zzzSplit("m", "o"),
+			buildKeyRanges("l", "o"),
+		},
+	)
+
+	// range:  [a-b) [c-d) [e-g) [l-o) [q-t)
+	//
+	// split:  [f-o)
+	// result: [e-g) [l-o) [q-t)
+	// split:  [h-p)
+	// result: [l-o) [q-t)
+	// split:  [r-t)
+	// result: [r-t)
+	ranges = &copRanges{first: first, mid: mid, last: last}
+	s.testZZZ(c, ranges, desc,
+		zzzCase{
+			zzzSplit("f", "o"),
+			buildKeyRanges("e", "g", "l", "o", "q", "t"),
+		},
+		zzzCase{
+			zzzSplit("h", "p"),
+			buildKeyRanges("l", "o", "q", "t"),
+		},
+		zzzCase{
+			zzzSplit("r", "t"),
+			buildKeyRanges("r", "t"),
+		},
+	)
+
+	desc = true
+	// reverse, test the desc direction
+	// range:  [c-d) [e-g) [l-o)
+	//
+	// split:  [c-m)
+	// result: [c-m)
+	// split:  [d-g)
+	// result: [c-d) [e-g)
+	// split:  [f-g)
+	// result: [c-d) [e-g)
+	ranges = &copRanges{mid: mid}
+	s.testZZZ(c, ranges, desc,
+		zzzCase{
+			zzzSplit("c", "m"),
+			buildKeyRanges("c", "m"),
+		},
+		zzzCase{
+			zzzSplit("d", "g"),
+			buildKeyRanges("c", "d", "e", "g"),
+		},
+		zzzCase{
+			zzzSplit("f", "g"),
+			buildKeyRanges("c", "d", "e", "g"),
+		},
+	)
+
+	// range:  [a-b) [c-d) [e-g) [l-o)
+	//
+	// split:  [a-d)
+	// result: [a-b) [c-d)
+	// split:  [b-d)
+	// result: [a-b) [c-d)
+	// split:  [m-o)
+	// result: [a-b) [c-d) [e-g) [l-o)
+	ranges = &copRanges{first: first, mid: mid}
+	s.testZZZ(c, ranges, desc,
+		zzzCase{
+			zzzSplit("a", "d"),
+			buildKeyRanges("a", "b", "c", "d"),
+		},
+		zzzCase{
+			zzzSplit("b", "d"),
+			buildKeyRanges("a", "b", "c", "d"),
+		},
+		zzzCase{
+			zzzSplit("m", "o"),
+			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
+		},
+	)
+
+	// range:  [a-b) [c-d) [e-g) [l-o) [q-t)
+	//
+	// split:  [f-o)
+	// result: [a-b) [c-d) [e-g) [l-o)
+	// split:  [h-p)
+	// result: [a-b) [c-d) [e-g) [l-o)
+	// split:  [r-t)
+	// result: [a-b) [c-d) [e-g) [l-o) [q-t)
+	ranges = &copRanges{first: first, mid: mid, last: last}
+	s.testZZZ(c, ranges, desc,
+		zzzCase{
+			zzzSplit("f", "o"),
+			buildKeyRanges("a", "b", "c", "d", "e", "l", "o"),
+		},
+		zzzCase{
+			zzzSplit("h", "p"),
+			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
+		},
+		zzzCase{
+			zzzSplit("r", "t"),
+			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t"),
+		},
+	)
+}
+
+func zzzSplit(start, end string) *coprocessor.KeyRange {
+	return &coprocessor.KeyRange{
+		Start: []byte(start),
+		End:   []byte(end),
+	}
+}
+
+type zzzCase struct {
+	*coprocessor.KeyRange
+	*copRanges
+}
+
+func (s *testCoprocessorSuite) testZZZ(c *C, ranges *copRanges, desc bool, cases ...zzzCase) {
+	for _, t := range cases {
+		result := calculateRemain(ranges, t.KeyRange, desc)
+		expect := t.copRanges
+
+		s.checkEqual(c, result, expect.mid, false)
 	}
 }
