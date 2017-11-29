@@ -48,7 +48,8 @@ type allocator struct {
 	base  int64
 	end   int64
 	store kv.Storage
-	dbID  int64
+	// dbID is current database's ID.
+	dbID int64
 }
 
 // GetStep is only used by tests
