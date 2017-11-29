@@ -49,35 +49,30 @@ type KvEncoder interface {
 	// NOTE: now we just support transfer insert statement to kv pairs.
 	// (if we wanna support other statement, we need to add a kv.Storage parameter,
 	// and pass tikv store in.)
-	Encode(sql string) ([]KvPair, error)
+	Encode(sql string, tableID int64) ([]KvPair, error)
 
 	// ExecDDLSQL execute ddl sql, you must use it to create schema infos.
 	ExecDDLSQL(sql string) error
-
-	// SetTableID set KvEncoder's tableID, just for test
-	SetTableID(tableID int64)
 }
 
 type kvEncoder struct {
-	store   kv.Storage
-	dom     *domain.Domain
-	se      tidb.Session
-	tableID int64
+	store kv.Storage
+	dom   *domain.Domain
+	se    tidb.Session
 }
 
 // New new a KvEncoder
-func New(dbName string, tableID int64, idAlloc autoid.Allocator) (KvEncoder, error) {
+func New(dbName string, idAlloc autoid.Allocator) (KvEncoder, error) {
 	kvEnc := &kvEncoder{}
 	err := kvEnc.initial(dbName, idAlloc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	kvEnc.tableID = tableID
 	return kvEnc, nil
 }
 
-func (e *kvEncoder) Encode(sql string) ([]KvPair, error) {
+func (e *kvEncoder) Encode(sql string, tableID int64) ([]KvPair, error) {
 	e.se.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	_, err := e.se.Execute(goctx.Background(), sql)
 	if err != nil {
@@ -95,7 +90,7 @@ func (e *kvEncoder) Encode(sql string) ([]KvPair, error) {
 	kvPairs := make([]KvPair, 0, txn.Len())
 	err = kv.WalkMemBuffer(txn.GetMemBuffer(), func(k kv.Key, v []byte) error {
 		if tablecodec.IsRecordKey(k) {
-			k = tablecodec.ReplaceRecordKeyTableID(k, e.tableID)
+			k = tablecodec.ReplaceRecordKeyTableID(k, tableID)
 		}
 		kvPairs = append(kvPairs, KvPair{Key: k, Val: v})
 		return nil
@@ -114,10 +109,6 @@ func (e *kvEncoder) ExecDDLSQL(sql string) error {
 	}
 
 	return nil
-}
-
-func (e *kvEncoder) SetTableID(tableID int64) {
-	e.tableID = tableID
 }
 
 func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {

@@ -79,7 +79,7 @@ type testCase struct {
 func (s *testKvEncoderSuite) runTestSQL(c *C, tkExpect *testkit.TestKit, encoder KvEncoder, cases []testCase, tableID int64) {
 	for _, ca := range cases {
 		comment := fmt.Sprintf("sql:%v", ca.sql)
-		kvPairs, err := encoder.Encode(ca.sql)
+		kvPairs, err := encoder.Encode(ca.sql, tableID)
 		c.Assert(err, IsNil, Commentf(comment))
 
 		kvPairsExpect := getExpectKvPairs(tkExpect, ca.sql)
@@ -116,7 +116,7 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	tkExpect := testkit.NewTestKit(c, store)
 	tkExpect.MustExec("use test")
 	var tableID int64 = 1
-	encoder, err := New("test", tableID, nil)
+	encoder, err := New("test", nil)
 	c.Assert(err, IsNil)
 
 	schemaSQL := "create table t(id int auto_increment, a char(10), primary key(id))"
@@ -141,7 +141,6 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	c.Assert(err, IsNil)
 
 	tableID = 2
-	encoder.SetTableID(tableID)
 	sqls = []testCase{
 		{"insert into t1 values(1, 'test');", 0, 2},
 		{"insert into t1(a) values('test')", 0, 2},
@@ -166,7 +165,6 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	tkExpect.MustExec(schemaSQL)
 	err = encoder.ExecDDLSQL(schemaSQL)
 	c.Assert(err, IsNil)
-	encoder.SetTableID(tableID)
 
 	sqls = []testCase{
 		{"insert into t2(id, a) values(1, 'test')", 0, 3},
@@ -186,7 +184,7 @@ func (s *testKvEncoderSuite) TestInsertPkIsNotHandle(c *C) {
 	tkExpect.MustExec("use test")
 
 	var tableID int64 = 1
-	encoder, err := New("test", tableID, nil)
+	encoder, err := New("test", nil)
 	c.Assert(err, IsNil)
 
 	schemaSQL := `create table t(
@@ -219,7 +217,7 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 	tk.MustExec("use test")
 	alloc := NewAllocator()
 	var tableID int64 = 1
-	encoder, err := New("test", tableID, alloc)
+	encoder, err := New("test", alloc)
 	c.Assert(err, IsNil)
 
 	schemaSQL := `create table t(
@@ -239,10 +237,10 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 
 	for _, sql := range sqls {
 		baseID := alloc.Base()
-		kvPairs, err1 := encoder.Encode(sql)
+		kvPairs, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		alloc.Rebase(tableID, baseID, false)
-		retryKvPairs, err1 := encoder.Encode(sql)
+		retryKvPairs, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
 		for i, kv := range kvPairs {
@@ -253,13 +251,46 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 
 	// specify id, it must be the same kv
 	sql := "insert into t(id, a) values(5, 'test')"
-	kvPairs, err := encoder.Encode(sql)
+	kvPairs, err := encoder.Encode(sql, tableID)
 	c.Assert(err, IsNil, Commentf("sql:%s", sql))
-	retryKvPairs, err := encoder.Encode(sql)
+	retryKvPairs, err := encoder.Encode(sql, tableID)
 	c.Assert(err, IsNil, Commentf("sql:%s", sql))
 	c.Assert(len(kvPairs), Equals, len(retryKvPairs))
 	for i, kv := range kvPairs {
 		c.Assert(bytes.Compare(kv.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
 		c.Assert(bytes.Compare(kv.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
+	}
+
+	schemaSQL = `create table t1(
+		id int auto_increment,
+		a char(10),
+		b char(10),
+		primary key(id),
+		KEY idx_a(a),
+		unique b_idx(b))`
+	tk.MustExec(schemaSQL)
+	c.Assert(encoder.ExecDDLSQL(schemaSQL), IsNil)
+	tableID = 2
+
+	sqls = []string{
+		"insert into t1(a, b) values('test', 'b1');",
+		"insert into t1(a, b) values('test', 'b2'), ('1', 'b3'), ('2', 'b4'), ('3', 'b5');",
+		"insert into t1(id, a, b) values(1000000, 'test', 'b6')",
+		"insert into t1(id, a, b) values(5, 'test', 'b7')",
+		"insert into t1(id, a, b) values(4, 'test', 'b8')",
+	}
+
+	for _, sql := range sqls {
+		baseID := alloc.Base()
+		kvPairs, err1 := encoder.Encode(sql, tableID)
+		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
+		alloc.Rebase(tableID, baseID, false)
+		retryKvPairs, err1 := encoder.Encode(sql, tableID)
+		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
+		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
+		for i, kv := range kvPairs {
+			c.Assert(bytes.Compare(kv.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
+			c.Assert(bytes.Compare(kv.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
+		}
 	}
 }
