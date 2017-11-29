@@ -918,6 +918,9 @@ func (d *ddl) AlterTableOption(ctx context.Context, ti ast.Ident, options []*ast
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
+	// https://github.com/pingcap/tidb/issues/5034
+	// alter table can not support the case of auto_increment now.
+	// This validation has been done in plan preprocess checkAlterTableGrammar function.
 	handleTableOptions(options, t.Meta())
 	return nil
 }
