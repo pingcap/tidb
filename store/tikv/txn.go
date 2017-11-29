@@ -65,7 +65,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	}, nil
 }
 
-// Get Implement transaction interface.
+// Get implements transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	txnCmdCounter.WithLabelValues("get").Inc()
 	start := time.Now()

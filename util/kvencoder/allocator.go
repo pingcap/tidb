@@ -30,7 +30,6 @@ func NewAllocator() autoid.Allocator {
 	return &allocator{}
 }
 
-// allocator make sure that only use it in single thread.
 type allocator struct {
 	base int64
 }
@@ -40,14 +39,14 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 }
 
 func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
-	alloc.base = newBase
+	atomic.StoreInt64(&alloc.base, newBase)
 	return nil
 }
 
 func (alloc *allocator) Base() int64 {
-	return alloc.base
+	return atomic.LoadInt64(&alloc.base)
 }
 
 func (alloc *allocator) End() int64 {
-	return alloc.base + step
+	return alloc.Base() + step
 }

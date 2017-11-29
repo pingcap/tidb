@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -46,14 +48,32 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 }
 
 type testKvEncoderSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *testKvEncoderSuite) cleanEnv(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
 }
 
 func (s *testKvEncoderSuite) SetUpSuite(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
 	testleak.BeforeTest()
+	s.store = store
+	s.dom = dom
 }
 
 func (s *testKvEncoderSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
+	s.dom.Close()
+	s.store.Close()
 }
 
 func getExpectKvPairs(tkExpect *testkit.TestKit, sql string) []KvPair {
@@ -304,5 +324,83 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 }
 
 func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
+	encoder, err := New("test", nil)
+	c.Assert(err, IsNil)
+	schemaSQL := `create table t(
+		id int auto_increment, 
+		a char(10), 
+		b char(10) default NULL, 
+		primary key(id), 
+		key a_idx(a))
+		`
+	encoder.ExecDDLSQL(schemaSQL)
+	tableID := int64(1)
+	indexID := int64(1)
+
+	sql := "insert into t values(1, 'a', 'b')"
+	kvPairs, affectedRows, err := encoder.Encode(sql, tableID)
+	c.Assert(err, IsNil)
+	c.Assert(len(kvPairs), Equals, 2)
+	c.Assert(affectedRows, Equals, uint64(1))
+	tablePrefix := tablecodec.GenTableRecordPrefix(tableID)
+	handle := int64(1)
+	expectRecordKey := tablecodec.EncodeRecordKey(tablePrefix, handle)
+
+	indexPrefix := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+	expectIdxKey := []byte{}
+	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)
+	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum([]byte("a")))
+	c.Assert(err, IsNil)
+	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum(handle))
+	c.Assert(err, IsNil)
+
+	for _, kv := range kvPairs {
+		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(kv.Key)
+		c.Assert(err1, IsNil)
+		c.Assert(tID, Equals, tableID)
+		if isRecordKey {
+			c.Assert(bytes.Compare(kv.Key, expectRecordKey), Equals, 0)
+		} else {
+			c.Assert(iID, Equals, indexID)
+			c.Assert(bytes.Compare(kv.Key, expectIdxKey), Equals, 0)
+		}
+	}
+
+	// unique index key
+	schemaSQL = `create table t1(
+		id int auto_increment, 
+		a char(10), 
+		primary key(id), 
+		unique a_idx(a))
+		`
+	encoder.ExecDDLSQL(schemaSQL)
+	tableID = int64(2)
+	sql = "insert into t1 values(1, 'a')"
+	kvPairs, affectedRows, err = encoder.Encode(sql, tableID)
+	c.Assert(err, IsNil)
+	c.Assert(len(kvPairs), Equals, 2)
+	c.Assert(affectedRows, Equals, uint64(1))
+
+	tablePrefix = tablecodec.GenTableRecordPrefix(tableID)
+	handle = int64(1)
+	expectRecordKey = tablecodec.EncodeRecordKey(tablePrefix, handle)
+
+	indexPrefix = tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+	expectIdxKey = []byte{}
+	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)
+	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum([]byte("a")))
+	c.Assert(err, IsNil)
+
+	for _, kv := range kvPairs {
+		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(kv.Key)
+		c.Assert(err1, IsNil)
+		c.Assert(tID, Equals, tableID)
+		if isRecordKey {
+			c.Assert(bytes.Compare(kv.Key, expectRecordKey), Equals, 0)
+		} else {
+			c.Assert(iID, Equals, indexID)
+			c.Assert(bytes.Compare(kv.Key, expectIdxKey), Equals, 0)
+		}
+	}
 
 }

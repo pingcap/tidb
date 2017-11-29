@@ -18,17 +18,15 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/tablecodec"
-
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/mysql"
-
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/tablecodec"
 	goctx "golang.org/x/net/context"
 )
 
@@ -43,17 +41,17 @@ type KvPair struct {
 	Val []byte
 }
 
-// KvEncoder is a encoder that transfer sql to key-value pairs.
+// KvEncoder is an encoder that transfer sql to key-value pairs.
 type KvEncoder interface {
-	// Encode transfer sql to kv pairs.
-	// before use Encode() method, please make sure you already call Schema() method.
-	// NOTE: now we just support transfer insert statement to kv pairs.
+	// Encode transfers sql to kv pairs.
+	// Before use Encode() method, please make sure you already call Schema() method.
+	// NOTE: now we just support transfers insert statement to kv pairs.
 	// (if we wanna support other statement, we need to add a kv.Storage parameter,
 	// and pass tikv store in.)
 	// return encoded kvs array that generate by sql, and affectRows count.
 	Encode(sql string, tableID int64) (kvPairs []KvPair, affectedRows uint64, err error)
 
-	// ExecDDLSQL execute ddl sql, you must use it to create schema infos.
+	// ExecDDLSQL executes ddl sql, you must use it to create schema infos.
 	ExecDDLSQL(sql string) error
 }
 

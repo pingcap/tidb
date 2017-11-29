@@ -39,7 +39,7 @@ func EncodeInt(b []byte, v int64) []byte {
 	return append(b, data[:]...)
 }
 
-// PutInt put v in b[:8].
+// PutInt puts v in b[:8].
 func PutInt(b []byte, v int64) {
 	if len(b) < 8 {
 		return

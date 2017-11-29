@@ -25,7 +25,7 @@ type mockTxn struct {
 	valid bool
 }
 
-// Commit Always returns a retryable error.
+// Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx goctx.Context) error {
 	return ErrRetryable
 }
