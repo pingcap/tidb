@@ -63,9 +63,9 @@ func (s *testKvEncoderSuite) cleanEnv(c *C) {
 }
 
 func (s *testKvEncoderSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	testleak.BeforeTest()
 	s.store = store
 	s.dom = dom
 }
@@ -143,6 +143,7 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	var tableID int64 = 1
 	encoder, err := New("test", nil)
 	c.Assert(err, IsNil)
+	defer encoder.Close()
 
 	schemaSQL := "create table t(id int auto_increment, a char(10), primary key(id))"
 	tkExpect.MustExec(schemaSQL)
@@ -212,6 +213,7 @@ func (s *testKvEncoderSuite) TestInsertPkIsNotHandle(c *C) {
 	var tableID int64 = 1
 	encoder, err := New("test", nil)
 	c.Assert(err, IsNil)
+	defer encoder.Close()
 
 	schemaSQL := `create table t(
 		id varchar(20),
@@ -246,6 +248,7 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 	var tableID int64 = 1
 	encoder, err := New("test", alloc)
 	c.Assert(err, IsNil)
+	defer encoder.Close()
 
 	schemaSQL := `create table t(
 		id int auto_increment,
@@ -326,6 +329,8 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	encoder, err := New("test", nil)
 	c.Assert(err, IsNil)
+	defer encoder.Close()
+
 	schemaSQL := `create table t(
 		id int auto_increment, 
 		a char(10), 

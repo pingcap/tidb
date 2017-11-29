@@ -53,6 +53,9 @@ type KvEncoder interface {
 
 	// ExecDDLSQL executes ddl sql, you must use it to create schema infos.
 	ExecDDLSQL(sql string) error
+
+	// Close cleanup the kvEncoder.
+	Close() error
 }
 
 type kvEncoder struct {
@@ -70,6 +73,11 @@ func New(dbName string, idAlloc autoid.Allocator) (KvEncoder, error) {
 	}
 
 	return kvEnc, nil
+}
+
+func (e *kvEncoder) Close() {
+	e.dom.Close()
+	e.store.Close()
 }
 
 func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affectedRows uint64, err error) {
