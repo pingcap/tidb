@@ -1177,7 +1177,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), builder.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1201,7 +1201,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), builder.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
