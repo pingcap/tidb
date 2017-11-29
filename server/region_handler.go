@@ -249,19 +249,21 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if tableName, ok := params[pTableName]; ok {
 			// table schema of a specified table name
 			cTableName := model.NewCIStr(tableName)
-			if data, err := schema.TableByName(cDBName, cTableName); err != nil {
+			data, err := schema.TableByName(cDBName, cTableName)
+			if err != nil {
 				rh.writeError(w, err)
-			} else {
-				rh.writeData(w, data)
+				return
 			}
-		} else {
-			// all table schemas in a specified database
-			if schema.SchemaExists(cDBName) {
-				rh.writeData(w, schema.SchemaTables(cDBName))
-			} else {
-				rh.writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
-			}
+			rh.writeData(w, data)
+			return
 		}
+		// all table schemas in a specified database
+		if schema.SchemaExists(cDBName) {
+			rh.writeData(w, schema.SchemaTables(cDBName))
+			return
+		}
+		rh.writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+		return
 	} else if tableID := req.FormValue(pTableID); len(tableID) > 0 {
 		// table schema of a specified tableID
 		tid, err := strconv.Atoi(tableID)
@@ -271,12 +273,14 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
 			rh.writeData(w, data)
-		} else {
-			rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			return
 		}
+		rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		return
 	} else {
 		// all databases' schemas
 		rh.writeData(w, schema.AllSchemas())
+		return
 	}
 }
 
