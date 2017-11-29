@@ -181,7 +181,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 
 func (h *rpcHandler) checkRequestSize(size int) *errorpb.Error {
 	// TiKV has a limitation on raft log size.
-	// mock-tikv has no raft inside, so we check the request's size instead.
+	// mocktikv has no raft inside, so we check the request's size instead.
 	if size >= requestMaxSize {
 		return &errorpb.Error{
 			RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{},
