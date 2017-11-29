@@ -294,6 +294,9 @@ func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
 			return nil
 		}
 		sm.Kill(s.ConnectionID, s.Query)
+	} else {
+		err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 	return nil
 }
