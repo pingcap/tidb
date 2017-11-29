@@ -75,9 +75,12 @@ func New(dbName string, idAlloc autoid.Allocator) (KvEncoder, error) {
 	return kvEnc, nil
 }
 
-func (e *kvEncoder) Close() {
+func (e *kvEncoder) Close() error {
 	e.dom.Close()
-	e.store.Close()
+	if err := e.store.Close(); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affectedRows uint64, err error) {
