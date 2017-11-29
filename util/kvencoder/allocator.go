@@ -25,11 +25,12 @@ var (
 	step = int64(5000)
 )
 
+// NewAllocator new an allocator.
 func NewAllocator() autoid.Allocator {
 	return &allocator{}
 }
 
-// allocator make sure that only use it in single thread
+// allocator make sure that only use it in single thread.
 type allocator struct {
 	base int64
 }

@@ -481,7 +481,7 @@ func IsRecordKey(key []byte) bool {
 	return false
 }
 
-// ReplaceRecordKeyTableID	replace the tableID in the recordKey buf.
+// ReplaceRecordKeyTableID replace the tableID in the recordKey buf.
 func ReplaceRecordKeyTableID(buf []byte, tableID int64) []byte {
 	if len(buf) < len(tablePrefix)+8 {
 		return buf
