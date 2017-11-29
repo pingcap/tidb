@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -86,10 +87,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	wg.Wait()
 }
 
-func (s *testStoreSuite) TestBusyServerKV(c *C) {
-	client := NewBusyClient(s.store.client)
-	s.store.client = client
-
+func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("key"), []byte("value"))
@@ -100,11 +98,11 @@ func (s *testStoreSuite) TestBusyServerKV(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	client.SetBusy(true)
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy", `return(true)`)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		client.SetBusy(false)
+		gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy")
 	}()
 
 	go func() {
