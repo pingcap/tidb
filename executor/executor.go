@@ -604,13 +604,11 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
-			if !e.selected[e.inputRow.Idx()] {
-				continue
-			}
-			chk.AppendRow(0, e.inputRow)
 			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
-				e.inputRow = e.inputRow.Next()
 				return nil
+			}
+			if e.selected[e.inputRow.Idx()] {
+				chk.AppendRow(0, e.inputRow)
 			}
 		}
 		err := e.children[0].NextChunk(e.childrenResults[0])
@@ -629,6 +627,9 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 	}
 }
 
+// unBatchedNextChunk filters input rows one by one and returns once an input row is selected.
+// For sql with "SETVAR" in filter and "GETVAR" in projection, for example: "SELECT @a FROM t WHERE (@a := 2) > 0",
+// we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNextChunk(chk *chunk.Chunk) error {
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
