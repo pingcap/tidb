@@ -798,7 +798,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
-	alloc := autoid.NewAllocator(d.store, tbInfo.OldSchemaID, schemaID)
+	alloc := autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID))
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(alloc, tbInfo)
 	if err != nil {
@@ -807,7 +807,7 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
 	// Its behavior is consistent with MySQL.
-	if err = tb.RebaseAutoID(tbInfo.AutoIncID-1, false); err != nil {
+	if err = tb.RebaseAutoID(nil, tbInfo.AutoIncID-1, false); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
