@@ -16,22 +16,19 @@ package statistics
 import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
-func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
-	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
-	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tables := make(statsCache, len(rows))
-	for _, row := range rows {
+func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, chk *chunk.Chunk) {
+	for row := chk.Begin(); row != chk.End(); row = row.Next() {
 		tableID := row.GetInt64(1)
 		table, ok := is.TableByID(tableID)
 		if !ok {
@@ -49,16 +46,31 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		}
 		tables[tableID] = tbl
 	}
+}
+
+func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
+	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tables := statsCache{}
+	chk := rc[0].NewChunk()
+	for {
+		err := rc[0].NextChunk(chk)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+		initStatsMeta4Chunk(is, tables, chk)
+	}
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
-	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch from mysql.stats_histograms"
-	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, row := range rows {
+func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, chk *chunk.Chunk) {
+	for row := chk.Begin(); row != chk.End(); row = row.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
 			continue
@@ -101,16 +113,36 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 			table.Columns[hist.ID] = &Column{Histogram: hist, Info: colInfo}
 		}
 	}
-	return nil
 }
 
-func (h *Handle) initStatsBuckets(tables statsCache) error {
-	sql := "select table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets"
-	rows, fields, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
+	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch from mysql.stats_histograms"
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, row := range rows {
+	chk := rc[0].NewChunk()
+	for {
+		err := rc[0].NextChunk(chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+		initStatsHistograms4Chunk(is, tables, chk)
+	}
+	return nil
+}
+
+func newBytesDatum(src []byte) types.Datum {
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	return types.NewBytesDatum(dst)
+}
+
+func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.Chunk) {
+	for row := chk.Begin(); row != chk.End(); row = row.Next() {
 		tableID, isIndex, histID, bucketID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3)
 		table, ok := tables[tableID]
 		if !ok {
@@ -124,7 +156,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 				continue
 			}
 			hist = &index.Histogram
-			lower, upper = row.GetDatum(6, &fields[6].Column.FieldType), row.GetDatum(7, &fields[7].Column.FieldType)
+			lower, upper = newBytesDatum(row.GetBytes(6)), newBytesDatum(row.GetBytes(7))
 		} else {
 			column, ok := table.Columns[histID]
 			if !ok {
@@ -135,15 +167,16 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 				continue
 			}
 			hist = &column.Histogram
-			d := row.GetDatum(6, &fields[6].Column.FieldType)
-			lower, err = d.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
+			d := newBytesDatum(row.GetBytes(6))
+			var err error
+			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
 				log.Debugf("decode bucket lower bound failed: %s", errors.ErrorStack(err))
 				delete(table.Columns, histID)
 				continue
 			}
-			d = row.GetDatum(7, &fields[7].Column.FieldType)
-			upper, err = d.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
+			d = newBytesDatum(row.GetBytes(7))
+			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
 				log.Debugf("decode bucket upper bound failed: %s", errors.ErrorStack(err))
 				delete(table.Columns, histID)
@@ -163,6 +196,25 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 			upperScalar:  upperScalar,
 			commonPfxLen: commonLength,
 		}
+	}
+}
+
+func (h *Handle) initStatsBuckets(tables statsCache) error {
+	sql := "select table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets"
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk := rc[0].NewChunk()
+	for {
+		err := rc[0].NextChunk(chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+		initStatsBuckets4Chunk(h.ctx, tables, chk)
 	}
 	for _, table := range tables {
 		if h.LastVersion < table.Version {
