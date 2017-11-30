@@ -597,26 +597,18 @@ func (e *SelectionExec) Next(goCtx goctx.Context) (Row, error) {
 // NextChunk implements the Executor NextChunk interface.
 func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 	chk.Reset()
+
+	if !e.batched {
+		return errors.Trace(e.unBatchedNextChunk(chk))
+	}
+
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
-			if e.batched {
-				if !e.selected[e.inputRow.Idx()] {
-					continue
-				}
-				chk.AppendRow(0, e.inputRow)
-				if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
-					e.inputRow = e.inputRow.Next()
-					return nil
-				}
-			} else {
-				selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if !selected {
-					continue
-				}
-				chk.AppendRow(0, e.inputRow)
+			if !e.selected[e.inputRow.Idx()] {
+				continue
+			}
+			chk.AppendRow(0, e.inputRow)
+			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
 				e.inputRow = e.inputRow.Next()
 				return nil
 			}
@@ -630,11 +622,35 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
 		}
-		if e.batched {
-			e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
+		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+}
+
+func (e *SelectionExec) unBatchedNextChunk(chk *chunk.Chunk) error {
+	for {
+		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if !selected {
+				continue
+			}
+			chk.AppendRow(0, e.inputRow)
+			e.inputRow = e.inputRow.Next()
+			return nil
+		}
+		err := e.children[0].NextChunk(e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.inputRow = e.childrenResults[0].Begin()
+		// no more data.
+		if e.childrenResults[0].NumRows() == 0 {
+			return nil
 		}
 	}
 }
