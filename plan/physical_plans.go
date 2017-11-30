@@ -234,7 +234,7 @@ type PhysicalIndexJoin struct {
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
-	outerIndex      int
+	OuterIndex      int
 	KeepOrder       bool
 	outerSchema     *expression.Schema
 	innerPlan       PhysicalPlan
@@ -553,7 +553,7 @@ func buildSchema(p PhysicalPlan) {
 	case *Limit, *TopN, *Sort, *PhysicalSelection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p, x.outerIndex))
+		p.SetSchema(buildJoinSchema(x.JoinType, p, x.OuterIndex))
 	case *PhysicalHashJoin:
 		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
 	case *PhysicalMergeJoin:

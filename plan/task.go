@@ -137,15 +137,19 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
-	if tasks[p.outerIndex].invalid() {
+	if tasks[p.OuterIndex].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[p.outerIndex].copy(), p.ctx)
+	outerTask := finishCopTask(tasks[p.OuterIndex].copy(), p.ctx)
 	np := p.Copy()
-	np.SetChildren(lTask.plan(), p.innerPlan)
+	if p.OuterIndex == 0 {
+		np.SetChildren(outerTask.plan(), p.innerPlan)
+	} else {
+		np.SetChildren(p.innerPlan, outerTask.plan())
+	}
 	return &rootTask{
 		p:   np,
-		cst: lTask.cost() + p.getCost(lTask.count()),
+		cst: outerTask.cost() + p.getCost(outerTask.count()),
 	}
 }
 
