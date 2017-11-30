@@ -132,6 +132,37 @@ func (s *testKvEncoderSuite) runTestSQL(c *C, tkExpect *testkit.TestKit, encoder
 	}
 }
 
+func (s *testKvEncoderSuite) TestCustomDatabaseHandle(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	defer dom.Close()
+
+	dbname := "tidb"
+
+	tkExpect := testkit.NewTestKit(c, store)
+	tkExpect.MustExec("create database if not exists " + dbname)
+	tkExpect.MustExec("use " + dbname)
+
+	encoder, err := New(dbname, nil)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	var tableID int64 = 123
+
+	schemaSQL := "create table tis (id int auto_increment, a char(10), primary key(id))"
+	tkExpect.MustExec(schemaSQL)
+	err = encoder.ExecDDLSQL(schemaSQL)
+	c.Assert(err, IsNil)
+
+	sqls := []testCase{
+		{"insert into tis (a) values('test')", 0, 1, 1},
+		{"insert into tis (a) values('test'), ('test1')", 0, 2, 2},
+	}
+
+	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
+}
+
 func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
