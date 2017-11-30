@@ -354,7 +354,7 @@ func (s *testStatsCacheSuite) TestInitStats(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6)")
 	testKit.MustExec("analyze table t")
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
