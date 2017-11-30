@@ -256,12 +256,17 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				rh.writeError(w, err)
 				return
 			}
-			rh.writeData(w, data)
+			rh.writeData(w, data.Meta())
 			return
 		}
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
-			rh.writeData(w, schema.SchemaTables(cDBName))
+			tbs := schema.SchemaTables(cDBName)
+			tbsInfo := make([]*model.TableInfo, len(tbs))
+			for i := range tbsInfo {
+				tbsInfo[i] = tbs[i].Meta()
+			}
+			rh.writeData(w, tbsInfo)
 			return
 		}
 		rh.writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
@@ -275,8 +280,12 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			rh.writeError(w, err)
 			return
 		}
+		if tid < 0 {
+			rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			return
+		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
-			rh.writeData(w, data)
+			rh.writeData(w, data.Meta())
 			return
 		}
 		rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))

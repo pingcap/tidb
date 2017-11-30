@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -315,13 +315,21 @@ func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
 	var dbs []*model.DBInfo
 	err = decoder.Decode(&dbs)
 	c.Assert(err, IsNil)
+	expects := []string{"information_schema", "mysql", "performance_schema", "test", "tidb"}
+	names := make([]string, len(dbs))
+	for i, v := range dbs {
+		names[i] = v.Name.L
+	}
+	sort.Strings(names)
+	c.Assert(names, DeepEquals, expects)
 
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=5"))
 	c.Assert(err, IsNil)
-	var t *tables.MemoryTable
+	var t *model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&t)
 	c.Assert(err, IsNil)
+	c.Assert(t.Name.L, Equals, "user")
 
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=a"))
 	c.Assert(err, IsNil)
@@ -329,12 +337,16 @@ func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=1"))
 	c.Assert(err, IsNil)
 
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=-1"))
+	c.Assert(err, IsNil)
+
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb"))
 	c.Assert(err, IsNil)
-	var lt []*tables.MemoryTable
+	var lt []*model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&lt)
 	c.Assert(err, IsNil)
+	c.Assert(lt[0].Name.L, Equals, "test")
 
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/abc"))
 	c.Assert(err, IsNil)
@@ -344,7 +356,8 @@ func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&t)
 	c.Assert(err, IsNil)
+	c.Assert(t.Name.L, Equals, "test")
 
-	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/mysql/abc"))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/abc"))
 	c.Assert(err, IsNil)
 }
