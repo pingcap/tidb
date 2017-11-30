@@ -129,7 +129,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	setParentAndChildren(p, children...)
 
 	switch p.(type) {
-	case *Sort, *TopN, *Limit, *LogicalSelection, *MaxOneRow, *Update, *SelectLock:
+	case *Sort, *TopN, *Limit, *LogicalSelection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *LogicalJoin, *LogicalApply:
 		var joinTp JoinType

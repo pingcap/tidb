@@ -184,23 +184,17 @@ func (p MaxOneRow) init(ctx context.Context) *MaxOneRow {
 }
 
 func (p Update) init(ctx context.Context) *Update {
-	p.basePlan = newBasePlan(TypeUpate, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePlan = *newBasePlan(TypeUpate, ctx, &p)
 	return &p
 }
 
 func (p Delete) init(ctx context.Context) *Delete {
-	p.basePlan = newBasePlan(TypeDelete, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePlan = *newBasePlan(TypeDelete, ctx, &p)
 	return &p
 }
 
 func (p Insert) init(ctx context.Context) *Insert {
-	p.basePlan = newBasePlan(TypeInsert, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePlan = *newBasePlan(TypeInsert, ctx, &p)
 	return &p
 }
 
