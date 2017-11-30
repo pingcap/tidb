@@ -72,7 +72,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID()
+	autoid, err := tb.AllocAutoID(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
@@ -130,10 +130,10 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 
 	table.MockTableFromMeta(tb.Meta())
-	alc := tb.Allocator()
+	alc := tb.Allocator(nil)
 	c.Assert(alc, NotNil)
 
-	err = tb.RebaseAutoID(0, false)
+	err = tb.RebaseAutoID(nil, 0, false)
 	c.Assert(err, IsNil)
 }
 
@@ -207,7 +207,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID()
+	autoid, err := tb.AllocAutoID(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 	c.Assert(ctx.NewTxn(), IsNil)

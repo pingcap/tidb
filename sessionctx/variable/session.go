@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
@@ -226,6 +227,10 @@ type SessionVars struct {
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
+
+	// IDAllocator is provided by kvEncoder, if it is provided, we will use it to alloc auto id instead of using
+	// Table.alloc.
+	IDAllocator autoid.Allocator
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
