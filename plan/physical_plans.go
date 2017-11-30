@@ -574,7 +574,9 @@ func buildSchema(p PhysicalPlan) {
 	}
 }
 
-// rebuildSchema rebuilds the schema for physical plans, because new planner may change indexjoin's schema.
+// rebuildSchema rebuilds the schema for physical plans, because join reorder will change join's schema.
+// And PhysicalIndexLookUpReader may add a handle column which make the schema changed.
+// In this two case, we need to rebuild the schema of its father.
 func rebuildSchema(p PhysicalPlan) bool {
 	needRebuild := false
 	for _, ch := range p.Children() {
@@ -586,6 +588,7 @@ func rebuildSchema(p PhysicalPlan) bool {
 	switch p.(type) {
 	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexLookUpReader:
 		needRebuild = true
+	// If there is projection or aggregation, the index of column will be resolved so no need to rebuild the schema.
 	case *Projection, *PhysicalAggregation:
 		needRebuild = false
 	}
