@@ -303,7 +303,6 @@ type PhysicalAggregation struct {
 	*basePlan
 	basePhysicalPlan
 
-	HasGby       bool
 	AggType      AggregationType
 	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
