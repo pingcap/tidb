@@ -323,10 +323,10 @@ func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
 	err = decoder.Decode(&t)
 	c.Assert(err, IsNil)
 
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=a"))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=a"))
 	c.Assert(err, IsNil)
 
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=1"))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=1"))
 	c.Assert(err, IsNil)
 
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb"))
@@ -336,7 +336,7 @@ func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
 	err = decoder.Decode(&lt)
 	c.Assert(err, IsNil)
 
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/abc"))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/abc"))
 	c.Assert(err, IsNil)
 
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/test"))
@@ -345,6 +345,6 @@ func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
 	err = decoder.Decode(&t)
 	c.Assert(err, IsNil)
 
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/mysql/abc"))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/mysql/abc"))
 	c.Assert(err, IsNil)
 }

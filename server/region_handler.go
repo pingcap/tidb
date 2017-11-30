@@ -44,12 +44,14 @@ import (
 const (
 	pDBName    = "db"
 	pHexKey    = "hexKey"
-	pRegionID  = "regionID"
 	pRecordID  = "recordID"
+	pRegionID  = "regionID"
 	pStartTS   = "startTS"
-	pTableID   = "table_id"
 	pTableName = "table"
 )
+
+// For query string
+const qTableID = "table_id"
 
 const (
 	headerContentType = "Content-Type"
@@ -266,7 +268,7 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if tableID := req.FormValue(pTableID); len(tableID) > 0 {
+	if tableID := req.FormValue(qTableID); len(tableID) > 0 {
 		// table schema of a specified tableID
 		tid, err := strconv.Atoi(tableID)
 		if err != nil {
