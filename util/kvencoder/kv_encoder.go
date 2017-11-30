@@ -132,20 +132,51 @@ func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	return store, dom, errors.Trace(err)
 }
 
-func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) error {
-	store, dom, err := newMockTikvWithBootstrap()
+func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error) {
+	var (
+		store kv.Storage
+		dom   *domain.Domain
+		se    tidb.Session
+	)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if store != nil {
+			if err1 := store.Close(); err1 != nil {
+				log.Error(errors.ErrorStack(err1))
+			}
+		}
+		if dom != nil {
+			dom.Close()
+		}
+		if se != nil {
+			se.Close()
+		}
+	}()
+
+	store, dom, err = newMockTikvWithBootstrap()
 	if err != nil {
-		return errors.Trace(err)
+		err = errors.Trace(err)
+		return
 	}
-	se, err := tidb.CreateSession(store)
+
+	se, err = tidb.CreateSession(store)
 	if err != nil {
-		return errors.Trace(err)
+		err = errors.Trace(err)
+		return
 	}
 
 	se.SetConnectionID(atomic.AddUint64(&mockConnID, 1))
+	_, err = se.Execute(goctx.Background(), fmt.Sprintf("create database if not exists %s", dbName))
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
 	_, err = se.Execute(goctx.Background(), fmt.Sprintf("use %s", dbName))
 	if err != nil {
-		return errors.Trace(err)
+		err = errors.Trace(err)
+		return
 	}
 
 	se.GetSessionVars().IDAllocator = idAlloc
