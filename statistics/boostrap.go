@@ -135,6 +135,12 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 	return nil
 }
 
+func newBytesDatum(src []byte) types.Datum {
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	return types.NewBytesDatum(dst)
+}
+
 func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.Chunk) {
 	for row := chk.Begin(); row != chk.End(); row = row.Next() {
 		tableID, isIndex, histID, bucketID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3)
@@ -150,7 +156,7 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.C
 				continue
 			}
 			hist = &index.Histogram
-			lower, upper = types.NewBytesDatum(row.GetBytes(6)), types.NewBytesDatum(row.GetBytes(7))
+			lower, upper = newBytesDatum(row.GetBytes(6)), newBytesDatum(row.GetBytes(7))
 		} else {
 			column, ok := table.Columns[histID]
 			if !ok {
@@ -161,7 +167,7 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.C
 				continue
 			}
 			hist = &column.Histogram
-			d := types.NewBytesDatum(row.GetBytes(6))
+			d := newBytesDatum(row.GetBytes(6))
 			var err error
 			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
