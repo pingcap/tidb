@@ -13,7 +13,12 @@
 
 package opcode
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+
+	"github.com/pingcap/tidb/util/hack"
+)
 
 // Op is opcode type.
 type Op int
@@ -94,4 +99,41 @@ func (o Op) String() string {
 	}
 
 	return str
+}
+
+var opsLiteral = map[Op]string{
+	LogicAnd:   "&&",
+	LogicOr:    "||",
+	LogicXor:   "^",
+	LeftShift:  "<<",
+	RightShift: ">>",
+	GE:         ">=",
+	LE:         "<=",
+	EQ:         "==",
+	NE:         "!=",
+	LT:         "<",
+	GT:         ">",
+	Plus:       "+",
+	Minus:      "-",
+	And:        "&",
+	Or:         "|",
+	Mod:        "%",
+	Xor:        "^",
+	Div:        "/",
+	Mul:        "*",
+	Not:        "!",
+	BitNeg:     "~",
+	IntDiv:     "//",
+	NullEQ:     "<=>",
+	In:         "IN",
+	Like:       "LIKE",
+	Case:       "CASE",
+	Regexp:     "REGEXP",
+	IsNull:     "IS NULL",
+	IsTruth:    "IS TRUE",
+	IsFalsity:  "IS FALSE",
+}
+
+func (op Op) Format(w io.Writer) {
+	w.Write(hack.Slice(opsLiteral[op]))
 }

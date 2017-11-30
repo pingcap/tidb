@@ -14,8 +14,11 @@
 package ast
 
 import (
+	"io"
+
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 var (
@@ -309,6 +312,18 @@ type FuncCallExpr struct {
 	Args []ExprNode
 }
 
+func (n *FuncCallExpr) Format(w io.Writer) {
+	w.Write(hack.Slice(n.FnName.String()))
+	w.Write(hack.Slice("("))
+	for i, arg := range n.Args {
+		arg.Format(w)
+		if i != len(n.Args)-1 {
+			w.Write(hack.Slice(", "))
+		}
+	}
+	w.Write(hack.Slice(")"))
+}
+
 // Accept implements Node interface.
 func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -346,6 +361,14 @@ type FuncCastExpr struct {
 	Tp *types.FieldType
 	// FunctionType is either Cast, Convert or Binary.
 	FunctionType CastFunctionType
+}
+
+func (n *FuncCastExpr) Format(w io.Writer) {
+	w.Write(hack.Slice("CAST("))
+	n.Expr.Format(w)
+	w.Write(hack.Slice(" AS "))
+	w.Write(hack.Slice(n.Tp.String()))
+	w.Write(hack.Slice(")"))
 }
 
 // Accept implements Node Accept interface.
@@ -421,6 +444,10 @@ type AggregateFuncExpr struct {
 	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
+}
+
+func (n *AggregateFuncExpr) Format(w io.Writer) {
+	// TODO: implement it.
 }
 
 // Accept implements Node Accept interface.

@@ -14,12 +14,14 @@
 package ast
 
 import (
+	"io"
 	"regexp"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 var (
@@ -53,6 +55,10 @@ var (
 type ValueExpr struct {
 	exprNode
 	projectionOffset int
+}
+
+func (n *ValueExpr) Format(w io.Writer) {
+	w.Write(hack.Slice(n.Text()))
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
@@ -100,6 +106,14 @@ type BetweenExpr struct {
 	Not bool
 }
 
+func (n *BetweenExpr) Format(w io.Writer) {
+	n.Expr.Format(w)
+	w.Write(hack.Slice(" BETWEEN "))
+	n.Left.Format(w)
+	w.Write(hack.Slice(" AND "))
+	n.Right.Format(w)
+}
+
 // Accept implements Node interface.
 func (n *BetweenExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -138,6 +152,14 @@ type BinaryOperationExpr struct {
 	L ExprNode
 	// R is the right expression in BinaryOperation.
 	R ExprNode
+}
+
+func (n *BinaryOperationExpr) Format(w io.Writer) {
+	n.L.Format(w)
+	w.Write(hack.Slice(" "))
+	n.Op.Format(w)
+	w.Write(hack.Slice(" "))
+	n.R.Format(w)
 }
 
 // Accept implements Node interface.
@@ -205,6 +227,13 @@ type CaseExpr struct {
 	ElseClause ExprNode
 }
 
+func (n *CaseExpr) Format(w io.Writer) {
+	w.Write(hack.Slice("CASE "))
+	n.Value.Format(w)
+	w.Write(hack.Slice(" "))
+	// TODO: all clauses
+}
+
 // Accept implements Node Accept interface.
 func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -263,6 +292,10 @@ type SubqueryExpr struct {
 	Exists       bool
 }
 
+func (n *SubqueryExpr) Format(w io.Writer) {
+	// TODO: implement it.
+}
+
 // Accept implements Node Accept interface.
 func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -295,6 +328,10 @@ type CompareSubqueryExpr struct {
 	R ExprNode
 	// All is true, we should compare all records in subquery.
 	All bool
+}
+
+func (n *CompareSubqueryExpr) Format(w io.Writer) {
+	// TODO: implement it.
 }
 
 // Accept implements Node Accept interface.
@@ -373,6 +410,10 @@ type ColumnNameExpr struct {
 	Refer *ResultField
 }
 
+func (n *ColumnNameExpr) Format(w io.Writer) {
+	w.Write(hack.Slice(n.Name.String()))
+}
+
 // Accept implements Node Accept interface.
 func (n *ColumnNameExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -393,6 +434,10 @@ type DefaultExpr struct {
 	exprNode
 	// Name is the column name.
 	Name *ColumnName
+}
+
+func (n *DefaultExpr) Format(w io.Writer) {
+	w.Write(hack.Slice(n.Name.String()))
 }
 
 // Accept implements Node Accept interface.
@@ -418,6 +463,10 @@ type ExistsSubqueryExpr struct {
 	exprNode
 	// Sel is the subquery, may be rewritten to other type of expression.
 	Sel ExprNode
+}
+
+func (n *ExistsSubqueryExpr) Format(w io.Writer) {
+	// TODO: Implement it.
 }
 
 // Accept implements Node Accept interface.
@@ -446,6 +495,18 @@ type PatternInExpr struct {
 	Not bool
 	// Sel is the subquery, may be rewritten to other type of expression.
 	Sel ExprNode
+}
+
+func (n *PatternInExpr) Format(w io.Writer) {
+	n.Expr.Format(w)
+	w.Write(hack.Slice("("))
+	for i, expr := range n.List {
+		expr.Format(w)
+		if i != len(n.List)-1 {
+			w.Write(hack.Slice(", "))
+		}
+	}
+	w.Write(hack.Slice(")"))
 }
 
 // Accept implements Node Accept interface.
@@ -486,6 +547,15 @@ type IsNullExpr struct {
 	Not bool
 }
 
+func (n *IsNullExpr) Format(w io.Writer) {
+	n.Expr.Format(w)
+	if n.Not {
+		w.Write(hack.Slice(" IS NOT NULL"))
+		return
+	}
+	w.Write(hack.Slice(" IS NULL"))
+}
+
 // Accept implements Node Accept interface.
 func (n *IsNullExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -510,6 +580,15 @@ type IsTruthExpr struct {
 	Not bool
 	// True indicates checking true or false.
 	True int64
+}
+
+func (n *IsTruthExpr) Format(w io.Writer) {
+	n.Expr.Format(w)
+	if n.Not {
+		w.Write(hack.Slice(" IS NOT TRUE"))
+		return
+	}
+	w.Write(hack.Slice(" IS TRUR"))
 }
 
 // Accept implements Node Accept interface.
@@ -541,6 +620,13 @@ type PatternLikeExpr struct {
 
 	PatChars []byte
 	PatTypes []byte
+}
+
+func (n *PatternLikeExpr) Format(w io.Writer) {
+	n.Expr.Format(w)
+	w.Write(hack.Slice(" LIKE "))
+	n.Pattern.Format(w)
+	// TODO: escape.
 }
 
 // Accept implements Node Accept interface.
@@ -575,6 +661,10 @@ type ParamMarkerExpr struct {
 	Order  int
 }
 
+func (n *ParamMarkerExpr) Format(w io.Writer) {
+	// TODO: implement it.
+}
+
 // Accept implements Node Accept interface.
 func (n *ParamMarkerExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -590,6 +680,12 @@ type ParenthesesExpr struct {
 	exprNode
 	// Expr is the expression in parentheses.
 	Expr ExprNode
+}
+
+func (n *ParenthesesExpr) Format(w io.Writer) {
+	w.Write(hack.Slice("("))
+	n.Expr.Format(w)
+	w.Write(hack.Slice(")"))
 }
 
 // Accept implements Node Accept interface.
@@ -620,6 +716,10 @@ type PositionExpr struct {
 	Refer *ResultField
 }
 
+func (n *PositionExpr) Format(w io.Writer) {
+	// TODO: implement it.
+}
+
 // Accept implements Node Accept interface.
 func (n *PositionExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -644,6 +744,10 @@ type PatternRegexpExpr struct {
 	Re *regexp.Regexp
 	// Sexpr is the string for Expr expression.
 	Sexpr *string
+}
+
+func (n *PatternRegexpExpr) Format(w io.Writer) {
+	// TODO: implement it.
 }
 
 // Accept implements Node Accept interface.
@@ -674,6 +778,10 @@ type RowExpr struct {
 	Values []ExprNode
 }
 
+func (n *RowExpr) Format(w io.Writer) {
+	// TODO: implement it.
+}
+
 // Accept implements Node Accept interface.
 func (n *RowExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -700,6 +808,11 @@ type UnaryOperationExpr struct {
 	V ExprNode
 }
 
+func (n *UnaryOperationExpr) Format(w io.Writer) {
+	n.Op.Format(w)
+	n.V.Format(w)
+}
+
 // Accept implements Node Accept interface.
 func (n *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -720,6 +833,9 @@ type ValuesExpr struct {
 	exprNode
 	// Column is column name.
 	Column *ColumnNameExpr
+}
+
+func (n *ValuesExpr) Format(w io.Writer) {
 }
 
 // Accept implements Node Accept interface.
@@ -748,6 +864,9 @@ type VariableExpr struct {
 	IsSystem bool
 	// Value is the variable value.
 	Value ExprNode
+}
+
+func (n *VariableExpr) Format(w io.Writer) {
 }
 
 // Accept implements Node Accept interface.

@@ -26,6 +26,7 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
@@ -2656,26 +2657,32 @@ Literal:
 	"FALSE"
 	{
 		$$ = ast.NewValueExpr(false)
+		$$.SetText("FALSE")
 	}
 |	"NULL"
 	{
 		$$ = ast.NewValueExpr(nil)
+		$$.SetText("NULL")
 	}
 |	"TRUE"
 	{
 		$$ = ast.NewValueExpr(true)
+		$$.SetText("TRUE")
 	}
 |	floatLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 |	decLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 |	intLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 |	StringLiteral %prec lowerThanStringLitToken
 	{
@@ -2697,14 +2704,17 @@ Literal:
 			tp.Flag |= mysql.BinaryFlag
 		}
 		$$ = expr
+		$$.SetText(fmt.Sprintf("\"%s\"", $2))
 	}
 |	hexLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 |	bitLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 
 StringLiteral:
@@ -2712,6 +2722,7 @@ StringLiteral:
 	{
 		expr := ast.NewValueExpr($1)
 		$$ = expr
+		$$.SetText(fmt.Sprintf("\"%s\"", $1))
 	}
 |	StringLiteral stringLit
 	{
@@ -2725,6 +2736,7 @@ StringLiteral:
 			expr.SetProjectionOffset(len(strLit))
 		}
 		$$ = expr
+		$$.SetText(fmt.Sprintf("\"%s\"", strLit + $2))
 	}
 
 
