@@ -175,7 +175,7 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.C
 				delete(table.Columns, histID)
 				continue
 			}
-			d = types.NewBytesDatum(row.GetBytes(7))
+			d = newBytesDatum(row.GetBytes(7))
 			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
 				log.Debugf("decode bucket upper bound failed: %s", errors.ErrorStack(err))
