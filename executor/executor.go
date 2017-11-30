@@ -559,9 +559,11 @@ func (e *SelectionExec) Open(goCtx goctx.Context) error {
 	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
-	e.selected = make([]bool, 0, chunk.InitialCapacity)
-	e.inputRow = e.childrenResults[0].End()
 	e.batched = expression.Vectorizable(e.filters)
+	if e.batched {
+		e.selected = make([]bool, 0, chunk.InitialCapacity)
+	}
+	e.inputRow = e.childrenResults[0].End()
 	return nil
 }
 
@@ -604,12 +606,13 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+			if !e.selected[e.inputRow.Idx()] {
+				continue
+			}
 			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
 				return nil
 			}
-			if e.selected[e.inputRow.Idx()] {
-				chk.AppendRow(0, e.inputRow)
-			}
+			chk.AppendRow(0, e.inputRow)
 		}
 		err := e.children[0].NextChunk(e.childrenResults[0])
 		if err != nil {
@@ -633,15 +636,14 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 func (e *SelectionExec) unBatchedNextChunk(chk *chunk.Chunk) error {
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
-			if chk.NumRows() == 1 {
-				return nil
-			}
 			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if selected {
 				chk.AppendRow(0, e.inputRow)
+				e.inputRow = e.inputRow.Next()
+				return nil
 			}
 		}
 		err := e.children[0].NextChunk(e.childrenResults[0])
