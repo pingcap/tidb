@@ -243,10 +243,8 @@ func (e *SortExec) buildKeyExprsAndTypes() {
 	e.keyTypes = make([]*types.FieldType, keyLen)
 	e.keyExprs = make([]expression.Expression, keyLen)
 	for keyColIdx := range e.ByItems {
-		keyExpr := e.ByItems[keyColIdx].Expr
-		keyType := keyExpr.GetType()
-		e.keyExprs[keyColIdx] = keyExpr
-		e.keyTypes[keyColIdx] = keyType
+		e.keyExprs[keyColIdx] = e.ByItems[keyColIdx].Expr
+		e.keyTypes[keyColIdx] = e.ByItems[keyColIdx].Expr.GetType()
 	}
 }
 
@@ -571,19 +569,6 @@ func (e *TopNExec) executeTopN() error {
 		sort.Slice(e.rowPointers, e.keyColumnsLess)
 	}
 	return nil
-}
-
-func (e *TopNExec) buildKeyExprsAndChildKeyChunk() ([]expression.Expression, *chunk.Chunk) {
-	keyLen := len(e.ByItems)
-	keyTypes := make([]*types.FieldType, keyLen)
-	keyExprs := make([]expression.Expression, keyLen)
-	for keyColIdx := range e.ByItems {
-		keyExpr := e.ByItems[keyColIdx].Expr
-		keyType := keyExpr.GetType()
-		keyExprs[keyColIdx] = keyExpr
-		keyTypes[keyColIdx] = keyType
-	}
-	return keyExprs, chunk.NewChunk(keyTypes)
 }
 
 func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error {
