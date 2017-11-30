@@ -258,14 +258,22 @@ func (p PhysicalMergeJoin) init(ctx context.Context) *PhysicalMergeJoin {
 	return &p
 }
 
-func (p PhysicalAggregation) init(ctx context.Context) *PhysicalAggregation {
-	tp := TypeHashAgg
-	if p.AggType == StreamedAgg {
-		tp = TypeStreamAgg
-	}
-	p.basePlan = newBasePlan(tp, ctx, &p)
+func (base basePhysicalAgg) initForHash(ctx context.Context) *PhysicalHashAgg {
+	p := &PhysicalHashAgg{base}
+	p.basePlan = newBasePlan(TypeHashAgg, ctx, p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
+	return p
+}
+
+func (base basePhysicalAgg) initForStream(ctx context.Context, keys []*expression.Column, inputCnt float64) *PhysicalStreamAgg {
+	p := &PhysicalStreamAgg{
+		basePhysicalAgg: base,
+		propKeys:        keys,
+		inputCount:      inputCnt,
+	}
+	p.basePlan = newBasePlan(TypeStreamAgg, ctx, p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return p
 }
 
 func (p PhysicalApply) init(ctx context.Context) *PhysicalApply {
@@ -301,7 +309,7 @@ func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
 	p.basePlan = newBasePlan(TypeIndexReader, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
+	if _, ok := p.indexPlan.(*PhysicalHashAgg); ok {
 		p.schema = p.indexPlan.Schema()
 	} else {
 		is := p.IndexPlans[0].(*PhysicalIndexScan)

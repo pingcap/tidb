@@ -42,7 +42,8 @@ var (
 	_ PhysicalPlan = &PhysicalTableReader{}
 	_ PhysicalPlan = &PhysicalIndexReader{}
 	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
-	_ PhysicalPlan = &PhysicalAggregation{}
+	_ PhysicalPlan = &PhysicalHashAgg{}
+	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
@@ -301,14 +302,22 @@ func (at AggregationType) String() string {
 	return "unsupported aggregation type"
 }
 
-// PhysicalAggregation is Aggregation's physical plan.
-type PhysicalAggregation struct {
+type basePhysicalAgg struct {
 	*basePlan
 	basePhysicalPlan
 
-	AggType      AggregationType
 	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
+}
+
+// PhysicalHashAgg is hash operator of aggregate.
+type PhysicalHashAgg struct {
+	basePhysicalAgg
+}
+
+// PhysicalStreamAgg is stream operator of aggregate.
+type PhysicalStreamAgg struct {
+	basePhysicalAgg
 
 	propKeys   []*expression.Column
 	inputCount float64 // inputCount is the input count of this plan.
@@ -493,7 +502,15 @@ func (p *SelectLock) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalAggregation) Copy() PhysicalPlan {
+func (p *PhysicalHashAgg) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalStreamAgg) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
@@ -585,7 +602,7 @@ func rebuildSchema(p PhysicalPlan) bool {
 	switch p.(type) {
 	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexLookUpReader:
 		needRebuild = true
-	case *Projection, *PhysicalAggregation:
+	case *Projection, *PhysicalHashAgg, *PhysicalStreamAgg:
 		needRebuild = false
 	}
 	return needRebuild

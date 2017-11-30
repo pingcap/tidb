@@ -160,13 +160,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *TableDual:
 		str = "Dual"
-	case *PhysicalAggregation:
-		switch x.AggType {
-		case StreamedAgg:
-			str = "StreamAgg"
-		default:
-			str = "HashAgg"
-		}
+	case *PhysicalHashAgg:
+		str = "HashAgg"
+	case *PhysicalStreamAgg:
+		str = "StreamAgg"
 	case *LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {

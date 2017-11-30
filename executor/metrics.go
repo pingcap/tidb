@@ -238,7 +238,7 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 	switch x := p.(type) {
 	case *plan.PhysicalApply:
 		pa.hasApply = true
-	case *plan.PhysicalAggregation:
+	case *plan.PhysicalHashAgg, *plan.PhysicalStreamAgg:
 		pa.hasAggregate = true
 	case *plan.PhysicalHashJoin:
 		pa.hasJoin = true

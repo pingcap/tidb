@@ -179,10 +179,10 @@ func (p *Limit) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *PhysicalAggregation) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("type:%s", p.AggType))
+func (p *basePhysicalAgg) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
 	if len(p.GroupByItems) > 0 {
-		buffer.WriteString(fmt.Sprintf(", group by:%s",
+		buffer.WriteString(fmt.Sprintf("group by:%s",
 			expression.ExplainExpressionList(p.GroupByItems)))
 	}
 	buffer.WriteString(", funcs:")
