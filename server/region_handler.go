@@ -264,7 +264,9 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		rh.writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
 		return
-	} else if tableID := req.FormValue(pTableID); len(tableID) > 0 {
+	}
+
+	if tableID := req.FormValue(pTableID); len(tableID) > 0 {
 		// table schema of a specified tableID
 		tid, err := strconv.Atoi(tableID)
 		if err != nil {
@@ -277,11 +279,11 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
 		return
-	} else {
-		// all databases' schemas
-		rh.writeData(w, schema.AllSchemas())
-		return
 	}
+
+	// all databases' schemas
+	rh.writeData(w, schema.AllSchemas())
+	return
 }
 
 // ServeHTTP handles request of list a table's regions.
