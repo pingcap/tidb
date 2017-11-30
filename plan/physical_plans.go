@@ -536,7 +536,7 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	return &np
 }
 
-func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Schema {
+func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
 		return join.Children()[0].Schema().Clone()
@@ -545,7 +545,7 @@ func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Sche
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
-	return expression.MergeSchema(join.Children()[outerID].Schema(), join.Children()[1-outerID].Schema())
+	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
 }
 
 func buildSchema(p PhysicalPlan) {
@@ -553,11 +553,11 @@ func buildSchema(p PhysicalPlan) {
 	case *Limit, *TopN, *Sort, *PhysicalSelection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p, x.OuterIndex))
+		p.SetSchema(buildJoinSchema(x.JoinType, p))
 	case *PhysicalHashJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
+		p.SetSchema(buildJoinSchema(x.JoinType, p))
 	case *PhysicalMergeJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
+		p.SetSchema(buildJoinSchema(x.JoinType, p))
 	case *PhysicalApply:
 		buildSchema(x.PhysicalJoin)
 		x.schema = x.PhysicalJoin.Schema()

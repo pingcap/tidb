@@ -139,6 +139,7 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		outerSchema:     p.children[outerIdx].Schema(),
 		innerPlan:       innerPlan,
 	}.init(p.ctx, p.children...)
+	join.SetSchema(p.schema)
 	join.profile = p.profile
 	orderJoin := join.Copy().(*PhysicalIndexJoin)
 	orderJoin.KeepOrder = true
