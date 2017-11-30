@@ -205,9 +205,7 @@ type InsertGeneratedColumns struct {
 
 // Insert represents an insert plan.
 type Insert struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
+	basePlan
 
 	Table       table.Table
 	tableSchema *expression.Schema
@@ -224,6 +222,28 @@ type Insert struct {
 	NeedFillDefaultValue bool
 
 	GenCols InsertGeneratedColumns
+
+	SelectPlan PhysicalPlan
+}
+
+// Update represents Update plan.
+type Update struct {
+	basePlan
+
+	OrderedList []*expression.Assignment
+	IgnoreErr   bool
+
+	SelectPlan PhysicalPlan
+}
+
+// Delete represents a delete plan.
+type Delete struct {
+	basePlan
+
+	Tables       []*ast.TableName
+	IsMultiTable bool
+
+	SelectPlan PhysicalPlan
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
