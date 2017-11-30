@@ -179,21 +179,21 @@ func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
 	// split:  [c-m)
 	// result: [c-d) [e-g) [l-o)
 	// split:  [d-g)
-	// result: [c-d) [e-g) [l-o)
+	// result: [e-g) [l-o)
 	// split:  [f-g)
 	// result: [f-g) [l-o)
 	ranges := &copRanges{mid: mid}
 	s.testZZZ(c, ranges, desc,
 		zzzCase{
-			zzzSplit("c", "m"),
+			coprocessorKeyRange("c", "m"),
 			buildKeyRanges("c", "d", "e", "g", "l", "o"),
 		},
 		zzzCase{
-			zzzSplit("d", "g"),
-			buildKeyRanges("c", "d", "e", "g", "l", "o"),
+			coprocessorKeyRange("d", "g"),
+			buildKeyRanges("e", "g", "l", "o"),
 		},
 		zzzCase{
-			zzzSplit("f", "g"),
+			coprocessorKeyRange("f", "g"),
 			buildKeyRanges("f", "g", "l", "o"),
 		},
 	)
@@ -205,27 +205,27 @@ func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
 	// split:  [b-d)
 	// result: [c-d) [e-g) [l-o)
 	// split:  [m-o)
-	// result: [l-o)
+	// result: [m-o)
 	ranges = &copRanges{first: first, mid: mid}
 	s.testZZZ(c, ranges, desc,
 		zzzCase{
-			zzzSplit("a", "d"),
+			coprocessorKeyRange("a", "d"),
 			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
 		},
 		zzzCase{
-			zzzSplit("b", "d"),
+			coprocessorKeyRange("b", "d"),
 			buildKeyRanges("c", "d", "e", "g", "l", "o"),
 		},
 		zzzCase{
-			zzzSplit("m", "o"),
-			buildKeyRanges("l", "o"),
+			coprocessorKeyRange("m", "o"),
+			buildKeyRanges("m", "o"),
 		},
 	)
 
 	// range:  [a-b) [c-d) [e-g) [l-o) [q-t)
 	//
 	// split:  [f-o)
-	// result: [e-g) [l-o) [q-t)
+	// result: [f-g) [l-o) [q-t)
 	// split:  [h-p)
 	// result: [l-o) [q-t)
 	// split:  [r-t)
@@ -233,15 +233,15 @@ func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
 	ranges = &copRanges{first: first, mid: mid, last: last}
 	s.testZZZ(c, ranges, desc,
 		zzzCase{
-			zzzSplit("f", "o"),
-			buildKeyRanges("e", "g", "l", "o", "q", "t"),
+			coprocessorKeyRange("f", "o"),
+			buildKeyRanges("f", "g", "l", "o", "q", "t"),
 		},
 		zzzCase{
-			zzzSplit("h", "p"),
+			coprocessorKeyRange("h", "p"),
 			buildKeyRanges("l", "o", "q", "t"),
 		},
 		zzzCase{
-			zzzSplit("r", "t"),
+			coprocessorKeyRange("r", "t"),
 			buildKeyRanges("r", "t"),
 		},
 	)
@@ -251,7 +251,7 @@ func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
 	// range:  [c-d) [e-g) [l-o)
 	//
 	// split:  [c-m)
-	// result: [c-m)
+	// result: [c-d) [e-g) [l-m)
 	// split:  [d-g)
 	// result: [c-d) [e-g)
 	// split:  [f-g)
@@ -259,15 +259,15 @@ func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
 	ranges = &copRanges{mid: mid}
 	s.testZZZ(c, ranges, desc,
 		zzzCase{
-			zzzSplit("c", "m"),
-			buildKeyRanges("c", "m"),
+			coprocessorKeyRange("c", "m"),
+			buildKeyRanges("c", "d", "e", "g", "l", "m"),
 		},
 		zzzCase{
-			zzzSplit("d", "g"),
+			coprocessorKeyRange("d", "g"),
 			buildKeyRanges("c", "d", "e", "g"),
 		},
 		zzzCase{
-			zzzSplit("f", "g"),
+			coprocessorKeyRange("f", "g"),
 			buildKeyRanges("c", "d", "e", "g"),
 		},
 	)
@@ -283,15 +283,15 @@ func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
 	ranges = &copRanges{first: first, mid: mid}
 	s.testZZZ(c, ranges, desc,
 		zzzCase{
-			zzzSplit("a", "d"),
+			coprocessorKeyRange("a", "d"),
 			buildKeyRanges("a", "b", "c", "d"),
 		},
 		zzzCase{
-			zzzSplit("b", "d"),
+			coprocessorKeyRange("b", "d"),
 			buildKeyRanges("a", "b", "c", "d"),
 		},
 		zzzCase{
-			zzzSplit("m", "o"),
+			coprocessorKeyRange("m", "o"),
 			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
 		},
 	)
@@ -307,21 +307,21 @@ func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
 	ranges = &copRanges{first: first, mid: mid, last: last}
 	s.testZZZ(c, ranges, desc,
 		zzzCase{
-			zzzSplit("f", "o"),
-			buildKeyRanges("a", "b", "c", "d", "e", "l", "o"),
-		},
-		zzzCase{
-			zzzSplit("h", "p"),
+			coprocessorKeyRange("f", "o"),
 			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
 		},
 		zzzCase{
-			zzzSplit("r", "t"),
+			coprocessorKeyRange("h", "p"),
+			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
+		},
+		zzzCase{
+			coprocessorKeyRange("r", "t"),
 			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t"),
 		},
 	)
 }
 
-func zzzSplit(start, end string) *coprocessor.KeyRange {
+func coprocessorKeyRange(start, end string) *coprocessor.KeyRange {
 	return &coprocessor.KeyRange{
 		Start: []byte(start),
 		End:   []byte(end),
