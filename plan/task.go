@@ -511,11 +511,11 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	task := tasks[0].copy()
+	t := tasks[0].copy()
 	np := p.Copy()
-	attachPlan2Task(np, task)
-	task.addCost(task.count() * cpuFactor)
-	return task
+	attachPlan2Task(np, t)
+	t.addCost(t.count() * cpuFactor)
+	return t
 }
 
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
