@@ -35,7 +35,7 @@ func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column)
 	return
 }
 
-func (p *Selection) preparePossibleProperties() (result [][]*expression.Column) {
+func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.Column) {
 	return p.children[0].(LogicalPlan).preparePossibleProperties()
 }
 

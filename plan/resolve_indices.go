@@ -140,7 +140,7 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *Selection) ResolveIndices() {
+func (p *PhysicalSelection) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.children[0].Schema())
@@ -187,7 +187,7 @@ func (p *PhysicalApply) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *Update) ResolveIndices() {
 	p.basePlan.ResolveIndices()
-	schema := p.children[0].Schema()
+	schema := p.SelectPlan.Schema()
 	for _, assign := range p.OrderedList {
 		assign.Col.ResolveIndices(schema)
 		assign.Expr.ResolveIndices(schema)
@@ -216,9 +216,11 @@ func (p *Insert) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *basePlan) ResolveIndices() {
-	for _, cols := range p.schema.TblID2Handle {
-		for _, col := range cols {
-			col.ResolveIndices(p.schema)
+	if p.schema != nil {
+		for _, cols := range p.schema.TblID2Handle {
+			for _, col := range cols {
+				col.ResolveIndices(p.schema)
+			}
 		}
 	}
 	for _, child := range p.children {

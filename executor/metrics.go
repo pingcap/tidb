@@ -256,6 +256,14 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 		pa.setIsSystemTable(x.DBName)
 	case *plan.PhysicalHashSemiJoin:
 		pa.hasJoin = true
+	case *plan.Insert:
+		if x.SelectPlan != nil {
+			pa.fromPlan(x.SelectPlan)
+		}
+	case *plan.Delete:
+		pa.fromPlan(x.SelectPlan)
+	case *plan.Update:
+		pa.fromPlan(x.SelectPlan)
 	case *plan.PhysicalTableReader:
 		for _, child := range x.TablePlans {
 			pa.fromPlan(child)

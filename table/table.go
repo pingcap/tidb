@@ -122,15 +122,15 @@ type Table interface {
 	RemoveRecord(ctx context.Context, h int64, r []types.Datum) error
 
 	// AllocAutoID allocates an auto_increment ID for a new row.
-	AllocAutoID() (int64, error)
+	AllocAutoID(ctx context.Context) (int64, error)
 
 	// Allocator returns Allocator.
-	Allocator() autoid.Allocator
+	Allocator(ctx context.Context) autoid.Allocator
 
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(newBase int64, allocIDs bool) error
+	RebaseAutoID(ctx context.Context, newBase int64, allocIDs bool) error
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo

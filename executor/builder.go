@@ -111,7 +111,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSemiJoin(v)
 	case *plan.PhysicalIndexJoin:
 		return b.buildIndexLookUpJoin(v)
-	case *plan.Selection:
+	case *plan.PhysicalSelection:
 		return b.buildSelection(v)
 	case *plan.PhysicalAggregation:
 		return b.buildAggregation(v)
@@ -234,11 +234,17 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 }
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
-	e := &LimitExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		Offset:       v.Offset,
-		Count:        v.Count,
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
+	e := &LimitExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		begin:        v.Offset,
+		end:          v.Offset + v.Count,
+	}
+	e.supportChk = true
 	return e
 }
 
@@ -313,8 +319,10 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		GenExprs:              v.GenCols.Exprs,
 		needFillDefaultValues: v.NeedFillDefaultValue,
 	}
-	if len(v.Children()) > 0 {
-		ivs.SelectExec = b.build(v.Children()[0])
+	ivs.SelectExec = b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
 	ivs.Table = v.Table
 	if v.IsReplace {
@@ -618,21 +626,31 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 		aggType:      v.AggType,
-		hasGby:       v.HasGby,
 	}
 }
 
-func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
-	exec := &SelectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		Conditions:   v.Conditions,
+func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
-	return exec
+	e := &SelectionExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		filters:      v.Conditions,
+	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	e := &ProjectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 		exprs:        v.Exprs,
 	}
 	e.baseExecutor.supportChk = true
@@ -784,12 +802,17 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.Schema().TblID2Handle {
+	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
+	}
+	selExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
 	return &UpdateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
-		SelectExec:   b.build(v.Children()[0]),
+		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
 		IgnoreErr:    v.IgnoreErr,
@@ -798,12 +821,17 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.Schema().TblID2Handle {
+	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
+	}
+	selExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
 	return &DeleteExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
-		SelectExec:   b.build(v.Children()[0]),
+		SelectExec:   selExec,
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 		tblID2Table:  tblID2table,
@@ -1166,7 +1194,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), builder.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1190,7 +1218,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), builder.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

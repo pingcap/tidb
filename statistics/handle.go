@@ -64,6 +64,7 @@ func (h *Handle) Clear() {
 	for len(h.analyzeResultCh) > 0 {
 		<-h.analyzeResultCh
 	}
+	h.ctx.GetSessionVars().MaxChunkSize = 1
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
 }

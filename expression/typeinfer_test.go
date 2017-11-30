@@ -66,7 +66,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")

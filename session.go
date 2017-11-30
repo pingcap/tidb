@@ -733,7 +733,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 		}
 		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
-		compiler := executor.Compiler{s}
+		compiler := executor.Compiler{Ctx: s}
 		for _, stmtNode := range stmtNodes {
 			s.PrepareTxnCtx(goCtx2)
 
@@ -962,6 +962,16 @@ func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
 		return n1
 	}
 	return n2
+}
+
+// CreateSession4Test creates a new session environment for test.
+func CreateSession4Test(store kv.Storage) (Session, error) {
+	s, err := CreateSession(store)
+	if err == nil {
+		// initialize session variables for test.
+		s.GetSessionVars().MaxChunkSize = 2
+	}
+	return s, errors.Trace(err)
 }
 
 // CreateSession creates a new session environment.

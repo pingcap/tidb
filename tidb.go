@@ -61,7 +61,13 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d, err1 = domain.NewDomain(store, ddlLease, statisticLease, factory, sysFactory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
+		err1 = d.Init(ddlLease, sysFactory)
+		if err1 != nil {
+			// If we don't clean it, there are some dirty data when retrying the function of Init.
+			d.Close()
+			log.Errorf("[ddl] init domain failed %v", errors.ErrorStack(errors.Trace(err1)))
+		}
 		return true, errors.Trace(err1)
 	})
 	if err != nil {
@@ -138,7 +144,7 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
-	compiler := executor.Compiler{ctx}
+	compiler := executor.Compiler{Ctx: ctx}
 	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }

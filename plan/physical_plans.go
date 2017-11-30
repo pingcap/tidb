@@ -24,19 +24,16 @@ import (
 )
 
 var (
-	_ PhysicalPlan = &Selection{}
+	_ PhysicalPlan = &PhysicalSelection{}
 	_ PhysicalPlan = &Projection{}
 	_ PhysicalPlan = &Exists{}
 	_ PhysicalPlan = &MaxOneRow{}
 	_ PhysicalPlan = &TableDual{}
 	_ PhysicalPlan = &Union{}
 	_ PhysicalPlan = &Sort{}
-	_ PhysicalPlan = &Update{}
-	_ PhysicalPlan = &Delete{}
 	_ PhysicalPlan = &SelectLock{}
 	_ PhysicalPlan = &Limit{}
 	_ PhysicalPlan = &Show{}
-	_ PhysicalPlan = &Insert{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalTableReader{}
@@ -306,7 +303,6 @@ type PhysicalAggregation struct {
 	*basePlan
 	basePhysicalPlan
 
-	HasGby       bool
 	AggType      AggregationType
 	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
@@ -387,11 +383,18 @@ func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
 	return &np
 }
 
+// PhysicalSelection represents a filter.
+type PhysicalSelection struct {
+	*basePlan
+	basePhysicalPlan
+
+	Conditions []expression.Expression
+}
+
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Selection) Copy() PhysicalPlan {
+func (p *PhysicalSelection) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
@@ -416,15 +419,6 @@ func (p *Exists) Copy() PhysicalPlan {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *MaxOneRow) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Insert) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
 	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
@@ -495,24 +489,6 @@ func (p *PhysicalAggregation) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Update) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Delete) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
 func (p *Show) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
@@ -543,7 +519,7 @@ func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Sche
 
 func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
-	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
+	case *Limit, *TopN, *Sort, *PhysicalSelection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
 		p.SetSchema(buildJoinSchema(x.JoinType, p, x.outerIndex))

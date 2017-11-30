@@ -143,7 +143,7 @@ func (p *PhysicalUnionScan) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *Selection) ExplainInfo() string {
+func (p *PhysicalSelection) ExplainInfo() string {
 	return string(expression.ExplainExpressionList(p.Conditions))
 }
 
@@ -181,7 +181,7 @@ func (p *Limit) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalAggregation) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("type:%s", p.AggType))
-	if p.HasGby && len(p.GroupByItems) > 0 {
+	if len(p.GroupByItems) > 0 {
 		buffer.WriteString(fmt.Sprintf(", group by:%s",
 			expression.ExplainExpressionList(p.GroupByItems)))
 	}
