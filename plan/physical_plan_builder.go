@@ -972,7 +972,6 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 		agg := PhysicalAggregation{
 			GroupByItems: p.GroupByItems,
 			AggFuncs:     p.AggFuncs,
-			HasGby:       len(p.GroupByItems) > 0,
 			AggType:      StreamedAgg,
 			propKeys:     cols,
 			inputCount:   p.inputCount,
