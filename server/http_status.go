@@ -54,6 +54,9 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandler, opMvccGetByHex})
+		router.Handle("/schema", schemaHandler{tikvHandler})
+		router.Handle("/schema/{db}", schemaHandler{tikvHandler})
+		router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandler})
 	}
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {

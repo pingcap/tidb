@@ -43,12 +43,15 @@ import (
 
 const (
 	pDBName    = "db"
-	pTableName = "table"
-	pRegionID  = "regionID"
-	pRecordID  = "recordID"
-	pStartTS   = "startTS"
 	pHexKey    = "hexKey"
+	pRecordID  = "recordID"
+	pRegionID  = "regionID"
+	pStartTS   = "startTS"
+	pTableName = "table"
 )
+
+// For query string
+const qTableID = "table_id"
 
 const (
 	headerContentType = "Content-Type"
@@ -70,6 +73,11 @@ type regionHandlerTool struct {
 // some common functions for all handlers.
 type regionHandler struct {
 	*regionHandlerTool
+}
+
+// schemaHandler is the handler for list database or table schemas.
+type schemaHandler struct {
+	*regionHandler
 }
 
 // tableRegionsHandler is the handler for list table's regions.
@@ -225,6 +233,68 @@ func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, er
 
 	}
 	return regions, nil
+}
+
+// ServeHTTP handles request of list a database or table's schemas.
+func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	schema, err := rh.schema()
+	if err != nil {
+		rh.writeError(w, err)
+		return
+	}
+
+	// parse params
+	params := mux.Vars(req)
+
+	if dbName, ok := params[pDBName]; ok {
+		cDBName := model.NewCIStr(dbName)
+		if tableName, ok := params[pTableName]; ok {
+			// table schema of a specified table name
+			cTableName := model.NewCIStr(tableName)
+			data, err := schema.TableByName(cDBName, cTableName)
+			if err != nil {
+				rh.writeError(w, err)
+				return
+			}
+			rh.writeData(w, data.Meta())
+			return
+		}
+		// all table schemas in a specified database
+		if schema.SchemaExists(cDBName) {
+			tbs := schema.SchemaTables(cDBName)
+			tbsInfo := make([]*model.TableInfo, len(tbs))
+			for i := range tbsInfo {
+				tbsInfo[i] = tbs[i].Meta()
+			}
+			rh.writeData(w, tbsInfo)
+			return
+		}
+		rh.writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+		return
+	}
+
+	if tableID := req.FormValue(qTableID); len(tableID) > 0 {
+		// table schema of a specified tableID
+		tid, err := strconv.Atoi(tableID)
+		if err != nil {
+			rh.writeError(w, err)
+			return
+		}
+		if tid < 0 {
+			rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			return
+		}
+		if data, ok := schema.TableByID(int64(tid)); ok {
+			rh.writeData(w, data.Meta())
+			return
+		}
+		rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		return
+	}
+
+	// all databases' schemas
+	rh.writeData(w, schema.AllSchemas())
+	return
 }
 
 // ServeHTTP handles request of list a table's regions.
