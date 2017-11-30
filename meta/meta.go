@@ -140,6 +140,7 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
+// GenAutoTableIDIDKeyValue generate meta key by dbID, tableID and coresponding value by autoID.
 func (m *Meta) GenAutoTableIDIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
 	dbKey := m.dbKey(dbID)
 	autoTableIDKey := m.autoTableIDKey(tableID)
