@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/meta"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
@@ -44,7 +46,7 @@ type KvPair struct {
 // KvEncoder is an encoder that transfer sql to key-value pairs.
 type KvEncoder interface {
 	// Encode transfers sql to kv pairs.
-	// Before use Encode() method, please make sure you already call Schema() method.
+	// Before use Encode() method, please make sure you already created schame by calling ExecDDLSQL() method.
 	// NOTE: now we just support transfers insert statement to kv pairs.
 	// (if we wanna support other statement, we need to add a kv.Storage parameter,
 	// and pass tikv store in.)
@@ -53,6 +55,9 @@ type KvEncoder interface {
 
 	// ExecDDLSQL executes ddl sql, you must use it to create schema infos.
 	ExecDDLSQL(sql string) error
+
+	// EncodeMetaAutoID encode the table meta info, autoID to coresponding key-value pair.
+	EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error)
 
 	// Close cleanup the kvEncoder.
 	Close() error
@@ -111,6 +116,13 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 		return nil, 0, errors.Trace(err)
 	}
 	return kvPairs, e.se.GetSessionVars().StmtCtx.AffectedRows(), nil
+}
+
+func (e *kvEncoder) EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error) {
+	mockTxn := kv.NewMockTxn()
+	m := meta.NewMeta(mockTxn)
+	k, v := m.GenAutoTableIDIDKeyValue(dbID, tableID, autoID)
+	return KvPair{Key: k, Val: v}, nil
 }
 
 func (e *kvEncoder) ExecDDLSQL(sql string) error {

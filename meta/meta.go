@@ -140,6 +140,12 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
+func (m *Meta) GenAutoTableIDIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
+	dbKey := m.dbKey(dbID)
+	autoTableIDKey := m.autoTableIDKey(tableID)
+	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
+}
+
 // GenAutoTableID adds step to the auto ID of the table and returns the sum.
 func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
 	// Check if DB exists.
