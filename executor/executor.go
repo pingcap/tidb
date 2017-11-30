@@ -633,16 +633,16 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 func (e *SelectionExec) unBatchedNextChunk(chk *chunk.Chunk) error {
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+			if chk.NumRows() == 1 {
+				return nil
+			}
 			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !selected {
-				continue
+			if selected {
+				chk.AppendRow(0, e.inputRow)
 			}
-			chk.AppendRow(0, e.inputRow)
-			e.inputRow = e.inputRow.Next()
-			return nil
 		}
 		err := e.children[0].NextChunk(e.childrenResults[0])
 		if err != nil {
