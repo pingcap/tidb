@@ -241,7 +241,7 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
-// Issue 3685.
+// TestSelectBackslashN Issue 3685.
 func (s *testSuite) TestSelectBackslashN(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -332,7 +332,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
 }
 
-// Issue #4053.
+// TestSelectNull Issue #4053.
 func (s *testSuite) TestSelectNull(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -365,7 +365,7 @@ func (s *testSuite) TestSelectNull(c *C) {
 	c.Check(fields[0].Column.Name.O, Equals, `null+NULL`)
 }
 
-// Issue #3686.
+// TestSelectStringLiteral Issue #3686.
 func (s *testSuite) TestSelectStringLiteral(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1941,7 +1941,7 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
 }
 
-// This tests https://github.com/pingcap/tidb/issues/4024
+// TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
 func (s *testSuite) TestIssue4024(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database test2")
@@ -2255,7 +2255,7 @@ func (s *testSuite) TestEnhancedRangeAccess(c *C) {
 	tk.MustQuery("select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)").Check(nil)
 }
 
-// Issue #4810
+// TestMaxInt64Handle Issue #4810
 func (s *testSuite) TestMaxInt64Handle(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 

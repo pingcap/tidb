@@ -624,7 +624,6 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 		aggType:      v.AggType,
-		hasGby:       v.HasGby,
 	}
 }
 
