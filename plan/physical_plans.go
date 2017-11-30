@@ -31,12 +31,9 @@ var (
 	_ PhysicalPlan = &TableDual{}
 	_ PhysicalPlan = &Union{}
 	_ PhysicalPlan = &Sort{}
-	_ PhysicalPlan = &Update{}
-	_ PhysicalPlan = &Delete{}
 	_ PhysicalPlan = &SelectLock{}
 	_ PhysicalPlan = &Limit{}
 	_ PhysicalPlan = &Show{}
-	_ PhysicalPlan = &Insert{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalTableReader{}
@@ -430,15 +427,6 @@ func (p *MaxOneRow) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Insert) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
 func (p *Limit) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
@@ -496,24 +484,6 @@ func (p *SelectLock) Copy() PhysicalPlan {
 func (p *PhysicalAggregation) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Update) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Delete) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }

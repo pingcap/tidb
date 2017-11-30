@@ -52,6 +52,9 @@ type Plan interface {
 	// findColumn finds the column in basePlan's schema.
 	// If the column is not in the schema, returns error.
 	findColumn(*ast.ColumnName) (*expression.Column, int, error)
+
+	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
+	ResolveIndices()
 }
 
 // taskType is the type of execution task.
@@ -197,9 +200,6 @@ type PhysicalPlan interface {
 
 	// statsProfile will return the stats for this plan.
 	statsProfile() *statsProfile
-
-	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
 }
 
 type baseLogicalPlan struct {
