@@ -22,11 +22,13 @@ import (
 
 const signMask uint64 = 0x8000000000000000
 
-func encodeIntToCmpUint(v int64) uint64 {
+// EncodeIntToCmpUint make int v to comparable uint type
+func EncodeIntToCmpUint(v int64) uint64 {
 	return uint64(v) ^ signMask
 }
 
-func decodeCmpUintToInt(u uint64) int64 {
+// DecodeCmpUintToInt decodes the u that encoded by EncodeIntToCmpUint
+func DecodeCmpUintToInt(u uint64) int64 {
 	return int64(u ^ signMask)
 }
 
@@ -34,7 +36,7 @@ func decodeCmpUintToInt(u uint64) int64 {
 // EncodeInt guarantees that the encoded value is in ascending order for comparison.
 func EncodeInt(b []byte, v int64) []byte {
 	var data [8]byte
-	u := encodeIntToCmpUint(v)
+	u := EncodeIntToCmpUint(v)
 	binary.BigEndian.PutUint64(data[:], u)
 	return append(b, data[:]...)
 }
@@ -43,7 +45,7 @@ func EncodeInt(b []byte, v int64) []byte {
 // EncodeIntDesc guarantees that the encoded value is in descending order for comparison.
 func EncodeIntDesc(b []byte, v int64) []byte {
 	var data [8]byte
-	u := encodeIntToCmpUint(v)
+	u := EncodeIntToCmpUint(v)
 	binary.BigEndian.PutUint64(data[:], ^u)
 	return append(b, data[:]...)
 }
@@ -56,7 +58,7 @@ func DecodeInt(b []byte) ([]byte, int64, error) {
 	}
 
 	u := binary.BigEndian.Uint64(b[:8])
-	v := decodeCmpUintToInt(u)
+	v := DecodeCmpUintToInt(u)
 	b = b[8:]
 	return b, v, nil
 }
@@ -69,7 +71,7 @@ func DecodeIntDesc(b []byte) ([]byte, int64, error) {
 	}
 
 	u := binary.BigEndian.Uint64(b[:8])
-	v := decodeCmpUintToInt(^u)
+	v := DecodeCmpUintToInt(^u)
 	b = b[8:]
 	return b, v, nil
 }

@@ -34,6 +34,7 @@ type Config struct {
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
 	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
+	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -147,13 +148,14 @@ type ProxyProtocol struct {
 }
 
 var defaultConf = Config{
-	Host:       "0.0.0.0",
-	Port:       4000,
-	Store:      "mocktikv",
-	Path:       "/tmp/tidb",
-	RunDDL:     true,
-	Lease:      "10s",
-	TokenLimit: 1000,
+	Host:        "0.0.0.0",
+	Port:        4000,
+	Store:       "mocktikv",
+	Path:        "/tmp/tidb",
+	RunDDL:      true,
+	Lease:       "10s",
+	TokenLimit:  1000,
+	EnableChunk: true,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
