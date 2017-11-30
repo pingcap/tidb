@@ -16,6 +16,7 @@ package kvenc
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/juju/errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -438,5 +440,60 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 			c.Assert(bytes.Compare(kv.Key, expectIdxKey), Equals, 0)
 		}
 	}
+}
 
+var (
+	mMetaPrefix    = []byte("m")
+	mDBPrefix      = "DB"
+	mTableIDPrefix = "TID"
+)
+
+func dbKey(dbID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
+}
+
+func autoTableIDKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
+}
+
+func encodeHashDataKey(key []byte, field []byte) kv.Key {
+	ek := make([]byte, 0, len(mMetaPrefix)+len(key)+len(field)+30)
+	ek = append(ek, mMetaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	return codec.EncodeBytes(ek, field)
+}
+
+func hashFieldIntegerVal(val int64) []byte {
+	return []byte(strconv.FormatInt(val, 10))
+}
+
+func (s *testKvEncoderSuite) TestEncodeMetaAutoID(c *C) {
+	encoder, err := New("test", nil)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	dbID := int64(1)
+	tableID := int64(10)
+	autoID := int64(10000000111)
+	kvPair, err := encoder.EncodeMetaAutoID(dbID, tableID, autoID)
+	c.Assert(err, IsNil)
+
+	expectKey := encodeHashDataKey(dbKey(dbID), autoTableIDKey(tableID))
+	expectVal := hashFieldIntegerVal(autoID)
+
+	c.Assert(bytes.Compare(kvPair.Key, expectKey), Equals, 0)
+	c.Assert(bytes.Compare(kvPair.Val, expectVal), Equals, 0)
+
+	dbID = 10
+	tableID = 1
+	autoID = -1
+	kvPair, err = encoder.EncodeMetaAutoID(dbID, tableID, autoID)
+	c.Assert(err, IsNil)
+
+	expectKey = encodeHashDataKey(dbKey(dbID), autoTableIDKey(tableID))
+	expectVal = hashFieldIntegerVal(autoID)
+
+	c.Assert(bytes.Compare(kvPair.Key, expectKey), Equals, 0)
+	c.Assert(bytes.Compare(kvPair.Val, expectVal), Equals, 0)
 }
