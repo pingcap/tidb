@@ -920,7 +920,10 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				return nil
 			}
 		}
-		setParentAndChildren(insertPlan, selectPlan)
+		insertPlan.SelectPlan, b.err = doOptimize(b.optFlag, selectPlan.(LogicalPlan), b.ctx)
+		if b.err != nil {
+			return nil
+		}
 	}
 
 	// Calculate generated columns.
@@ -1040,8 +1043,25 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	setParents4FinalPlan(targetPlan.(PhysicalPlan))
-	p := &Explain{StmtPlan: targetPlan}
+	pp, ok := targetPlan.(PhysicalPlan)
+	if !ok {
+		switch x := targetPlan.(type) {
+		case *Delete:
+			pp = x.SelectPlan
+		case *Update:
+			pp = x.SelectPlan
+		case *Insert:
+			if x.SelectPlan != nil {
+				pp = x.SelectPlan
+			}
+		}
+		if pp == nil {
+			b.err = ErrUnsupportedType.GenByArgs(targetPlan)
+			return nil
+		}
+	}
+	setParents4FinalPlan(pp)
+	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
 		retFields := []string{"id", "parents", "children", "task", "operator info"}

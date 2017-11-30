@@ -213,6 +213,15 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}
 		str = str + strings.Join(children, ",") + "}"
+	case *Update:
+		str = fmt.Sprintf("%s->Update", ToString(x.SelectPlan))
+	case *Delete:
+		str = fmt.Sprintf("%s->Delete", ToString(x.SelectPlan))
+	case *Insert:
+		str = "Insert"
+		if x.SelectPlan != nil {
+			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
+		}
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
