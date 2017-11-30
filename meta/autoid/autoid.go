@@ -41,7 +41,7 @@ type Allocator interface {
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
 	Rebase(tableID, newBase int64, allocIDs bool) error
-	// Base is only used for test.
+	// Base return the current base of Allocator.
 	Base() int64
 	// End is only used for test.
 	End() int64
