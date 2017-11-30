@@ -1575,6 +1575,11 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 
 	// Check generated expression with blanks.
 	s.tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)))")
+	result = s.tk.MustQuery(`show create table table_with_gen_col_blanks`)
+	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` char(20) GENERATED ALWAYS AS (cast( a as char)) VIRTUAL DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	genExprTests := []struct {
 		stmt string

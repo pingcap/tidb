@@ -131,9 +131,11 @@ func (s *testStringUtilSuite) TestRemoveRedundantBlanks(c *C) {
 		input  string
 		output string
 	}{
-		{"a\nb\rc d\te", "a b c d e"},
+		{"a\nb\rc d\te ", "a b c d e"},
 		{"hello, 世界\npeace", "hello, 世界 peace"},
 		{"cast(a      as \t\n\rchar)", "cast(a as char)"},
+		{`json_extract(a,  "   $.'b c'	" )`, `json_extract(a, "   $.'b c'	" )`},
+		{`length ( '  x "y z" "m'   )  `, `length ( '  x "y z" "m' )`},
 	}
 	for _, tt := range tests {
 		c.Assert(RemoveRedundantBlanks(tt.input), Equals, tt.output)
