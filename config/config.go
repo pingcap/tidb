@@ -45,6 +45,7 @@ type Config struct {
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 }
 
 // Log is the log section of config.
@@ -145,6 +146,13 @@ type ProxyProtocol struct {
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout int `toml:"header-timeout" json:"header-timeout"`
+}
+
+// TiKVClient is the config for tikv client.
+type TiKVClient struct {
+	// GrpcConnectionCount is the max gRPC connections that will be established
+	// with each tikv-server.
+	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
 }
 
 var defaultConf = Config{
