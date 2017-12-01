@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
@@ -44,7 +45,7 @@ type KvPair struct {
 // KvEncoder is an encoder that transfer sql to key-value pairs.
 type KvEncoder interface {
 	// Encode transfers sql to kv pairs.
-	// Before use Encode() method, please make sure you already call Schema() method.
+	// Before use Encode() method, please make sure you already created schame by calling ExecDDLSQL() method.
 	// NOTE: now we just support transfers insert statement to kv pairs.
 	// (if we wanna support other statement, we need to add a kv.Storage parameter,
 	// and pass tikv store in.)
@@ -53,6 +54,9 @@ type KvEncoder interface {
 
 	// ExecDDLSQL executes ddl sql, you must use it to create schema infos.
 	ExecDDLSQL(sql string) error
+
+	// EncodeMetaAutoID encode the table meta info, autoID to coresponding key-value pair.
+	EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error)
 
 	// Close cleanup the kvEncoder.
 	Close() error
@@ -113,6 +117,13 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 	return kvPairs, e.se.GetSessionVars().StmtCtx.AffectedRows(), nil
 }
 
+func (e *kvEncoder) EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error) {
+	mockTxn := kv.NewMockTxn()
+	m := meta.NewMeta(mockTxn)
+	k, v := m.GenAutoTableIDIDKeyValue(dbID, tableID, autoID)
+	return KvPair{Key: k, Val: v}, nil
+}
+
 func (e *kvEncoder) ExecDDLSQL(sql string) error {
 	_, err := e.se.Execute(goctx.Background(), sql)
 	if err != nil {
@@ -132,20 +143,51 @@ func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	return store, dom, errors.Trace(err)
 }
 
-func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) error {
-	store, dom, err := newMockTikvWithBootstrap()
+func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error) {
+	var (
+		store kv.Storage
+		dom   *domain.Domain
+		se    tidb.Session
+	)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if store != nil {
+			if err1 := store.Close(); err1 != nil {
+				log.Error(errors.ErrorStack(err1))
+			}
+		}
+		if dom != nil {
+			dom.Close()
+		}
+		if se != nil {
+			se.Close()
+		}
+	}()
+
+	store, dom, err = newMockTikvWithBootstrap()
 	if err != nil {
-		return errors.Trace(err)
+		err = errors.Trace(err)
+		return
 	}
-	se, err := tidb.CreateSession(store)
+
+	se, err = tidb.CreateSession(store)
 	if err != nil {
-		return errors.Trace(err)
+		err = errors.Trace(err)
+		return
 	}
 
 	se.SetConnectionID(atomic.AddUint64(&mockConnID, 1))
+	_, err = se.Execute(goctx.Background(), fmt.Sprintf("create database if not exists %s", dbName))
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
 	_, err = se.Execute(goctx.Background(), fmt.Sprintf("use %s", dbName))
 	if err != nil {
-		return errors.Trace(err)
+		err = errors.Trace(err)
+		return
 	}
 
 	se.GetSessionVars().IDAllocator = idAlloc
