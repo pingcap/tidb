@@ -255,7 +255,6 @@ func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 	agg := PhysicalAggregation{
 		GroupByItems: p.GroupByItems,
 		AggFuncs:     p.AggFuncs,
-		HasGby:       len(p.GroupByItems) > 0,
 		AggType:      CompleteAgg,
 	}.init(p.ctx)
 	agg.SetSchema(p.schema.Clone())

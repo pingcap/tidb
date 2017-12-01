@@ -489,7 +489,6 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 		finalAggFuncs[i] = fun
 	}
 	finalAgg = PhysicalAggregation{
-		HasGby:   p.HasGby, // TODO: remove this field
 		AggType:  FinalAgg,
 		AggFuncs: finalAggFuncs,
 	}.init(p.ctx)
