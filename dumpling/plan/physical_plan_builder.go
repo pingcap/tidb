@@ -126,22 +126,11 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 }
 
 func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
-	var rightConds, leftConds expression.CNFExprs
 	joinType := p.JoinType
-	if outerIdx == 0 {
-		rightConds = p.RightConditions.Clone()
-		leftConds = p.LeftConditions.Clone()
-	} else {
-		rightConds = p.LeftConditions.Clone()
-		leftConds = p.RightConditions.Clone()
-		if p.JoinType == RightOuterJoin {
-			joinType = LeftOuterJoin
-		}
-	}
 	join := PhysicalIndexJoin{
-		outerIndex:      outerIdx,
-		LeftConditions:  leftConds,
-		RightConditions: rightConds,
+		OuterIndex:      outerIdx,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		JoinType:        joinType,
 		OuterJoinKeys:   outerJoinKeys,
@@ -149,13 +138,8 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		DefaultValues:   p.DefaultValues,
 		outerSchema:     p.children[outerIdx].Schema(),
 		innerPlan:       innerPlan,
-	}.init(p.ctx, p.children[outerIdx], p.children[1-outerIdx])
-	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		join.SetSchema(p.Schema().Clone())
-	case LeftOuterJoin, RightOuterJoin, InnerJoin:
-		join.SetSchema(expression.MergeSchema(p.children[outerIdx].Schema(), p.children[1-outerIdx].Schema()))
-	}
+	}.init(p.ctx, p.children...)
+	join.SetSchema(p.schema)
 	join.profile = p.profile
 	orderJoin := join.Copy().(*PhysicalIndexJoin)
 	orderJoin.KeepOrder = true
@@ -231,7 +215,8 @@ func (p *PhysicalIndexJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 		}
 	}
 	requiredProps1 := make([]*requiredProp, 2)
-	requiredProps1[p.outerIndex] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
+	requiredProps1[p.OuterIndex] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
+	requiredProps1[1-p.OuterIndex] = &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}
 	return [][]*requiredProp{requiredProps1}
 }
 
