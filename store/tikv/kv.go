@@ -371,7 +371,7 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 
 func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	for {
-		startTS, err := s.oracle.GetTimestamp(bo.ctx)
+		startTS, err := s.oracle.GetTimestamp(bo)
 		if err == nil {
 			return startTS, nil
 		}
