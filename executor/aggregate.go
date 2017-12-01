@@ -34,7 +34,6 @@ type HashAggExec struct {
 	baseExecutor
 
 	executed      bool
-	hasGby        bool
 	aggType       plan.AggregationType
 	sc            *stmtctx.StatementContext
 	AggFuncs      []aggregation.Aggregation
@@ -74,7 +73,7 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 				break
 			}
 		}
-		if (e.groupMap.Len() == 0) && !e.hasGby {
+		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
@@ -96,9 +95,6 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
-	if !e.hasGby {
-		return []byte{}, nil
-	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
