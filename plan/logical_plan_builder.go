@@ -627,8 +627,33 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
 	}
-
 	u.SetSchema(firstSchema)
+
+	for childID, child := range u.children {
+		exprs := make([]expression.Expression, len(child.Schema().Columns))
+		needProjection := false
+		for i, srcCol := range child.Schema().Columns {
+			dstType := firstSchema.Columns[i].RetType
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				needProjection = true
+			} else {
+				exprs[i] = srcCol.Clone()
+			}
+		}
+		if needProjection {
+			proj := Projection{Exprs: exprs}.init(b.ctx)
+			proj.schema = firstSchema.Clone()
+			for _, col := range proj.schema.Columns {
+				col.FromID = proj.ID()
+			}
+			setParentAndChildren(proj, u.children[childID])
+			u.children[childID] = proj
+		}
+	}
+	setParentAndChildren(u, u.children...)
+
 	var p LogicalPlan = u
 	if union.Distinct {
 		p = b.buildDistinct(u, u.Schema().Len())
