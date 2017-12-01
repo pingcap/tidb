@@ -861,9 +861,10 @@ type UnionExec struct {
 	wg            sync.WaitGroup
 
 	// For chunk execution.
-	resoucePool chan *executorResult
-	resultPool  chan *executorResult
-	initialized bool
+	resourcePool   chan *executorResult
+	resultPool     chan *executorResult
+	initialized    bool
+	chunkExecution bool
 }
 
 type execResult struct {
@@ -876,16 +877,10 @@ type executorResult struct {
 	err error
 }
 
-func (er *executorResult) reset() {
-	er.chk.Reset()
-	er.err = nil
-}
-
-func (e *UnionExec) waitAllFinished(forChunk bool) {
+func (e *UnionExec) waitAllFinished() {
 	e.wg.Wait()
-	if forChunk {
+	if e.chunkExecution {
 		close(e.resultPool)
-		close(e.resoucePool)
 	} else {
 		close(e.resultCh)
 	}
@@ -916,18 +911,6 @@ func (e *UnionExec) fetchData(goCtx goctx.Context, idx int) {
 				}
 				return
 			}
-			// TODO: Add cast function in plan building phase.
-			for j := range row {
-				col := e.schema.Columns[j]
-				val, err := row[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
-				if err != nil {
-					e.stopFetchData.Store(true)
-					result.err = err
-					e.resultCh <- result
-					return
-				}
-				row[j] = val
-			}
 			result.rows = append(result.rows, row)
 		}
 		e.resultCh <- result
@@ -945,11 +928,12 @@ func (e *UnionExec) Open(goCtx goctx.Context) error {
 }
 
 func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
+	e.chunkExecution = forChunk
 	if forChunk {
-		e.resoucePool = make(chan *executorResult, len(e.children))
+		e.resourcePool = make(chan *executorResult, len(e.children))
 		e.resultPool = make(chan *executorResult, len(e.children))
 		for i := range e.children {
-			e.resoucePool <- &executorResult{chk: e.childrenResults[i], err: nil}
+			e.resourcePool <- &executorResult{chk: e.childrenResults[i], err: nil}
 			e.wg.Add(1)
 			go e.resultPuller(i)
 		}
@@ -961,7 +945,7 @@ func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 			go e.fetchData(goCtx, i)
 		}
 	}
-	go e.waitAllFinished(forChunk)
+	go e.waitAllFinished()
 }
 
 func (e *UnionExec) resultPuller(childID int) {
@@ -970,7 +954,7 @@ func (e *UnionExec) resultPuller(childID int) {
 		if e.stopFetchData.Load().(bool) {
 			return
 		}
-		resource := <-e.resoucePool
+		resource := <-e.resourcePool
 		resource.err = errors.Trace(e.children[childID].NextChunk(resource.chk))
 		if resource.err != nil || resource.chk.NumRows() == 0 {
 			if resource.err != nil {
@@ -1024,12 +1008,15 @@ func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
 
 	chk.SwapColumns(result.chk)
 	result.reset()
-	e.resoucePool <- result
+	e.resourcePool <- result
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	e.rows = nil
+	if e.chunkExecution {
+		close(e.resourcePool)
+	}
 	return errors.Trace(e.baseExecutor.Close())
 }
