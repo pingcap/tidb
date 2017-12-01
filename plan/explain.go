@@ -305,6 +305,7 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainInfo implements PhysicalPlan interface.
 func (p *TopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	for i, item := range p.ByItems {
