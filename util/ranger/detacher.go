@@ -197,14 +197,7 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
 	var filterConds []expression.Expression
 	for _, cond := range conditions {
-		found := false
-		for _, accessCond := range accessConds {
-			if cond == accessCond {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !expression.Contains(accessConds, cond) {
 			filterConds = append(filterConds, cond)
 		}
 	}
