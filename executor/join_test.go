@@ -530,8 +530,9 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
 	c.Check(err, IsNil)
-	_, err = tidb.GetRows(goctx.Background(), rs)
+	_, err = tidb.GetRows4Test(goctx.Background(), rs)
 	c.Check(err, NotNil)
+	c.Check(rs.Close(), IsNil)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists s")
@@ -711,4 +712,15 @@ func (s *testSuite) TestSubqueryInJoinOn(c *C) {
 
 	_, err := tk.Exec("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
 	c.Check(err, NotNil)
+}
+
+func (s *testSuite) TestIssue5255(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b date, c float, primary key(a, b))")
+	tk.MustExec("create table t2(a int primary key)")
+	tk.MustExec("insert into t1 values(1, '2017-11-29', 2.2)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a=t2.a").Check(testkit.Rows("1 2017-11-29 2.2 1"))
 }
