@@ -24,6 +24,9 @@ PACKAGES  := $$(go list ./...| grep -vE "vendor")
 FILES     := $$(find . -name "*.go" | grep -vE "vendor")
 TOPDIRS   := $$(ls -d */ | grep -vE "vendor")
 
+GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail disable)
+
 LDFLAGS += -X "github.com/pingcap/tidb/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
@@ -111,8 +114,11 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
 else
 	@echo "Running in native mode."
+	go get github.com/coreos/gofail
+	@$(GOFAIL_ENABLE)
 	@export log_level=error; \
-	$(GOTEST) -cover $(PACKAGES)
+	$(GOTEST) -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
+	@$(GOFAIL_DISABLE)
 endif
 
 race: parserlib
@@ -165,3 +171,11 @@ endif
 
 checklist:
 	cat checklist.md
+
+gofail-enable:
+	# Converting gofail failpoints...
+	@$(GOFAIL_ENABLE)
+
+gofail-disable:
+	# Restoring gofail failpoints...
+	@$(GOFAIL_DISABLE)
