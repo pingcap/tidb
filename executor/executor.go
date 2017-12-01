@@ -1007,7 +1007,6 @@ func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
 	}
 
 	chk.SwapColumns(result.chk)
-	result.reset()
 	e.resourcePool <- result
 	return nil
 }
