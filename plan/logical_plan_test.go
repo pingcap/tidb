@@ -612,11 +612,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "update t set t.a = t.a * 1.5 where t.a >= 1000 order by t.a desc limit 10",
-			plan: "DataScan(t)->Sel([ge(test.t.a, 1000)])->Sort->Limit->*plan.Update",
+			plan: "TableReader(Table(t)->Limit)->Limit->Update",
 		},
 		{
 			sql:  "delete from t where t.a >= 1000 order by t.a desc limit 10",
-			plan: "DataScan(t)->Sel([ge(test.t.a, 1000)])->Sort->Limit->*plan.Delete",
+			plan: "TableReader(Table(t)->Limit)->Limit->Delete",
 		},
 		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
@@ -624,7 +624,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "insert into t select * from t",
-			plan: "DataScan(t)->Projection->*plan.Insert",
+			plan: "TableReader(Table(t))->Insert",
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",

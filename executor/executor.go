@@ -548,7 +548,32 @@ func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
 type SelectionExec struct {
 	baseExecutor
 
-	Conditions []expression.Expression
+	batched  bool
+	filters  []expression.Expression
+	selected []bool
+	inputRow chunk.Row
+}
+
+// Open implements the Executor Open interface.
+func (e *SelectionExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
+	e.batched = expression.Vectorizable(e.filters)
+	if e.batched {
+		e.selected = make([]bool, 0, chunk.InitialCapacity)
+	}
+	e.inputRow = e.childrenResults[0].End()
+	return nil
+}
+
+// Close implements plan.Plan Close interface.
+func (e *SelectionExec) Close() error {
+	if err := e.baseExecutor.Close(); err != nil {
+		return errors.Trace(err)
+	}
+	e.selected = nil
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -561,12 +586,74 @@ func (e *SelectionExec) Next(goCtx goctx.Context) (Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		match, err := expression.EvalBool(e.Conditions, srcRow, e.ctx)
+		match, err := expression.EvalBool(e.filters, srcRow, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if match {
 			return srcRow, nil
+		}
+	}
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+
+	if !e.batched {
+		return errors.Trace(e.unBatchedNextChunk(chk))
+	}
+
+	for {
+		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+			if !e.selected[e.inputRow.Idx()] {
+				continue
+			}
+			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+				return nil
+			}
+			chk.AppendRow(0, e.inputRow)
+		}
+		err := e.children[0].NextChunk(e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.inputRow = e.childrenResults[0].Begin()
+		// no more data.
+		if e.childrenResults[0].NumRows() == 0 {
+			return nil
+		}
+		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+}
+
+// unBatchedNextChunk filters input rows one by one and returns once an input row is selected.
+// For sql with "SETVAR" in filter and "GETVAR" in projection, for example: "SELECT @a FROM t WHERE (@a := 2) > 0",
+// we have to set batch size to 1 to do the evaluation of filter and projection.
+func (e *SelectionExec) unBatchedNextChunk(chk *chunk.Chunk) error {
+	for {
+		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if selected {
+				chk.AppendRow(0, e.inputRow)
+				e.inputRow = e.inputRow.Next()
+				return nil
+			}
+		}
+		err := e.children[0].NextChunk(e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.inputRow = e.childrenResults[0].Begin()
+		// no more data.
+		if e.childrenResults[0].NumRows() == 0 {
+			return nil
 		}
 	}
 }

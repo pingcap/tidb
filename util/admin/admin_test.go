@@ -123,7 +123,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 
-	err = t.DropTable(s.dbInfo.ID, s.tbInfo, true)
+	err = t.DropTable(s.dbInfo.ID, s.tbInfo.ID, true)
 	c.Assert(err, IsNil)
 	err = t.DropDatabase(s.dbInfo.ID)
 	c.Assert(err, IsNil)
@@ -274,7 +274,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 
 func (s *testSuite) TestScan(c *C) {
 	defer testleak.AfterTest(c)()
-	alloc := autoid.NewAllocator(s.store, s.tbInfo.OldSchemaID, s.dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, s.dbInfo.ID)
 	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()

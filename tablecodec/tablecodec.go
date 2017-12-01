@@ -15,6 +15,7 @@ package tablecodec
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math"
 	"time"
 
@@ -466,6 +467,17 @@ func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
 	buf = append(buf, indexPrefixSep...)
+	return buf
+}
+
+// ReplaceRecordKeyTableID replace the tableID in the recordKey buf.
+func ReplaceRecordKeyTableID(buf []byte, tableID int64) []byte {
+	if len(buf) < len(tablePrefix)+8 {
+		return buf
+	}
+
+	u := codec.EncodeIntToCmpUint(tableID)
+	binary.BigEndian.PutUint64(buf[len(tablePrefix):], u)
 	return buf
 }
 

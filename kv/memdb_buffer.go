@@ -148,3 +148,24 @@ func (i *memDbIter) Value() []byte {
 func (i *memDbIter) Close() {
 	i.iter.Release()
 }
+
+// WalkMemBuffer iterates all buffered kv pairs in memBuf
+func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v []byte) error) error {
+	iter, err := memBuf.Seek(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer iter.Close()
+	for iter.Valid() {
+		if err = f(iter.Key(), iter.Value()); err != nil {
+			return errors.Trace(err)
+		}
+		err = iter.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
