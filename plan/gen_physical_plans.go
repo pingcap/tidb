@@ -275,7 +275,7 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 		agg := basePhysicalAgg{
 			GroupByItems: p.GroupByItems,
 			AggFuncs:     p.AggFuncs,
-		}.initForStream(p.ctx, cols[:len(keys)], p.inputCount)
+		}.initForStream(p.ctx, keys, p.inputCount)
 		agg.SetSchema(p.schema.Clone())
 		agg.profile = p.profile
 		streamAggs = append(streamAggs, agg)
