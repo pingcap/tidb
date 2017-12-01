@@ -104,7 +104,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	context, cancel := goctx.WithTimeout(bo.ctx, timeout)
+	context, cancel := goctx.WithTimeout(bo, timeout)
 	defer cancel()
 	resp, err = s.client.SendReq(context, ctx.Addr, req)
 	if err != nil {
@@ -124,7 +124,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	}
 	if grpc.Code(errors.Cause(err)) == codes.Canceled {
 		select {
-		case <-bo.ctx.Done():
+		case <-bo.Done():
 			return errors.Trace(err)
 		default:
 			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
