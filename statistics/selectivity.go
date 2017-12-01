@@ -160,7 +160,7 @@ func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeT
 	mask := int64(0)
 	for i := range exprs {
 		for j := range accessConds {
-			if exprs[i].Equal(accessConds[j], ctx) {
+			if exprs[i] == accessConds[j] {
 				mask |= 1 << uint64(i)
 				break
 			}
