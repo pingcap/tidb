@@ -395,6 +395,11 @@ type Row struct {
 	idx int
 }
 
+// Idx returns the row index of Chunk.
+func (r Row) Idx() int {
+	return r.idx
+}
+
 // Len returns the number of values in the row.
 func (r Row) Len() int {
 	return r.c.NumCols()
