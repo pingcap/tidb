@@ -27,7 +27,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -300,7 +300,7 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	// Make sure the uuid is unique.
 	partID := fmt.Sprintf("%05d", rand.Intn(100000))
-	uuid := fmt.Sprintf("mock-tikv-store-%v-%v", time.Now().Unix(), partID)
+	uuid := fmt.Sprintf("mocktikv-store-%v-%v", time.Now().Unix(), partID)
 	pdCli := pd.Client(&codecPDClient{mocktikv.NewPDClient(cluster)})
 	if opt.pdClientHijack != nil {
 		pdCli = opt.pdClientHijack(pdCli)
@@ -371,7 +371,7 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 
 func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	for {
-		startTS, err := s.oracle.GetTimestamp(bo.ctx)
+		startTS, err := s.oracle.GetTimestamp(bo)
 		if err == nil {
 			return startTS, nil
 		}
