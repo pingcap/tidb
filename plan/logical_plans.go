@@ -35,12 +35,9 @@ var (
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &Union{}
 	_ LogicalPlan = &Sort{}
-	_ LogicalPlan = &Update{}
-	_ LogicalPlan = &Delete{}
 	_ LogicalPlan = &SelectLock{}
 	_ LogicalPlan = &Limit{}
 	_ LogicalPlan = &Show{}
-	_ LogicalPlan = &Insert{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -375,24 +372,4 @@ type Limit struct {
 	partial bool
 
 	expectedProp *requiredProp
-}
-
-// Update represents Update plan.
-type Update struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	OrderedList []*expression.Assignment
-	IgnoreErr   bool
-}
-
-// Delete represents a delete plan.
-type Delete struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	Tables       []*ast.TableName
-	IsMultiTable bool
 }

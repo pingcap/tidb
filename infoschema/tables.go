@@ -1148,15 +1148,15 @@ func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData, n
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) AllocAutoID() (int64, error) {
+func (it *infoschemaTable) AllocAutoID(ctx context.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) Allocator() autoid.Allocator {
+func (it *infoschemaTable) Allocator(ctx context.Context) autoid.Allocator {
 	return nil
 }
 
-func (it *infoschemaTable) RebaseAutoID(newBase int64, isSetStep bool) error {
+func (it *infoschemaTable) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
