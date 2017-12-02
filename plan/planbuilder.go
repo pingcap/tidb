@@ -575,6 +575,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		Flag:   show.Flag,
 		Full:   show.Full,
 		User:   show.User,
+		GlobalScope: show.GlobalScope,
 	}.init(b.ctx)
 	resultPlan = p
 	switch showTp := show.Tp; showTp {
