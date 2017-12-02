@@ -211,6 +211,9 @@ var defaultConf = Config{
 		},
 		Reporter: OpenTracingReporter{},
 	},
+	TiKVClient: TiKVClient{
+		GrpcConnectionCount: 16,
+	},
 }
 
 var globalConf = defaultConf
