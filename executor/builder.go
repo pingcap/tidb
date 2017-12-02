@@ -16,6 +16,7 @@ package executor
 import (
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/cznic/sortutil"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -1010,15 +1012,19 @@ func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newR
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
-	batchSize := 1
-	if !v.KeepOrder {
-		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
-	}
-
 	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
+	}
+	if outerExec.supportChunk() {
+		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReadfer),
+		// we only need to check outer.
+		return b.buildNewIndexLookUpJoin(v, outerExec)
+	}
+	batchSize := 1
+	if !v.KeepOrder {
+		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
 	}
 	innerExecBuilder := &dataReaderBuilder{v.Children()[1-v.OuterIndex], b}
 	return &IndexLookUpJoin{
@@ -1034,6 +1040,45 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, v.DefaultValues, v.OtherConditions, nil, nil),
 		maxBatchSize:     batchSize,
 	}
+}
+
+func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, outerExec Executor) Executor {
+	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
+	leftTypes, rightTypes := v.Children()[0].Schema().GetTypes(), v.Children()[1].Schema().GetTypes()
+	outerTypes, innerTypes := leftTypes, rightTypes
+	if v.OuterIndex == 1 {
+		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
+		outerTypes, innerTypes = rightTypes, leftTypes
+	}
+	innerPlan := v.Children()[1-v.OuterIndex]
+	e := &NewIndexLookUpJoin{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, outerExec),
+		outerCtx: outerCtx{
+			schema:   outerExec.Schema(),
+			rowTypes: outerTypes,
+			filter:   outerFilter,
+		},
+		innerCtx: innerCtx{
+			readerBuilder: &dataReaderBuilder{innerPlan, b},
+			rowTypes:      innerTypes,
+			filter:        innerFilter,
+		},
+		workerWg:        new(sync.WaitGroup),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, v.DefaultValues, v.OtherConditions, leftTypes, rightTypes),
+	}
+	e.supportChk = true
+	outerKeyCols := make([]int, len(v.OuterJoinKeys))
+	for i := 0; i < len(v.OuterJoinKeys); i++ {
+		outerKeyCols[i] = v.OuterJoinKeys[i].Index
+	}
+	e.outerCtx.keyCols = outerKeyCols
+	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	for i := 0; i < len(v.InnerJoinKeys); i++ {
+		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+	}
+	e.innerCtx.keyCols = innerKeyCols
+	e.joinResult = chunk.NewChunk(e.schema.GetTypes())
+	return e
 }
 
 func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
