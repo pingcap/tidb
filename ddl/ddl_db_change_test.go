@@ -246,7 +246,7 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 func (t *testExecInfo) compileSQL(idx int) (err error) {
 	for _, info := range t.sqlInfos {
 		c := info.cases[idx]
-		compiler := executor.Compiler{c.session}
+		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
 		goCtx := goctx.TODO()
 		se.PrepareTxnCtx(goCtx)

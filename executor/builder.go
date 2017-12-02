@@ -319,8 +319,10 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		GenExprs:              v.GenCols.Exprs,
 		needFillDefaultValues: v.NeedFillDefaultValue,
 	}
-	if len(v.Children()) > 0 {
-		ivs.SelectExec = b.build(v.Children()[0])
+	ivs.SelectExec = b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
 	ivs.Table = v.Table
 	if v.IsReplace {
@@ -631,18 +633,23 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 		aggType:      v.AggType,
-		hasGby:       v.HasGby,
 	}
 	//e.supportChk = true
 	return e
 }
 
 func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
-	exec := &SelectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		Conditions:   v.Conditions,
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
-	return exec
+	e := &SelectionExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		filters:      v.Conditions,
+	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
@@ -804,12 +811,17 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.Schema().TblID2Handle {
+	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
+	}
+	selExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
 	return &UpdateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
-		SelectExec:   b.build(v.Children()[0]),
+		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
 		IgnoreErr:    v.IgnoreErr,
@@ -818,12 +830,17 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.Schema().TblID2Handle {
+	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
+	}
+	selExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
 	return &DeleteExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
-		SelectExec:   b.build(v.Children()[0]),
+		SelectExec:   selExec,
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 		tblID2Table:  tblID2table,
@@ -972,13 +989,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
 	}
 
-	// for IndexLookUpJoin, left is always the outer side.
-	outerExec := b.build(v.Children()[0])
+	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	innerExecBuilder := &dataReaderBuilder{v.Children()[1], b}
+	innerExecBuilder := &dataReaderBuilder{v.Children()[1-v.OuterIndex], b}
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
@@ -989,7 +1005,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerFilter:      v.RightConditions,
 		outerOrderedRows: newKeyRowBlock(batchSize, true),
 		innerOrderedRows: newKeyRowBlock(batchSize, false),
-		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, false, v.DefaultValues, v.OtherConditions),
+		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, v.DefaultValues, v.OtherConditions),
 		maxBatchSize:     batchSize,
 	}
 }

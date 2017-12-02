@@ -31,12 +31,9 @@ var (
 	_ PhysicalPlan = &TableDual{}
 	_ PhysicalPlan = &Union{}
 	_ PhysicalPlan = &Sort{}
-	_ PhysicalPlan = &Update{}
-	_ PhysicalPlan = &Delete{}
 	_ PhysicalPlan = &SelectLock{}
 	_ PhysicalPlan = &Limit{}
 	_ PhysicalPlan = &Show{}
-	_ PhysicalPlan = &Insert{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalTableReader{}
@@ -234,7 +231,7 @@ type PhysicalIndexJoin struct {
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
-	outerIndex      int
+	OuterIndex      int
 	KeepOrder       bool
 	outerSchema     *expression.Schema
 	innerPlan       PhysicalPlan
@@ -306,7 +303,6 @@ type PhysicalAggregation struct {
 	*basePlan
 	basePhysicalPlan
 
-	HasGby       bool
 	AggType      AggregationType
 	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
@@ -431,15 +427,6 @@ func (p *MaxOneRow) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Insert) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
 func (p *Limit) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
@@ -502,24 +489,6 @@ func (p *PhysicalAggregation) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Update) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Delete) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
 func (p *Show) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
@@ -536,7 +505,7 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	return &np
 }
 
-func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Schema {
+func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
 		return join.Children()[0].Schema().Clone()
@@ -545,7 +514,7 @@ func buildJoinSchema(joinType JoinType, join Plan, outerID int) *expression.Sche
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
-	return expression.MergeSchema(join.Children()[outerID].Schema(), join.Children()[1-outerID].Schema())
+	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
 }
 
 func buildSchema(p PhysicalPlan) {
@@ -553,11 +522,11 @@ func buildSchema(p PhysicalPlan) {
 	case *Limit, *TopN, *Sort, *PhysicalSelection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p, x.outerIndex))
+		p.SetSchema(buildJoinSchema(x.JoinType, p))
 	case *PhysicalHashJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
+		p.SetSchema(buildJoinSchema(x.JoinType, p))
 	case *PhysicalMergeJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p, 0))
+		p.SetSchema(buildJoinSchema(x.JoinType, p))
 	case *PhysicalApply:
 		buildSchema(x.PhysicalJoin)
 		x.schema = x.PhysicalJoin.Schema()
@@ -574,7 +543,9 @@ func buildSchema(p PhysicalPlan) {
 	}
 }
 
-// rebuildSchema rebuilds the schema for physical plans, because new planner may change indexjoin's schema.
+// rebuildSchema rebuilds the schema for physical plans, because join reorder will change join's schema.
+// And PhysicalIndexLookUpReader may add a handle column which make the schema changed.
+// In this two case, we need to rebuild the schema of its father.
 func rebuildSchema(p PhysicalPlan) bool {
 	needRebuild := false
 	for _, ch := range p.Children() {
@@ -586,6 +557,7 @@ func rebuildSchema(p PhysicalPlan) bool {
 	switch p.(type) {
 	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexLookUpReader:
 		needRebuild = true
+	// If there is projection or aggregation, the index of column will be resolved so no need to rebuild the schema.
 	case *Projection, *PhysicalAggregation:
 		needRebuild = false
 	}
