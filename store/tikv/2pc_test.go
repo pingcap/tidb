@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
@@ -43,7 +43,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := newTikvStore("mock-tikv-store", pdCli, spkv, client, false)
+	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
 	c.Assert(err, IsNil)
 	s.store = store
 	commitMaxBackoff = 2000
@@ -377,46 +377,11 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	c.Assert(v, BytesEquals, []byte("a3"))
 }
 
-// interceptCommitClient wraps rpcClient and returns specified response and
-// error for commit command.
-// It supports 3 strategies: "error": alwrays return err; "response": always
-// return resp; "firstCallError": return err when first called, then always
-// return resp.
-type interceptCommitClient struct {
-	Client
-	resp      *tikvrpc.Response
-	err       error
-	strategy  string
-	callCount int
-}
-
-func (c *interceptCommitClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	if req.Type == tikvrpc.CmdCommit {
-		switch c.strategy {
-		case "error":
-			return nil, c.err
-		case "response":
-			return c.resp, nil
-		case "firstCallError":
-			c.callCount++
-			if c.callCount == 1 {
-				return nil, c.err
-			}
-			return c.resp, nil
-		}
-	}
-	return c.Client.SendReq(ctx, addr, req)
-}
-
-// TestCommitPrimaryRpcError tests rpc errors are handled properly
-// when committing primary region task.
-func (s *testCommitterSuite) TestCommitPrimaryRpcErrors(c *C) {
-	s.store.client = &interceptCommitClient{
-		Client:   s.store.client,
-		err:      errors.New("timeout"),
-		strategy: "error",
-	}
-
+// TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
+// committing primary region task.
+func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitResult", `return("timeout")`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitResult")
 	// The rpc error will be wrapped to ErrResultUndetermined.
 	t1 := s.begin(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
@@ -426,21 +391,11 @@ func (s *testCommitterSuite) TestCommitPrimaryRpcErrors(c *C) {
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
 
-// TestCommitPrimaryRegionError tests RegionError is handled properly
-// when committing primary region task.
-func (s *testCommitterSuite) TestCommitPrimaryRegionError(c *C) {
-	s.store.client = &interceptCommitClient{
-		Client: s.store.client,
-		resp: &tikvrpc.Response{
-			Type: tikvrpc.CmdCommit,
-			Commit: &kvrpcpb.CommitResponse{
-				RegionError: &errorpb.Error{
-					NotLeader: &errorpb.NotLeader{},
-				},
-			},
-		},
-		strategy: "response",
-	}
+// TestFailCommitPrimaryRegionError tests RegionError is handled properly when
+// committing primary region task.
+func (s *testCommitterSuite) TestFailCommitPrimaryRegionError(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitResult", `return("notLeader")`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitResult")
 	// Ensure it returns the original error without wrapped to ErrResultUndetermined
 	// if it exceeds max retry timeout on RegionError.
 	t2 := s.begin(c)
@@ -451,22 +406,11 @@ func (s *testCommitterSuite) TestCommitPrimaryRegionError(c *C) {
 	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
 
-// TestCommitPrimaryRPCErrorThenRegionError tests the case when commit first
+// TestFailCommitPrimaryRPCErrorThenRegionError tests the case when commit first
 // receive a rpc timeout, then region errors afterwrards.
-func (s *testCommitterSuite) TestCommitPrimaryRPCErrorThenRegionError(c *C) {
-	s.store.client = &interceptCommitClient{
-		Client: s.store.client,
-		resp: &tikvrpc.Response{
-			Type: tikvrpc.CmdCommit,
-			Commit: &kvrpcpb.CommitResponse{
-				RegionError: &errorpb.Error{
-					NotLeader: &errorpb.NotLeader{},
-				},
-			},
-		},
-		err:      errors.New("timeout"),
-		strategy: "firstCallError",
-	}
+func (s *testCommitterSuite) TestFailCommitPrimaryRPCErrorThenRegionError(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitResult", `1*return("timeout")->return("notLeader")`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitResult")
 	// The region error will be wrapped to ErrResultUndetermined.
 	t1 := s.begin(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
@@ -476,19 +420,11 @@ func (s *testCommitterSuite) TestCommitPrimaryRPCErrorThenRegionError(c *C) {
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
 
-// TestCommitPrimaryKeyError tests KeyError is handled properly
-// when committing primary region task.
-func (s *testCommitterSuite) TestCommitPrimaryKeyError(c *C) {
-	s.store.client = &interceptCommitClient{
-		Client: s.store.client,
-		resp: &tikvrpc.Response{
-			Type: tikvrpc.CmdCommit,
-			Commit: &kvrpcpb.CommitResponse{
-				Error: &kvrpcpb.KeyError{},
-			},
-		},
-		strategy: "response",
-	}
+// TestFailCommitPrimaryKeyError tests KeyError is handled properly when
+// committing primary region task.
+func (s *testCommitterSuite) TestFailCommitPrimaryKeyError(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitResult", `return("keyError")`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitResult")
 	// Ensure it returns the original error without wrapped to ErrResultUndetermined
 	// if it meets KeyError.
 	t3 := s.begin(c)
@@ -499,22 +435,9 @@ func (s *testCommitterSuite) TestCommitPrimaryKeyError(c *C) {
 	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
 
-type commitWithUndeterminedErrClient struct {
-	Client
-}
-
-func (c *commitWithUndeterminedErrClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendReq(ctx, addr, req)
-	if err != nil || req.Type != tikvrpc.CmdCommit {
-		return resp, err
-	}
-	return nil, terror.ErrResultUndetermined
-}
-
-func (s *testCommitterSuite) TestCommitTimeout(c *C) {
-	s.store.client = &commitWithUndeterminedErrClient{
-		Client: s.store.client,
-	}
+func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitTimeout", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcCommitTimeout")
 	txn := s.begin(c)
 	err := txn.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
