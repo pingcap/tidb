@@ -617,6 +617,7 @@ func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []in
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
+		priority:     e.priority,
 	}, handles)
 	if err != nil {
 		log.Error(err)
