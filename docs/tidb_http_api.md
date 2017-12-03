@@ -1,7 +1,8 @@
 #  TiDB HTTP API
 
-#### 
-> 1. Get present TiDB ' s status, about connections, version and git_hash
+`TiDBIP` is the ip of tidb, `10080` is the default status port, and it can be changed in the tidb.toml when start. 
+
+> 1. Get present TiDB's status, about connections, version and git_hash
 
 ```
 curl http://{TiDBIP}:10080/status
@@ -19,7 +20,7 @@ curl http://{TiDBIP}:10080/metrics
 curl http://{TiDBIP}:10080/regions/meta
 ```
 
-> 4. Get info about regionID
+> 4. Get the information of a specific region by ID
 
 ```
 curl http://{TiDBIP}:10080/regions/{regionID}
@@ -48,3 +49,4 @@ curl http://{TiDBIP}:10080/schema/{db}
 ```
 curl http://{TiDBIP}:10080/schema/{db}/{table}
 ```
+
