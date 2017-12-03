@@ -36,9 +36,15 @@ func (af *avgFunction) Clone() Aggregation {
 
 // GetType implements Aggregation interface.
 func (af *avgFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	var ft *types.FieldType
+	if af.Args[0].GetType().Tp == mysql.TypeFloat || af.Args[0].GetType().Tp == mysql.TypeDouble {
+		ft = types.NewFieldType(mysql.TypeDouble)
+		ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
+	} else {
+		ft = types.NewFieldType(mysql.TypeNewDecimal)
+		ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal+types.DivFracIncr
+	}
 	types.SetBinChsClnFlag(ft)
-	ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
 	return ft
 }
 
@@ -99,6 +105,12 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	terror.Log(errors.Trace(err))
 	err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))
+	if ctx.Value.Kind() == types.KindFloat64 {
+		f, err := to.ToFloat64()
+		terror.Log(errors.Trace(err))
+		d.SetFloat64(f)
+		return
+	}
 	d.SetMysqlDecimal(to)
 	return
 }
