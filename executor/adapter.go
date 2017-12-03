@@ -92,8 +92,8 @@ func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 	return row, nil
 }
 
-func (a *recordSet) NextChunk(chk *chunk.Chunk) error {
-	err := a.executor.NextChunk(chk)
+func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	err := a.executor.NextChunk(goCtx, chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)

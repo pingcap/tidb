@@ -796,7 +796,7 @@ func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary b
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = cc.writeChunks(rs, binary, more)
+		err = cc.writeChunks(goCtx, rs, binary, more)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -867,11 +867,11 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	return nil
 }
 
-func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
+func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	for {
-		err := rs.NextChunk(chk)
+		err := rs.NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

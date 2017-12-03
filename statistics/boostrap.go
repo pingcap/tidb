@@ -57,7 +57,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	tables := statsCache{}
 	chk := rc[0].NewChunk()
 	for {
-		err := rc[0].NextChunk(chk)
+		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -123,7 +123,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 	}
 	chk := rc[0].NewChunk()
 	for {
-		err := rc[0].NextChunk(chk)
+		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -207,7 +207,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 	}
 	chk := rc[0].NewChunk()
 	for {
-		err := rc[0].NextChunk(chk)
+		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
