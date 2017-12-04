@@ -161,7 +161,7 @@ func (s *testMyDecimalSuite) TestShift(c *C) {
 			err = dec.Shift(ca.shift)
 			c.Check(err, Equals, ca.err)
 			result := dec.ToString()
-			c.Check(string(result), Equals, ca.output, Commentf("origin:%s\ndec:%s", origin.String(), origin.String()))
+			c.Check(result, Equals, ca.output, Commentf("origin:%s\ndec:%s", origin.String(), result))
 		}
 	}
 	wordBufLen = maxWordBufLen
