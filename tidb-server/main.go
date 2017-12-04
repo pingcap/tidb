@@ -356,6 +356,10 @@ func setGlobalVars() {
 	if plan.PreparedPlanCacheEnabled {
 		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
+
+	if cfg.TiKVClient.GrpcConnectionCount > 0 {
+		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
+	}
 }
 
 func setupLog() {
