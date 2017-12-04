@@ -821,8 +821,11 @@ type MaxOneRowExec struct {
 
 // Open implements the Executor Open interface.
 func (e *MaxOneRowExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.evaluated = false
-	return errors.Trace(e.children[0].Open(goCtx))
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -846,6 +849,37 @@ func (e *MaxOneRowExec) Next(goCtx goctx.Context) (Row, error) {
 		return srcRow, nil
 	}
 	return nil, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *MaxOneRowExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.evaluated {
+		return nil
+	}
+	e.evaluated = true
+	err := e.children[0].NextChunk(e.childrenResults[0])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if chk.NumRows() > 1 {
+		return errors.New("subquery returns more than 1 row")
+	}
+	if chk.NumRows() == 0 {
+		for i := range e.schema.Columns {
+			chk.AppendNull(i)
+		}
+	} else {
+		chk2 := e.children[0].newChunk()
+		err2 := e.children[0].NextChunk(chk2)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		if chk2.NumRows() != 0 {
+			return errors.New("subquery returns more than 1 row")
+		}
+	}
+	return nil
 }
 
 // UnionExec represents union executor.
