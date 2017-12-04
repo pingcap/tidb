@@ -65,9 +65,10 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	}
 	expected := []int64{0, 1, 2, 3, 4}
 	var results []int64
-	l.Walk(func(r Row) bool {
+	err := l.Walk(func(r Row) error {
 		results = append(results, r.GetInt64(0))
-		return false
+		return nil
 	})
+	c.Assert(err, check.IsNil)
 	c.Assert(results, check.DeepEquals, expected)
 }

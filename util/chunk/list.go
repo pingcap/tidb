@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -104,18 +105,20 @@ func (l *List) Reset() {
 	l.length = 0
 }
 
-// ListWalkFunc is used to walk the list, returns true if need stop
-type ListWalkFunc = func(row Row) (stop bool)
+// ListWalkFunc is used to walk the list.
+// If error is returned, it will stop walking.
+type ListWalkFunc = func(row Row) error
 
 // Walk iterate the list and call walkFunc for each row.
-func (l *List) Walk(walkFunc ListWalkFunc) {
+func (l *List) Walk(walkFunc ListWalkFunc) error {
 	for i := 0; i < len(l.chunks); i++ {
 		chk := l.chunks[i]
 		for j := 0; j < chk.NumRows(); j++ {
-			stop := walkFunc(chk.GetRow(j))
-			if stop {
-				return
+			err := walkFunc(chk.GetRow(j))
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}
+	return nil
 }
