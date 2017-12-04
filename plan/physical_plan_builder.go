@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -665,37 +664,4 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *s
 		// FIXME: It seems wrong...
 		copTask.cst += copTask.count() * cpuFactor
 	}
-}
-
-func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
-	if len(p.possibleProperties) == 0 {
-		return nil
-	}
-	for _, aggFunc := range p.AggFuncs {
-		if aggFunc.GetMode() == aggregation.FinalMode {
-			return nil
-		}
-	}
-	// group by a + b is not interested in any order.
-	if len(p.groupByCols) != len(p.GroupByItems) {
-		return nil
-	}
-	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
-	for _, cols := range p.possibleProperties {
-		_, keys := getPermutation(cols, p.groupByCols)
-		if len(keys) != len(p.groupByCols) {
-			continue
-		}
-		agg := PhysicalAggregation{
-			GroupByItems: p.GroupByItems,
-			AggFuncs:     p.AggFuncs,
-			AggType:      StreamedAgg,
-			propKeys:     cols,
-			inputCount:   p.inputCount,
-		}.init(p.ctx)
-		agg.SetSchema(p.schema.Clone())
-		agg.profile = p.profile
-		streamAggs = append(streamAggs, agg)
-	}
-	return streamAggs
 }

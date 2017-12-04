@@ -184,20 +184,26 @@ func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	return props
 }
 
-func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalHashAgg) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
-	if p.AggType != StreamedAgg {
-		if !prop.isEmpty() {
-			return nil
-		}
-		props := make([][]*requiredProp, 0, len(wholeTaskTypes))
-		for _, tp := range wholeTaskTypes {
-			props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
-		}
-		return props
+	if !prop.isEmpty() {
+		return nil
 	}
+	props := make([][]*requiredProp, 0, len(wholeTaskTypes))
+	for _, tp := range wholeTaskTypes {
+		props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
+	}
+	return props
+}
 
-	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count, desc: prop.desc}
+func (p *PhysicalStreamAgg) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	reqProp := &requiredProp{
+		taskTp:      rootTaskType,
+		cols:        p.propKeys,
+		expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count,
+		desc:        prop.desc,
+	}
 	if !prop.isEmpty() && !prop.isPrefix(reqProp) {
 		return nil
 	}
