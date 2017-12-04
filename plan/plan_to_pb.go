@@ -31,7 +31,7 @@ func (p *basePhysicalPlan) ToPB(_ context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalAggregation) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalHashAgg) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	aggExec := &tipb.Aggregation{
