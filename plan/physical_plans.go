@@ -479,6 +479,7 @@ func (p *PhysicalSort) Copy() PhysicalPlan {
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhantomSort) Copy() PhysicalPlan {
 	panic("should not call this function")
 }
