@@ -660,7 +660,7 @@ func (s *builtinArithmeticRealDivideRealSig) evalInt(row types.Row) (int64, bool
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	
+
 	ret, err := types.DivFloat64(a, b)
 	return ret, err != nil, errors.Trace(err)
 }
