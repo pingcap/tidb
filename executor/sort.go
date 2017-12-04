@@ -514,7 +514,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit() error {
 	return nil
 }
 
-const topNCompactionfactor = 4
+const topNCompactionFactor = 4
 
 func (e *TopNExec) executeTopN() error {
 	heap.Init(e.chkHeap)
@@ -539,7 +539,7 @@ func (e *TopNExec) executeTopN() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionfactor {
+		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
 				return errors.Trace(err)
