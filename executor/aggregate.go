@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mvmap"
 	goctx "golang.org/x/net/context"
 )
@@ -95,7 +96,8 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
-	vals := make([]types.Datum, 0, len(e.GroupByItems))
+	var tmp [32]types.Datum
+	vals := tmp[:]
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
 		if err != nil {
@@ -139,16 +141,14 @@ func (e *HashAggExec) innerNext(goCtx goctx.Context) (ret bool, err error) {
 }
 
 func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
-	// Use string(groupKey) as map key, because Go compiler plays a trick that
-	// map[string(bytes)] make no byte to string conversion, while
-	// key := string(bytes); map[key] does allocate a new string object.
-	aggCtxs, ok := e.aggCtxsMap[string(groupKey)]
+	groupKeyString := hack.String(groupKey)
+	aggCtxs, ok := e.aggCtxsMap[groupKeyString]
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 		for _, af := range e.AggFuncs {
 			aggCtxs = append(aggCtxs, af.CreateContext())
 		}
-		e.aggCtxsMap[string(groupKey)] = aggCtxs
+		e.aggCtxsMap[groupKeyString] = aggCtxs
 	}
 	return aggCtxs
 }

@@ -401,8 +401,10 @@ func (s *session) isRetryableError(err error) bool {
 }
 
 func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
-	span, ctx := opentracing.StartSpanFromContext(goCtx, "retry")
-	defer span.Finish()
+	if span := opentracing.SpanFromContext(goCtx); span != nil {
+		span, goCtx = opentracing.StartSpanFromContext(goCtx, "retry")
+		defer span.Finish()
+	}
 
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
@@ -420,7 +422,7 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 	nh := GetHistory(s)
 	var err error
 	for {
-		s.PrepareTxnCtx(ctx)
+		s.PrepareTxnCtx(goCtx)
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
@@ -446,12 +448,12 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 				break
 			}
 		}
-		if hook := ctx.Value("preCommitHook"); hook != nil {
+		if hook := goCtx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
 			hook.(func())()
 		}
 		if err == nil {
-			err = s.doCommit(ctx)
+			err = s.doCommit(goCtx)
 			if err == nil {
 				break
 			}
@@ -682,10 +684,12 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 }
 
 func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.RecordSet, err error) {
-	span, goCtx1 := opentracing.StartSpanFromContext(goCtx, "session.Execute")
-	defer span.Finish()
+	if span := opentracing.SpanFromContext(goCtx); span != nil {
+		span, goCtx = opentracing.StartSpanFromContext(goCtx, "session.Execute")
+		defer span.Finish()
+	}
 
-	goCtx2, cancelFunc := goctx.WithCancel(goCtx1)
+	goCtx2, cancelFunc := goctx.WithCancel(goCtx)
 	s.mu.Lock()
 	s.mu.cancelFunc = cancelFunc
 	s.mu.Unlock()
@@ -1202,7 +1206,9 @@ type txnFuture struct {
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
-	tf.span.Finish()
+	if tf.span != nil {
+		tf.span.Finish()
+	}
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
 	}
@@ -1212,10 +1218,16 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 }
 
 func (s *session) getTxnFuture(ctx goctx.Context) *txnFuture {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
+	var ret txnFuture
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span, ctx = opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
+		ret.span = span
+	}
 	oracle := s.store.GetOracle()
 	tsFuture := oracle.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store, span}
+	ret.future = tsFuture
+	ret.store = s.store
+	return &ret
 }
 
 // PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
