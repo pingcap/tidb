@@ -614,8 +614,13 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 }
 
 func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
+	src := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	return &HashAggExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
@@ -623,8 +628,13 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 }
 
 func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
+	src := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	return &StreamAggExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
