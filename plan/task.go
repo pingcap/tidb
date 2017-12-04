@@ -445,8 +445,8 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *PhysicalAggregation) {
-	finalAgg = p.Copy().(*PhysicalAggregation)
+func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalHashAgg) {
+	finalAgg = p.Copy().(*PhysicalHashAgg)
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
@@ -460,7 +460,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	if len(remained) > 0 {
 		return
 	}
-	partialAgg = p.Copy().(*PhysicalAggregation)
+	partialAgg = p.Copy().(*PhysicalHashAgg)
 	// TODO: It's toooooo ugly here. Refactor in the future !!
 	gkType := types.NewFieldType(mysql.TypeBlob)
 	gkType.Charset = charset.CharsetBin
@@ -492,10 +492,9 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 		fun.SetMode(aggregation.FinalMode)
 		finalAggFuncs[i] = fun
 	}
-	finalAgg = PhysicalAggregation{
-		AggType:  FinalAgg,
+	finalAgg = basePhysicalAgg{
 		AggFuncs: finalAggFuncs,
-	}.init(p.ctx)
+	}.initForHash(p.ctx)
 	finalAgg.profile = p.profile
 	finalAgg.SetSchema(p.schema)
 	// add group by columns
@@ -511,7 +510,19 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	return
 }
 
-func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
+func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
+	// If task is invalid, keep it remained.
+	if tasks[0].invalid() {
+		return invalidTask
+	}
+	t := tasks[0].copy()
+	np := p.Copy()
+	attachPlan2Task(np, t)
+	t.addCost(t.count() * cpuFactor)
+	return t
+}
+
+func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
 	if tasks[0].invalid() {
 		return invalidTask
@@ -531,16 +542,12 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 			}
 		}
 		task = finishCopTask(cop, p.ctx)
-		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 	} else {
 		np := p.Copy()
 		attachPlan2Task(np, task)
-		if p.AggType == StreamedAgg {
-			task.addCost(task.count() * cpuFactor)
-		} else {
-			task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
-		}
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 	}
 	return task
 }

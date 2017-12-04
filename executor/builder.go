@@ -113,8 +113,10 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildIndexLookUpJoin(v)
 	case *plan.PhysicalSelection:
 		return b.buildSelection(v)
-	case *plan.PhysicalAggregation:
-		return b.buildAggregation(v)
+	case *plan.PhysicalHashAgg:
+		return b.buildHashAgg(v)
+	case *plan.PhysicalStreamAgg:
+		return b.buildStreamAgg(v)
 	case *plan.Projection:
 		return b.buildProjection(v)
 	case *plan.PhysicalMemTable:
@@ -611,21 +613,31 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 	return e
 }
 
-func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
-	if v.AggType == plan.StreamedAgg {
-		return &StreamAggExec{
-			baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-			StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
-			AggFuncs:     v.AggFuncs,
-			GroupByItems: v.GroupByItems,
-		}
+func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
+	src := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
 	return &HashAggExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
-		aggType:      v.AggType,
+	}
+}
+
+func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
+	src := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+	return &StreamAggExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
+		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
+		AggFuncs:     v.AggFuncs,
+		GroupByItems: v.GroupByItems,
 	}
 }
 

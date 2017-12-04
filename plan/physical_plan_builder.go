@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -935,53 +934,26 @@ func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	return props
 }
 
-func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
-	if len(p.possibleProperties) == 0 {
+func (p *PhysicalHashAgg) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	if !prop.isEmpty() {
 		return nil
 	}
-	for _, aggFunc := range p.AggFuncs {
-		if aggFunc.GetMode() == aggregation.FinalMode {
-			return nil
-		}
+	props := make([][]*requiredProp, 0, len(wholeTaskTypes))
+	for _, tp := range wholeTaskTypes {
+		props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
 	}
-	// group by a + b is not interested in any order.
-	if len(p.groupByCols) != len(p.GroupByItems) {
-		return nil
-	}
-	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
-	for _, cols := range p.possibleProperties {
-		_, keys := getPermutation(cols, p.groupByCols)
-		if len(keys) != len(p.groupByCols) {
-			continue
-		}
-		agg := PhysicalAggregation{
-			GroupByItems: p.GroupByItems,
-			AggFuncs:     p.AggFuncs,
-			AggType:      StreamedAgg,
-			propKeys:     cols,
-			inputCount:   p.inputCount,
-		}.init(p.ctx)
-		agg.SetSchema(p.schema.Clone())
-		agg.profile = p.profile
-		streamAggs = append(streamAggs, agg)
-	}
-	return streamAggs
+	return props
 }
 
-func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalStreamAgg) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
-	if p.AggType != StreamedAgg {
-		if !prop.isEmpty() {
-			return nil
-		}
-		props := make([][]*requiredProp, 0, len(wholeTaskTypes))
-		for _, tp := range wholeTaskTypes {
-			props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
-		}
-		return props
+	reqProp := &requiredProp{
+		taskTp:      rootTaskType,
+		cols:        p.propKeys,
+		expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count,
+		desc:        prop.desc,
 	}
-
-	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count, desc: prop.desc}
 	if !prop.isEmpty() && !prop.isPrefix(reqProp) {
 		return nil
 	}
