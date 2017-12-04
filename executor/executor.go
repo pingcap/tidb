@@ -98,6 +98,7 @@ type baseExecutor struct {
 	ctx             context.Context
 	schema          *expression.Schema
 	supportChk      bool
+	maxChunkSize    int
 	children        []Executor
 	childrenResults []*chunk.Chunk
 }
@@ -159,9 +160,10 @@ func (e *baseExecutor) NextChunk(chk *chunk.Chunk) error {
 
 func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
 	return baseExecutor{
-		children: children,
-		ctx:      ctx,
-		schema:   schema,
+		children:     children,
+		ctx:          ctx,
+		schema:       schema,
+		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 }
 
@@ -609,7 +611,7 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
-			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+			if chk.NumRows() == e.maxChunkSize {
 				return nil
 			}
 			chk.AppendRow(0, e.inputRow)
@@ -821,8 +823,11 @@ type MaxOneRowExec struct {
 
 // Open implements the Executor Open interface.
 func (e *MaxOneRowExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.evaluated = false
-	return errors.Trace(e.children[0].Open(goCtx))
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -846,6 +851,37 @@ func (e *MaxOneRowExec) Next(goCtx goctx.Context) (Row, error) {
 		return srcRow, nil
 	}
 	return nil, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *MaxOneRowExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.evaluated {
+		return nil
+	}
+	e.evaluated = true
+	err := e.children[0].NextChunk(e.childrenResults[0])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if chk.NumRows() > 1 {
+		return errors.New("subquery returns more than 1 row")
+	}
+	if chk.NumRows() == 0 {
+		for i := range e.schema.Columns {
+			chk.AppendNull(i)
+		}
+	} else {
+		chk2 := e.children[0].newChunk()
+		err2 := e.children[0].NextChunk(chk2)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		if chk2.NumRows() != 0 {
+			return errors.New("subquery returns more than 1 row")
+		}
+	}
+	return nil
 }
 
 // UnionExec represents union executor.
