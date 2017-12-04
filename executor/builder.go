@@ -980,13 +980,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
 	}
 
-	// for IndexLookUpJoin, left is always the outer side.
-	outerExec := b.build(v.Children()[0])
+	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	innerExecBuilder := &dataReaderBuilder{v.Children()[1], b}
+	innerExecBuilder := &dataReaderBuilder{v.Children()[1-v.OuterIndex], b}
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
@@ -997,7 +996,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerFilter:      v.RightConditions,
 		outerOrderedRows: newKeyRowBlock(batchSize, true),
 		innerOrderedRows: newKeyRowBlock(batchSize, false),
-		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, false, v.DefaultValues, v.OtherConditions),
+		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, v.DefaultValues, v.OtherConditions),
 		maxBatchSize:     batchSize,
 	}
 }
