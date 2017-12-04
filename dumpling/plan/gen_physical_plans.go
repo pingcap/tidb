@@ -16,6 +16,8 @@ package plan
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/types"
 )
 
 func (p *LogicalUnionScan) generatePhysicalPlans() []PhysicalPlan {
@@ -138,6 +140,109 @@ func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
 	hashJoin.SetSchema(p.schema)
 	hashJoin.profile = p.profile
 	return hashJoin
+}
+
+// joinKeysMatchIndex checks if all keys match columns in index.
+func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
+	if len(index.Columns) < len(keys) {
+		return nil
+	}
+	matchOffsets := make([]int, len(keys))
+	for i, idxCol := range index.Columns {
+		if idxCol.Length != types.UnspecifiedLength {
+			return nil
+		}
+		found := false
+		for j, key := range keys {
+			if idxCol.Name.L == key.ColName.L {
+				matchOffsets[i] = j
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+		if i+1 == len(keys) {
+			break
+		}
+	}
+	return matchOffsets
+}
+
+func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
+	joinType := p.JoinType
+	join := PhysicalIndexJoin{
+		OuterIndex:      outerIdx,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+		JoinType:        joinType,
+		OuterJoinKeys:   outerJoinKeys,
+		InnerJoinKeys:   innerJoinKeys,
+		DefaultValues:   p.DefaultValues,
+		outerSchema:     p.children[outerIdx].Schema(),
+		innerPlan:       innerPlan,
+	}.init(p.ctx, p.children...)
+	join.SetSchema(p.schema)
+	join.profile = p.profile
+	orderJoin := join.Copy().(*PhysicalIndexJoin)
+	orderJoin.KeepOrder = true
+	return []PhysicalPlan{join, orderJoin}
+}
+
+// getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
+// because we will swap the children of join when the right child is outer child.
+// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or PK
+// column of inner child, we can apply the index join.
+func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
+	innerChild := p.children[1-outerIdx].(LogicalPlan)
+	var (
+		usedIndexInfo *model.IndexInfo
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
+	)
+	if outerIdx == 0 {
+		outerJoinKeys = p.LeftJoinKeys
+		innerJoinKeys = p.RightJoinKeys
+	} else {
+		innerJoinKeys = p.LeftJoinKeys
+		outerJoinKeys = p.RightJoinKeys
+	}
+	x, ok := innerChild.(*DataSource)
+	if !ok {
+		return nil
+	}
+	indices := x.availableIndices.indices
+	includeTableScan := x.availableIndices.includeTableScan
+	if includeTableScan && len(innerJoinKeys) == 1 {
+		pkCol := x.getPKIsHandleCol()
+		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
+			innerPlan := x.forceToTableScan()
+			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+		}
+	}
+	for _, indexInfo := range indices {
+		matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
+		if matchedOffsets == nil {
+			continue
+		}
+		usedIndexInfo = indexInfo
+		newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
+		newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
+		for i, offset := range matchedOffsets {
+			newOuterJoinKeys[i] = outerJoinKeys[offset]
+			newInnerJoinKeys[i] = innerJoinKeys[offset]
+		}
+		outerJoinKeys = newOuterJoinKeys
+		innerJoinKeys = newInnerJoinKeys
+		break
+	}
+	if usedIndexInfo != nil {
+		innerPlan := x.forceToIndexScan(usedIndexInfo)
+		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+	}
+	return nil
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
