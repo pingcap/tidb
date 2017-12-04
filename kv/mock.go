@@ -99,6 +99,14 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
+// NewMockTxn new a mockTxn.
+func NewMockTxn() Transaction {
+	return &mockTxn{
+		opts:  make(map[Option]interface{}),
+		valid: true,
+	}
+}
+
 // mockStorage is used to start a must commit-failed txn.
 type mockStorage struct {
 }
