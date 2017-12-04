@@ -62,7 +62,7 @@ type ShowExec struct {
 // Next implements Execution Next interface.
 func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.rows == nil {
-		err := e.fetchAll(goCtx)
+		err := e.fetchAll()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -87,7 +87,7 @@ func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	return row, nil
 }
 
-func (e *ShowExec) fetchAll(goCtx goctx.Context) error {
+func (e *ShowExec) fetchAll() error {
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
