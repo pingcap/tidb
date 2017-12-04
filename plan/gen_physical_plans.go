@@ -13,7 +13,10 @@
 
 package plan
 
-import "github.com/pingcap/tidb/expression"
+import (
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
+)
 
 func (p *LogicalUnionScan) generatePhysicalPlans() []PhysicalPlan {
 	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx)
@@ -250,13 +253,42 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{np}
 }
 
+func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
+	if len(p.possibleProperties) == 0 {
+		return nil
+	}
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.GetMode() == aggregation.FinalMode {
+			return nil
+		}
+	}
+	// group by a + b is not interested in any order.
+	if len(p.groupByCols) != len(p.GroupByItems) {
+		return nil
+	}
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	for _, cols := range p.possibleProperties {
+		_, keys := getPermutation(cols, p.groupByCols)
+		if len(keys) != len(p.groupByCols) {
+			continue
+		}
+		agg := basePhysicalAgg{
+			GroupByItems: p.GroupByItems,
+			AggFuncs:     p.AggFuncs,
+		}.initForStream(p.ctx, keys, p.inputCount)
+		agg.SetSchema(p.schema.Clone())
+		agg.profile = p.profile
+		streamAggs = append(streamAggs, agg)
+	}
+	return streamAggs
+}
+
 func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
-	agg := PhysicalAggregation{
+	agg := basePhysicalAgg{
 		GroupByItems: p.GroupByItems,
 		AggFuncs:     p.AggFuncs,
-		AggType:      CompleteAgg,
-	}.init(p.ctx)
+	}.initForHash(p.ctx)
 	agg.SetSchema(p.schema.Clone())
 	agg.profile = p.profile
 	aggs = append(aggs, agg)

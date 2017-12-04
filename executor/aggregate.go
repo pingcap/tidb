@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -34,7 +33,6 @@ type HashAggExec struct {
 	baseExecutor
 
 	executed      bool
-	aggType       plan.AggregationType
 	sc            *stmtctx.StatementContext
 	AggFuncs      []aggregation.Aggregation
 	aggCtxsMap    aggCtxsMapper
