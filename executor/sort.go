@@ -303,7 +303,7 @@ func (e *SortExec) keyChunksLess(i, j int) bool {
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	limit      *plan.Limit
+	limit      *plan.PhysicalLimit
 	totalCount int
 	heapSize   int
 }

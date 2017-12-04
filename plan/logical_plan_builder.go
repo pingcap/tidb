@@ -580,7 +580,7 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := Union{}.init(b.ctx)
+	u := LogicalUnionAll{}.init(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
@@ -695,7 +695,7 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
 	}
-	return 0, errors.Errorf("Invalid type %T for Limit/Offset", val)
+	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
@@ -722,7 +722,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
 	}
-	li := Limit{
+	li := LogicalLimit{
 		Offset: offset,
 		Count:  count,
 	}.init(b.ctx)
