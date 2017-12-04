@@ -87,9 +87,9 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
 		"TableScan_5 HashAgg_4  cop table:t, range:(-inf,+inf), keep order:false 8",
-		"HashAgg_4  TableScan_5 cop type:complete, group by:test.t.a, funcs:count(1) 2",
+		"HashAgg_4  TableScan_5 cop group by:test.t.a, funcs:count(1) 2",
 		"TableReader_7 HashAgg_6  root data:HashAgg_4 2",
-		"HashAgg_6  TableReader_7 root type:final, group by:, funcs:count(col_0) 2",
+		"HashAgg_6  TableReader_7 root group by:, funcs:count(col_0) 2",
 	))
 }
 

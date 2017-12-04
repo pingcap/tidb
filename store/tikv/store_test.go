@@ -86,39 +86,6 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	wg.Wait()
 }
 
-func (s *testStoreSuite) TestBusyServerKV(c *C) {
-	client := NewBusyClient(s.store.client)
-	s.store.client = client
-
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	err = txn.Set([]byte("key"), []byte("value"))
-	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
-	c.Assert(err, IsNil)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	client.SetBusy(true)
-	go func() {
-		defer wg.Done()
-		time.Sleep(time.Millisecond * 100)
-		client.SetBusy(false)
-	}()
-
-	go func() {
-		defer wg.Done()
-		txn, err := s.store.Begin()
-		c.Assert(err, IsNil)
-		val, err := txn.Get([]byte("key"))
-		c.Assert(err, IsNil)
-		c.Assert(val, BytesEquals, []byte("value"))
-	}()
-
-	wg.Wait()
-}
-
 type mockPDClient struct {
 	sync.RWMutex
 	client pd.Client

@@ -19,21 +19,21 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
 
 func TestT(t *testing.T) {
-	TestingT(t)
+	check.TestingT(t)
 }
 
-var _ = Suite(&testChunkSuite{})
+var _ = check.Suite(&testChunkSuite{})
 
 type testChunkSuite struct{}
 
-func (s *testChunkSuite) TestChunk(c *C) {
+func (s *testChunkSuite) TestChunk(c *check.C) {
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, -1)
@@ -47,22 +47,22 @@ func (s *testChunkSuite) TestChunk(c *C) {
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
 		chk.AppendJSON(5, json.CreateJSON(str))
 	}
-	c.Assert(chk.NumCols(), Equals, numCols)
-	c.Assert(chk.NumRows(), Equals, numRows)
+	c.Assert(chk.NumCols(), check.Equals, numCols)
+	c.Assert(chk.NumRows(), check.Equals, numRows)
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
-		c.Assert(row.GetInt64(0), Equals, int64(0))
-		c.Assert(row.IsNull(0), IsTrue)
-		c.Assert(row.GetInt64(1), Equals, int64(i))
+		c.Assert(row.GetInt64(0), check.Equals, int64(0))
+		c.Assert(row.IsNull(0), check.IsTrue)
+		c.Assert(row.GetInt64(1), check.Equals, int64(i))
 		str := fmt.Sprintf(strFmt, i)
-		c.Assert(row.IsNull(2), IsFalse)
-		c.Assert(row.GetString(2), Equals, str)
-		c.Assert(row.IsNull(3), IsFalse)
-		c.Assert(row.GetBytes(3), BytesEquals, []byte(str))
-		c.Assert(row.IsNull(4), IsFalse)
-		c.Assert(row.GetMyDecimal(4).String(), Equals, str)
-		c.Assert(row.IsNull(5), IsFalse)
-		c.Assert(row.GetJSON(5).Str, Equals, str)
+		c.Assert(row.IsNull(2), check.IsFalse)
+		c.Assert(row.GetString(2), check.Equals, str)
+		c.Assert(row.IsNull(3), check.IsFalse)
+		c.Assert(row.GetBytes(3), check.BytesEquals, []byte(str))
+		c.Assert(row.IsNull(4), check.IsFalse)
+		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
+		c.Assert(row.IsNull(5), check.IsFalse)
+		c.Assert(row.GetJSON(5).Str, check.Equals, str)
 	}
 
 	chk2 := newChunk(8, 8, 0, 0, 40, -1)
@@ -73,7 +73,7 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	for i := 0; i < numCols; i++ {
 		col2, col1 := chk2.columns[i], chk.columns[i]
 		col2.elemBuf, col1.elemBuf = nil, nil
-		c.Assert(col2, DeepEquals, col1)
+		c.Assert(col2, check.DeepEquals, col1)
 	}
 
 	chk = newChunk(4, 8, -1, 16, 0, 0)
@@ -91,11 +91,11 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	chk.AppendSet(5, setVal)
 
 	row := chk.GetRow(0)
-	c.Assert(row.GetFloat32(0), Equals, f32Val)
-	c.Assert(row.GetTime(2).Compare(tVal), Equals, 0)
-	c.Assert(row.GetDuration(3), DeepEquals, durVal)
-	c.Assert(row.GetEnum(4), DeepEquals, enumVal)
-	c.Assert(row.GetSet(5), DeepEquals, setVal)
+	c.Assert(row.GetFloat32(0), check.Equals, f32Val)
+	c.Assert(row.GetTime(2).Compare(tVal), check.Equals, 0)
+	c.Assert(row.GetDuration(3), check.DeepEquals, durVal)
+	c.Assert(row.GetEnum(4), check.DeepEquals, enumVal)
+	c.Assert(row.GetSet(5), check.DeepEquals, setVal)
 
 	// AppendRow can be different number of columns, useful for join.
 	chk = newChunk(8, 8)
@@ -104,33 +104,33 @@ func (s *testChunkSuite) TestChunk(c *C) {
 	chk2.AppendInt64(0, -1)
 	chk.AppendRow(0, chk2.GetRow(0))
 	chk.AppendRow(1, chk2.GetRow(0))
-	c.Assert(chk.GetRow(0).GetInt64(0), Equals, int64(1))
-	c.Assert(chk.GetRow(0).GetInt64(1), Equals, int64(1))
-	c.Assert(chk.NumRows(), Equals, 1)
+	c.Assert(chk.GetRow(0).GetInt64(0), check.Equals, int64(1))
+	c.Assert(chk.GetRow(0).GetInt64(1), check.Equals, int64(1))
+	c.Assert(chk.NumRows(), check.Equals, 1)
 
 	// Test Reset.
 	chk = newChunk(0)
 	chk.AppendString(0, "abcd")
 	chk.Reset()
 	chk.AppendString(0, "def")
-	c.Assert(chk.GetRow(0).GetString(0), Equals, "def")
+	c.Assert(chk.GetRow(0).GetString(0), check.Equals, "def")
 
 	// Test float32
 	chk = newChunk(4)
 	chk.AppendFloat32(0, 1)
 	chk.AppendFloat32(0, 1)
 	chk.AppendFloat32(0, 1)
-	c.Assert(chk.GetRow(2).GetFloat32(0), Equals, float32(1))
+	c.Assert(chk.GetRow(2).GetFloat32(0), check.Equals, float32(1))
 }
 
-func (s *testChunkSuite) TestAppend(c *C) {
+func (s *testChunkSuite) TestAppend(c *check.C) {
 	fieldTypes := make([]*types.FieldType, 0, 3)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
 	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
-	c.Assert(err, IsNil)
+	c.Assert(err, check.IsNil)
 
 	src := NewChunk(fieldTypes)
 	dst := NewChunk(fieldTypes)
@@ -149,49 +149,49 @@ func (s *testChunkSuite) TestAppend(c *C) {
 	dst.Append(dst, 2, 6)
 	dst.Append(dst, 6, 6)
 
-	c.Assert(len(dst.columns), Equals, 3)
+	c.Assert(len(dst.columns), check.Equals, 3)
 
-	c.Assert(dst.columns[0].length, Equals, 12)
-	c.Assert(dst.columns[0].nullCount, Equals, 6)
-	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
-	c.Assert(len(dst.columns[0].offsets), Equals, 0)
-	c.Assert(len(dst.columns[0].data), Equals, 4*12)
-	c.Assert(len(dst.columns[0].elemBuf), Equals, 4)
-	c.Assert(len(dst.columns[0].ifaces), Equals, 0)
+	c.Assert(dst.columns[0].length, check.Equals, 12)
+	c.Assert(dst.columns[0].nullCount, check.Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
+	c.Assert(len(dst.columns[0].offsets), check.Equals, 0)
+	c.Assert(len(dst.columns[0].data), check.Equals, 4*12)
+	c.Assert(len(dst.columns[0].elemBuf), check.Equals, 4)
+	c.Assert(len(dst.columns[0].ifaces), check.Equals, 0)
 
-	c.Assert(dst.columns[1].length, Equals, 12)
-	c.Assert(dst.columns[1].nullCount, Equals, 6)
-	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
-	c.Assert(string(dst.columns[1].offsets), Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
-	c.Assert(string(dst.columns[1].data), Equals, "abcabcabcabcabcabc")
-	c.Assert(len(dst.columns[1].elemBuf), Equals, 0)
-	c.Assert(len(dst.columns[1].ifaces), Equals, 0)
+	c.Assert(dst.columns[1].length, check.Equals, 12)
+	c.Assert(dst.columns[1].nullCount, check.Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
+	c.Assert(string(dst.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
+	c.Assert(string(dst.columns[1].data), check.Equals, "abcabcabcabcabcabc")
+	c.Assert(len(dst.columns[1].elemBuf), check.Equals, 0)
+	c.Assert(len(dst.columns[1].ifaces), check.Equals, 0)
 
-	c.Assert(dst.columns[2].length, Equals, 12)
-	c.Assert(dst.columns[2].nullCount, Equals, 6)
-	c.Assert(string(dst.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x05}))
-	c.Assert(len(dst.columns[2].offsets), Equals, 0)
-	c.Assert(len(dst.columns[2].data), Equals, 0)
-	c.Assert(len(dst.columns[2].elemBuf), Equals, 0)
-	c.Assert(len(dst.columns[2].ifaces), Equals, 12)
+	c.Assert(dst.columns[2].length, check.Equals, 12)
+	c.Assert(dst.columns[2].nullCount, check.Equals, 6)
+	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
+	c.Assert(len(dst.columns[2].offsets), check.Equals, 0)
+	c.Assert(len(dst.columns[2].data), check.Equals, 0)
+	c.Assert(len(dst.columns[2].elemBuf), check.Equals, 0)
+	c.Assert(len(dst.columns[2].ifaces), check.Equals, 12)
 	for i := 0; i < 12; i += 2 {
 		elem := dst.columns[2].ifaces[i]
 		jsonElem, ok := elem.(json.JSON)
-		c.Assert(ok, IsTrue)
+		c.Assert(ok, check.IsTrue)
 		cmpRes, err := json.CompareJSON(jsonElem, jsonObj)
-		c.Assert(err, IsNil)
-		c.Assert(cmpRes, Equals, 0)
+		c.Assert(err, check.IsNil)
+		c.Assert(cmpRes, check.Equals, 0)
 	}
 }
 
-func (s *testChunkSuite) TestTruncateTo(c *C) {
+func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	fieldTypes := make([]*types.FieldType, 0, 3)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
 	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
-	c.Assert(err, IsNil)
+	c.Assert(err, check.IsNil)
 
 	src := NewChunk(fieldTypes)
 
@@ -208,38 +208,38 @@ func (s *testChunkSuite) TestTruncateTo(c *C) {
 	src.TruncateTo(16)
 	src.TruncateTo(14)
 	src.TruncateTo(12)
-	c.Assert(len(src.columns), Equals, 3)
+	c.Assert(len(src.columns), check.Equals, 3)
 
-	c.Assert(src.columns[0].length, Equals, 12)
-	c.Assert(src.columns[0].nullCount, Equals, 6)
-	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
-	c.Assert(len(src.columns[0].offsets), Equals, 0)
-	c.Assert(len(src.columns[0].data), Equals, 4*12)
-	c.Assert(len(src.columns[0].elemBuf), Equals, 4)
-	c.Assert(len(src.columns[0].ifaces), Equals, 0)
+	c.Assert(src.columns[0].length, check.Equals, 12)
+	c.Assert(src.columns[0].nullCount, check.Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
+	c.Assert(len(src.columns[0].offsets), check.Equals, 0)
+	c.Assert(len(src.columns[0].data), check.Equals, 4*12)
+	c.Assert(len(src.columns[0].elemBuf), check.Equals, 4)
+	c.Assert(len(src.columns[0].ifaces), check.Equals, 0)
 
-	c.Assert(src.columns[1].length, Equals, 12)
-	c.Assert(src.columns[1].nullCount, Equals, 6)
-	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
-	c.Assert(string(src.columns[1].offsets), Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
-	c.Assert(string(src.columns[1].data), Equals, "abcabcabcabcabcabc")
-	c.Assert(len(src.columns[1].elemBuf), Equals, 0)
-	c.Assert(len(src.columns[1].ifaces), Equals, 0)
+	c.Assert(src.columns[1].length, check.Equals, 12)
+	c.Assert(src.columns[1].nullCount, check.Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
+	c.Assert(string(src.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
+	c.Assert(string(src.columns[1].data), check.Equals, "abcabcabcabcabcabc")
+	c.Assert(len(src.columns[1].elemBuf), check.Equals, 0)
+	c.Assert(len(src.columns[1].ifaces), check.Equals, 0)
 
-	c.Assert(src.columns[2].length, Equals, 12)
-	c.Assert(src.columns[2].nullCount, Equals, 6)
-	c.Assert(string(src.columns[0].nullBitmap), Equals, string([]byte{0x55, 0x55}))
-	c.Assert(len(src.columns[2].offsets), Equals, 0)
-	c.Assert(len(src.columns[2].data), Equals, 0)
-	c.Assert(len(src.columns[2].elemBuf), Equals, 0)
-	c.Assert(len(src.columns[2].ifaces), Equals, 12)
+	c.Assert(src.columns[2].length, check.Equals, 12)
+	c.Assert(src.columns[2].nullCount, check.Equals, 6)
+	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
+	c.Assert(len(src.columns[2].offsets), check.Equals, 0)
+	c.Assert(len(src.columns[2].data), check.Equals, 0)
+	c.Assert(len(src.columns[2].elemBuf), check.Equals, 0)
+	c.Assert(len(src.columns[2].ifaces), check.Equals, 12)
 	for i := 0; i < 12; i += 2 {
 		elem := src.columns[2].ifaces[i]
 		jsonElem, ok := elem.(json.JSON)
-		c.Assert(ok, IsTrue)
+		c.Assert(ok, check.IsTrue)
 		cmpRes, err := json.CompareJSON(jsonElem, jsonObj)
-		c.Assert(err, IsNil)
-		c.Assert(cmpRes, Equals, 0)
+		c.Assert(err, check.IsNil)
+		c.Assert(cmpRes, check.Equals, 0)
 	}
 }
 
@@ -304,7 +304,7 @@ var allTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeJSON),
 }
 
-func (s *testChunkSuite) TestCompare(c *C) {
+func (s *testChunkSuite) TestCompare(c *check.C) {
 	chunk := NewChunk(allTypes)
 	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
@@ -380,13 +380,13 @@ func (s *testChunkSuite) TestCompare(c *C) {
 	rowBig := chunk.GetRow(2)
 	for i := 0; i < len(allTypes); i++ {
 		cmpFunc := GetCompareFunc(allTypes[i])
-		c.Assert(cmpFunc(rowNull, i, rowNull, i), Equals, 0)
-		c.Assert(cmpFunc(rowNull, i, rowSmall, i), Equals, -1)
-		c.Assert(cmpFunc(rowSmall, i, rowNull, i), Equals, 1)
-		c.Assert(cmpFunc(rowSmall, i, rowSmall, i), Equals, 0)
-		c.Assert(cmpFunc(rowSmall, i, rowBig, i), Equals, -1, Commentf("%d", allTypes[i].Tp))
-		c.Assert(cmpFunc(rowBig, i, rowSmall, i), Equals, 1)
-		c.Assert(cmpFunc(rowBig, i, rowBig, i), Equals, 0)
+		c.Assert(cmpFunc(rowNull, i, rowNull, i), check.Equals, 0)
+		c.Assert(cmpFunc(rowNull, i, rowSmall, i), check.Equals, -1)
+		c.Assert(cmpFunc(rowSmall, i, rowNull, i), check.Equals, 1)
+		c.Assert(cmpFunc(rowSmall, i, rowSmall, i), check.Equals, 0)
+		c.Assert(cmpFunc(rowSmall, i, rowBig, i), check.Equals, -1, check.Commentf("%d", allTypes[i].Tp))
+		c.Assert(cmpFunc(rowBig, i, rowSmall, i), check.Equals, 1)
+		c.Assert(cmpFunc(rowBig, i, rowBig, i), check.Equals, 0)
 	}
 }
 

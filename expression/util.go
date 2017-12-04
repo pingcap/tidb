@@ -228,3 +228,13 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 	}
 	return expr
 }
+
+// Contains tests if `exprs` contains `e`.
+func Contains(exprs []Expression, e Expression) bool {
+	for _, expr := range exprs {
+		if e == expr {
+			return true
+		}
+	}
+	return false
+}
