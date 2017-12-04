@@ -14,6 +14,7 @@
 package ast
 
 import (
+	"fmt"
 	"io"
 	"regexp"
 
@@ -231,7 +232,17 @@ func (n *CaseExpr) Format(w io.Writer) {
 	w.Write(hack.Slice("CASE "))
 	n.Value.Format(w)
 	w.Write(hack.Slice(" "))
-	// TODO: all clauses
+	for _, clause := range n.WhenClauses {
+		w.Write(hack.Slice("WHEN "))
+		clause.Expr.Format(w)
+		w.Write(hack.Slice(" THEN "))
+		clause.Result.Format(w)
+	}
+	if n.ElseClause != nil {
+		w.Write(hack.Slice(" ELSE "))
+		n.ElseClause.Format(w)
+	}
+	w.Write(hack.Slice(" END"))
 }
 
 // Accept implements Node Accept interface.
@@ -293,7 +304,7 @@ type SubqueryExpr struct {
 }
 
 func (n *SubqueryExpr) Format(w io.Writer) {
-	// TODO: implement it.
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -331,7 +342,7 @@ type CompareSubqueryExpr struct {
 }
 
 func (n *CompareSubqueryExpr) Format(w io.Writer) {
-	// TODO: implement it.
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -438,6 +449,7 @@ type DefaultExpr struct {
 
 func (n *DefaultExpr) Format(w io.Writer) {
 	w.Write(hack.Slice(n.Name.String()))
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -466,7 +478,7 @@ type ExistsSubqueryExpr struct {
 }
 
 func (n *ExistsSubqueryExpr) Format(w io.Writer) {
-	// TODO: Implement it.
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -499,6 +511,7 @@ type PatternInExpr struct {
 
 func (n *PatternInExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
+	w.Write(hack.Slice(" IN "))
 	w.Write(hack.Slice("("))
 	for i, expr := range n.List {
 		expr.Format(w)
@@ -585,10 +598,15 @@ type IsTruthExpr struct {
 func (n *IsTruthExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
-		w.Write(hack.Slice(" IS NOT TRUE"))
-		return
+		w.Write(hack.Slice(" IS NOT"))
+	} else {
+		w.Write(hack.Slice(" IS"))
 	}
-	w.Write(hack.Slice(" IS TRUR"))
+	if n.True > 0 {
+		w.Write(hack.Slice(" TRUE"))
+	} else {
+		w.Write(hack.Slice(" FALSE"))
+	}
 }
 
 // Accept implements Node Accept interface.
@@ -626,7 +644,10 @@ func (n *PatternLikeExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	w.Write(hack.Slice(" LIKE "))
 	n.Pattern.Format(w)
-	// TODO: escape.
+	if n.Escape != '\\' {
+		w.Write(hack.Slice(" ESCAPE "))
+		w.Write(hack.Slice(fmt.Sprintf("'%c'", n.Escape)))
+	}
 }
 
 // Accept implements Node Accept interface.
@@ -662,7 +683,7 @@ type ParamMarkerExpr struct {
 }
 
 func (n *ParamMarkerExpr) Format(w io.Writer) {
-	// TODO: implement it.
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -717,7 +738,7 @@ type PositionExpr struct {
 }
 
 func (n *PositionExpr) Format(w io.Writer) {
-	// TODO: implement it.
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -747,7 +768,13 @@ type PatternRegexpExpr struct {
 }
 
 func (n *PatternRegexpExpr) Format(w io.Writer) {
-	// TODO: implement it.
+	n.Expr.Format(w)
+	if n.Not {
+		w.Write(hack.Slice(" NOT REGEXP "))
+	} else {
+		w.Write(hack.Slice(" REGEXP "))
+	}
+	n.Pattern.Format(w)
 }
 
 // Accept implements Node Accept interface.
@@ -779,7 +806,7 @@ type RowExpr struct {
 }
 
 func (n *RowExpr) Format(w io.Writer) {
-	// TODO: implement it.
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -836,6 +863,7 @@ type ValuesExpr struct {
 }
 
 func (n *ValuesExpr) Format(w io.Writer) {
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -867,6 +895,7 @@ type VariableExpr struct {
 }
 
 func (n *VariableExpr) Format(w io.Writer) {
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.

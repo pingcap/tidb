@@ -364,11 +364,23 @@ type FuncCastExpr struct {
 }
 
 func (n *FuncCastExpr) Format(w io.Writer) {
-	w.Write(hack.Slice("CAST("))
-	n.Expr.Format(w)
-	w.Write(hack.Slice(" AS "))
-	w.Write(hack.Slice(n.Tp.String()))
-	w.Write(hack.Slice(")"))
+	switch n.FunctionType {
+	case CastFunction:
+		w.Write(hack.Slice("CAST("))
+		n.Expr.Format(w)
+		w.Write(hack.Slice(" AS "))
+		n.Tp.FormatAsCastType(w)
+		w.Write(hack.Slice(")"))
+	case CastConvertFunction:
+		w.Write(hack.Slice("CONVERT("))
+		n.Expr.Format(w)
+		w.Write(hack.Slice(", "))
+		n.Tp.FormatAsCastType(w)
+		w.Write(hack.Slice(")"))
+	case CastBinaryOperator:
+		w.Write(hack.Slice("BINARY "))
+		n.Expr.Format(w)
+	}
 }
 
 // Accept implements Node Accept interface.
@@ -447,7 +459,7 @@ type AggregateFuncExpr struct {
 }
 
 func (n *AggregateFuncExpr) Format(w io.Writer) {
-	// TODO: implement it.
+	panic("Not implemented")
 }
 
 // Accept implements Node Accept interface.

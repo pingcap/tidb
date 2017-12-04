@@ -15,6 +15,7 @@ package types
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -253,6 +255,54 @@ func (ft *FieldType) String() string {
 	}
 
 	return strings.Join(strs, " ")
+}
+
+// FormatAsCastType is used for write AST back to string.
+func (ft *FieldType) FormatAsCastType(w io.Writer) {
+	switch ft.Tp {
+	case mysql.TypeVarString:
+		if ft.Charset == charset.CharsetBin && ft.Collate == charset.CollationBin {
+			w.Write(hack.Slice("BINARY"))
+		} else {
+			w.Write(hack.Slice("CHAR"))
+		}
+		if ft.Flen != UnspecifiedLength {
+			w.Write(hack.Slice(fmt.Sprintf("(%d)", ft.Flen)))
+		}
+		if ft.Flag&mysql.BinaryFlag != 0 {
+			w.Write(hack.Slice(" BINARY"))
+		}
+		if ft.Charset != charset.CharsetBin && ft.Charset != charset.CharsetUTF8 {
+			w.Write(hack.Slice(fmt.Sprintf(" %s", ft.Charset)))
+		}
+	case mysql.TypeDate:
+		w.Write(hack.Slice("DATE"))
+	case mysql.TypeDatetime:
+		w.Write(hack.Slice("DATETIME"))
+		if ft.Decimal > 0 {
+			w.Write(hack.Slice(fmt.Sprintf("(%d)", ft.Decimal)))
+		}
+	case mysql.TypeNewDecimal:
+		w.Write(hack.Slice("DECIMAL"))
+		if ft.Flen > 0 && ft.Decimal > 0 {
+			w.Write(hack.Slice(fmt.Sprintf("(%d, %d)", ft.Flen, ft.Decimal)))
+		} else if ft.Flen > 0 {
+			w.Write(hack.Slice(fmt.Sprintf("(%d)", ft.Flen)))
+		}
+	case mysql.TypeDuration:
+		w.Write(hack.Slice("TIME"))
+		if ft.Decimal > 0 {
+			w.Write(hack.Slice(fmt.Sprintf("(%d)", ft.Decimal)))
+		}
+	case mysql.TypeLonglong:
+		if ft.Flag&mysql.UnsignedFlag != 0 {
+			w.Write(hack.Slice("UNSIGNED"))
+		} else {
+			w.Write(hack.Slice("SIGNED"))
+		}
+	case mysql.TypeJSON:
+		w.Write(hack.Slice("JSON"))
+	}
 }
 
 // DefaultParamTypeForValue returns the default FieldType for the parameterized value.

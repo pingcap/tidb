@@ -26,8 +26,8 @@
 package parser
 
 import (
-	"fmt"
 	"strings"
+	"strconv"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/ast"
@@ -2704,7 +2704,8 @@ Literal:
 			tp.Flag |= mysql.BinaryFlag
 		}
 		$$ = expr
-		$$.SetText(fmt.Sprintf("\"%s\"", $2))
+		// Because `Lexer` removes quotation marks, we add them back.
+		$$.SetText(strconv.Quote($2))
 	}
 |	hexLit
 	{
@@ -2722,7 +2723,8 @@ StringLiteral:
 	{
 		expr := ast.NewValueExpr($1)
 		$$ = expr
-		$$.SetText(fmt.Sprintf("\"%s\"", $1))
+		// Because `Lexer` removes quotation marks, we add them back.
+		$$.SetText(strconv.Quote($1))
 	}
 |	StringLiteral stringLit
 	{
@@ -2736,7 +2738,8 @@ StringLiteral:
 			expr.SetProjectionOffset(len(strLit))
 		}
 		$$ = expr
-		$$.SetText(fmt.Sprintf("\"%s\"", strLit + $2))
+		// Because `Lexer` removes quotation marks, we add them back.
+		$$.SetText(strconv.Quote(strLit + $2))
 	}
 
 
