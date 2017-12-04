@@ -118,7 +118,7 @@ func (e *ShowExec) fetchAll(goCtx goctx.Context) error {
 	case ast.ShowTriggers:
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
-		return e.fetchShowVariables(goCtx)
+		return e.fetchShowVariables()
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings()
 	case ast.ShowProcessList:
@@ -370,19 +370,12 @@ func (e *ShowExec) fetchShowCharset() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables(goCtx goctx.Context) error {
-	systemVars := make(map[string]string)
-	for {
-		row, err := e.children[0].Next(goCtx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		systemVars[row[0].GetString()] = row[1].GetString()
-	}
+func (e *ShowExec) fetchShowVariables() error {
 	sessionVars := e.ctx.GetSessionVars()
+	systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for _, v := range variable.SysVars {
 		var (
 			value string

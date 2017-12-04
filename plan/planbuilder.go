@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 )
 
 // Error instances.
@@ -601,12 +599,6 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	for i, col := range p.schema.Columns {
 		col.Position = i
 	}
-	if show.Tp == ast.ShowVariables {
-		p = b.buildChildPlanForShowVar(p)
-		if b.err != nil {
-			return nil
-		}
-	}
 	var conditions []expression.Expression
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
@@ -637,59 +629,6 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		resultPlan = sel
 	}
 	return resultPlan
-}
-
-// buildChildPlanForShowVar builds a Selection->DataSource
-func (b *planBuilder) buildChildPlanForShowVar(p *Show) *Show {
-	// 1. build a DataSource for table mysql.GLOBAL_VARIABLES
-	tblName := &ast.TableName{Schema: model.NewCIStr(mysql.SystemDB), Name: model.NewCIStr(mysql.GlobalVariablesTable)}
-	b.err = Preprocess(b.ctx, tblName, b.is, false)
-	if b.err != nil {
-		return p
-	}
-	ds := b.buildResultSetNode(&ast.TableSource{Source: tblName})
-	if b.err != nil {
-		return p
-	}
-	for i, cols := 0, ds.Schema().Columns; i < len(cols); i++ {
-		cols[i].DBName = model.NewCIStr("")
-		cols[i].TblName = model.NewCIStr("")
-		cols[i].OrigTblName = model.NewCIStr("")
-	}
-
-	// 2. build a Selection for the variable names
-	varNameCol, err := ds.Schema().FindColumn(&ast.ColumnName{Name: model.NewCIStr("VARIABLE_NAME")})
-	if err != nil {
-		b.err = err
-		return p
-	}
-	args := make([]expression.Expression, 0, len(variable.SysVars)+1)
-	args = append(args, varNameCol)
-	for _, v := range variable.SysVars {
-		varName := &expression.Constant{
-			Value:   types.NewStringDatum(v.Name),
-			RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
-		args = append(args, varName)
-	}
-	var filter expression.Expression
-	filter, b.err = expression.NewFunction(b.ctx, ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
-	if b.err != nil {
-		return p
-	}
-
-	// 3. build plan as ShowVariable -> Selection -> DataSource
-	var childPlan Plan = ds
-	if filter != nil {
-		sel := LogicalSelection{Conditions: []expression.Expression{filter}}.init(b.ctx)
-		setParentAndChildren(sel, ds)
-		sel.SetSchema(ds.Schema().Clone())
-		childPlan = sel
-	}
-	childSchema := childPlan.Schema().Columns
-	setParentAndChildren(p, childPlan)
-	p.Schema().Columns[0] = childSchema[0].Clone().(*expression.Column)
-	p.Schema().Columns[1] = childSchema[1].Clone().(*expression.Column)
-	return p
 }
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {

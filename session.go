@@ -594,6 +594,28 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	return value, nil
 }
 
+// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
+func (s *session) GetAllSysVars() (map[string]string, error) {
+	if s.Value(context.Initing) != nil {
+		return nil, nil
+	}
+	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME in (`
+	for _, v := range variable.SysVars {
+		sql += `"` + v.Name + `",`
+	}
+	sql += `false);`
+	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
+	rows, _, err := s.ExecRestrictedSQL(s, sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret := make(map[string]string)
+	for _, r := range rows {
+		ret[r.GetString(0)] = ret[r.GetString(1)]
+	}
+	return ret, nil
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
 	if s.Value(context.Initing) != nil {
