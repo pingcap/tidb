@@ -168,7 +168,7 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	for chk.NumRows() < e.ctx.GetSessionVars().MaxChunkSize {
+	for chk.NumRows() < e.maxChunkSize {
 		if e.Idx >= len(e.rowPtrs) {
 			return nil
 		}
@@ -181,7 +181,7 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 
 func (e *SortExec) fetchRowChunks() error {
 	fields := e.schema.GetTypes()
-	e.rowChunks = chunk.NewList(fields, e.ctx.GetSessionVars().MaxChunkSize)
+	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(chk)
@@ -242,7 +242,7 @@ func (e *SortExec) buildKeyExprsAndTypes() {
 }
 
 func (e *SortExec) buildKeyChunks() error {
-	e.keyChunks = chunk.NewList(e.keyTypes, e.ctx.GetSessionVars().MaxChunkSize)
+	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
 		err := expression.VectorizedExecute(e.ctx, e.keyExprs, e.rowChunks.GetChunk(chkIdx), keyChk)
@@ -479,8 +479,7 @@ func (e *TopNExec) NextChunk(chk *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	maxChkSize := e.ctx.GetSessionVars().MaxChunkSize
-	for chk.NumRows() < maxChkSize && e.Idx < len(e.rowPtrs) {
+	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		chk.AppendRow(0, row)
 		e.Idx++
@@ -490,7 +489,7 @@ func (e *TopNExec) NextChunk(chk *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit() error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(e.schema.GetTypes(), e.ctx.GetSessionVars().MaxChunkSize)
+	e.rowChunks = chunk.NewList(e.schema.GetTypes(), e.maxChunkSize)
 	for e.rowChunks.Len() < e.totalLimit {
 		srcChk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(srcChk)
@@ -590,7 +589,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(e.schema.GetTypes(), e.ctx.GetSessionVars().MaxChunkSize)
+	newRowChunks := chunk.NewList(e.schema.GetTypes(), e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
