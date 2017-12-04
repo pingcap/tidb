@@ -376,30 +376,24 @@ func (e *ShowExec) fetchShowVariables() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var (
+		value string
+		ok    bool
+	)
 	for _, v := range variable.SysVars {
-		var (
-			value string
-			ok    bool
-			err   error
-		)
 		if !e.GlobalScope {
 			value, ok, err = varsutil.GetSessionOnlySysVars(sessionVars, v.Name)
 		} else {
-			value, ok, err = varsutil.CheckGlobalSystemVar(sessionVars, v.Name)
+			value, ok, err = varsutil.GetScopeNoneSystemVar(v.Name)
+			if terror.ErrorEqual(err, variable.ErrIncorrectScope) {
+				continue
+			}
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !ok {
-			value, ok = systemVars[v.Name]
-			if !ok {
-				sv, ok2 := variable.SysVars[v.Name]
-				isUninitializedGlobalVariable := ok2 && sv.Scope|variable.ScopeGlobal > 0
-				if !isUninitializedGlobalVariable {
-					return variable.UnknownSystemVar.GenByArgs(v.Name)
-				}
-				value = sv.Value
-			}
+			value = systemVars[v.Name]
 		}
 		row := types.MakeDatums(v.Name, value)
 		e.rows = append(e.rows, row)

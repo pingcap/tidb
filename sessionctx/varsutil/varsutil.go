@@ -68,7 +68,7 @@ func GetSessionOnlySysVars(s *variable.SessionVars, key string) (string, bool, e
 // GetGlobalSystemVar gets a global system variable.
 func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
-	gVal, ok, err := CheckGlobalSystemVar(s, key)
+	gVal, ok, err := GetScopeNoneSystemVar(key)
 	if err != nil || ok {
 		return gVal, errors.Trace(err)
 	}
@@ -80,9 +80,9 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	return gVal, nil
 }
 
-// CheckGlobalSystemVar check the validation of `key`,
+// GetScopeNoneSystemVar checks the validation of `key`,
 // and return the default value if its scope is `ScopeNone`.
-func CheckGlobalSystemVar(s *variable.SessionVars, key string) (string, bool, error) {
+func GetScopeNoneSystemVar(key string) (string, bool, error) {
 	sysVar := variable.SysVars[key]
 	if sysVar == nil {
 		return "", false, variable.UnknownSystemVar.GenByArgs(key)
