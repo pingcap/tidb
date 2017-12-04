@@ -122,10 +122,10 @@ func (h *Handle) DumpStatsDeltaToKV() {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
-	goCtx := h.ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
+	if delta.Count == 0 {
+		return nil
 	}
+	goCtx := goctx.TODO()
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "begin")
 	if err != nil {
 		return errors.Trace(err)

@@ -2,7 +2,7 @@ package aggregation
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -38,7 +38,7 @@ func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
 }
 
 // calculateSum adds v to sum.
-func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
+func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
 	// for avg and sum calculation
 	// avg and sum use decimal for integer and decimal type, use float for others
 	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html

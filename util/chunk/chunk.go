@@ -32,45 +32,63 @@ type Chunk struct {
 	columns []*column
 }
 
-// AddFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
-func (c *Chunk) AddFixedLenColumn(elemLen, initCap int) {
+// Capacity constants.
+const (
+	InitialCapacity = 32
+)
+
+// NewChunk creates a new chunk with field types.
+func NewChunk(fields []*types.FieldType) *Chunk {
+	chk := new(Chunk)
+	chk.columns = make([]*column, 0, len(fields))
+	for _, f := range fields {
+		chk.addColumnByFieldType(f, InitialCapacity)
+	}
+	return chk
+}
+
+// addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
+func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
 	c.columns = append(c.columns, &column{
-		elemBuf: make([]byte, elemLen),
-		data:    make([]byte, 0, initCap),
+		elemBuf:    make([]byte, elemLen),
+		data:       make([]byte, 0, initCap*elemLen),
+		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
-// AddVarLenColumn adds a variable length column with initial data capacity.
-func (c *Chunk) AddVarLenColumn(initCap int) {
+// addVarLenColumn adds a variable length column with initial data capacity.
+func (c *Chunk) addVarLenColumn(initCap int) {
 	c.columns = append(c.columns, &column{
-		offsets: []int32{0},
-		data:    make([]byte, 0, initCap),
+		offsets:    make([]int32, 1, initCap+1),
+		data:       make([]byte, 0, initCap*4),
+		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
-// AddInterfaceColumn adds an interface column which holds element as interface.
-func (c *Chunk) AddInterfaceColumn() {
+// addInterfaceColumn adds an interface column which holds element as interface.
+func (c *Chunk) addInterfaceColumn(initCap int) {
 	c.columns = append(c.columns, &column{
-		ifaces: []interface{}{},
+		ifaces:     make([]interface{}, 0, initCap),
+		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
-// AddColumnByFieldType adds a column by field type.
-func (c *Chunk) AddColumnByFieldType(fieldTp byte, initCap int) {
-	switch fieldTp {
+// addColumnByFieldType adds a column by field type.
+func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
+	switch fieldTp.Tp {
 	case mysql.TypeFloat:
-		c.AddFixedLenColumn(4, initCap)
+		c.addFixedLenColumn(4, initCap)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeDouble:
-		c.AddFixedLenColumn(8, initCap)
+		mysql.TypeDouble, mysql.TypeYear:
+		c.addFixedLenColumn(8, initCap)
 	case mysql.TypeDuration:
-		c.AddFixedLenColumn(16, initCap)
+		c.addFixedLenColumn(16, initCap)
 	case mysql.TypeNewDecimal:
-		c.AddFixedLenColumn(types.MyDecimalStructSize, initCap)
+		c.addFixedLenColumn(types.MyDecimalStructSize, initCap)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeJSON:
-		c.AddInterfaceColumn()
+		c.addInterfaceColumn(initCap)
 	default:
-		c.AddVarLenColumn(initCap)
+		c.addVarLenColumn(initCap)
 	}
 }
 
@@ -100,11 +118,21 @@ func (c *Chunk) GetRow(idx int) Row {
 	return Row{c: c, idx: idx}
 }
 
+// Begin returns the first valid Row in the Chunk.
+func (c *Chunk) Begin() Row {
+	return c.GetRow(0)
+}
+
+// End returns a Row referring to the past-the-end element in the Chunk.
+func (c *Chunk) End() Row {
+	return c.GetRow(c.NumRows())
+}
+
 // AppendRow appends a row to the chunk.
 func (c *Chunk) AppendRow(colIdx int, row Row) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
-		chkCol.setNullBitmap(!rowCol.isNull(row.idx))
+		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
 			offset := row.idx * elemLen
@@ -117,6 +145,51 @@ func (c *Chunk) AppendRow(colIdx int, row Row) {
 			chkCol.ifaces = append(chkCol.ifaces, rowCol.ifaces[row.idx])
 		}
 		chkCol.length++
+	}
+}
+
+// Append appends rows in [begin, end) in another Chunk to a Chunk.
+func (c *Chunk) Append(other *Chunk, begin, end int) {
+	for colID, src := range other.columns {
+		dst := c.columns[colID]
+		if src.isFixed() {
+			elemLen := len(src.elemBuf)
+			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
+		} else if src.isVarlen() {
+			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
+			dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
+			for i := begin; i < end; i++ {
+				dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
+			}
+		} else {
+			dst.ifaces = append(dst.ifaces, src.ifaces[begin:end]...)
+		}
+		for i := begin; i < end; i++ {
+			dst.appendNullBitmap(!src.isNull(i))
+			dst.length++
+		}
+	}
+}
+
+// TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
+func (c *Chunk) TruncateTo(numRows int) {
+	for _, col := range c.columns {
+		if col.isFixed() {
+			elemLen := len(col.elemBuf)
+			col.data = col.data[:numRows*elemLen]
+		} else if col.isVarlen() {
+			col.data = col.data[:col.offsets[numRows]]
+			col.offsets = col.offsets[:numRows+1]
+		} else {
+			col.ifaces = col.ifaces[:numRows]
+		}
+		for i := numRows; i < col.length; i++ {
+			if col.isNull(i) {
+				col.nullCount--
+			}
+		}
+		col.length = numRows
+		col.nullBitmap = col.nullBitmap[:(col.length>>3)+1]
 	}
 }
 
@@ -225,7 +298,7 @@ func (c *column) isNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *column) setNullBitmap(on bool) {
+func (c *column) appendNullBitmap(on bool) {
 	idx := c.length >> 3
 	if idx >= len(c.nullBitmap) {
 		c.nullBitmap = append(c.nullBitmap, 0)
@@ -239,7 +312,7 @@ func (c *column) setNullBitmap(on bool) {
 }
 
 func (c *column) appendNull() {
-	c.setNullBitmap(false)
+	c.appendNullBitmap(false)
 	if c.isFixed() {
 		c.data = append(c.data, c.elemBuf...)
 	} else if c.isVarlen() {
@@ -252,7 +325,7 @@ func (c *column) appendNull() {
 
 func (c *column) finishAppendFixed() {
 	c.data = append(c.data, c.elemBuf...)
-	c.setNullBitmap(true)
+	c.appendNullBitmap(true)
 	c.length++
 }
 
@@ -277,7 +350,7 @@ func (c *column) appendFloat64(f float64) {
 }
 
 func (c *column) finishAppendVar() {
-	c.setNullBitmap(true)
+	c.appendNullBitmap(true)
 	c.offsets = append(c.offsets, int32(len(c.data)))
 	c.length++
 }
@@ -294,7 +367,7 @@ func (c *column) appendBytes(b []byte) {
 
 func (c *column) appendInterface(o interface{}) {
 	c.ifaces = append(c.ifaces, o)
-	c.setNullBitmap(true)
+	c.appendNullBitmap(true)
 	c.length++
 }
 
@@ -322,9 +395,19 @@ type Row struct {
 	idx int
 }
 
+// Idx returns the row index of Chunk.
+func (r Row) Idx() int {
+	return r.idx
+}
+
 // Len returns the number of values in the row.
 func (r Row) Len() int {
 	return r.c.NumCols()
+}
+
+// Next returns the next valid Row in the same Chunk.
+func (r Row) Next() (next Row) {
+	return Row{c: r.c, idx: r.idx + 1}
 }
 
 // GetInt64 returns the int64 value with the colIdx.
@@ -418,7 +501,7 @@ func (r Row) GetJSON(colIdx int) json.JSON {
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
 	switch tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		if !r.IsNull(colIdx) {
 			if mysql.HasUnsignedFlag(tp.Flag) {
 				d.SetUint64(r.GetUint64(colIdx))

@@ -173,10 +173,7 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx context.Context) error {
 
 func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 	decodeTableRow func(types.Row, []*ast.ResultField) error) error {
-	goCtx := ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
-	}
+	goCtx := goctx.Background()
 	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -186,7 +183,7 @@ func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 
 	fs := rs.Fields()
 	for {
-		row, err := rs.Next()
+		row, err := rs.Next(goctx.TODO())
 		if err != nil {
 			return errors.Trace(err)
 		}

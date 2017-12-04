@@ -26,11 +26,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 var dummySlice = make([]byte, 0)
@@ -77,9 +78,10 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks []tipb.Chunk
 		rowCnt int
 	)
+	goCtx := goctx.TODO()
 	for {
 		var row [][]byte
-		row, err = e.Next()
+		row, err = e.Next(goCtx)
 		if err != nil {
 			break
 		}
@@ -278,7 +280,7 @@ type evalContext struct {
 	colIDs      map[int64]int
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
-	sc          *variable.StatementContext
+	sc          *stmtctx.StatementContext
 	timeZone    *time.Location
 }
 
@@ -316,13 +318,17 @@ const (
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
 	FlagTruncateAsWarning uint64 = 1 << 1
+
+	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
+	FlagPadCharToFullLength uint64 = 1 << 2
 )
 
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
-func flagsToStatementContext(flags uint64) *variable.StatementContext {
-	sc := new(variable.StatementContext)
+func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
+	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
+	sc.PadCharToFullLength = (flags & FlagPadCharToFullLength) > 0
 	return sc
 }
 

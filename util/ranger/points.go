@@ -21,7 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -74,7 +74,7 @@ func (rp point) String() string {
 type pointSorter struct {
 	points []point
 	err    error
-	sc     *variable.StatementContext
+	sc     *stmtctx.StatementContext
 }
 
 func (r *pointSorter) Len() int {
@@ -91,7 +91,7 @@ func (r *pointSorter) Less(i, j int) bool {
 	return less
 }
 
-func rangePointLess(sc *variable.StatementContext, a, b point) (bool, error) {
+func rangePointLess(sc *stmtctx.StatementContext, a, b point) (bool, error) {
 	cmp, err := a.value.CompareDatum(sc, &b.value)
 	if cmp != 0 {
 		return cmp < 0, nil
@@ -121,19 +121,19 @@ var fullRange = []point{
 }
 
 // FullIntRange is (-∞, +∞) for IntColumnRange.
-func FullIntRange() []types.IntColumnRange {
-	return []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+func FullIntRange() []IntColumnRange {
+	return []IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 }
 
 // FullIndexRange is (-∞, +∞) for IndexRange.
-func FullIndexRange() []*types.IndexRange {
-	return []*types.IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+func FullIndexRange() []*IndexRange {
+	return []*IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
 }
 
 // builder is the range builder struct.
 type builder struct {
 	err error
-	sc  *variable.StatementContext
+	sc  *stmtctx.StatementContext
 }
 
 func (r *builder) build(expr expression.Expression) []point {

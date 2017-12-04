@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -166,13 +167,13 @@ func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
 }
 
 // CommitTxn implements QueryCtx CommitTxn method.
-func (tc *TiDBContext) CommitTxn() error {
-	return tc.session.CommitTxn(tc.session.GoCtx())
+func (tc *TiDBContext) CommitTxn(goCtx goctx.Context) error {
+	return tc.session.CommitTxn(goCtx)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.
 func (tc *TiDBContext) RollbackTxn() error {
-	return tc.session.RollbackTxn(tc.session.GoCtx())
+	return tc.session.RollbackTxn(goctx.TODO())
 }
 
 // AffectedRows implements QueryCtx AffectedRows method.
@@ -235,11 +236,7 @@ func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colums, err = rs[0].Columns()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return
+	return rs[0].Columns(), nil
 }
 
 // GetStatement implements QueryCtx GetStatement method.
@@ -290,23 +287,37 @@ func (tc *TiDBContext) Cancel() {
 
 type tidbResultSet struct {
 	recordSet ast.RecordSet
+	columns   []*ColumnInfo
 }
 
-func (trs *tidbResultSet) Next() (types.Row, error) {
-	return trs.recordSet.Next()
+func (trs *tidbResultSet) Next(goCtx goctx.Context) (types.Row, error) {
+	return trs.recordSet.Next(goCtx)
+}
+
+func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
+	return trs.recordSet.NewChunk()
+}
+
+func (trs *tidbResultSet) NextChunk(chk *chunk.Chunk) error {
+	return trs.recordSet.NextChunk(chk)
+}
+
+func (trs *tidbResultSet) SupportChunk() bool {
+	return trs.recordSet.SupportChunk()
 }
 
 func (trs *tidbResultSet) Close() error {
 	return trs.recordSet.Close()
 }
 
-func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
-	fields := trs.recordSet.Fields()
-	var columns []*ColumnInfo
-	for _, v := range fields {
-		columns = append(columns, convertColumnInfo(v))
+func (trs *tidbResultSet) Columns() []*ColumnInfo {
+	if trs.columns == nil {
+		fields := trs.recordSet.Fields()
+		for _, v := range fields {
+			trs.columns = append(trs.columns, convertColumnInfo(v))
+		}
 	}
-	return columns, nil
+	return trs.columns
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
@@ -325,18 +336,27 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	} else {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
-	// Fix issue #4540.
-	// The flen is a hint, not a precise value, so most client will not use the value.
-	// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
-	// the `show create table` result. To fix this case, we must use a large enough flen to prevent
-	// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
-	// For examples:
-	// * latin, the multiple is 1
-	// * gb2312, the multiple is 2
-	// * Utf-8, the multiple is 3
-	// * utf8mb4, the multiple is 4
-	// So the large enough multiple is 4 in here.
-	ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+	if fld.Column.Tp == mysql.TypeNewDecimal {
+		// Consider the negative sign.
+		ci.ColumnLength++
+		if fld.Column.Decimal > types.DefaultFsp {
+			// Consider the decimal point.
+			ci.ColumnLength++
+		}
+	} else {
+		// Fix issue #4540.
+		// The flen is a hint, not a precise value, so most client will not use the value.
+		// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
+		// the `show create table` result. To fix this case, we must use a large enough flen to prevent
+		// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
+		// For examples:
+		// * latin, the multiple is 1
+		// * gb2312, the multiple is 2
+		// * Utf-8, the multiple is 3
+		// * utf8mb4, the multiple is 4
+		// So the large enough multiple is 4 in here.
+		ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+	}
 
 	if fld.Column.Decimal == types.UnspecifiedLength {
 		ci.Decimal = mysql.NotFixedDec

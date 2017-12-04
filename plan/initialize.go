@@ -109,9 +109,14 @@ func (p LogicalApply) init(ctx context.Context) *LogicalApply {
 	return &p
 }
 
-func (p Selection) init(ctx context.Context) *Selection {
+func (p LogicalSelection) init(ctx context.Context) *LogicalSelection {
 	p.basePlan = newBasePlan(TypeSel, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalSelection) init(ctx context.Context) *PhysicalSelection {
+	p.basePlan = newBasePlan(TypeSel, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
@@ -179,23 +184,17 @@ func (p MaxOneRow) init(ctx context.Context) *MaxOneRow {
 }
 
 func (p Update) init(ctx context.Context) *Update {
-	p.basePlan = newBasePlan(TypeUpate, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePlan = *newBasePlan(TypeUpate, ctx, &p)
 	return &p
 }
 
 func (p Delete) init(ctx context.Context) *Delete {
-	p.basePlan = newBasePlan(TypeDelete, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePlan = *newBasePlan(TypeDelete, ctx, &p)
 	return &p
 }
 
 func (p Insert) init(ctx context.Context) *Insert {
-	p.basePlan = newBasePlan(TypeInsert, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePlan = *newBasePlan(TypeInsert, ctx, &p)
 	return &p
 }
 
@@ -253,14 +252,22 @@ func (p PhysicalMergeJoin) init(ctx context.Context) *PhysicalMergeJoin {
 	return &p
 }
 
-func (p PhysicalAggregation) init(ctx context.Context) *PhysicalAggregation {
-	tp := TypeHashAgg
-	if p.AggType == StreamedAgg {
-		tp = TypeStreamAgg
-	}
-	p.basePlan = newBasePlan(tp, ctx, &p)
+func (base basePhysicalAgg) initForHash(ctx context.Context) *PhysicalHashAgg {
+	p := &PhysicalHashAgg{base}
+	p.basePlan = newBasePlan(TypeHashAgg, ctx, p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
+	return p
+}
+
+func (base basePhysicalAgg) initForStream(ctx context.Context, keys []*expression.Column, inputCnt float64) *PhysicalStreamAgg {
+	p := &PhysicalStreamAgg{
+		basePhysicalAgg: base,
+		propKeys:        keys,
+		inputCount:      inputCnt,
+	}
+	p.basePlan = newBasePlan(TypeStreamAgg, ctx, p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return p
 }
 
 func (p PhysicalApply) init(ctx context.Context) *PhysicalApply {
@@ -280,7 +287,6 @@ func (p PhysicalIndexLookUpReader) init(ctx context.Context) *PhysicalIndexLookU
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.NeedColHandle = p.IndexPlans[0].(*PhysicalIndexScan).NeedColHandle
 	p.schema = p.tablePlan.Schema()
 	return &p
 }
@@ -289,7 +295,6 @@ func (p PhysicalTableReader) init(ctx context.Context) *PhysicalTableReader {
 	p.basePlan = newBasePlan(TypeTableReader, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.NeedColHandle = p.TablePlans[0].(*PhysicalTableScan).NeedColHandle
 	p.schema = p.tablePlan.Schema()
 	return &p
 }
@@ -298,8 +303,7 @@ func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
 	p.basePlan = newBasePlan(TypeIndexReader, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.NeedColHandle = p.IndexPlans[0].(*PhysicalIndexScan).NeedColHandle
-	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
+	if _, ok := p.indexPlan.(*PhysicalHashAgg); ok {
 		p.schema = p.indexPlan.Schema()
 	} else {
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -313,7 +317,6 @@ func (p PhysicalIndexJoin) init(ctx context.Context, children ...Plan) *Physical
 	p.basePlan = newBasePlan(TypeIndexJoin, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.children = children
-	p.schema = expression.MergeSchema(p.children[0].Schema(), p.children[1].Schema())
 	return &p
 }
 

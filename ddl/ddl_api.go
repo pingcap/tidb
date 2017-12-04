@@ -94,14 +94,21 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 
 func checkTooLongSchema(schema model.CIStr) error {
 	if len(schema.L) > mysql.MaxDatabaseNameLength {
-		return ErrTooLongIdent.Gen("too long schema %s", schema)
+		return ErrTooLongIdent.GenByArgs(schema)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
 	if len(table.L) > mysql.MaxTableNameLength {
-		return ErrTooLongIdent.Gen("too long table %s", table)
+		return ErrTooLongIdent.GenByArgs(table)
+	}
+	return nil
+}
+
+func checkTooLongIndex(index model.CIStr) error {
+	if len(index.L) > mysql.MaxIndexIdentifierLen {
+		return ErrTooLongIdent.GenByArgs(index)
 	}
 	return nil
 }
@@ -499,7 +506,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name)
+			return ErrTooLongIdent.GenByArgs(colDef.Name.Name)
 		}
 	}
 	return nil
@@ -791,7 +798,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
-	alloc := autoid.NewAllocator(d.store, tbInfo.OldSchemaID, schemaID)
+	alloc := autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID))
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(alloc, tbInfo)
 	if err != nil {
@@ -800,7 +807,7 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
 	// Its behavior is consistent with MySQL.
-	if err = tb.RebaseAutoID(tbInfo.AutoIncID-1, false); err != nil {
+	if err = tb.RebaseAutoID(nil, tbInfo.AutoIncID-1, false); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -943,7 +950,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	if len(colName) > mysql.MaxColumnNameLength {
-		return ErrTooLongIdent.Gen("too long column %s", colName)
+		return ErrTooLongIdent.GenByArgs(colName)
 	}
 
 	// Ingore table constraints now, maybe return error later.
@@ -1440,6 +1447,10 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 
 	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
 		return errDupKeyName.Gen("index already exist %s", indexName)
+	}
+
+	if err = checkTooLongIndex(indexName); err != nil {
+		return errors.Trace(err)
 	}
 
 	if indexOption != nil {

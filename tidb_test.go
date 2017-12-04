@@ -193,7 +193,7 @@ func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
 var testConnID uint64
 
 func newSession(c *C, store kv.Storage, dbName string) Session {
-	se, err := CreateSession(store)
+	se, err := CreateSession4Test(store)
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
@@ -245,7 +245,7 @@ func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
 	r, err := exec(se, sql, args...)
 	if err == nil && r != nil {
 		// sometimes we may meet error after executing first row.
-		_, err = r.Next()
+		_, err = r.Next(goctx.Background())
 	}
 	c.Assert(err, NotNil)
 }

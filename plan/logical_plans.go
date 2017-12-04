@@ -27,7 +27,7 @@ var (
 	_ LogicalPlan = &LogicalJoin{}
 	_ LogicalPlan = &LogicalAggregation{}
 	_ LogicalPlan = &Projection{}
-	_ LogicalPlan = &Selection{}
+	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
 	_ LogicalPlan = &Exists{}
 	_ LogicalPlan = &MaxOneRow{}
@@ -35,12 +35,9 @@ var (
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &Union{}
 	_ LogicalPlan = &Sort{}
-	_ LogicalPlan = &Update{}
-	_ LogicalPlan = &Delete{}
 	_ LogicalPlan = &SelectLock{}
 	_ LogicalPlan = &Limit{}
 	_ LogicalPlan = &Show{}
-	_ LogicalPlan = &Insert{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -206,30 +203,18 @@ func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCol
 	return corCols
 }
 
-// Selection means a filter.
-type Selection struct {
+// LogicalSelection represents a where or having predicate.
+type LogicalSelection struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
-
-	// onTable means if this selection's child is a table scan or index scan.
-	onTable bool
-
-	// If ScanController is true, then the child of this selection is a scan,
-	// which use pk or index. we will record the accessConditions, idxConditions,
-	// and tblConditions to control the below plan.
-	ScanController bool
-
-	// We will check this at decorrelate phase.
-	controllerStatus int
 }
 
-func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalSelection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, cond := range p.Conditions {
 		corCols = append(corCols, extractCorColumns(cond)...)
@@ -304,8 +289,13 @@ type DataSource struct {
 
 	statisticTable *statistics.Table
 
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
+	// availableIndices is used for storing result of avalableIndices function.
+	availableIndices *avalableIndices
+}
+
+type avalableIndices struct {
+	indices          []*model.IndexInfo
+	includeTableScan bool
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
@@ -382,24 +372,4 @@ type Limit struct {
 	partial bool
 
 	expectedProp *requiredProp
-}
-
-// Update represents Update plan.
-type Update struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	OrderedList []*expression.Assignment
-	IgnoreErr   bool
-}
-
-// Delete represents a delete plan.
-type Delete struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	Tables       []*ast.TableName
-	IsMultiTable bool
 }

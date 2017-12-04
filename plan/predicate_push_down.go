@@ -30,7 +30,7 @@ func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, er
 
 func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression) {
 	conditions = expression.PropagateConstant(p.context(), conditions)
-	selection := Selection{Conditions: conditions}.init(p.context())
+	selection := LogicalSelection{Conditions: conditions}.init(p.context())
 	selection.SetSchema(child.Schema().Clone())
 	replaceChild(p, child, selection)
 	selection.SetChildren(child)
@@ -52,7 +52,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	retConditions, child := p.children[0].(LogicalPlan).PredicatePushDown(append(p.Conditions, predicates...))
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)

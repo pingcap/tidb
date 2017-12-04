@@ -22,15 +22,17 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -51,7 +53,7 @@ const (
 )
 
 // Open implements the Executor Open interface.
-func (e *AnalyzeExec) Open() error {
+func (e *AnalyzeExec) Open(goctx.Context) error {
 	return nil
 }
 
@@ -61,7 +63,7 @@ func (e *AnalyzeExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next() (Row, error) {
+func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -75,7 +77,7 @@ func (e *AnalyzeExec) Next() (Row, error) {
 		taskCh <- task
 	}
 	close(taskCh)
-	dom := sessionctx.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.ctx)
 	lease := dom.StatsHandle().Lease
 	if lease > 0 {
 		var err1 error
@@ -184,24 +186,21 @@ type AnalyzeIndexExec struct {
 }
 
 func (e *AnalyzeIndexExec) open() error {
-	fieldTypes := make([]*types.FieldType, len(e.idxInfo.Columns))
-	for i, v := range e.idxInfo.Columns {
-		fieldTypes[i] = &(e.tblInfo.Columns[v.Offset].FieldType)
-	}
-	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
+	idxRange := &ranger.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	var builder requestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*types.IndexRange{idxRange}, fieldTypes).
+	kvReq, err := builder.SetIndexRanges(e.tblInfo.ID, e.idxInfo.ID, []*ranger.IndexRange{idxRange}).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		SetPriority(e.priority).
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
-	e.result, err = distsql.Analyze(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
+	goCtx := goctx.TODO()
+	e.result, err = distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(e.ctx.GoCtx())
+	e.result.Fetch(goCtx)
 	return nil
 }
 
@@ -278,7 +277,7 @@ type AnalyzeColumnsExec struct {
 }
 
 func (e *AnalyzeColumnsExec) open() error {
-	ranges := []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+	ranges := []ranger.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 	var builder requestBuilder
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).
@@ -290,11 +289,12 @@ func (e *AnalyzeColumnsExec) open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Analyze(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
+	goCtx := goctx.TODO()
+	e.result, err = distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(e.ctx.GoCtx())
+	e.result.Fetch(goCtx)
 	return nil
 }
 

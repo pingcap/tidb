@@ -25,8 +25,10 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coprocessor.Response {
@@ -72,8 +74,9 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
+	goCtx := goctx.TODO()
 	for {
-		values, err := e.Next()
+		values, err := e.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -177,8 +180,8 @@ func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 }
 
 // Next implements the ast.RecordSet Next interface.
-func (e *analyzeColumnsExec) Next() (row types.Row, err error) {
-	values, err := e.tblExec.Next()
+func (e *analyzeColumnsExec) Next(goCtx goctx.Context) (row types.Row, err error) {
+	values, err := e.tblExec.Next(goCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -194,6 +197,18 @@ func (e *analyzeColumnsExec) Next() (row types.Row, err error) {
 		datumRow = append(datumRow, d)
 	}
 	return datumRow, nil
+}
+
+func (e *analyzeColumnsExec) NextChunk(chk *chunk.Chunk) error {
+	return nil
+}
+
+func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+	return nil
+}
+
+func (e *analyzeColumnsExec) SupportChunk() bool {
+	return false
 }
 
 // Close implements the ast.RecordSet Close interface.

@@ -150,7 +150,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
 		}
-	case *Selection:
+	case *LogicalSelection:
+		str = fmt.Sprintf("Sel(%s)", x.Conditions)
+	case *PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)
 	case *Projection:
 		str = "Projection"
@@ -158,13 +160,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *TableDual:
 		str = "Dual"
-	case *PhysicalAggregation:
-		switch x.AggType {
-		case StreamedAgg:
-			str = "StreamAgg"
-		default:
-			str = "HashAgg"
-		}
+	case *PhysicalHashAgg:
+		str = "HashAgg"
+	case *PhysicalStreamAgg:
+		str = "StreamAgg"
 	case *LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
@@ -211,6 +210,15 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}
 		str = str + strings.Join(children, ",") + "}"
+	case *Update:
+		str = fmt.Sprintf("%s->Update", ToString(x.SelectPlan))
+	case *Delete:
+		str = fmt.Sprintf("%s->Delete", ToString(x.SelectPlan))
+	case *Insert:
+		str = "Insert"
+		if x.SelectPlan != nil {
+			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
+		}
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

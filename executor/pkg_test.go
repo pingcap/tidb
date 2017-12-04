@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&pkgTestSuite{})
@@ -24,7 +25,7 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Next() (Row, error) {
+func (m *MockExec) Next(goCtx goctx.Context) (Row, error) {
 	if m.curRowIdx >= len(m.Rows) {
 		return nil, nil
 	}
@@ -43,12 +44,13 @@ func (m *MockExec) Close() error {
 	return nil
 }
 
-func (m *MockExec) Open() error {
+func (m *MockExec) Open(goCtx goctx.Context) error {
 	m.curRowIdx = 0
 	return nil
 }
 
 func (s *pkgTestSuite) TestNestedLoopJoin(c *C) {
+	goCtx := goctx.Background()
 	ctx := mock.NewContext()
 	bigExec := &MockExec{
 		baseExecutor: newBaseExecutor(nil, ctx),
@@ -82,27 +84,27 @@ func (s *pkgTestSuite) TestNestedLoopJoin(c *C) {
 		SmallFilter:  []expression.Expression{smallFilter},
 		OtherFilter:  []expression.Expression{otherFilter},
 	}
-	row, err := join.Next()
+	row, err := join.Next(goCtx)
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
 	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
-	row, err = join.Next()
+	row, err = join.Next(goCtx)
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
 	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
-	row, err = join.Next()
+	row, err = join.Next(goCtx)
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
 	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
-	row, err = join.Next()
+	row, err = join.Next(goCtx)
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
 	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
-	row, err = join.Next()
+	row, err = join.Next(goCtx)
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
 	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
-	row, err = join.Next()
+	row, err = join.Next(goCtx)
 	c.Check(err, IsNil)
 	c.Check(row, IsNil)
 }

@@ -19,10 +19,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
@@ -117,7 +118,7 @@ func (c *SampleCollector) collect(d types.Datum) error {
 // SampleBuilder is used to build samples for columns.
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
-	Sc              *variable.StatementContext
+	Sc              *stmtctx.StatementContext
 	RecordSet       ast.RecordSet
 	ColLen          int   // ColLen is the number of columns need to be sampled.
 	PkID            int64 // If primary key is handle, the PkID is the id of the primary key. If not exists, it is -1.
@@ -150,8 +151,9 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			collectors[i].CMSketch = NewCMSketch(s.CMSketchDepth, s.CMSketchWidth)
 		}
 	}
+	goCtx := goctx.TODO()
 	for {
-		row, err := s.RecordSet.Next()
+		row, err := s.RecordSet.Next(goCtx)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

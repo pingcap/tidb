@@ -16,9 +16,10 @@
 package ast
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	goctx "golang.org/x/net/context"
 )
 
 // Node is the basic element of the AST.
@@ -128,12 +129,20 @@ type ResultField struct {
 
 // RecordSet is an abstract result set interface to help get data from Plan.
 type RecordSet interface {
-
 	// Fields gets result fields.
 	Fields() []*ResultField
 
 	// Next returns the next row, nil row means there is no more to return.
-	Next() (row types.Row, err error)
+	Next(goCtx goctx.Context) (row types.Row, err error)
+
+	// NextChunk reads records into chunk.
+	NextChunk(chk *chunk.Chunk) error
+
+	// NewChunk creates a new chunk with initial capacity.
+	NewChunk() *chunk.Chunk
+
+	// SupportChunk check if the RecordSet supports Chunk structure.
+	SupportChunk() bool
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
@@ -172,13 +181,16 @@ type Statement interface {
 	OriginText() string
 
 	// Exec executes SQL and gets a Recordset.
-	Exec(ctx context.Context) (RecordSet, error)
+	Exec(goCtx goctx.Context) (RecordSet, error)
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool
 
 	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
 	IsReadOnly() bool
+
+	// RebuildPlan rebuilds the plan of the statement.
+	RebuildPlan() error
 }
 
 // Visitor visits a Node.

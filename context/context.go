@@ -33,9 +33,6 @@ type Context interface {
 	// Txn returns the current transaction which is created before executing a statement.
 	Txn() kv.Transaction
 
-	// GoCtx returns the standard context.Context which is bound with current transaction.
-	GoCtx() goctx.Context
-
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
@@ -55,7 +52,7 @@ type Context interface {
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
 	// now just for load data and batch insert.
-	RefreshTxnCtx() error
+	RefreshTxnCtx(goctx.Context) error
 
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.

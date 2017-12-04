@@ -51,7 +51,7 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	tidb.SetSchemaLease(s.lease)
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.se, err = tidb.CreateSession(s.store)
+	s.se, err = tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(goctx.Background(), "create database test_db_state")
 	c.Assert(err, IsNil)
@@ -210,7 +210,7 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 	var err error
 	for i, info := range t.sqlInfos {
 		for j, c := range info.cases {
-			c.session, err = tidb.CreateSession(store)
+			c.session, err = tidb.CreateSession4Test(store)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -244,15 +244,16 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 }
 
 func (t *testExecInfo) compileSQL(idx int) (err error) {
-	compiler := executor.Compiler{}
 	for _, info := range t.sqlInfos {
 		c := info.cases[idx]
+		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
-		se.PrepareTxnCtx(se.GoCtx())
+		goCtx := goctx.TODO()
+		se.PrepareTxnCtx(goCtx)
 		ctx := se.(context.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
 
-		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
+		c.stmt, err = compiler.Compile(goCtx, c.rawStmt)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -263,8 +264,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
 		c := sqlInfo.cases[idx]
-		ctx := c.session.(context.Context)
-		_, err := c.stmt.Exec(ctx)
+		_, err := c.stmt.Exec(goctx.TODO())
 		if c.expectedErr != nil {
 			if err == nil {
 				err = errors.Errorf("expected error %s but got nil", c.expectedErr)
@@ -275,7 +275,7 @@ func (t *testExecInfo) execSQL(idx int) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = c.session.CommitTxn(c.session.GoCtx())
+		err = c.session.CommitTxn(goctx.TODO())
 		if err != nil {
 			return errors.Trace(err)
 		}

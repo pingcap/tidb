@@ -44,18 +44,14 @@ func (t DelRangeTask) Range() ([]byte, []byte) {
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
 func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	sql := fmt.Sprintf(loadDeleteRangeSQL, safePoint)
-	goCtx := ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
-	}
-	rss, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
+	rss, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	rs := rss[0]
 	for {
-		row, err := rs.Next()
+		row, err := rs.Next(goctx.TODO())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -84,11 +80,7 @@ func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeT
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx context.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
-	goCtx := ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
-	}
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 	return errors.Trace(err)
 }
 
@@ -97,10 +89,6 @@ func UpdateDeleteRange(ctx context.Context, dr DelRangeTask, newStartKey, oldSta
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
-	goCtx := ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
-	}
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 	return errors.Trace(err)
 }

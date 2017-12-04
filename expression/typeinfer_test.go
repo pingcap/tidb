@@ -20,10 +20,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/printer"
@@ -66,7 +66,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
@@ -140,7 +140,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
 
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmt, is)

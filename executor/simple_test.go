@@ -17,11 +17,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
@@ -137,7 +137,7 @@ func (s *testSuite) TestUser(c *C) {
 	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
 	_, err = tk.Exec(alterUserSQL)
 	c.Check(err, NotNil)
-	tk.Se, err = tidb.CreateSession(s.store)
+	tk.Se, err = tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(context.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
@@ -189,7 +189,7 @@ func (s *testSuite) TestSetPwd(c *C) {
 	// Session user is empty.
 	_, err := tk.Exec(setPwdSQL)
 	c.Check(err, NotNil)
-	tk.Se, err = tidb.CreateSession(s.store)
+	tk.Se, err = tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(context.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost"}
@@ -203,6 +203,15 @@ func (s *testSuite) TestSetPwd(c *C) {
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
 }
 
+func (s *testSuite) TestKillStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("kill 1")
+
+	result := tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+}
+
 func (s *testSuite) TestFlushPrivileges(c *C) {
 	// Global variables is really bad, when the test cases run concurrently.
 	save := privileges.Enable
@@ -214,7 +223,7 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	tk.MustExec(`UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost"`)
 
 	// Create a new session.
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil), IsTrue)
@@ -238,7 +247,7 @@ func (s *testSuite) TestDropStats(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("analyze table t")
-	do := sessionctx.GetDomain(testKit.Se)
+	do := domain.GetDomain(testKit.Se)
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)

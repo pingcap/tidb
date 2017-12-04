@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -85,7 +84,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.s, err = tidb.CreateSession(s.store)
+	s.s, err = tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	_, err = s.s.Execute(goctx.Background(), "create database test_db")
@@ -208,17 +207,17 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
-	domain := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := domain.Reload()
+	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
 	c.Assert(err, IsNil)
 	return tbl
 }
 
 func backgroundExec(s kv.Storage, sql string, done chan error) {
-	se, err := tidb.CreateSession(s)
+	se, err := tidb.CreateSession4Test(s)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
@@ -458,7 +457,7 @@ func (s *testDBSuite) testAlterLock(c *C) {
 func (s *testDBSuite) TestAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table test_add_index (c1 int, c2 int, c3 int, primary key(c1))")
+	s.tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 
 	done := make(chan error, 1)
 	start := -10
@@ -483,6 +482,11 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 			otherKeys = append(otherKeys, n)
 		}
 	}
+	// Encounter the value of math.MaxInt64 in middle of
+	v := math.MaxInt64 - defaultBatchSize/2
+	sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v)
+	s.mustExec(c, sql)
+	otherKeys = append(otherKeys, v)
 
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
@@ -771,7 +775,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
-	se, err := tidb.CreateSession(s)
+	se, err := tidb.CreateSession4Test(s)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test_db")
 	c.Assert(err, IsNil)
@@ -783,7 +787,7 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 
 func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
 	go func() {
-		se, err := tidb.CreateSession(s)
+		se, err := tidb.CreateSession4Test(s)
 		if err != nil {
 			done <- errors.Trace(err)
 			return
@@ -982,7 +986,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	// for no default flag
 	s.mustExec(c, "alter table t3 change d dd bigint not null")
 	ctx := s.tk.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
@@ -991,7 +995,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	c.Assert(hasNoDefault, IsTrue)
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
 	s.mustExec(c, "alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
@@ -1004,7 +1008,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	// for timestamp
 	s.mustExec(c, "alter table t3 add column c timestamp not null")
 	s.mustExec(c, "alter table t3 change c c timestamp null default '2017-02-11' comment 'col c comment' on update current_timestamp")
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
@@ -1038,7 +1042,7 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.mustExec(c, "insert into test_alter_column set b = 'a', c = 'aa'")
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
 	ctx := s.tk.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
@@ -1048,7 +1052,7 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.mustExec(c, "alter table test_alter_column alter column a set default 222")
 	s.mustExec(c, "insert into test_alter_column set b = 'b', c = 'bb'")
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
@@ -1058,7 +1062,7 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.mustExec(c, "alter table test_alter_column alter column b set default null")
 	s.mustExec(c, "insert into test_alter_column set c = 'cc'")
 	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
@@ -1068,7 +1072,7 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.mustExec(c, "alter table test_alter_column alter column c set default 'xx'")
 	s.mustExec(c, "insert into test_alter_column set a = 123")
 	s.tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
@@ -1164,8 +1168,8 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	tk.MustExec("create table t2 (c1 int, c2 int)")
 	tk.MustExec("insert t2 values (1, 3), (2, 5)")
 	ctx := tk.Se.(context.Context)
-	domain := sessionctx.GetDomain(ctx)
-	is := domain.InfoSchema()
+	dom := domain.GetDomain(ctx)
+	is := dom.InfoSchema()
 	db, ok := is.SchemaByName(model.NewCIStr("test"))
 	c.Assert(ok, IsTrue)
 	t1Tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -1191,7 +1195,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
 		return nil
 	})
-	err = domain.Reload()
+	err = dom.Reload()
 	c.Assert(err, IsNil)
 
 	tk.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
@@ -1207,7 +1211,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
 		return nil
 	})
-	err = domain.Reload()
+	err = dom.Reload()
 	c.Assert(err, IsNil)
 
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
@@ -1248,7 +1252,7 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("10 1"))
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	ctx := s.tk.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
@@ -1266,7 +1270,7 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk.MustExec("create table t1 like test.t")
 	s.tk.MustExec("insert into t1 set c2=11")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().ForeignKeys, IsNil)
@@ -1289,7 +1293,7 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
 	ctx := s.tk.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	cols := tbl.Cols()
@@ -1310,7 +1314,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	tk.MustExec("create table truncate_table (c1 int, c2 int)")
 	tk.MustExec("insert truncate_table values (1, 1), (2, 2)")
 	ctx := tk.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"))
 	c.Assert(err, IsNil)
 	oldTblID := oldTblInfo.Meta().ID
@@ -1320,7 +1324,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	tk.MustExec("insert truncate_table values (3, 3), (4, 4)")
 	tk.MustQuery("select * from truncate_table").Check(testkit.Rows("3 3", "4 4"))
 
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"))
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Greater, oldTblID)
@@ -1366,14 +1370,14 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	s.tk.MustExec("create table t (c1 int, c2 int)")
 	s.tk.MustExec("insert t values (1, 1), (2, 2)")
 	ctx := s.tk.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	oldTblID := oldTblInfo.Meta().ID
 	s.tk.MustExec("create database test1")
 	s.tk.MustExec("use test1")
 	s.tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
@@ -1386,7 +1390,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	// for the same database
 	s.tk.MustExec("use test1")
 	s.tk.MustExec(fmt.Sprintf(sql, "t1", "t2"))
-	is = sessionctx.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(ctx).InfoSchema()
 	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)

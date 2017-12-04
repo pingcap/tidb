@@ -20,13 +20,14 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 /***
@@ -52,7 +53,7 @@ type GrantExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *GrantExec) Next() (Row, error) {
+func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -73,13 +74,17 @@ func (e *GrantExec) Next() (Row, error) {
 				if user.AuthOpt.ByAuthString {
 					pwd = auth.EncodePassword(user.AuthOpt.AuthString)
 				} else {
-					pwd = auth.EncodePassword(user.AuthOpt.HashString)
+					if len(user.AuthOpt.HashString) == 41 && strings.HasPrefix(user.AuthOpt.HashString, "*") {
+						pwd = user.AuthOpt.HashString
+					} else {
+						return nil, errors.Trace(ErrPasswordFormat)
+					}
 				}
 			}
 
 			user := fmt.Sprintf(`("%s", "%s", "%s")`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(e.ctx.GoCtx(), sql)
+			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -122,7 +127,7 @@ func (e *GrantExec) Next() (Row, error) {
 		}
 	}
 	e.done = true
-	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil, nil
 }
 
@@ -132,7 +137,7 @@ func (e *GrantExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *GrantExec) Open() error {
+func (e *GrantExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 

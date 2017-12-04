@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	goctx "golang.org/x/net/context"
 )
 
 type keyRowBlock struct {
@@ -107,8 +108,8 @@ type IndexLookUpJoin struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *IndexLookUpJoin) Open() error {
-	if err := e.baseExecutor.Open(); err != nil {
+func (e *IndexLookUpJoin) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -152,7 +153,7 @@ func (e *IndexLookUpJoin) Close() error {
 // Step5: deduplicate "request rows" based on the join keys.
 // Step6: fetch a batch of sorted "inner rows" based on the request rows.
 // Step7: do merge join on the **sorted** outer and inner rows.
-func (e *IndexLookUpJoin) Next() (Row, error) {
+func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 	for ; e.resultCursor == len(e.resultBuffer); e.resultCursor = 0 {
 		if e.curBatchSize < e.maxBatchSize {
 			e.curBatchSize *= 2
@@ -166,7 +167,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 		e.resultBuffer = e.resultBuffer[:0:cap(e.resultBuffer)]
 
 		for i := 0; i < e.curBatchSize; i++ {
-			outerRow, err := e.outerExec.Next()
+			outerRow, err := e.outerExec.Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			} else if outerRow == nil {
@@ -262,23 +263,24 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
-	innerExec, err := e.innerExecBuilder.buildExecutorForDatums(e.ctx.GoCtx(), requestRows)
+	goCtx := goctx.TODO()
+	innerExec, err := e.innerExecBuilder.buildExecutorForDatums(goCtx, requestRows)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer terror.Call(innerExec.Close)
 
 	for {
-		innerRow, err1 := innerExec.Next()
+		innerRow, err1 := innerExec.Next(goCtx)
 		if err1 != nil {
 			return errors.Trace(err1)
 		} else if innerRow == nil {
 			break
 		}
 
-		matched, err := expression.EvalBool(e.innerFilter, innerRow, e.ctx)
-		if err != nil {
-			return errors.Trace(err)
+		matched, err2 := expression.EvalBool(e.innerFilter, innerRow, e.ctx)
+		if err2 != nil {
+			return errors.Trace(err2)
 		} else if matched {
 			e.innerOrderedRows.rows = append(e.innerOrderedRows.rows, innerRow)
 		}
@@ -288,9 +290,9 @@ func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 	innerJoinKey := e.buffer4JoinKey[:0]
 	for _, innerRow := range e.innerOrderedRows.rows {
 		for _, innerKey := range e.innerKeys {
-			innerDatum, err := innerKey.Eval(innerRow)
-			if err != nil {
-				return errors.Trace(err)
+			innerDatum, err1 := innerKey.Eval(innerRow)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 			innerJoinKey = append(innerJoinKey, innerDatum)
 		}

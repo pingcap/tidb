@@ -57,7 +57,7 @@ func (p *LogicalAggregation) buildKeyInfo() {
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (p *Selection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression) bool {
+func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression) bool {
 	col, ok := unique.(*expression.Column)
 	if !ok {
 		return false
@@ -73,7 +73,7 @@ func (p *Selection) checkMaxOneRowCond(unique expression.Expression, constOrCorC
 	return okCorCol
 }
 
-func (p *Selection) buildKeyInfo() {
+func (p *LogicalSelection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	for _, cond := range p.Conditions {
@@ -166,7 +166,7 @@ func (p *LogicalJoin) buildKeyInfo() {
 
 func (p *DataSource) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	indices, _ := availableIndices(p.indexHints, p.tableInfo)
+	indices := p.availableIndices.indices
 	for _, idx := range indices {
 		if !idx.Unique {
 			continue

@@ -540,7 +540,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
-		return cc.handleStmtExecute(data)
+		return cc.handleStmtExecute(goCtx, data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -654,7 +654,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 
 var defaultLoadDataBatchCnt = 20000
 
-func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
+func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
 	var reachLimit bool
 	for {
@@ -666,7 +666,7 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 			break
 		}
 		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.RefreshTxnCtx(); err != nil {
+		if err = loadDataInfo.Ctx.RefreshTxnCtx(goCtx); err != nil {
 			return nil, errors.Trace(err)
 		}
 		curData = prevData
@@ -677,7 +677,7 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
+func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor.LoadDataInfo) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
@@ -713,7 +713,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 				break
 			}
 		}
-		prevData, err = insertDataWithCommit(prevData, curData, loadDataInfo)
+		prevData, err = insertDataWithCommit(goCtx, prevData, curData, loadDataInfo)
 		if err != nil {
 			break
 		}
@@ -731,7 +731,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 		}
 		return errors.Trace(err)
 	}
-	return errors.Trace(txn.Commit(loadDataInfo.Ctx.GoCtx()))
+	return errors.Trace(txn.Commit(goCtx))
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
@@ -745,15 +745,15 @@ func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
 	}
 	if rs != nil {
 		if len(rs) == 1 {
-			err = cc.writeResultset(rs[0], false, false)
+			err = cc.writeResultset(goCtx, rs[0], false, false)
 		} else {
-			err = cc.writeMultiResultset(rs, false)
+			err = cc.writeMultiResultset(goCtx, rs, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			if err = cc.handleLoadData(goCtx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -788,37 +788,32 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // If binary is true, the data would be encoded in BINARY format.
 // If more is true, a flag bit would be set to indicate there are more
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
-func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error {
+func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	defer terror.Call(rs.Close)
-	// We need to call Next before we get columns.
-	// Otherwise, we will get incorrect columns info.
-	row, err := rs.Next()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	columns, err := rs.Columns()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	data := cc.alloc.AllocWithLen(4, 1024)
-	data = dumpLengthEncodedInt(data, uint64(len(columns)))
-	if err = cc.writePacket(data); err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, v := range columns {
-		data = data[0:4]
-		data = v.Dump(data)
-		if err = cc.writePacket(data); err != nil {
+	if cc.server.cfg.EnableChunk && rs.SupportChunk() {
+		columns := rs.Columns()
+		err := cc.writeColumnInfo(columns)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		err = cc.writeChunks(rs, binary, more)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(cc.flush())
 	}
-
-	if err = cc.writeEOF(false); err != nil {
+	// We need to call Next before we get columns.
+	// Otherwise, we will get incorrect columns info.
+	row, err := rs.Next(goCtx)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	columns := rs.Columns()
+	err = cc.writeColumnInfo(columns)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	data := make([]byte, 4, 1024)
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -842,7 +837,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		if err = cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
-		row, err = rs.Next()
+		row, err = rs.Next(goCtx)
 	}
 
 	err = cc.writeEOF(more)
@@ -853,9 +848,58 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
+	data := make([]byte, 4, 1024)
+	data = dumpLengthEncodedInt(data, uint64(len(columns)))
+	if err := cc.writePacket(data); err != nil {
+		return errors.Trace(err)
+	}
+	for _, v := range columns {
+		data = data[0:4]
+		data = v.Dump(data)
+		if err := cc.writePacket(data); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := cc.writeEOF(false); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
+	data := make([]byte, 4, 1024)
+	chk := rs.NewChunk()
+	for {
+		err := rs.NextChunk(chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rowCount := chk.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		for i := 0; i < rowCount; i++ {
+			data = data[0:4]
+			if binary {
+				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
+			} else {
+				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err = cc.writePacket(data); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return errors.Trace(cc.writeEOF(more))
+}
+
+func (cc *clientConn) writeMultiResultset(goCtx goctx.Context, rss []ResultSet, binary bool) error {
 	for _, rs := range rss {
-		if err := cc.writeResultset(rs, binary, true); err != nil {
+		if err := cc.writeResultset(goCtx, rs, binary, true); err != nil {
 			return errors.Trace(err)
 		}
 	}

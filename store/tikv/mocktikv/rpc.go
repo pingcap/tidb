@@ -25,8 +25,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
+
+// For gofail injection.
+var undeterminedErr = terror.ErrResultUndetermined
 
 const requestMaxSize = 8 * 1024 * 1024
 
@@ -71,7 +75,7 @@ func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
 }
 
 func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
-	var kvPairs []*kvrpcpb.KvPair
+	kvPairs := make([]*kvrpcpb.KvPair, 0, len(pairs))
 	for _, p := range pairs {
 		var kvPair *kvrpcpb.KvPair
 		if p.Err == nil {
@@ -109,7 +113,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil && ctxPeer.GetStoreId() != h.storeID {
 		return &errorpb.Error{
-			Message:       proto.String("store not match"),
+			Message:       *proto.String("store not match"),
 			StoreNotMatch: &errorpb.StoreNotMatch{},
 		}
 	}
@@ -117,9 +121,9 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	// No region found.
 	if region == nil {
 		return &errorpb.Error{
-			Message: proto.String("region not found"),
+			Message: *proto.String("region not found"),
 			RegionNotFound: &errorpb.RegionNotFound{
-				RegionId: proto.Uint64(ctx.GetRegionId()),
+				RegionId: *proto.Uint64(ctx.GetRegionId()),
 			},
 		}
 	}
@@ -135,27 +139,27 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	// The Store does not contain a Peer of the Region.
 	if storePeer == nil {
 		return &errorpb.Error{
-			Message: proto.String("region not found"),
+			Message: *proto.String("region not found"),
 			RegionNotFound: &errorpb.RegionNotFound{
-				RegionId: proto.Uint64(ctx.GetRegionId()),
+				RegionId: *proto.Uint64(ctx.GetRegionId()),
 			},
 		}
 	}
 	// No leader.
 	if leaderPeer == nil {
 		return &errorpb.Error{
-			Message: proto.String("no leader"),
+			Message: *proto.String("no leader"),
 			NotLeader: &errorpb.NotLeader{
-				RegionId: proto.Uint64(ctx.GetRegionId()),
+				RegionId: *proto.Uint64(ctx.GetRegionId()),
 			},
 		}
 	}
 	// The Peer on the Store is not leader.
 	if storePeer.GetId() != leaderPeer.GetId() {
 		return &errorpb.Error{
-			Message: proto.String("not leader"),
+			Message: *proto.String("not leader"),
 			NotLeader: &errorpb.NotLeader{
-				RegionId: proto.Uint64(ctx.GetRegionId()),
+				RegionId: *proto.Uint64(ctx.GetRegionId()),
 				Leader:   leaderPeer,
 			},
 		}
@@ -168,7 +172,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			newRegions = append(newRegions, nextRegion)
 		}
 		return &errorpb.Error{
-			Message: proto.String("stale epoch"),
+			Message: *proto.String("stale epoch"),
 			StaleEpoch: &errorpb.StaleEpoch{
 				NewRegions: newRegions,
 			},
@@ -181,7 +185,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 
 func (h *rpcHandler) checkRequestSize(size int) *errorpb.Error {
 	// TiKV has a limitation on raft log size.
-	// mock-tikv has no raft inside, so we check the request's size instead.
+	// mocktikv has no raft inside, so we check the request's size instead.
 	if size >= requestMaxSize {
 		return &errorpb.Error{
 			RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{},
@@ -387,7 +391,7 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 		errStr := "not implemented"
 		return &kvrpcpb.RawScanResponse{
 			RegionError: &errorpb.Error{
-				Message: &errStr,
+				Message: errStr,
 			},
 		}
 	}
@@ -458,6 +462,10 @@ func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) (*rpcHandler, erro
 
 // SendReq sends a request to mock cluster.
 func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	// gofail: var rpcServerBusy bool
+	// if rpcServerBusy {
+	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
+	// }
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
 		return nil, err
@@ -489,12 +497,31 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		}
 		resp.Prewrite = handler.handleKvPrewrite(r)
 	case tikvrpc.CmdCommit:
+		// gofail: var rpcCommitResult string
+		// switch rpcCommitResult {
+		// case "timeout":
+		// 	return nil, errors.New("timeout")
+		// case "notLeader":
+		// 	return &tikvrpc.Response{
+		// 		Type:   tikvrpc.CmdCommit,
+		// 		Commit: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+		// 	}, nil
+		// case "keyError":
+		// 	return &tikvrpc.Response{
+		// 		Type:   tikvrpc.CmdCommit,
+		// 		Commit: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
+		// 	}, nil
+		// }
 		r := req.Commit
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Commit = &kvrpcpb.CommitResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.Commit = handler.handleKvCommit(r)
+		// gofail: var rpcCommitTimeout bool
+		// if rpcCommitTimeout {
+		//	return nil, undeterminedErr
+		// }
 	case tikvrpc.CmdCleanup:
 		r := req.Cleanup
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

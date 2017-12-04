@@ -16,17 +16,20 @@ package server
 import (
 	"bytes"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -268,6 +271,17 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
 		c.Assert(bytes.Equal(v1, expect.Value), IsTrue)
 		c.Assert(bytes.Equal(v2, expect.Value), IsTrue)
 	}
+
+	_, key, err := codec.DecodeBytes(p1.Key)
+	c.Assert(err, IsNil)
+	hexKey := hex.EncodeToString(key)
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/hex/" + hexKey)
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data2 kvrpcpb.MvccGetByKeyResponse
+	err = decoder.Decode(&data2)
+	c.Assert(err, IsNil)
+	c.Assert(data2, DeepEquals, data)
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
@@ -289,4 +303,61 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
 	err = decoder.Decode(&p)
 	c.Assert(err, IsNil)
 	c.Assert(p.Info, IsNil)
+}
+
+func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var dbs []*model.DBInfo
+	err = decoder.Decode(&dbs)
+	c.Assert(err, IsNil)
+	expects := []string{"information_schema", "mysql", "performance_schema", "test", "tidb"}
+	names := make([]string, len(dbs))
+	for i, v := range dbs {
+		names[i] = v.Name.L
+	}
+	sort.Strings(names)
+	c.Assert(names, DeepEquals, expects)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=5"))
+	c.Assert(err, IsNil)
+	var t *model.TableInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&t)
+	c.Assert(err, IsNil)
+	c.Assert(t.Name.L, Equals, "user")
+
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=a"))
+	c.Assert(err, IsNil)
+
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=1"))
+	c.Assert(err, IsNil)
+
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema?table_id=-1"))
+	c.Assert(err, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb"))
+	c.Assert(err, IsNil)
+	var lt []*model.TableInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&lt)
+	c.Assert(err, IsNil)
+	c.Assert(lt[0].Name.L, Equals, "test")
+
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/abc"))
+	c.Assert(err, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/test"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&t)
+	c.Assert(err, IsNil)
+	c.Assert(t.Name.L, Equals, "test")
+
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/abc"))
+	c.Assert(err, IsNil)
 }

@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -40,12 +42,15 @@ var (
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
 // `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table, onDup bool) (bool, error) {
+// ignoreErr indicate that update statement has the `IGNORE` modifier, in this situation, update statement will not update
+// the keys which cause duplicate conflicts and ignore the error.
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table, onDup, ignoreErr bool) (bool, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
 	var onUpdateSpecified = make(map[int]bool)
+	var newHandle int64
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
@@ -69,7 +74,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			if errTI != nil {
 				return false, errors.Trace(errTI)
 			}
-			err := t.RebaseAutoID(val, true)
+			err := t.RebaseAutoID(ctx, val, true)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -83,6 +88,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			modified[i] = true
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
+				newHandle = newData[i].GetInt64()
 			}
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
@@ -115,15 +121,24 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 				return false, errors.Trace(errGT)
 			}
 			newData[i] = v
+			modified[i] = true
 		}
 	}
 
 	if handleChanged {
-		_, err = t.AddRecord(ctx, newData)
+		skipHandleCheck := false
+		if ignoreErr {
+			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
+			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
+				return false, errors.Trace(err)
+			}
+			skipHandleCheck = true
+		}
+		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		err = t.RemoveRecord(ctx, h, oldData)
+		_, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
@@ -157,16 +172,17 @@ type DeleteExec struct {
 	Tables       []*ast.TableName
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
+	// tblMap is the table map value is an array which contains table aliases.
 	// Table ID may not be unique for deleting multiple tables, for statements like
 	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
-	// by its alias instead of ID, so the table map value is an array which contains table aliases.
+	// by its alias instead of ID.
 	tblMap map[int64][]*ast.TableName
 
 	finished bool
 }
 
 // Next implements the Executor Next interface.
-func (e *DeleteExec) Next() (Row, error) {
+func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -175,9 +191,9 @@ func (e *DeleteExec) Next() (Row, error) {
 	}()
 
 	if e.IsMultiTable {
-		return nil, e.deleteMultiTables()
+		return nil, e.deleteMultiTables(goCtx)
 	}
-	return nil, e.deleteSingleTable()
+	return nil, e.deleteSingleTable(goCtx)
 }
 
 type tblColPosInfo struct {
@@ -187,7 +203,7 @@ type tblColPosInfo struct {
 	handleIndex   int
 }
 
-func (e *DeleteExec) deleteMultiTables() error {
+func (e *DeleteExec) deleteMultiTables(goCtx goctx.Context) error {
 	if len(e.Tables) == 0 {
 		return nil
 	}
@@ -213,7 +229,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 	// Map for unique (Table, Row) pair.
 	tblRowMap := make(map[int64]map[int64][]types.Datum)
 	for {
-		joinedRow, err := e.SelectExec.Next()
+		joinedRow, err := e.SelectExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -254,7 +270,7 @@ func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column
 	return false
 }
 
-func (e *DeleteExec) deleteSingleTable() error {
+func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	var (
 		id        int64
 		tbl       table.Table
@@ -276,7 +292,7 @@ func (e *DeleteExec) deleteSingleTable() error {
 			}
 			rowCount = 0
 		}
-		row, err := e.SelectExec.Next()
+		row, err := e.SelectExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -314,8 +330,8 @@ func (e *DeleteExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *DeleteExec) Open() error {
-	return e.SelectExec.Open()
+func (e *DeleteExec) Open(goCtx goctx.Context) error {
+	return e.SelectExec.Open(goCtx)
 }
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
@@ -582,7 +598,7 @@ func (e *LoadDataInfo) insertData(cols []string) {
 		e.insertVal.handleLoadDataWarnings(err, warnLog)
 		return
 	}
-	_, err = e.Table.AddRecord(e.insertVal.ctx, row)
+	_, err = e.Table.AddRecord(e.insertVal.ctx, row, false)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
 		e.insertVal.handleLoadDataWarnings(err, warnLog)
@@ -615,7 +631,7 @@ func (k loadDataVarKeyType) String() string {
 const LoadDataVarKey loadDataVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *LoadData) Next() (Row, error) {
+func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return nil, errors.New("Load Data: don't support load data without local field")
@@ -645,7 +661,7 @@ func (e *LoadData) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *LoadData) Open() error {
+func (e *LoadData) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -691,7 +707,7 @@ var BatchInsertSize = 20000
 var BatchDeleteSize = 20000
 
 // Next implements the Executor Next interface.
-func (e *InsertExec) Next() (Row, error) {
+func (e *InsertExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -702,7 +718,7 @@ func (e *InsertExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols, e.IgnoreErr)
+		rows, err = e.getRowsSelect(goCtx, cols, e.IgnoreErr)
 	} else {
 		rows, err = e.getRows(cols, e.IgnoreErr)
 	}
@@ -727,7 +743,7 @@ func (e *InsertExec) Next() (Row, error) {
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
-		h, err := e.Table.AddRecord(e.ctx, row)
+		h, err := e.Table.AddRecord(e.ctx, row, false)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
@@ -771,9 +787,9 @@ func (e *InsertExec) Close() error {
 }
 
 // Open implements the Executor Close interface.
-func (e *InsertExec) Open() error {
+func (e *InsertExec) Open(goCtx goctx.Context) error {
 	if e.SelectExec != nil {
-		return e.SelectExec.Open()
+		return e.SelectExec.Open(goCtx)
 	}
 	return nil
 }
@@ -952,14 +968,14 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ign
 	return nil
 }
 
-func (e *InsertValues) getRowsSelect(cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelect(goCtx goctx.Context, cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if e.SelectExec.Schema().Len() != len(cols) {
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
 	var rows [][]types.Datum
 	for {
-		innerRow, err := e.SelectExec.Next()
+		innerRow, err := e.SelectExec.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1094,7 +1110,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.RebaseAutoID(recordID, true)
+		err = e.Table.RebaseAutoID(e.ctx, recordID, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1111,7 +1127,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		recordID, err = e.Table.AllocAutoID()
+		recordID, err = e.Table.AllocAutoID(e.ctx)
 		if e.filterErr(errors.Trace(err), ignoreErr) != nil {
 			return errors.Trace(err)
 		}
@@ -1153,7 +1169,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	if _, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
+	if _, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true, false); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1175,15 +1191,15 @@ func (e *ReplaceExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *ReplaceExec) Open() error {
+func (e *ReplaceExec) Open(goCtx goctx.Context) error {
 	if e.SelectExec != nil {
-		return e.SelectExec.Open()
+		return e.SelectExec.Open(goCtx)
 	}
 	return nil
 }
 
 // Next implements the Executor Next interface.
-func (e *ReplaceExec) Next() (Row, error) {
+func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -1194,7 +1210,7 @@ func (e *ReplaceExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols, false)
+		rows, err = e.getRowsSelect(goCtx, cols, false)
 	} else {
 		rows, err = e.getRows(cols, false)
 	}
@@ -1222,7 +1238,7 @@ func (e *ReplaceExec) Next() (Row, error) {
 			break
 		}
 		row := rows[idx]
-		h, err1 := e.Table.AddRecord(e.ctx, row)
+		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
 			idx++
@@ -1280,9 +1296,9 @@ type UpdateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next() (Row, error) {
+func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.fetched {
-		err := e.fetchRows()
+		err := e.fetchRows(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1319,7 +1335,7 @@ func (e *UpdateExec) Next() (Row, error) {
 				continue
 			}
 			// Update row
-			changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+			changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, e.IgnoreErr)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}
@@ -1342,16 +1358,14 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range assignList {
 		idx := v.Col.Index
-		if v != nil {
-			assignFlag[idx] = true
-		}
+		assignFlag[idx] = true
 	}
 	return assignFlag, nil
 }
 
-func (e *UpdateExec) fetchRows() error {
+func (e *UpdateExec) fetchRows(goCtx goctx.Context) error {
 	for {
-		row, err := e.SelectExec.Next()
+		row, err := e.SelectExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1386,6 +1400,6 @@ func (e *UpdateExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *UpdateExec) Open() error {
-	return e.SelectExec.Open()
+func (e *UpdateExec) Open(goCtx goctx.Context) error {
+	return e.SelectExec.Open(goCtx)
 }

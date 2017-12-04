@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -60,7 +61,13 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d, err1 = domain.NewDomain(store, ddlLease, statisticLease, factory, sysFactory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
+		err1 = d.Init(ddlLease, sysFactory)
+		if err1 != nil {
+			// If we don't clean it, there are some dirty data when retrying the function of Init.
+			d.Close()
+			log.Errorf("[ddl] init domain failed %v", errors.ErrorStack(errors.Trace(err1)))
+		}
 		return true, errors.Trace(err1)
 	})
 	if err != nil {
@@ -136,22 +143,22 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
-	compiler := executor.Compiler{}
-	stmt, err := compiler.Compile(ctx, stmtNode)
+func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
+	compiler := executor.Compiler{Ctx: ctx}
+	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
-	span, ctx1 := opentracing.StartSpanFromContext(ctx.GoCtx(), "runStmt")
+func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
+	span, ctx1 := opentracing.StartSpanFromContext(goCtx, "runStmt")
 	span.LogKV("sql", s.OriginText())
 	defer span.Finish()
 
 	var err error
 	var rs ast.RecordSet
 	se := ctx.(*session)
-	rs, err = s.Exec(ctx)
+	rs, err = s.Exec(goCtx)
 	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
@@ -178,23 +185,38 @@ func GetHistory(ctx context.Context) *StmtHistory {
 	return hist
 }
 
-// GetRows gets all the rows from a RecordSet.
-func GetRows(rs ast.RecordSet) ([]types.Row, error) {
+// GetRows4Test gets all the rows from a RecordSet, only used for test.
+func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
 	var rows []types.Row
-	defer terror.Call(rs.Close)
-	// Negative limit means no limit.
-	for {
-		row, err := rs.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
+	if rs.SupportChunk() {
+		for {
+			// Since we collect all the rows, we can not reuse the chunk.
+			chk := rs.NewChunk()
+			err := rs.NextChunk(chk)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			for row := chk.Begin(); row != chk.End(); row = row.Next() {
+				rows = append(rows, row)
+			}
 		}
-		if row == nil {
-			break
+	} else {
+		for {
+			row, err := rs.Next(goCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if row == nil {
+				break
+			}
+			rows = append(rows, row)
 		}
-		rows = append(rows, row)
 	}
 	return rows, nil
 }
