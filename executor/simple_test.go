@@ -203,6 +203,15 @@ func (s *testSuite) TestSetPwd(c *C) {
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
 }
 
+func (s *testSuite) TestKillStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("kill 1")
+
+	result := tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+}
+
 func (s *testSuite) TestFlushPrivileges(c *C) {
 	// Global variables is really bad, when the test cases run concurrently.
 	save := privileges.Enable
