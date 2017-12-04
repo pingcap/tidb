@@ -139,14 +139,16 @@ func (e *HashAggExec) innerNext(goCtx goctx.Context) (ret bool, err error) {
 }
 
 func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
-	groupKeyString := string(groupKey)
-	aggCtxs, ok := e.aggCtxsMap[groupKeyString]
+	// Use string(groupKey) as map key, because Go compiler plays a trick that
+	// map[string(bytes)] make no byte to string conversion, while
+	// key := string(bytes); map[key] does allocate a new string object.
+	aggCtxs, ok := e.aggCtxsMap[string(groupKey)]
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 		for _, af := range e.AggFuncs {
 			aggCtxs = append(aggCtxs, af.CreateContext())
 		}
-		e.aggCtxsMap[groupKeyString] = aggCtxs
+		e.aggCtxsMap[string(groupKey)] = aggCtxs
 	}
 	return aggCtxs
 }
