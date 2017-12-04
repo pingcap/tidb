@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -82,36 +81,6 @@ func (s *testStoreSuite) TestOracle(c *C) {
 		c.Assert(t2, Less, t3)
 		expired := s.store.oracle.IsExpired(t2, 50)
 		c.Assert(expired, IsTrue)
-	}()
-
-	wg.Wait()
-}
-
-func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	err = txn.Set([]byte("key"), []byte("value"))
-	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
-	c.Assert(err, IsNil)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy", `return(true)`)
-	go func() {
-		defer wg.Done()
-		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy")
-	}()
-
-	go func() {
-		defer wg.Done()
-		txn, err := s.store.Begin()
-		c.Assert(err, IsNil)
-		val, err := txn.Get([]byte("key"))
-		c.Assert(err, IsNil)
-		c.Assert(val, BytesEquals, []byte("value"))
 	}()
 
 	wg.Wait()
