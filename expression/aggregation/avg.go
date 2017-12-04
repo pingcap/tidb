@@ -37,13 +37,15 @@ func (af *avgFunction) Clone() Aggregation {
 // GetType implements Aggregation interface.
 func (af *avgFunction) GetType() *types.FieldType {
 	var ft *types.FieldType
-	if af.Args[0].GetType().Tp == mysql.TypeFloat || af.Args[0].GetType().Tp == mysql.TypeDouble {
+	tp := af.Args[0].GetType().Tp
+	if tp == mysql.TypeFloat || tp == mysql.TypeDouble {
 		ft = types.NewFieldType(mysql.TypeDouble)
-		ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
+		ft.Decimal = af.Args[0].GetType().Decimal
 	} else {
 		ft = types.NewFieldType(mysql.TypeNewDecimal)
-		ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal+types.DivFracIncr
+		ft.Decimal = af.Args[0].GetType().Decimal + types.DivFracIncr
 	}
+	ft.Flen = mysql.MaxRealWidth
 	types.SetBinChsClnFlag(ft)
 	return ft
 }
