@@ -68,44 +68,6 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
-// convert2NewPhysicalPlan implements PhysicalPlan interface.
-// If this sort is a topN plan, we will try to push the sort down and leave the limit.
-// TODO: If this is a sort plan and the coming prop is not nil, this plan is redundant and can be removed.
-func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	t := p.getTask(prop)
-	if t != nil {
-		return t, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// TODO: This is a trick here, because an operator that can be pushed to Coprocessor can never be pushed across sort.
-		// e.g. If an aggregation want to be pushed, the SQL is always like select count(*) from t order by ...
-		// The Sort will on top of Aggregation. If the SQL is like select count(*) from (select * from s order by k).
-		// The Aggregation will also be blocked by projection. In the future we will break this restriction.
-		p.storeTask(prop, invalidTask)
-		return invalidTask, nil
-	}
-	// enforce branch
-	t, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	t = p.attach2Task(t)
-	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
-	if canPassProp {
-		newProp.expectedCnt = prop.expectedCnt
-		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if orderedTask.cost() < t.cost() {
-			t = orderedTask
-		}
-	}
-	t = prop.enforceProperty(t, p.ctx)
-	p.storeTask(prop, t)
-	return t, nil
-}
-
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
 	// look up the task map

@@ -141,9 +141,14 @@ func (p Union) init(ctx context.Context) *Union {
 	return &p
 }
 
-func (p Sort) init(ctx context.Context) *Sort {
+func (p LogicalSort) init(ctx context.Context) *LogicalSort {
 	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalSort) init(ctx context.Context) *PhysicalSort {
+	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
