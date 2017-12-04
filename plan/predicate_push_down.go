@@ -34,8 +34,8 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression)
 	selection.SetSchema(child.Schema().Clone())
 	replaceChild(p, child, selection)
 	selection.SetChildren(child)
-	child.SetParents(selection)
-	selection.SetParents(p)
+	child.SetParent(selection)
+	selection.SetParent(p)
 }
 
 // PredicatePushDown implements LogicalPlan interface.
@@ -88,10 +88,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		e := joinReOrderSolver{ctx: p.ctx}
 		e.reorderJoin(groups, predicates)
 		newJoin := e.resultJoin
-		if len(p.parents) > 0 {
-			parent := p.parents[0]
-			newJoin.SetParents(parent)
-			replaceChild(parent, p, newJoin)
+		if p.parent != nil {
+			newJoin.SetParent(p.parent)
+			replaceChild(p.parent, p, newJoin)
 		}
 		return newJoin.PredicatePushDown(predicates)
 	}
@@ -221,7 +220,7 @@ func (p *LogicalJoin) getProj(idx int) *Projection {
 	}
 	proj.SetSchema(child.Schema().Clone())
 	setParentAndChildren(proj, child)
-	proj.SetParents(p)
+	proj.SetParent(p)
 	p.children[idx] = proj
 	return proj
 }

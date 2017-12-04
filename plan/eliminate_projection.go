@@ -158,7 +158,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	if !(isProj && canEliminate && canProjectionBeEliminatedLoose(proj)) {
 		return p
 	}
-	if join, ok := p.Parents()[0].(*LogicalJoin); ok {
+	if join, ok := p.Parent().(*LogicalJoin); ok {
 		pe.resetDefaultValues(join, p)
 	}
 	exprs := proj.Exprs

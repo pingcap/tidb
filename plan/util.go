@@ -61,21 +61,21 @@ func setParentAndChildren(parent Plan, children ...Plan) {
 		return
 	}
 	for _, child := range children {
-		child.SetParents(parent)
+		child.SetParent(parent)
 	}
 	parent.SetChildren(children...)
 }
 
 // removePlan removes a plan from its parent and child.
 func removePlan(p Plan) {
-	parents := p.Parents()
+	parent := p.Parent()
 	children := p.Children()
-	if len(parents) == 0 {
+	if parent == nil {
 		child := children[0]
-		child.SetParents()
+		child.SetParent(nil)
 		return
 	}
-	parent, child := parents[0], children[0]
+	child := children[0]
 	replaceChild(parent, p, child)
-	child.SetParents(parent)
+	child.SetParent(parent)
 }

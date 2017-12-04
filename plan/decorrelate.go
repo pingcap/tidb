@@ -91,8 +91,8 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 		if len(apply.corCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
-			innerPlan.SetParents(join)
-			outerPlan.SetParents(join)
+			innerPlan.SetParent(join)
+			outerPlan.SetParent(join)
 			join.self = join
 			p = join
 		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
@@ -123,7 +123,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				proj.SetParents(apply.Parents()...)
+				proj.SetParent(apply.Parent())
 				np, err := s.optimize(p, nil)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -147,7 +147,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
 				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				agg.SetParents(apply.Parents()...)
+				agg.SetParent(apply.Parent())
 				np, err := s.optimize(p, nil)
 				if err != nil {
 					return nil, errors.Trace(err)
