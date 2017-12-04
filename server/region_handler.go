@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -33,10 +35,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	tjson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
 )
@@ -44,6 +49,7 @@ import (
 const (
 	pDBName    = "db"
 	pHexKey    = "hexKey"
+	pIndexName = "index"
 	pRecordID  = "recordID"
 	pRegionID  = "regionID"
 	pStartTS   = "startTS"
@@ -92,9 +98,10 @@ type mvccTxnHandler struct {
 }
 
 const (
-	opMvccGetByKey = "key"
-	opMvccGetByTxn = "txn"
 	opMvccGetByHex = "hex"
+	opMvccGetByKey = "key"
+	opMvccGetByIdx = "idx"
+	opMvccGetByTxn = "txn"
 )
 
 // newRegionHandler checks and prepares for region handler.
@@ -578,18 +585,51 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var data interface{}
 	params := mux.Vars(req)
 	var err error
-	if rh.op == opMvccGetByKey {
-		data, err = rh.handleMvccGetByKey(params)
-	} else if rh.op == opMvccGetByTxn {
-		data, err = rh.handleMvccGetByTxn(params)
-	} else {
+	switch rh.op {
+	case opMvccGetByHex:
 		data, err = rh.handleMvccGetByHex(params)
+	case opMvccGetByIdx:
+		data, err = rh.handleMvccGetByIdx(params, req.Form)
+	case opMvccGetByKey:
+		data, err = rh.handleMvccGetByKey(params)
+	case opMvccGetByTxn:
+		data, err = rh.handleMvccGetByTxn(params)
+	default:
+		rh.writeError(w, errors.NotSupportedf("Operation not supported."))
+		return
 	}
 	if err != nil {
 		rh.writeError(w, err)
 	} else {
 		rh.writeData(w, data)
 	}
+}
+
+func (rh mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
+	schema, err := rh.schema()
+	dbName := params[pDBName]
+	tableName := params[pTableName]
+	if err != nil {
+		return nil, err
+	}
+	// get table's schema.
+	table, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return nil, err
+	}
+	tableID := table.Meta().ID
+	var indexID int64
+	var idxCols []*model.ColumnInfo
+	for _, v := range table.Indices() {
+		if strings.EqualFold(v.Meta().Name.String(), params[pIndexName]) {
+			indexID = v.Meta().ID
+			for _, c := range v.Meta().Columns {
+				idxCols = append(idxCols, table.Meta().Columns[c.Offset])
+			}
+			break
+		}
+	}
+	return rh.getMvccByIdxValue(tableID, indexID, values, idxCols)
 }
 
 func (rh mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
@@ -623,6 +663,150 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	}
 	return rh.getMvccByStartTs(uint64(startTS), startKey, endKey)
+}
+
+func (t *regionHandlerTool) getMvccByIdxValue(tableID, indexID int64, values url.Values, idxCols []*model.ColumnInfo) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	idxRow, err := t.formValue2DatumRow(values, idxCols)
+	if err != nil {
+		return nil, err
+	}
+	valKey, err := codec.EncodeKey(nil, idxRow...)
+	if err != nil {
+		return nil, err
+	}
+	encodeKey := tablecodec.EncodeIndexSeekKey(tableID, indexID, valKey)
+	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
+	if err != nil {
+		return nil, err
+	}
+
+	tikvReq := &tikvrpc.Request{
+		Type: tikvrpc.CmdMvccGetByKey,
+		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
+			Key: encodeKey,
+		},
+	}
+	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
+	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
+
+	if err != nil {
+		return nil, err
+	}
+	return kvResp.MvccGetByKey, nil
+}
+
+func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+	data := make([]types.Datum, len(idxCols))
+	for i, col := range idxCols {
+		var d types.Datum
+		vals, ok := values[col.Name.String()]
+		if !ok {
+			return nil, errInvalidSequence
+		}
+		val := vals[0]
+		switch col.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			if len(val) > 0 {
+				if mysql.HasUnsignedFlag(col.Flag) {
+					elem, err := strconv.ParseUint(val, 10, 64)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					d.SetUint64(elem)
+				} else {
+					elem, err := strconv.ParseInt(val, 10, 64)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					d.SetInt64(elem)
+				}
+			}
+		case mysql.TypeFloat:
+			if len(val) > 0 {
+				elem, err := strconv.ParseFloat(val, 32)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				d.SetFloat32(float32(elem))
+			}
+		case mysql.TypeDouble:
+			if len(val) > 0 {
+				elem, err := strconv.ParseFloat(val, 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				d.SetFloat64(elem)
+			}
+		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			if len(val) > 0 {
+				d.SetBytes([]byte(val))
+			}
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			if len(val) > 0 {
+				elem, err := types.ParseTime(nil, val, col.Tp, col.Decimal)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				d.SetMysqlTime(elem)
+			}
+		case mysql.TypeDuration:
+			if len(val) > 0 {
+				elem, err := types.ParseDuration(val, col.Decimal)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				d.SetMysqlDuration(elem)
+			}
+		case mysql.TypeNewDecimal:
+			if len(val) > 0 {
+				var elem types.MyDecimal
+				err := elem.FromString([]byte(val))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				d.SetMysqlDecimal(&elem)
+			}
+		case mysql.TypeEnum:
+			if len(val) > 0 {
+				num, err := strconv.ParseUint(val, 10, 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				elem, err := types.ParseEnumValue(col.Elems, num)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				d.SetMysqlEnum(elem)
+			}
+		case mysql.TypeSet:
+			if len(val) > 0 {
+				num, err := strconv.ParseUint(val, 10, 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				elem, err := types.ParseSetValue(col.Elems, num)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				d.SetMysqlSet(elem)
+			}
+		case mysql.TypeBit:
+			if len(val) > 0 {
+				d.SetMysqlBit([]byte(val))
+			}
+		case mysql.TypeJSON:
+			if len(val) > 0 {
+				elem, err := tjson.ParseFromString(val)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				d.SetMysqlJSON(elem)
+			}
+		}
+		data[i] = d
+	}
+	return data, nil
 }
 
 func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
