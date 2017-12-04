@@ -114,11 +114,8 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
 else
 	@echo "Running in native mode."
-	go get github.com/coreos/gofail
-	@$(GOFAIL_ENABLE)
 	@export log_level=error; \
-	$(GOTEST) -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
-	@$(GOFAIL_DISABLE)
+	$(GOTEST) -cover $(PACKAGES)
 endif
 
 race: parserlib
@@ -128,6 +125,13 @@ race: parserlib
 leak: parserlib
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES)
+
+gofail: parserlib
+	go get github.com/coreos/gofail
+	@$(GOFAIL_ENABLE)
+	@export log_level=debug; \
+	$(GOTEST) -tags gofail $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
+	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true
