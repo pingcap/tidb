@@ -10,8 +10,9 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build gofail
 
-package tikv_test
+package tikv
 
 import (
 	"sync"
@@ -19,26 +20,15 @@ import (
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/store/tikv"
 	goctx "golang.org/x/net/context"
 )
 
-var _ = Suite(new(testSQLSuite))
-
-type testSQLSuite struct {
-	store tikv.Storage
-}
-
-func (s *testSQLSuite) SetUpSuite(c *C) {
-	s.store, _ = tikv.NewTestTiKVStorage(false, "")
-}
-
-func (s *testSQLSuite) TestBusyServerCop(c *C) {
-	_, err := tidb.BootstrapSession(s.store)
+func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-
-	session, err := tidb.CreateSession4Test(s.store)
+	err = txn.Set([]byte("key"), []byte("value"))
+	c.Assert(err, IsNil)
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
@@ -53,12 +43,11 @@ func (s *testSQLSuite) TestBusyServerCop(c *C) {
 
 	go func() {
 		defer wg.Done()
-		rs, err := session.Execute(goctx.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		row, err := rs[0].Next(goctx.Background())
+		val, err := txn.Get([]byte("key"))
 		c.Assert(err, IsNil)
-		c.Assert(row, NotNil)
-		c.Assert(row.GetString(0), Equals, "True")
+		c.Assert(val, BytesEquals, []byte("value"))
 	}()
 
 	wg.Wait()
