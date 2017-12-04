@@ -599,11 +599,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if s.Value(context.Initing) != nil {
 		return nil, nil
 	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME in (`
-	for _, v := range variable.SysVars {
-		sql += `"` + v.Name + `",`
-	}
-	sql += `false);`
+	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
 	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
 	rows, _, err := s.ExecRestrictedSQL(s, sql)
 	if err != nil {
