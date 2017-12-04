@@ -270,8 +270,22 @@ func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 }
 
 func (b *executorBuilder) buildShow(v *plan.Show) Executor {
+	var (
+		childExec Executor
+		baseExec  baseExecutor
+	)
+	if len(v.Children()) != 0 {
+		childExec = b.build(v.Children()[0])
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
+		baseExec = newBaseExecutor(v.Schema(), b.ctx, childExec)
+	} else {
+		baseExec = newBaseExecutor(v.Schema(), b.ctx)
+	}
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: baseExec,
 		Tp:           v.Tp,
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,

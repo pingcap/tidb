@@ -62,7 +62,7 @@ type ShowExec struct {
 // Next implements Execution Next interface.
 func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.rows == nil {
-		err := e.fetchAll()
+		err := e.fetchAll(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -87,7 +87,7 @@ func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	return row, nil
 }
 
-func (e *ShowExec) fetchAll() error {
+func (e *ShowExec) fetchAll(goCtx goctx.Context) error {
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
@@ -118,7 +118,7 @@ func (e *ShowExec) fetchAll() error {
 	case ast.ShowTriggers:
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
-		return e.fetchShowVariables()
+		return e.fetchShowVariables(goCtx)
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings()
 	case ast.ShowProcessList:
@@ -370,19 +370,43 @@ func (e *ShowExec) fetchShowCharset() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() error {
+func (e *ShowExec) fetchShowVariables(goCtx goctx.Context) error {
+	systemVars := make(map[string]string)
+	for {
+		row, err := e.children[0].Next(goCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		systemVars[row[0].GetString()] = row[1].GetString()
+	}
 	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
-		var err error
-		var value string
+		var (
+			value string
+			ok    bool
+			err   error
+		)
 		if !e.GlobalScope {
-			// Try to get Session Scope variable value first.
-			value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
+			value, ok, err = varsutil.GetSessionOnlySysVars(sessionVars, v.Name)
 		} else {
-			value, err = varsutil.GetGlobalSystemVar(sessionVars, v.Name)
+			value, ok, err = varsutil.CheckGlobalSystemVar(sessionVars, v.Name)
 		}
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if !ok {
+			value, ok = systemVars[v.Name]
+			if !ok {
+				sv, ok2 := variable.SysVars[v.Name]
+				isUninitializedGlobalVariable := ok2 && sv.Scope|variable.ScopeGlobal > 0
+				if !isUninitializedGlobalVariable {
+					return variable.UnknownSystemVar.GenByArgs(v.Name)
+				}
+				value = sv.Value
+			}
 		}
 		row := types.MakeDatums(v.Name, value)
 		e.rows = append(e.rows, row)
