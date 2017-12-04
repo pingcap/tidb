@@ -783,8 +783,13 @@ func (b *executorBuilder) buildExists(v *plan.Exists) Executor {
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	return &MaxOneRowExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 	}
 }
 
