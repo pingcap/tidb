@@ -34,6 +34,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	}
 	c.Assert(l.NumChunks(), check.Equals, 3)
 	c.Assert(l.Len(), check.Equals, 5)
+	c.Assert(len(l.freelist), check.Equals, 0)
 
 	// Test chunk reuse.
 	l.Reset()
