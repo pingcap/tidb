@@ -37,8 +37,7 @@ func (af *avgFunction) Clone() Aggregation {
 // GetType implements Aggregation interface.
 func (af *avgFunction) GetType() *types.FieldType {
 	var ft *types.FieldType
-	tp := af.Args[0].GetType().Tp
-	if tp == mysql.TypeFloat || tp == mysql.TypeDouble {
+	if types.IsTypeFloat(af.Args[0].GetType().Tp) {
 		ft = types.NewFieldType(mysql.TypeDouble)
 		ft.Decimal = af.Args[0].GetType().Decimal
 	} else {
