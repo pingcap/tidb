@@ -98,6 +98,7 @@ type baseExecutor struct {
 	ctx             context.Context
 	schema          *expression.Schema
 	supportChk      bool
+	maxChunkSize    int
 	children        []Executor
 	childrenResults []*chunk.Chunk
 }
@@ -159,9 +160,10 @@ func (e *baseExecutor) NextChunk(chk *chunk.Chunk) error {
 
 func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
 	return baseExecutor{
-		children: children,
-		ctx:      ctx,
-		schema:   schema,
+		children:     children,
+		ctx:          ctx,
+		schema:       schema,
+		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 }
 
@@ -609,7 +611,7 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
-			if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+			if chk.NumRows() == e.maxChunkSize {
 				return nil
 			}
 			chk.AppendRow(0, e.inputRow)
