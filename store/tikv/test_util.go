@@ -20,9 +20,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -126,39 +124,4 @@ func NewTestTiKVStorage(withTiKV bool, pdAddrs string) (Storage, error) {
 		return nil, errors.Trace(err)
 	}
 	return store.(Storage), nil
-}
-
-// BusyClient is a client wrapper that generates busy error for test.
-type BusyClient struct {
-	Client
-	mu struct {
-		sync.RWMutex
-		isBusy bool
-	}
-}
-
-// NewBusyClient creates a new *BusyClient.
-func NewBusyClient(client Client) *BusyClient {
-	return &BusyClient{
-		Client: client,
-	}
-}
-
-// SetBusy sets if the client is busy.
-func (c *BusyClient) SetBusy(busy bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.mu.isBusy = busy
-}
-
-// SendReq sends the request if not busy, returns ServerIsBuzy error if it's busy.
-func (c *BusyClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.mu.isBusy {
-		return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
-	}
-	return c.Client.SendReq(ctx, addr, req)
 }
