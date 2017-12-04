@@ -49,19 +49,11 @@ type SortExec struct {
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
 	// keyChunks is used to store ByItems values when not all ByItems are column.
-	keyChunks []*chunk.Chunk
+	keyChunks *chunk.List
 	// rowChunks is the chunks to store row values.
-	rowChunks []*chunk.Chunk
+	rowChunks *chunk.List
 	// rowPointer store the chunk index and row index for each row.
-	rowPointers []rowPointer
-	// totalCount is calculated from rowChunks and used to initialize rowPointers.
-	totalCount int
-}
-
-// rowPointer stores the address of a row in rowChunks by its chunk index and row index.
-type rowPointer struct {
-	chkIdx uint32
-	rowIdx uint32
+	rowPtrs []chunk.RowPtr
 }
 
 // Close implements the Executor Close interface.
@@ -165,23 +157,23 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 		e.initCompareFuncs()
 		allColumnExpr := e.buildKeyColumns()
 		if allColumnExpr {
-			sort.Slice(e.rowPointers, e.keyColumnsLess)
+			sort.Slice(e.rowPtrs, e.keyColumnsLess)
 		} else {
 			e.buildKeyExprsAndTypes()
 			err = e.buildKeyChunks()
 			if err != nil {
 				return errors.Trace(err)
 			}
-			sort.Slice(e.rowPointers, e.keyChunksLess)
+			sort.Slice(e.rowPtrs, e.keyChunksLess)
 		}
 		e.fetched = true
 	}
 	for chk.NumRows() < e.ctx.GetSessionVars().MaxChunkSize {
-		if e.Idx >= len(e.rowPointers) {
+		if e.Idx >= len(e.rowPtrs) {
 			return nil
 		}
-		rowPtr := e.rowPointers[e.Idx]
-		chk.AppendRow(0, e.rowChunks[rowPtr.chkIdx].GetRow(int(rowPtr.rowIdx)))
+		rowPtr := e.rowPtrs[e.Idx]
+		chk.AppendRow(0, e.rowChunks.GetRow(rowPtr))
 		e.Idx++
 	}
 	return nil
@@ -189,6 +181,7 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 
 func (e *SortExec) fetchRowChunks() error {
 	fields := e.schema.GetTypes()
+	e.rowChunks = chunk.NewList(fields, e.ctx.GetSessionVars().MaxChunkSize)
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(chk)
@@ -199,17 +192,17 @@ func (e *SortExec) fetchRowChunks() error {
 		if rowCount == 0 {
 			break
 		}
-		e.rowChunks = append(e.rowChunks, chk)
-		e.totalCount += rowCount
+		e.rowChunks.Add(chk)
 	}
 	return nil
 }
 
 func (e *SortExec) initPointers() {
-	e.rowPointers = make([]rowPointer, 0, e.totalCount)
-	for chkIdx, rowChk := range e.rowChunks {
+	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
+	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
+		rowChk := e.rowChunks.GetChunk(chkIdx)
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			e.rowPointers = append(e.rowPointers, rowPointer{chkIdx: uint32(chkIdx), rowIdx: uint32(rowIdx)})
+			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
 }
@@ -249,14 +242,14 @@ func (e *SortExec) buildKeyExprsAndTypes() {
 }
 
 func (e *SortExec) buildKeyChunks() error {
-	e.keyChunks = make([]*chunk.Chunk, len(e.rowChunks))
-	for chkIdx, rowChk := range e.rowChunks {
+	e.keyChunks = chunk.NewList(e.keyTypes, e.ctx.GetSessionVars().MaxChunkSize)
+	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
-		e.keyChunks[chkIdx] = keyChk
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, rowChk, keyChk)
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, e.rowChunks.GetChunk(chkIdx), keyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		e.keyChunks.Add(keyChk)
 	}
 	return nil
 }
@@ -279,19 +272,15 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (e *SortExec) keyColumnsLess(i, j int) bool {
-	ptrI := e.rowPointers[i]
-	ptrJ := e.rowPointers[j]
-	rowI := e.rowChunks[ptrI.chkIdx].GetRow(int(ptrI.rowIdx))
-	rowJ := e.rowChunks[ptrJ.chkIdx].GetRow(int(ptrJ.rowIdx))
+	rowI := e.rowChunks.GetRow(e.rowPtrs[i])
+	rowJ := e.rowChunks.GetRow(e.rowPtrs[j])
 	return e.lessRow(rowI, rowJ)
 }
 
 // keyChunksLess is the less function for key chunk.
 func (e *SortExec) keyChunksLess(i, j int) bool {
-	ptrI := e.rowPointers[i]
-	ptrJ := e.rowPointers[j]
-	keyRowI := e.keyChunks[ptrI.chkIdx].GetRow(int(ptrI.rowIdx))
-	keyRowJ := e.keyChunks[ptrJ.chkIdx].GetRow(int(ptrJ.rowIdx))
+	keyRowI := e.keyChunks.GetRow(e.rowPtrs[i])
+	keyRowJ := e.keyChunks.GetRow(e.rowPtrs[j])
 	return e.lessRow(keyRowI, keyRowJ)
 }
 
@@ -419,25 +408,21 @@ type topNChunkHeap struct {
 // Less implement heap.Interface, but since we mantains a max heap,
 // this function returns true if row i is greater than row j.
 func (h *topNChunkHeap) Less(i, j int) bool {
-	if len(h.keyChunks) != 0 {
+	if h.keyChunks != nil {
 		return h.keyChunksGreater(i, j)
 	}
 	return h.keyColumnsGreater(i, j)
 }
 
 func (h *topNChunkHeap) keyChunksGreater(i, j int) bool {
-	ptrI := h.rowPointers[i]
-	ptrJ := h.rowPointers[j]
-	keyRowI := h.keyChunks[ptrI.chkIdx].GetRow(int(ptrI.rowIdx))
-	keyRowJ := h.keyChunks[ptrJ.chkIdx].GetRow(int(ptrJ.rowIdx))
+	keyRowI := h.keyChunks.GetRow(h.rowPtrs[i])
+	keyRowJ := h.keyChunks.GetRow(h.rowPtrs[j])
 	return h.greaterRow(keyRowI, keyRowJ)
 }
 
 func (h *topNChunkHeap) keyColumnsGreater(i, j int) bool {
-	ptrI := h.rowPointers[i]
-	ptrJ := h.rowPointers[j]
-	rowI := h.rowChunks[ptrI.chkIdx].GetRow(int(ptrI.rowIdx))
-	rowJ := h.rowChunks[ptrJ.chkIdx].GetRow(int(ptrJ.rowIdx))
+	rowI := h.rowChunks.GetRow(h.rowPtrs[i])
+	rowJ := h.rowChunks.GetRow(h.rowPtrs[j])
 	return h.greaterRow(rowI, rowJ)
 }
 
@@ -458,7 +443,7 @@ func (h *topNChunkHeap) greaterRow(rowI, rowJ chunk.Row) bool {
 }
 
 func (h *topNChunkHeap) Len() int {
-	return len(h.rowPointers)
+	return len(h.rowPtrs)
 }
 
 func (h *topNChunkHeap) Push(x interface{}) {
@@ -466,13 +451,13 @@ func (h *topNChunkHeap) Push(x interface{}) {
 }
 
 func (h *topNChunkHeap) Pop() interface{} {
-	h.rowPointers = h.rowPointers[:len(h.rowPointers)-1]
+	h.rowPtrs = h.rowPtrs[:len(h.rowPtrs)-1]
 	// We don't need the popped value, return nil to avoid memory allocation.
 	return nil
 }
 
 func (h *topNChunkHeap) Swap(i, j int) {
-	h.rowPointers[i], h.rowPointers[j] = h.rowPointers[j], h.rowPointers[i]
+	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -491,13 +476,12 @@ func (e *TopNExec) NextChunk(chk *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	if e.Idx >= len(e.rowPointers) {
+	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
 	maxChkSize := e.ctx.GetSessionVars().MaxChunkSize
-	for chk.NumRows() < maxChkSize && e.Idx < len(e.rowPointers) {
-		rowPointer := e.rowPointers[e.Idx]
-		row := e.rowChunks[rowPointer.chkIdx].GetRow(int(rowPointer.rowIdx))
+	for chk.NumRows() < maxChkSize && e.Idx < len(e.rowPtrs) {
+		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		chk.AppendRow(0, row)
 		e.Idx++
 	}
@@ -506,7 +490,8 @@ func (e *TopNExec) NextChunk(chk *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit() error {
 	e.chkHeap = &topNChunkHeap{e}
-	for e.totalCount < e.totalLimit {
+	e.rowChunks = chunk.NewList(e.schema.GetTypes(), e.ctx.GetSessionVars().MaxChunkSize)
+	for e.rowChunks.Len() < e.totalLimit {
 		srcChk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(srcChk)
 		if err != nil {
@@ -515,8 +500,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit() error {
 		if srcChk.NumRows() == 0 {
 			break
 		}
-		e.rowChunks = append(e.rowChunks, srcChk)
-		e.totalCount += srcChk.NumRows()
+		e.rowChunks.Add(srcChk)
 	}
 	e.initPointers()
 	e.initCompareFuncs()
@@ -535,12 +519,12 @@ const topNCompactionfactor = 4
 
 func (e *TopNExec) executeTopN() error {
 	heap.Init(e.chkHeap)
-	for len(e.rowPointers) > e.totalLimit {
+	for len(e.rowPtrs) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
 	var childKeyChk *chunk.Chunk
-	if len(e.keyChunks) > 0 {
+	if e.keyChunks != nil {
 		childKeyChk = chunk.NewChunk(e.keyTypes)
 	}
 	childRowChk := e.children[0].newChunk()
@@ -556,17 +540,17 @@ func (e *TopNExec) executeTopN() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if e.totalCount > len(e.rowPointers)*topNCompactionfactor {
+		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionfactor {
 			err = e.doCompaction()
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
-	if len(e.keyChunks) != 0 {
-		sort.Slice(e.rowPointers, e.keyChunksLess)
+	if e.keyChunks != nil {
+		sort.Slice(e.rowPtrs, e.keyChunksLess)
 	} else {
-		sort.Slice(e.rowPointers, e.keyColumnsLess)
+		sort.Slice(e.rowPtrs, e.keyColumnsLess)
 	}
 	return nil
 }
@@ -580,47 +564,25 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 		}
 	}
 	for i := 0; i < childRowChk.NumRows(); i++ {
-		heapMaxPtr := e.rowPointers[0]
+		heapMaxPtr := e.rowPtrs[0]
 		var heapMax, next chunk.Row
 		if childKeyChk != nil {
-			heapMax = e.keyChunks[heapMaxPtr.chkIdx].GetRow(int(heapMaxPtr.rowIdx))
+			heapMax = e.keyChunks.GetRow(heapMaxPtr)
 			next = childKeyChk.GetRow(i)
 		} else {
-			heapMax = e.rowChunks[heapMaxPtr.chkIdx].GetRow(int(heapMaxPtr.rowIdx))
+			heapMax = e.rowChunks.GetRow(heapMaxPtr)
 			next = childRowChk.GetRow(i)
 		}
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
-			e.appendRowChunk(childRowChk.GetRow(i))
+			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
 			if childKeyChk != nil {
-				e.appendKeyChunk(childKeyChk.GetRow(i))
+				e.keyChunks.AppendRow(childKeyChk.GetRow(i))
 			}
-			e.totalCount++
-			chkIdx := len(e.rowChunks) - 1
-			e.rowPointers[0].chkIdx = uint32(chkIdx)
-			e.rowPointers[0].rowIdx = uint32(e.rowChunks[chkIdx].NumRows() - 1)
 			heap.Fix(e.chkHeap, 0)
 		}
 	}
 	return nil
-}
-
-func (e *TopNExec) appendRowChunk(row chunk.Row) {
-	lastChkIdx := len(e.rowChunks) - 1
-	if lastChkIdx == -1 || e.rowChunks[lastChkIdx].NumRows() >= e.ctx.GetSessionVars().MaxChunkSize {
-		e.rowChunks = append(e.rowChunks, e.children[0].newChunk())
-		lastChkIdx++
-	}
-	e.rowChunks[lastChkIdx].AppendRow(0, row)
-}
-
-func (e *TopNExec) appendKeyChunk(keyRow chunk.Row) {
-	lastChkIdx := len(e.keyChunks) - 1
-	if lastChkIdx == -1 || e.keyChunks[lastChkIdx].NumRows() >= e.ctx.GetSessionVars().MaxChunkSize {
-		e.keyChunks = append(e.keyChunks, chunk.NewChunk(e.keyTypes))
-		lastChkIdx++
-	}
-	e.keyChunks[lastChkIdx].AppendRow(0, keyRow)
 }
 
 // doCompaction rebuild the chunks and row pointers to release memory.
@@ -628,26 +590,19 @@ func (e *TopNExec) appendKeyChunk(keyRow chunk.Row) {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := make([]*chunk.Chunk, 0, len(e.rowChunks))
-	newRowChunks = append(newRowChunks, e.children[0].newChunk())
-	maxChunkSize := e.ctx.GetSessionVars().MaxChunkSize
-	for _, rowPtr := range e.rowPointers {
-		lastChkIdx := len(newRowChunks) - 1
-		if newRowChunks[lastChkIdx].NumRows() > maxChunkSize {
-			newRowChunks = append(newRowChunks, e.children[0].newChunk())
-			lastChkIdx++
-		}
-		row := e.rowChunks[rowPtr.chkIdx].GetRow(int(rowPtr.rowIdx))
-		newRowChunks[lastChkIdx].AppendRow(0, row)
+	newRowChunks := chunk.NewList(e.schema.GetTypes(), e.ctx.GetSessionVars().MaxChunkSize)
+	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
+	for _, rowPtr := range e.rowPtrs {
+		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
+		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
 	e.rowChunks = newRowChunks
-	e.initPointers()
-	if len(e.keyChunks) != 0 {
+	e.rowPtrs = newRowPtrs
+	if e.keyChunks != nil {
 		err := e.buildKeyChunks()
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	e.totalCount = len(e.rowPointers)
 	return nil
 }
