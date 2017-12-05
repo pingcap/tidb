@@ -295,7 +295,7 @@ func (t *rootTask) plan() PhysicalPlan {
 	return t.p
 }
 
-func (p *Limit) attach2Task(tasks ...task) task {
+func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
 	if tasks[0].invalid() {
 		return invalidTask
@@ -305,7 +305,7 @@ func (p *Limit) attach2Task(tasks ...task) task {
 		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
 			// When limit be pushed down, it should remove its offset.
-			pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.ctx)
+			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx)
 			pushedDownLimit.profile = p.profile
 			if cop.tablePlan != nil {
 				pushedDownLimit.SetSchema(cop.tablePlan.Schema())
@@ -322,7 +322,7 @@ func (p *Limit) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *Sort) getCost(count float64) float64 {
+func (p *PhysicalSort) getCost(count float64) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
@@ -351,7 +351,7 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 	return len(schema.ColumnsIndices(cols)) > 0
 }
 
-func (p *Sort) attach2Task(tasks ...task) task {
+func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
@@ -359,6 +359,10 @@ func (p *Sort) attach2Task(tasks ...task) task {
 	t = attachPlan2Task(p.Copy(), t)
 	t.addCost(p.getCost(t.count()))
 	return t
+}
+
+func (p *NominalSort) attach2Task(tasks ...task) task {
+	return tasks[0]
 }
 
 func (p *TopN) attach2Task(tasks ...task) task {
@@ -380,16 +384,16 @@ func (p *TopN) attach2Task(tasks ...task) task {
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
 		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
+			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 			pushedDownTopN.SetChildren(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
-			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 		} else {
 			// FIXME: When we pushed down a top-N plan to table plan branch in case of double reading. The cost should
 			// be more expensive in case of single reading, because we may execute table scan multi times.
 			copTask.finishIndexPlan()
+			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 			pushedDownTopN.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
-			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
 		copTask.addCost(pushedDownTopN.getCost(t.count()))
 	}
@@ -419,7 +423,7 @@ func (p *Projection) attach2Task(tasks ...task) task {
 	return nil
 }
 
-func (p *Union) attach2Task(tasks ...task) task {
+func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	np := p.Copy()
 	newTask := &rootTask{p: np}
 	newChildren := make([]Plan, 0, len(p.children))
