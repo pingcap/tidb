@@ -58,7 +58,7 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *SelectLock) ExplainInfo() string {
+func (p *PhysicalLock) ExplainInfo() string {
 	return p.Lock.String()
 }
 
@@ -158,7 +158,7 @@ func (p *TableDual) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *Sort) ExplainInfo() string {
+func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	for i, item := range p.ByItems {
 		order := "asc"
@@ -174,7 +174,7 @@ func (p *Sort) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *Limit) ExplainInfo() string {
+func (p *PhysicalLimit) ExplainInfo() string {
 	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
 }
 

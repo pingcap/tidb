@@ -588,7 +588,7 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
-func (b *planBuilder) buildProjection4Union(u *Union) {
+func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 	schema4Union := u.schema
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
@@ -617,7 +617,7 @@ func (b *planBuilder) buildProjection4Union(u *Union) {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := Union{}.init(b.ctx)
+	u := LogicalUnionAll{}.init(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
@@ -700,7 +700,7 @@ func (by *ByItems) Clone() *ByItems {
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	b.curClause = orderByClause
-	sort := Sort{}.init(b.ctx)
+	sort := LogicalSort{}.init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
@@ -732,7 +732,7 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
 	}
-	return 0, errors.Errorf("Invalid type %T for Limit/Offset", val)
+	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
@@ -759,7 +759,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
 	}
-	li := Limit{
+	li := LogicalLimit{
 		Offset: offset,
 		Count:  count,
 	}.init(b.ctx)
@@ -1748,7 +1748,7 @@ out:
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *Projection, *Sort:
+		case *Projection, *LogicalSort:
 			p = p.Children()[0].(LogicalPlan)
 			p.SetParents()
 		case *LogicalAggregation:
