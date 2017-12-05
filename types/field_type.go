@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -262,46 +261,46 @@ func (ft *FieldType) FormatAsCastType(w io.Writer) {
 	switch ft.Tp {
 	case mysql.TypeVarString:
 		if ft.Charset == charset.CharsetBin && ft.Collate == charset.CollationBin {
-			w.Write(hack.Slice("BINARY"))
+			fmt.Fprintf(w, "BINARY")
 		} else {
-			w.Write(hack.Slice("CHAR"))
+			fmt.Fprintf(w, "CHAR")
 		}
 		if ft.Flen != UnspecifiedLength {
-			w.Write(hack.Slice(fmt.Sprintf("(%d)", ft.Flen)))
+			fmt.Fprintf(w, "(%d)", ft.Flen)
 		}
 		if ft.Flag&mysql.BinaryFlag != 0 {
-			w.Write(hack.Slice(" BINARY"))
+			fmt.Fprintf(w, " BINARY")
 		}
 		if ft.Charset != charset.CharsetBin && ft.Charset != charset.CharsetUTF8 {
-			w.Write(hack.Slice(fmt.Sprintf(" %s", ft.Charset)))
+			fmt.Fprintf(w, " %s", ft.Charset)
 		}
 	case mysql.TypeDate:
-		w.Write(hack.Slice("DATE"))
+		fmt.Fprintf(w, "DATE")
 	case mysql.TypeDatetime:
-		w.Write(hack.Slice("DATETIME"))
+		fmt.Fprintf(w, "DATETIME")
 		if ft.Decimal > 0 {
-			w.Write(hack.Slice(fmt.Sprintf("(%d)", ft.Decimal)))
+			fmt.Fprintf(w, "(%d)", ft.Decimal)
 		}
 	case mysql.TypeNewDecimal:
-		w.Write(hack.Slice("DECIMAL"))
+		fmt.Fprintf(w, "DECIMAL")
 		if ft.Flen > 0 && ft.Decimal > 0 {
-			w.Write(hack.Slice(fmt.Sprintf("(%d, %d)", ft.Flen, ft.Decimal)))
+			fmt.Fprintf(w, "(%d, %d)", ft.Flen, ft.Decimal)
 		} else if ft.Flen > 0 {
-			w.Write(hack.Slice(fmt.Sprintf("(%d)", ft.Flen)))
+			fmt.Fprintf(w, "(%d)", ft.Flen)
 		}
 	case mysql.TypeDuration:
-		w.Write(hack.Slice("TIME"))
+		fmt.Fprintf(w, "TIME")
 		if ft.Decimal > 0 {
-			w.Write(hack.Slice(fmt.Sprintf("(%d)", ft.Decimal)))
+			fmt.Fprintf(w, "(%d)", ft.Decimal)
 		}
 	case mysql.TypeLonglong:
 		if ft.Flag&mysql.UnsignedFlag != 0 {
-			w.Write(hack.Slice("UNSIGNED"))
+			fmt.Fprintf(w, "UNSIGNED")
 		} else {
-			w.Write(hack.Slice("SIGNED"))
+			fmt.Fprintf(w, "SIGNED")
 		}
 	case mysql.TypeJSON:
-		w.Write(hack.Slice("JSON"))
+		fmt.Fprintf(w, "JSON")
 	}
 }
 

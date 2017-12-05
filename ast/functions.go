@@ -14,11 +14,11 @@
 package ast
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 var (
@@ -313,15 +313,14 @@ type FuncCallExpr struct {
 }
 
 func (n *FuncCallExpr) Format(w io.Writer) {
-	w.Write(hack.Slice(n.FnName.String()))
-	w.Write(hack.Slice("("))
+	fmt.Fprintf(w, "%s(", n.FnName.String())
 	for i, arg := range n.Args {
 		arg.Format(w)
 		if i != len(n.Args)-1 {
-			w.Write(hack.Slice(", "))
+			fmt.Fprintf(w, ", ")
 		}
 	}
-	w.Write(hack.Slice(")"))
+	fmt.Fprintf(w, ")")
 }
 
 // Accept implements Node interface.
@@ -366,19 +365,19 @@ type FuncCastExpr struct {
 func (n *FuncCastExpr) Format(w io.Writer) {
 	switch n.FunctionType {
 	case CastFunction:
-		w.Write(hack.Slice("CAST("))
+		fmt.Fprintf(w, "CAST(")
 		n.Expr.Format(w)
-		w.Write(hack.Slice(" AS "))
+		fmt.Fprintf(w, " AS ")
 		n.Tp.FormatAsCastType(w)
-		w.Write(hack.Slice(")"))
+		fmt.Fprintf(w, ")")
 	case CastConvertFunction:
-		w.Write(hack.Slice("CONVERT("))
+		fmt.Fprintf(w, "CONVERT(")
 		n.Expr.Format(w)
-		w.Write(hack.Slice(", "))
+		fmt.Fprintf(w, ", ")
 		n.Tp.FormatAsCastType(w)
-		w.Write(hack.Slice(")"))
+		fmt.Fprintf(w, ")")
 	case CastBinaryOperator:
-		w.Write(hack.Slice("BINARY "))
+		fmt.Fprintf(w, "BINARY ")
 		n.Expr.Format(w)
 	}
 }

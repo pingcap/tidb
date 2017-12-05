@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 var (
@@ -59,7 +58,7 @@ type ValueExpr struct {
 }
 
 func (n *ValueExpr) Format(w io.Writer) {
-	w.Write(hack.Slice(n.Text()))
+	fmt.Fprintf(w, n.Text())
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
@@ -109,9 +108,9 @@ type BetweenExpr struct {
 
 func (n *BetweenExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	w.Write(hack.Slice(" BETWEEN "))
+	fmt.Fprintf(w, " BETWEEN ")
 	n.Left.Format(w)
-	w.Write(hack.Slice(" AND "))
+	fmt.Fprintf(w, " AND ")
 	n.Right.Format(w)
 }
 
@@ -157,9 +156,9 @@ type BinaryOperationExpr struct {
 
 func (n *BinaryOperationExpr) Format(w io.Writer) {
 	n.L.Format(w)
-	w.Write(hack.Slice(" "))
+	fmt.Fprintf(w, " ")
 	n.Op.Format(w)
-	w.Write(hack.Slice(" "))
+	fmt.Fprintf(w, " ")
 	n.R.Format(w)
 }
 
@@ -229,20 +228,20 @@ type CaseExpr struct {
 }
 
 func (n *CaseExpr) Format(w io.Writer) {
-	w.Write(hack.Slice("CASE "))
+	fmt.Fprintf(w, "CASE ")
 	n.Value.Format(w)
-	w.Write(hack.Slice(" "))
+	fmt.Fprintf(w, " ")
 	for _, clause := range n.WhenClauses {
-		w.Write(hack.Slice("WHEN "))
+		fmt.Fprintf(w, "WHEN ")
 		clause.Expr.Format(w)
-		w.Write(hack.Slice(" THEN "))
+		fmt.Fprintf(w, " THEN ")
 		clause.Result.Format(w)
 	}
 	if n.ElseClause != nil {
-		w.Write(hack.Slice(" ELSE "))
+		fmt.Fprintf(w, " ELSE ")
 		n.ElseClause.Format(w)
 	}
-	w.Write(hack.Slice(" END"))
+	fmt.Fprintf(w, " END")
 }
 
 // Accept implements Node Accept interface.
@@ -422,7 +421,7 @@ type ColumnNameExpr struct {
 }
 
 func (n *ColumnNameExpr) Format(w io.Writer) {
-	w.Write(hack.Slice(n.Name.String()))
+	fmt.Fprintf(w, n.Name.String())
 }
 
 // Accept implements Node Accept interface.
@@ -448,7 +447,6 @@ type DefaultExpr struct {
 }
 
 func (n *DefaultExpr) Format(w io.Writer) {
-	w.Write(hack.Slice(n.Name.String()))
 	panic("Not implemented")
 }
 
@@ -511,15 +509,14 @@ type PatternInExpr struct {
 
 func (n *PatternInExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	w.Write(hack.Slice(" IN "))
-	w.Write(hack.Slice("("))
+	fmt.Fprintf(w, " IN (")
 	for i, expr := range n.List {
 		expr.Format(w)
 		if i != len(n.List)-1 {
-			w.Write(hack.Slice(", "))
+			fmt.Fprintf(w, ", ")
 		}
 	}
-	w.Write(hack.Slice(")"))
+	fmt.Fprintf(w, ")")
 }
 
 // Accept implements Node Accept interface.
@@ -563,10 +560,10 @@ type IsNullExpr struct {
 func (n *IsNullExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
-		w.Write(hack.Slice(" IS NOT NULL"))
+		fmt.Fprintf(w, " IS NOT NULL")
 		return
 	}
-	w.Write(hack.Slice(" IS NULL"))
+	fmt.Fprintf(w, " IS NULL")
 }
 
 // Accept implements Node Accept interface.
@@ -598,14 +595,14 @@ type IsTruthExpr struct {
 func (n *IsTruthExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
-		w.Write(hack.Slice(" IS NOT"))
+		fmt.Fprintf(w, " IS NOT")
 	} else {
-		w.Write(hack.Slice(" IS"))
+		fmt.Fprintf(w, " IS")
 	}
 	if n.True > 0 {
-		w.Write(hack.Slice(" TRUE"))
+		fmt.Fprintf(w, " TRUE")
 	} else {
-		w.Write(hack.Slice(" FALSE"))
+		fmt.Fprintf(w, " FALSE")
 	}
 }
 
@@ -642,11 +639,11 @@ type PatternLikeExpr struct {
 
 func (n *PatternLikeExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	w.Write(hack.Slice(" LIKE "))
+	fmt.Fprintf(w, " LIKE ")
 	n.Pattern.Format(w)
 	if n.Escape != '\\' {
-		w.Write(hack.Slice(" ESCAPE "))
-		w.Write(hack.Slice(fmt.Sprintf("'%c'", n.Escape)))
+		fmt.Fprintf(w, " ESCAPE ")
+		fmt.Fprintf(w, "'%c'", n.Escape)
 	}
 }
 
@@ -704,9 +701,9 @@ type ParenthesesExpr struct {
 }
 
 func (n *ParenthesesExpr) Format(w io.Writer) {
-	w.Write(hack.Slice("("))
+	fmt.Fprintf(w, "(")
 	n.Expr.Format(w)
-	w.Write(hack.Slice(")"))
+	fmt.Fprintf(w, ")")
 }
 
 // Accept implements Node Accept interface.
@@ -770,9 +767,9 @@ type PatternRegexpExpr struct {
 func (n *PatternRegexpExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
-		w.Write(hack.Slice(" NOT REGEXP "))
+		fmt.Fprintf(w, " NOT REGEXP ")
 	} else {
-		w.Write(hack.Slice(" REGEXP "))
+		fmt.Fprintf(w, " REGEXP ")
 	}
 	n.Pattern.Format(w)
 }

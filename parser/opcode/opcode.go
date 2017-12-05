@@ -16,8 +16,6 @@ package opcode
 import (
 	"fmt"
 	"io"
-
-	"github.com/pingcap/tidb/util/hack"
 )
 
 // Op is opcode type.
@@ -135,5 +133,5 @@ var opsLiteral = map[Op]string{
 }
 
 func (op Op) Format(w io.Writer) {
-	w.Write(hack.Slice(opsLiteral[op]))
+	fmt.Fprintf(w, opsLiteral[op])
 }
