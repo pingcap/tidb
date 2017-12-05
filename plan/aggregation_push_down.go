@@ -372,7 +372,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				}
 				projChild := proj.children[0]
 				setParentAndChildren(agg, projChild)
-			} else if union, ok1 := child.(*Union); ok1 {
+			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
 				var gbyCols []*expression.Column
 				for _, gbyExpr := range agg.GroupByItems {
 					gbyCols = append(gbyCols, expression.ExtractColumns(gbyExpr)...)
