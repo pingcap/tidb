@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"math/bits"
 	"sort"
 
 	log "github.com/Sirupsen/logrus"
@@ -29,7 +30,7 @@ func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
 	// 2. not inner join
 	// 3. forced merge join
 	// 4. forced index nested loop join
-	if j.reordered || !j.cartesianJoin || j.preferMergeJoin || j.preferINLJ > 0 {
+	if j.reordered || !j.cartesianJoin || bits.OnesCount(j.preferJoinType) > 0 {
 		return nil, false
 	}
 	lChild := j.children[0].(LogicalPlan)

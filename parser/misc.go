@@ -442,6 +442,7 @@ var tokenMap = map[string]int{
 	"THAN":                     than,
 	"THEN":                     then,
 	"TIDB":                     tidb,
+	"TIDB_HASHJOIN":            tidbHASHJOIN,
 	"TIDB_INLJ":                tidbINLJ,
 	"TIDB_SMJ":                 tidbSMJ,
 	"TIME":                     timeType,

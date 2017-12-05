@@ -86,6 +86,7 @@ type visitInfo struct {
 type tableHintInfo struct {
 	indexNestedLoopJoinTables []model.CIStr
 	sortMergeJoinTables       []model.CIStr
+	hashJoinTables            []model.CIStr
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -101,6 +102,27 @@ func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
 			continue
 		}
 		for _, curEntry := range info.sortMergeJoinTables {
+			if curEntry.L == tableName.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*model.CIStr) bool {
+	// Only need either side matches one on the list.
+	// Even though you can put 2 tables on the list,
+	// it doesn't mean optimizer will reorder to make them
+	// join directly.
+	// Which it joins on with depend on sequence of traverse
+	// and without reorder, user might adjust themselves.
+	// This is similar to MySQL hints.
+	for _, tableName := range tableNames {
+		if tableName == nil {
+			continue
+		}
+		for _, curEntry := range info.hashJoinTables {
 			if curEntry.L == tableName.L {
 				return true
 			}

@@ -147,6 +147,8 @@ func (s *testSuite) TestJoin(c *C) {
 
 	// Test that two conflict hints will return error.
 	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
+	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_HASHJOIN(t) */ from t join t1 on t.a=t1.a")
+	_, err = tk.Exec("select /*+ TIDB_SMJ(t) TIDB_HASHJOIN(t) */ from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
 
 	tk.MustExec("drop table if exists t")
