@@ -361,7 +361,7 @@ func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhantomSort) attach2Task(tasks ...task) task {
+func (p *NominalSort) attach2Task(tasks ...task) task {
 	return tasks[0]
 }
 

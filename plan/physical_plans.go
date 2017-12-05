@@ -31,7 +31,7 @@ var (
 	_ PhysicalPlan = &TableDual{}
 	_ PhysicalPlan = &Union{}
 	_ PhysicalPlan = &PhysicalSort{}
-	_ PhysicalPlan = &PhantomSort{}
+	_ PhysicalPlan = &NominalSort{}
 	_ PhysicalPlan = &SelectLock{}
 	_ PhysicalPlan = &Limit{}
 	_ PhysicalPlan = &Show{}
@@ -329,9 +329,9 @@ type PhysicalSort struct {
 	ByItems []*ByItems
 }
 
-// PhantomSort asks sort properties for its child. It is a fake operator that will not
+// NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree.
-type PhantomSort struct {
+type NominalSort struct {
 	*basePlan
 	basePhysicalPlan
 
@@ -480,7 +480,7 @@ func (p *PhysicalSort) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *PhantomSort) Copy() PhysicalPlan {
+func (p *NominalSort) Copy() PhysicalPlan {
 	panic("should not call this function")
 }
 

@@ -224,7 +224,7 @@ func (p *PhysicalSort) getChildrenPossibleProps(prop *requiredProp) [][]*require
 	return nil
 }
 
-func (p *PhantomSort) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *NominalSort) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	if prop.isPrefix(p.prop) {
 		p.prop.expectedCnt = prop.expectedCnt
 		return [][]*requiredProp{{p.prop}}

@@ -420,12 +420,12 @@ func (p *LogicalSort) getPhysicalSort() *PhysicalSort {
 	return ps
 }
 
-func (p *LogicalSort) getPhantomSort() *PhantomSort {
+func (p *LogicalSort) getPhantomSort() *NominalSort {
 	prop, canPass := getPropByOrderByItems(p.ByItems)
 	if !canPass {
 		return nil
 	}
-	ps := &PhantomSort{prop: prop}
+	ps := &NominalSort{prop: prop}
 	return ps
 }
 
