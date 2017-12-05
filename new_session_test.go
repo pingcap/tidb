@@ -286,6 +286,16 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
+
+	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	tk.MustExec("set session sql_select_limit=100000000000;")
+	result = tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 100000000000"))
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
