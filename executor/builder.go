@@ -544,6 +544,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		mergeJoinExec.outerIter.filter = nil
 	}
 
+	mergeJoinExec.supportChk = true
 	return mergeJoinExec
 }
 

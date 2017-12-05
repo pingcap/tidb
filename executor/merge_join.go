@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -56,8 +58,17 @@ type rowBlockIterator struct {
 	reader    Executor
 	filter    []expression.Expression
 	joinKeys  []*expression.Column
-	peekedRow Row
+	peekedRow types.Row
 	rowCache  []Row
+
+	// for chunk executions
+	firstRowForKey   chunk.Row
+	curRow           chunk.Row
+	curChunk         *chunk.Chunk
+	curChunkSelected bool
+	curSelected      []bool
+	resultPool       []*chunk.Chunk
+	resourcePool     []*chunk.Chunk
 }
 
 func (rb *rowBlockIterator) init() error {
@@ -71,11 +82,10 @@ func (rb *rowBlockIterator) init() error {
 		return errors.Trace(err)
 	}
 	rb.rowCache = make([]Row, 0, rowBufferSize)
-
 	return nil
 }
 
-func (rb *rowBlockIterator) nextRow() (Row, error) {
+func (rb *rowBlockIterator) nextRow() (types.Row, error) {
 	goCtx := goctx.TODO()
 	for {
 		row, err := rb.reader.Next(goCtx)
@@ -103,7 +113,7 @@ func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 		return nil, nil
 	}
 	rowCache := rb.rowCache[0:0:rowBufferSize]
-	rowCache = append(rowCache, rb.peekedRow)
+	rowCache = append(rowCache, rb.peekedRow.(types.DatumRow))
 	for {
 		curRow, err := rb.nextRow()
 		if err != nil {
@@ -118,10 +128,89 @@ func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if compareResult == 0 {
-			rowCache = append(rowCache, curRow)
+			rowCache = append(rowCache, curRow.(types.DatumRow))
 		} else {
 			rb.peekedRow = curRow
 			return rowCache, nil
+		}
+	}
+}
+
+func (rb *rowBlockIterator) initForChunk(chk *chunk.Chunk) error {
+	if rb.reader == nil || rb.joinKeys == nil || len(rb.joinKeys) == 0 || rb.ctx == nil {
+		return errors.Errorf("Invalid arguments: Empty arguments detected.")
+	}
+	rb.stmtCtx = rb.ctx.GetSessionVars().StmtCtx
+	rb.curRow = chk.End()
+	rb.curChunk = chk
+	rb.curSelected = make([]bool, 0, rb.ctx.GetSessionVars().MaxChunkSize)
+	rb.curChunkSelected = false
+	rb.resultPool = append(rb.resultPool, chk)
+	return nil
+}
+
+func (rb *rowBlockIterator) nextSelectedRow() (chunk.Row, error) {
+	for {
+		for ; rb.curRow != rb.curChunk.End(); rb.curRow = rb.curRow.Next() {
+			if rb.curSelected[rb.curRow.Idx()] {
+				result := rb.curRow
+				rb.curRow = rb.curRow.Next()
+				rb.curChunkSelected = true
+				return result, nil
+			}
+		}
+		if !rb.curChunkSelected {
+			rb.resultPool = rb.resultPool[:len(rb.resultPool)-1]
+			rb.resourcePool = append(rb.resourcePool, rb.curChunk)
+		}
+		if len(rb.resourcePool) == 0 {
+			rb.resourcePool = append(rb.resourcePool, rb.reader.newChunk())
+		}
+		chk := rb.resourcePool[0]
+		rb.resourcePool = rb.resourcePool[1:]
+		err := rb.reader.NextChunk(chk)
+		if err != nil {
+			return rb.curRow, errors.Trace(err)
+		}
+		rb.resultPool = append(rb.resultPool, chk)
+		if chk.NumRows() == 0 {
+			return rb.curRow, errors.Trace(err)
+		}
+		rb.curSelected, err = expression.VectorizedFilter(rb.ctx, rb.filter, chk, rb.curSelected)
+		if err != nil {
+			return rb.curRow, errors.Trace(err)
+		}
+		rb.curChunk = chk
+		rb.curRow = chk.Begin()
+	}
+}
+
+func (rb *rowBlockIterator) rowsWithSameKey() (rows []chunk.Row, err error) {
+	rb.resourcePool = append(rb.resourcePool, rb.resultPool[0:len(rb.resultPool)-1]...)
+	rb.firstRowForKey, err = rb.nextSelectedRow()
+	// error happens or no more data.
+	if err != nil || rb.firstRowForKey == rb.curChunk.End() {
+		return nil, errors.Trace(err)
+	}
+
+	rows = append(rows, rb.firstRowForKey)
+	for {
+		curRow, err := rb.nextSelectedRow()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if curRow == rb.curChunk.End() {
+			return rows, nil
+		}
+		compareResult, err := compareKeys(rb.stmtCtx, curRow, rb.joinKeys, rb.firstRowForKey, rb.joinKeys)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if compareResult == 0 {
+			rows = append(rows, curRow)
+		} else {
+			rb.firstRowForKey = curRow
+			return rows, nil
 		}
 	}
 }
@@ -147,8 +236,8 @@ func (e *MergeJoinExec) Open(goCtx goctx.Context) error {
 }
 
 func compareKeys(stmtCtx *stmtctx.StatementContext,
-	leftRow Row, leftKeys []*expression.Column,
-	rightRow Row, rightKeys []*expression.Column) (int, error) {
+	leftRow types.Row, leftKeys []*expression.Column,
+	rightRow types.Row, rightKeys []*expression.Column) (int, error) {
 	for i, leftKey := range leftKeys {
 		lVal, err := leftKey.Eval(leftRow)
 		if err != nil {
@@ -291,4 +380,9 @@ func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
 	result := e.resultBuffer[e.resultCursor]
 	e.resultCursor++
 	return result, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *MergeJoinExec) NextChunk(chk *chunk.Chunk) error {
+	return nil
 }
