@@ -120,11 +120,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *Sort:
+	case *LogicalSort, *PhysicalSort:
 		str = "Sort"
-		if x.ExecLimit != nil {
-			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
-		}
 	case *LogicalJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]

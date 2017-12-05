@@ -93,7 +93,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSimple(v)
 	case *plan.Set:
 		return b.buildSet(v)
-	case *plan.Sort:
+	case *plan.PhysicalSort:
 		return b.buildSort(v)
 	case *plan.TopN:
 		return b.buildTopN(v)
@@ -703,7 +703,7 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	return ts
 }
 
-func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
+func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -715,12 +715,6 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		schema:       v.Schema(),
 	}
 	sortExec.supportChk = true
-	if v.ExecLimit != nil {
-		return &TopNExec{
-			SortExec: sortExec,
-			limit:    v.ExecLimit,
-		}
-	}
 	return &sortExec
 }
 

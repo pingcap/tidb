@@ -30,7 +30,8 @@ var (
 	_ PhysicalPlan = &MaxOneRow{}
 	_ PhysicalPlan = &TableDual{}
 	_ PhysicalPlan = &Union{}
-	_ PhysicalPlan = &Sort{}
+	_ PhysicalPlan = &PhysicalSort{}
+	_ PhysicalPlan = &NominalSort{}
 	_ PhysicalPlan = &SelectLock{}
 	_ PhysicalPlan = &Limit{}
 	_ PhysicalPlan = &Show{}
@@ -320,6 +321,23 @@ type PhysicalStreamAgg struct {
 	inputCount float64 // inputCount is the input count of this plan.
 }
 
+// PhysicalSort is the physical operator of sort, which implements a memory sort.
+type PhysicalSort struct {
+	*basePlan
+	basePhysicalPlan
+
+	ByItems []*ByItems
+}
+
+// NominalSort asks sort properties for its child. It is a fake operator that will not
+// appear in final physical operator tree.
+type NominalSort struct {
+	*basePlan
+	basePhysicalPlan
+
+	prop *requiredProp
+}
+
 // PhysicalUnionScan represents a union scan operator.
 type PhysicalUnionScan struct {
 	*basePlan
@@ -454,12 +472,16 @@ func (p *Union) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Sort) Copy() PhysicalPlan {
+func (p *PhysicalSort) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *NominalSort) Copy() PhysicalPlan {
+	panic("should not call this function")
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -536,7 +558,7 @@ func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
 
 func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
-	case *Limit, *TopN, *Sort, *PhysicalSelection, *MaxOneRow, *SelectLock:
+	case *Limit, *TopN, *PhysicalSort, *PhysicalSelection, *MaxOneRow, *SelectLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
 		p.SetSchema(buildJoinSchema(x.JoinType, p))

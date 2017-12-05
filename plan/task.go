@@ -322,7 +322,7 @@ func (p *Limit) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *Sort) getCost(count float64) float64 {
+func (p *PhysicalSort) getCost(count float64) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
@@ -351,7 +351,7 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 	return len(schema.ColumnsIndices(cols)) > 0
 }
 
-func (p *Sort) attach2Task(tasks ...task) task {
+func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
@@ -359,6 +359,10 @@ func (p *Sort) attach2Task(tasks ...task) task {
 	t = attachPlan2Task(p.Copy(), t)
 	t.addCost(p.getCost(t.count()))
 	return t
+}
+
+func (p *NominalSort) attach2Task(tasks ...task) task {
+	return tasks[0]
 }
 
 func (p *TopN) attach2Task(tasks ...task) task {

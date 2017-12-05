@@ -158,7 +158,7 @@ func (p *TableDual) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *Sort) ExplainInfo() string {
+func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	for i, item := range p.ByItems {
 		order := "asc"

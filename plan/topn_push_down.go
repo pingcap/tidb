@@ -59,12 +59,12 @@ func (s *TopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
 	return s
 }
 
-func (s *Sort) pushDownTopN(topN *TopN) LogicalPlan {
+func (s *LogicalSort) pushDownTopN(topN *TopN) LogicalPlan {
 	if topN == nil {
 		return s.baseLogicalPlan.pushDownTopN(nil)
 	} else if topN.isLimit() {
 		topN.ByItems = s.ByItems
-		// If a Limit is pushed down, the Sort should be converted to topN and be pushed again.
+		// If a Limit is pushed down, the LogicalSort should be converted to topN and be pushed again.
 		return s.children[0].(LogicalPlan).pushDownTopN(topN)
 	}
 	// If a TopN is pushed down, this sort is useless.
