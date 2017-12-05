@@ -75,11 +75,11 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildInsert(v)
 	case *plan.LoadData:
 		return b.buildLoadData(v)
-	case *plan.Limit:
+	case *plan.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plan.Prepare:
 		return b.buildPrepare(v)
-	case *plan.SelectLock:
+	case *plan.PhysicalLock:
 		return b.buildSelectLock(v)
 	case *plan.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
@@ -93,12 +93,12 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSimple(v)
 	case *plan.Set:
 		return b.buildSet(v)
-	case *plan.Sort:
+	case *plan.PhysicalSort:
 		return b.buildSort(v)
 	case *plan.TopN:
 		return b.buildTopN(v)
-	case *plan.Union:
-		return b.buildUnion(v)
+	case *plan.PhysicalUnionAll:
+		return b.buildUnionAll(v)
 	case *plan.Update:
 		return b.buildUpdate(v)
 	case *plan.PhysicalUnionScan:
@@ -219,7 +219,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 	}
 }
 
-func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
+func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
 	src := b.build(v.Children()[0])
 	if !b.ctx.GetSessionVars().InTxn() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
@@ -235,7 +235,7 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
+func (b *executorBuilder) buildLimit(v *plan.PhysicalLimit) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -703,7 +703,7 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	return ts
 }
 
-func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
+func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -715,12 +715,6 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		schema:       v.Schema(),
 	}
 	sortExec.supportChk = true
-	if v.ExecLimit != nil {
-		return &TopNExec{
-			SortExec: sortExec,
-			limit:    v.ExecLimit,
-		}
-	}
 	return &sortExec
 }
 
@@ -738,7 +732,7 @@ func (b *executorBuilder) buildTopN(v *plan.TopN) Executor {
 	sortExec.supportChk = true
 	return &TopNExec{
 		SortExec: sortExec,
-		limit:    &plan.Limit{Count: v.Count, Offset: v.Offset},
+		limit:    &plan.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 	}
 }
 
@@ -811,15 +805,19 @@ func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
 	}
 }
 
-func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
-	srcs := make([]Executor, len(v.Children()))
-	for i, sel := range v.Children() {
-		selExec := b.build(sel)
-		srcs[i] = selExec
+func (b *executorBuilder) buildUnionAll(v *plan.PhysicalUnionAll) Executor {
+	childExecs := make([]Executor, len(v.Children()))
+	for i, child := range v.Children() {
+		childExecs[i] = b.build(child)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	e := &UnionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, srcs...),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExecs...),
 	}
+	e.supportChk = true
 	return e
 }
 
