@@ -339,13 +339,9 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
 	is.Ranges = ranger.FullIndexRange()
 	if len(p.pushedDownConds) > 0 {
-		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
-		for _, cond := range p.pushedDownConds {
-			conds = append(conds, cond.Clone())
-		}
 		if len(idxCols) > 0 {
 			var ranges []ranger.Range
-			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(conds, idxCols, colLengths)
+			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(p.pushedDownConds, idxCols, colLengths)
 			ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -356,7 +352,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 				return nil, errors.Trace(err)
 			}
 		} else {
-			is.filterCondition = conds
+			is.filterCondition = p.pushedDownConds
 		}
 	}
 	is.profile = p.getStatsProfileByFilter(p.pushedDownConds)
@@ -585,20 +581,16 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 	}
 	if len(p.pushedDownConds) > 0 {
-		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
-		for _, cond := range p.pushedDownConds {
-			conds = append(conds, cond.Clone())
-		}
 		if pkCol != nil {
 			var ranges []ranger.Range
-			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, conds, pkCol)
+			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, p.pushedDownConds, pkCol)
 			ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 			ts.Ranges = ranger.Ranges2IntRanges(ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
-			ts.filterCondition = conds
+			ts.filterCondition = p.pushedDownConds
 		}
 	}
 	ts.profile = p.getStatsProfileByFilter(p.pushedDownConds)
