@@ -23,6 +23,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
@@ -47,6 +48,9 @@ var (
 		"gc",
 		"select:0_10000:10",
 	}, "|"), "jobs to run")
+	sslCA   = flag.String("cacert", "", "path of file that contains list of trusted SSL CAs.")
+	sslCert = flag.String("cert", "", "path of file that contains X509 certificate in PEM format.")
+	sslKey  = flag.String("key", "", "path of file that contains X509 key in PEM format.")
 )
 
 func main() {
@@ -94,7 +98,11 @@ type benchDB struct {
 
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
-	store, err := tidb.NewStore("tikv://" + *addr + "?disableGC=true")
+	store, err := tidb.NewStore("tikv://"+*addr+"?disableGC=true", config.Security{
+		SSLCA:   *sslCA,
+		SSLCert: *sslCert,
+		SSLKey:  *sslKey,
+	})
 	terror.MustNil(err)
 	_, err = tidb.BootstrapSession(store)
 	terror.MustNil(err)

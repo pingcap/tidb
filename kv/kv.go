@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	goctx "golang.org/x/net/context"
 )
@@ -210,7 +211,7 @@ type Snapshot interface {
 type Driver interface {
 	// Open returns a new Storage.
 	// The path is the string for storage specific format.
-	Open(path string) (Storage, error)
+	Open(path string, security config.Security) (Storage, error)
 }
 
 // Storage defines the interface for storage.

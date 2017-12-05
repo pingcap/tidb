@@ -26,6 +26,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
@@ -39,6 +40,9 @@ var (
 	workerCnt = flag.Int("C", 400, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
 	valueSize = flag.Int("V", 5, "value size in byte")
+	sslCA     = flag.String("cacert", "", "path of file that contains list of trusted SSL CAs.")
+	sslCert   = flag.String("cert", "", "path of file that contains X509 certificate in PEM format.")
+	sslKey    = flag.String("key", "", "path of file that contains X509 key in PEM format.")
 
 	txnCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -70,7 +74,11 @@ var (
 func Init() {
 	driver := tikv.Driver{}
 	var err error
-	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr))
+	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr), config.Security{
+		SSLCA:   *sslCA,
+		SSLCert: *sslCert,
+		SSLKey:  *sslKey,
+	})
 	terror.MustNil(err)
 
 	prometheus.MustRegister(txnCounter)

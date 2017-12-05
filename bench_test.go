@@ -21,6 +21,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	goctx "golang.org/x/net/context"
 )
 
@@ -28,7 +29,7 @@ var smallCount = 100
 var bigCount = 10000
 
 func prepareBenchSession() Session {
-	store, err := NewStore("memory://bench")
+	store, err := NewStore("memory://bench", config.Security{})
 	if err != nil {
 		log.Fatal(err)
 	}

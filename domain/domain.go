@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"crypto/tls"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -432,6 +433,7 @@ func (m *MockFailure) getValue() bool {
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
 	EtcdAddrs() []string
+	TLSConfig() *tls.Config
 	StartGCWorker() error
 }
 
@@ -461,6 +463,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
 				},
+				TLS: ebd.TLSConfig(),
 			})
 			if err != nil {
 				return errors.Trace(err)

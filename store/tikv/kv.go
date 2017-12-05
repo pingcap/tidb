@@ -14,7 +14,10 @@
 package tikv
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"net/url"
 	"strings"
@@ -26,6 +29,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -46,7 +50,7 @@ var mc storeCache
 type Driver struct {
 }
 
-func createEtcdKV(addrs []string) (*clientv3.Client, error) {
+func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   addrs,
 		DialTimeout: 5 * time.Second,
@@ -54,6 +58,7 @@ func createEtcdKV(addrs []string) (*clientv3.Client, error) {
 			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
 		},
+		TLS: tlsConfig,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -63,7 +68,7 @@ func createEtcdKV(addrs []string) (*clientv3.Client, error) {
 
 // Open opens or creates an TiKV storage with given path.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
-func (d Driver) Open(path string) (kv.Storage, error) {
+func (d Driver) Open(path string, security config.Security) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
@@ -72,7 +77,12 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	pdCli, err := pd.NewClient(etcdAddrs)
+	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
+		CAPath:   security.SSLCA,
+		CertPath: security.SSLCert,
+		KeyPath:  security.SSLKey,
+	})
+
 	if err != nil {
 		if strings.Contains(err.Error(), "i/o timeout") {
 			return nil, errors.Annotate(err, txnRetryableMark)
@@ -86,19 +96,57 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return store, nil
 	}
 
-	spkv, err := NewEtcdSafePointKV(etcdAddrs)
+	tlsConfig, err := newTLSConfig(security)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(), !disableGC)
+	spkv, err := NewEtcdSafePointKV(etcdAddrs, tlsConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	s.etcdAddrs = etcdAddrs
+	s.tlsConfig = tlsConfig
 
 	mc.cache[uuid] = s
 	return s, nil
+}
+
+func newTLSConfig(security config.Security) (*tls.Config, error) {
+	tlsConfig := &tls.Config{}
+	if len(security.SSLCA) != 0 {
+		certificates := []tls.Certificate{}
+		if len(security.SSLCert) != 0 && len(security.SSLKey) != 0 {
+			// Load the client certificates from disk
+			certificate, err := tls.LoadX509KeyPair(security.SSLCert, security.SSLKey)
+			if err != nil {
+				return nil, errors.Errorf("could not load client key pair: %s", err)
+			}
+			certificates = append(certificates, certificate)
+		}
+
+		// Create a certificate pool from the certificate authority
+		certPool := x509.NewCertPool()
+		ca, err := ioutil.ReadFile(security.SSLCA)
+		if err != nil {
+			return nil, errors.Errorf("could not read ca certificate: %s", err)
+		}
+
+		// Append the certificates from the CA
+		if !certPool.AppendCertsFromPEM(ca) {
+			return nil, errors.New("failed to append ca certs")
+		}
+
+		tlsConfig.Certificates = certificates
+		tlsConfig.RootCAs = certPool
+	}
+
+	return tlsConfig, nil
 }
 
 // MockDriver is in memory mock TiKV driver.
@@ -106,7 +154,7 @@ type MockDriver struct {
 }
 
 // Open creates a MockTiKV storage.
-func (d MockDriver) Open(path string) (kv.Storage, error) {
+func (d MockDriver) Open(path string, security config.Security) (kv.Storage, error) {
 	u, err := url.Parse(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -130,6 +178,7 @@ type tikvStore struct {
 	lockResolver *LockResolver
 	gcWorker     GCHandler
 	etcdAddrs    []string
+	tlsConfig    *tls.Config
 	mock         bool
 	enableGC     bool
 
@@ -192,6 +241,10 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 
 func (s *tikvStore) EtcdAddrs() []string {
 	return s.etcdAddrs
+}
+
+func (s *tikvStore) TLSConfig() *tls.Config {
+	return s.tlsConfig
 }
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.

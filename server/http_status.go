@@ -64,7 +64,14 @@ func (s *Server) startHTTPServer() {
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
 	http.Handle("/", router)
-	err := http.ListenAndServe(addr, nil)
+
+	var err error
+	if len(s.cfg.Security.SSLCA) != 0 {
+		err = http.ListenAndServeTLS(addr, s.cfg.Security.SSLCert, s.cfg.Security.SSLKey, nil)
+	} else {
+		err = http.ListenAndServe(addr, nil)
+	}
+
 	if err != nil {
 		log.Fatal(err)
 	}

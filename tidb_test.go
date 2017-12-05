@@ -25,6 +25,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -56,7 +57,7 @@ type testMainSuite struct {
 
 type brokenStore struct{}
 
-func (s *brokenStore) Open(schema string) (kv.Storage, error) {
+func (s *brokenStore) Open(schema string, security config.Security) (kv.Storage, error) {
 	return nil, errors.New("try again later")
 }
 
@@ -117,7 +118,7 @@ func (s *testMainSuite) TestTrimSQL(c *C) {
 func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	begin := time.Now()
 	RegisterStore("dummy", &brokenStore{})
-	_, err := newStoreWithRetry("dummy://dummy-store", 3)
+	_, err := newStoreWithRetry("dummy://dummy-store", 3, config.Security{})
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
