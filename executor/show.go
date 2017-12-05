@@ -370,33 +370,38 @@ func (e *ShowExec) fetchShowCharset() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() error {
-	sessionVars := e.ctx.GetSessionVars()
-	systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
-		value string
-		ok    bool
+		value         string
+		ok            bool
+		sessionVars   = e.ctx.GetSessionVars()
+		unreachedVars = make([]string, 0, len(variable.SysVars))
 	)
 	for _, v := range variable.SysVars {
 		if !e.GlobalScope {
 			value, ok, err = varsutil.GetSessionOnlySysVars(sessionVars, v.Name)
 		} else {
 			value, ok, err = varsutil.GetScopeNoneSystemVar(v.Name)
-			if terror.ErrorEqual(err, variable.ErrIncorrectScope) {
-				continue
-			}
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !ok {
-			value = systemVars[v.Name]
+			unreachedVars = append(unreachedVars, v.Name)
+			continue
 		}
 		row := types.MakeDatums(v.Name, value)
 		e.rows = append(e.rows, row)
+	}
+	if len(unreachedVars) != 0 {
+		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, varName := range unreachedVars {
+			row := types.MakeDatums(varName, systemVars[varName])
+			e.rows = append(e.rows, row)
+		}
 	}
 	return nil
 }
