@@ -86,7 +86,7 @@ func (t basicCtxType) String() string {
 const (
 	// QueryString is the key for original query string.
 	QueryString basicCtxType = 1
-	// Initing is the key for indicating if the server is running bootstrap or upgrad job.
+	// Initing is the key for indicating if the server is running bootstrap or upgrade job.
 	Initing basicCtxType = 2
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
