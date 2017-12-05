@@ -719,11 +719,17 @@ func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
 }
 
 func (b *executorBuilder) buildTopN(v *plan.TopN) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
+	sortExec.supportChk = true
 	return &TopNExec{
 		SortExec: sortExec,
 		limit:    &plan.Limit{Count: v.Count, Offset: v.Offset},
@@ -800,14 +806,18 @@ func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
 }
 
 func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
-	srcs := make([]Executor, len(v.Children()))
-	for i, sel := range v.Children() {
-		selExec := b.build(sel)
-		srcs[i] = selExec
+	childExecs := make([]Executor, len(v.Children()))
+	for i, child := range v.Children() {
+		childExecs[i] = b.build(child)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	e := &UnionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, srcs...),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExecs...),
 	}
+	e.supportChk = true
 	return e
 }
 
