@@ -62,9 +62,7 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if sysVar == nil {
 		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
-	if sysVar.Scope == variable.ScopeSession {
-		return "", variable.ErrIncorrectScope
-	} else if sysVar.Scope == variable.ScopeNone {
+	if sysVar.Scope == variable.ScopeNone {
 		return sysVar.Value, nil
 	}
 	gVal, err := s.GlobalVarsAccessor.GetGlobalSysVar(key)
