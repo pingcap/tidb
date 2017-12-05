@@ -29,7 +29,7 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context) task {
 		return task
 	}
 	task = finishCopTask(task, ctx)
-	sort := Sort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx)
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx)
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
 	}
@@ -208,4 +208,26 @@ func (p *PhysicalStreamAgg) getChildrenPossibleProps(prop *requiredProp) [][]*re
 		return nil
 	}
 	return [][]*requiredProp{{reqProp}}
+}
+
+func (p *PhysicalSort) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	if len(p.ByItems) >= len(prop.cols) {
+		for i, col := range prop.cols {
+			sortItem := p.ByItems[i]
+			if sortItem.Desc != prop.desc || !sortItem.Expr.Equal(col, p.ctx) {
+				return nil
+			}
+		}
+		return [][]*requiredProp{{{expectedCnt: math.MaxFloat64}}}
+	}
+	return nil
+}
+
+func (p *NominalSort) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	if prop.isPrefix(p.prop) {
+		p.prop.expectedCnt = prop.expectedCnt
+		return [][]*requiredProp{{p.prop}}
+	}
+	return nil
 }
