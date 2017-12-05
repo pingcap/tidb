@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -59,7 +60,7 @@ type ValueExpr struct {
 
 // Format the ExprNode into a Writer.
 func (n *ValueExpr) Format(w io.Writer) {
-	fmt.Fprintf(w, n.Text())
+	fmt.Fprint(w, n.Text())
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
@@ -428,7 +429,8 @@ type ColumnNameExpr struct {
 
 // Format the ExprNode into a Writer.
 func (n *ColumnNameExpr) Format(w io.Writer) {
-	fmt.Fprintf(w, n.Name.String())
+	name := strings.Replace(n.Name.String(), ".", "`.`", -1)
+	fmt.Fprintf(w, "`%s`", name)
 }
 
 // Accept implements Node Accept interface.
@@ -523,7 +525,7 @@ func (n *PatternInExpr) Format(w io.Writer) {
 	for i, expr := range n.List {
 		expr.Format(w)
 		if i != len(n.List)-1 {
-			fmt.Fprintf(w, ", ")
+			fmt.Fprintf(w, ",")
 		}
 	}
 	fmt.Fprintf(w, ")")
