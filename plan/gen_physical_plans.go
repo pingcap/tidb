@@ -420,7 +420,7 @@ func (p *LogicalSort) getPhysicalSort() *PhysicalSort {
 	return ps
 }
 
-func (p *LogicalSort) getPhantomSort() *NominalSort {
+func (p *LogicalSort) getNominalSort() *NominalSort {
 	prop, canPass := getPropByOrderByItems(p.ByItems)
 	if !canPass {
 		return nil
@@ -432,7 +432,7 @@ func (p *LogicalSort) getPhantomSort() *NominalSort {
 func (p *LogicalSort) generatePhysicalPlans() []PhysicalPlan {
 	ret := make([]PhysicalPlan, 0, 2)
 	ret = append(ret, p.getPhysicalSort())
-	ps := p.getPhantomSort()
+	ps := p.getNominalSort()
 	if ps != nil {
 		ret = append(ret, ps)
 	}
