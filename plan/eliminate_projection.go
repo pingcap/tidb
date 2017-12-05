@@ -118,7 +118,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	children := make([]Plan, 0, len(p.Children()))
 
 	childFlag := canEliminate
-	if _, isUnion := p.(*Union); isUnion {
+	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		childFlag = false
 	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
 		childFlag = true
@@ -129,7 +129,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	setParentAndChildren(p, children...)
 
 	switch p.(type) {
-	case *LogicalSort, *TopN, *Limit, *LogicalSelection, *MaxOneRow, *SelectLock:
+	case *LogicalSort, *TopN, *LogicalLimit, *LogicalSelection, *MaxOneRow, *LogicalLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *LogicalJoin, *LogicalApply:
 		var joinTp JoinType

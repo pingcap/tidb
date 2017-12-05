@@ -56,15 +56,6 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
-// SelectLock represents a select lock plan.
-type SelectLock struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	Lock ast.SelectLockType
-}
-
 // Prepare represents prepare plan.
 type Prepare struct {
 	basePlan
