@@ -92,7 +92,7 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	}
 }
 
-// SwapColumns swap columns with another Chunk.
+// SwapColumns swaps columns with another Chunk.
 func (c *Chunk) SwapColumns(other *Chunk) {
 	c.columns, other.columns = other.columns, c.columns
 }

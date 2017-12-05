@@ -936,10 +936,8 @@ func (e *UnionExec) fetchData(goCtx goctx.Context, idx int) {
 		}
 		select {
 		case e.resultCh <- result:
-		case _, ok := <-e.finished:
-			if !ok {
-				return
-			}
+		case <-e.finished:
+			return
 		}
 	}
 }
@@ -988,23 +986,15 @@ func (e *UnionExec) resultPuller(childID int) {
 			return
 		}
 		select {
-		case _, ok := <-e.finished:
-			if !ok {
-				return
-			}
+		case <-e.finished:
+			return
 		case result.chk = <-e.resourcePools[childID]:
 		}
 		result.err = errors.Trace(e.children[childID].NextChunk(result.chk))
 		if result.err == nil && result.chk.NumRows() == 0 {
 			return
 		}
-		select {
-		case _, ok := <-e.finished:
-			if !ok {
-				return
-			}
-		case e.resultPool <- result:
-		}
+		e.resultPool <- result
 		if result.err != nil {
 			e.stopFetchData.Store(true)
 			return
