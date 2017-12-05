@@ -606,7 +606,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			sel = proj
 			u.children[i] = proj
 		}
-		sel.SetParents(u)
+		sel.SetParent(u)
 	}
 
 	// infer union type
@@ -1697,8 +1697,8 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = TypeApply
 	ap.self = ap
-	ap.children[0].SetParents(ap)
-	ap.children[1].SetParents(ap)
+	ap.children[0].SetParent(ap)
+	ap.children[1].SetParent(ap)
 	return ap
 }
 
@@ -1710,14 +1710,14 @@ out:
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *Projection, *Sort:
 			p = p.Children()[0].(LogicalPlan)
-			p.SetParents()
+			p.SetParent(nil)
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
 				p = b.buildTableDual()
 				break out
 			}
 			p = p.Children()[0].(LogicalPlan)
-			p.SetParents()
+			p.SetParent(nil)
 		default:
 			break out
 		}

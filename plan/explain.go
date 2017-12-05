@@ -26,7 +26,7 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 	planMark := map[int]bool{}
 	planMark[plan.ID()] = true
 	for pID := 0; pID < len(allPlans); pID++ {
-		allPlans[pID].SetParents()
+		allPlans[pID].SetParent(nil)
 		switch copPlan := allPlans[pID].(type) {
 		case *PhysicalTableReader:
 			setParents4FinalPlan(copPlan.tablePlan)
@@ -48,7 +48,7 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 	planMark[plan.ID()] = false
 	for pID := 0; pID < len(allPlans); pID++ {
 		for _, p := range allPlans[pID].Children() {
-			p.SetParents(allPlans[pID])
+			p.SetParent(allPlans[pID])
 			if planMark[p.ID()] {
 				planMark[p.ID()] = false
 				allPlans = append(allPlans, p.(PhysicalPlan))

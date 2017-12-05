@@ -30,7 +30,7 @@ func (s *baseLogicalPlan) pushDownTopN(topN *TopN) LogicalPlan {
 	p := s.basePlan.self.(LogicalPlan)
 	for i, child := range p.Children() {
 		p.Children()[i] = child.(LogicalPlan).pushDownTopN(nil)
-		p.Children()[i].SetParents(p)
+		p.Children()[i].SetParent(p)
 	}
 	if topN != nil {
 		return topN.setChild(p, false)
@@ -94,7 +94,7 @@ func (p *Union) pushDownTopN(topN *TopN) LogicalPlan {
 			}
 		}
 		p.children[i] = child.(LogicalPlan).pushDownTopN(newTopN)
-		p.children[i].SetParents(p)
+		p.children[i].SetParent(p)
 	}
 	if topN != nil {
 		return topN.setChild(p, true)

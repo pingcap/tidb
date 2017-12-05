@@ -28,8 +28,8 @@ import (
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
-	// Get all the parents.
-	Parents() []Plan
+	// Get all the parent.
+	Parent() Plan
 	// Get all the children.
 	Children() []Plan
 	// Set the schema.
@@ -40,8 +40,8 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() string
-	// SetParents sets the parents for the plan.
-	SetParents(...Plan)
+	// SetParent sets the parent for the plan.
+	SetParent(Plan)
 	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
 	// replaceExprColumns replace all the column reference in the plan's expression node.
@@ -79,7 +79,7 @@ func (t taskType) String() string {
 	return "UnknownTaskType"
 }
 
-// requiredProp stands for the required physical property by parents.
+// requiredProp stands for the required physical property by parent.
 // It contains the orders, if the order is desc and the task types.
 type requiredProp struct {
 	cols []*expression.Column
@@ -289,7 +289,7 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	parents  []Plan
+	parent   Plan
 	children []Plan
 
 	schema  *expression.Schema
@@ -329,9 +329,9 @@ func (p *basePlan) Schema() *expression.Schema {
 	return p.schema
 }
 
-// Parents implements Plan Parents interface.
-func (p *basePlan) Parents() []Plan {
-	return p.parents
+// Parent implements Plan Parent interface.
+func (p *basePlan) Parent() Plan {
+	return p.parent
 }
 
 // Children implements Plan Children interface.
@@ -339,9 +339,9 @@ func (p *basePlan) Children() []Plan {
 	return p.children
 }
 
-// SetParents implements Plan SetParents interface.
-func (p *basePlan) SetParents(pars ...Plan) {
-	p.parents = pars
+// SetParent implements Plan SetParent interface.
+func (p *basePlan) SetParent(parent Plan) {
+	p.parent = parent
 }
 
 // SetChildren implements Plan SetChildren interface.
