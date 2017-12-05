@@ -704,9 +704,9 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 			return nil, errInvalidSequence
 		}
 		val := vals[0]
-		switch col.Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			if len(val) > 0 {
+		if len(val) > 0 {
+			switch col.Tp {
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 				if mysql.HasUnsignedFlag(col.Flag) {
 					elem, err := strconv.ParseUint(val, 10, 64)
 					if err != nil {
@@ -720,55 +720,41 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 					}
 					d.SetInt64(elem)
 				}
-			}
-		case mysql.TypeFloat:
-			if len(val) > 0 {
+			case mysql.TypeFloat:
 				elem, err := strconv.ParseFloat(val, 32)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				d.SetFloat32(float32(elem))
-			}
-		case mysql.TypeDouble:
-			if len(val) > 0 {
+			case mysql.TypeDouble:
 				elem, err := strconv.ParseFloat(val, 64)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				d.SetFloat64(elem)
-			}
-		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			if len(val) > 0 {
+			case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
+				mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 				d.SetBytes([]byte(val))
-			}
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			if len(val) > 0 {
+			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 				elem, err := types.ParseTime(nil, val, col.Tp, col.Decimal)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				d.SetMysqlTime(elem)
-			}
-		case mysql.TypeDuration:
-			if len(val) > 0 {
+			case mysql.TypeDuration:
 				elem, err := types.ParseDuration(val, col.Decimal)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				d.SetMysqlDuration(elem)
-			}
-		case mysql.TypeNewDecimal:
-			if len(val) > 0 {
+			case mysql.TypeNewDecimal:
 				var elem types.MyDecimal
 				err := elem.FromString([]byte(val))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				d.SetMysqlDecimal(&elem)
-			}
-		case mysql.TypeEnum:
-			if len(val) > 0 {
+			case mysql.TypeEnum:
 				num, err := strconv.ParseUint(val, 10, 64)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -778,9 +764,7 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 					return nil, errors.Trace(err)
 				}
 				d.SetMysqlEnum(elem)
-			}
-		case mysql.TypeSet:
-			if len(val) > 0 {
+			case mysql.TypeSet:
 				num, err := strconv.ParseUint(val, 10, 64)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -790,19 +774,17 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 					return nil, errors.Trace(err)
 				}
 				d.SetMysqlSet(elem)
-			}
-		case mysql.TypeBit:
-			if len(val) > 0 {
+			case mysql.TypeBit:
 				d.SetMysqlBit([]byte(val))
-			}
-		case mysql.TypeJSON:
-			if len(val) > 0 {
+			case mysql.TypeJSON:
 				elem, err := tjson.ParseFromString(val)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				d.SetMysqlJSON(elem)
 			}
+		} else {
+			d.SetNull()
 		}
 		data[i] = d
 	}
