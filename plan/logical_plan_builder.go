@@ -579,6 +579,34 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
+func (b *planBuilder) buildProjection4Union(u *Union) {
+	schema4Union := u.schema
+	for childID, child := range u.children {
+		exprs := make([]expression.Expression, len(child.Schema().Columns))
+		needProjection := false
+		for i, srcCol := range child.Schema().Columns {
+			dstType := schema4Union.Columns[i].RetType
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				needProjection = true
+			} else {
+				exprs[i] = srcCol.Clone()
+			}
+		}
+		if needProjection {
+			proj := Projection{Exprs: exprs}.init(b.ctx)
+			proj.schema = schema4Union.Clone()
+			for _, col := range proj.schema.Columns {
+				col.FromID = proj.ID()
+			}
+			setParentAndChildren(proj, u.children[childID])
+			u.children[childID] = proj
+		}
+	}
+	setParentAndChildren(u, u.children...)
+}
+
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := Union{}.init(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
@@ -627,8 +655,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
 	}
-
 	u.SetSchema(firstSchema)
+	b.buildProjection4Union(u)
 	var p LogicalPlan = u
 	if union.Distinct {
 		p = b.buildDistinct(u, u.Schema().Len())
