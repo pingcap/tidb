@@ -57,6 +57,7 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
+// Format the ExprNode into a Writer.
 func (n *ValueExpr) Format(w io.Writer) {
 	fmt.Fprintf(w, n.Text())
 }
@@ -106,6 +107,7 @@ type BetweenExpr struct {
 	Not bool
 }
 
+// Format the ExprNode into a Writer.
 func (n *BetweenExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	fmt.Fprintf(w, " BETWEEN ")
@@ -154,6 +156,7 @@ type BinaryOperationExpr struct {
 	R ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *BinaryOperationExpr) Format(w io.Writer) {
 	n.L.Format(w)
 	fmt.Fprintf(w, " ")
@@ -227,6 +230,7 @@ type CaseExpr struct {
 	ElseClause ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *CaseExpr) Format(w io.Writer) {
 	fmt.Fprintf(w, "CASE ")
 	n.Value.Format(w)
@@ -302,6 +306,7 @@ type SubqueryExpr struct {
 	Exists       bool
 }
 
+// Format the ExprNode into a Writer.
 func (n *SubqueryExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
@@ -340,6 +345,7 @@ type CompareSubqueryExpr struct {
 	All bool
 }
 
+// Format the ExprNode into a Writer.
 func (n *CompareSubqueryExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
@@ -420,6 +426,7 @@ type ColumnNameExpr struct {
 	Refer *ResultField
 }
 
+// Format the ExprNode into a Writer.
 func (n *ColumnNameExpr) Format(w io.Writer) {
 	fmt.Fprintf(w, n.Name.String())
 }
@@ -446,6 +453,7 @@ type DefaultExpr struct {
 	Name *ColumnName
 }
 
+// Format the ExprNode into a Writer.
 func (n *DefaultExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
@@ -475,6 +483,7 @@ type ExistsSubqueryExpr struct {
 	Sel ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *ExistsSubqueryExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
@@ -507,6 +516,7 @@ type PatternInExpr struct {
 	Sel ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *PatternInExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	fmt.Fprintf(w, " IN (")
@@ -557,6 +567,7 @@ type IsNullExpr struct {
 	Not bool
 }
 
+// Format the ExprNode into a Writer.
 func (n *IsNullExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
@@ -592,6 +603,7 @@ type IsTruthExpr struct {
 	True int64
 }
 
+// Format the ExprNode into a Writer.
 func (n *IsTruthExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
@@ -637,6 +649,7 @@ type PatternLikeExpr struct {
 	PatTypes []byte
 }
 
+// Format the ExprNode into a Writer.
 func (n *PatternLikeExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	fmt.Fprintf(w, " LIKE ")
@@ -679,6 +692,7 @@ type ParamMarkerExpr struct {
 	Order  int
 }
 
+// Format the ExprNode into a Writer.
 func (n *ParamMarkerExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
@@ -700,6 +714,7 @@ type ParenthesesExpr struct {
 	Expr ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *ParenthesesExpr) Format(w io.Writer) {
 	fmt.Fprintf(w, "(")
 	n.Expr.Format(w)
@@ -734,6 +749,7 @@ type PositionExpr struct {
 	Refer *ResultField
 }
 
+// Format the ExprNode into a Writer.
 func (n *PositionExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
@@ -764,6 +780,7 @@ type PatternRegexpExpr struct {
 	Sexpr *string
 }
 
+// Format the ExprNode into a Writer.
 func (n *PatternRegexpExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
@@ -802,6 +819,7 @@ type RowExpr struct {
 	Values []ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *RowExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
@@ -832,6 +850,7 @@ type UnaryOperationExpr struct {
 	V ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *UnaryOperationExpr) Format(w io.Writer) {
 	n.Op.Format(w)
 	n.V.Format(w)
@@ -859,6 +878,7 @@ type ValuesExpr struct {
 	Column *ColumnNameExpr
 }
 
+// Format the ExprNode into a Writer.
 func (n *ValuesExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
@@ -891,6 +911,7 @@ type VariableExpr struct {
 	Value ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *VariableExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }

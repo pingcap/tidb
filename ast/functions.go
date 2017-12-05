@@ -312,6 +312,7 @@ type FuncCallExpr struct {
 	Args []ExprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *FuncCallExpr) Format(w io.Writer) {
 	fmt.Fprintf(w, "%s(", n.FnName.String())
 	for i, arg := range n.Args {
@@ -362,6 +363,7 @@ type FuncCastExpr struct {
 	FunctionType CastFunctionType
 }
 
+// Format the ExprNode into a Writer.
 func (n *FuncCastExpr) Format(w io.Writer) {
 	switch n.FunctionType {
 	case CastFunction:
@@ -457,6 +459,7 @@ type AggregateFuncExpr struct {
 	Distinct bool
 }
 
+// Format the ExprNode into a Writer.
 func (n *AggregateFuncExpr) Format(w io.Writer) {
 	panic("Not implemented")
 }
