@@ -169,7 +169,7 @@ func needCount(af aggregation.Aggregation) bool {
 func needValue(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat ||
-		af.GetName() == ast.AggFuncBitAnd
+		af.GetName() == ast.AggFuncBitXor || af.GetName() == ast.AggFuncBitAnd
 }
 
 // PhysicalTableScan represents a table scan plan.
