@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -50,7 +51,7 @@ const (
 	pDBName    = "db"
 	pHexKey    = "hexKey"
 	pIndexName = "index"
-	pRecordID  = "recordID"
+	pHandle    = "handle"
 	pRegionID  = "regionID"
 	pStartTS   = "startTS"
 	pTableName = "table"
@@ -589,14 +590,16 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case opMvccGetByHex:
 		data, err = rh.handleMvccGetByHex(params)
 	case opMvccGetByIdx:
-		data, err = rh.handleMvccGetByIdx(params, req.Form)
+		err = req.ParseForm()
+		if err == nil {
+			data, err = rh.handleMvccGetByIdx(params, req.Form)
+		}
 	case opMvccGetByKey:
 		data, err = rh.handleMvccGetByKey(params)
 	case opMvccGetByTxn:
 		data, err = rh.handleMvccGetByTxn(params)
 	default:
-		rh.writeError(w, errors.NotSupportedf("Operation not supported."))
-		return
+		err = errors.NotSupportedf("Operation not supported.")
 	}
 	if err != nil {
 		rh.writeError(w, err)
@@ -606,34 +609,37 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (rh mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
-	schema, err := rh.schema()
 	dbName := params[pDBName]
 	tableName := params[pTableName]
+	handleStr := params[pHandle]
+	schema, err := rh.schema()
 	if err != nil {
 		return nil, err
 	}
 	// get table's schema.
-	table, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	t, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return nil, err
 	}
-	tableID := table.Meta().ID
-	var indexID int64
 	var idxCols []*model.ColumnInfo
-	for _, v := range table.Indices() {
+	var idx table.Index
+	for _, v := range t.Indices() {
 		if strings.EqualFold(v.Meta().Name.String(), params[pIndexName]) {
-			indexID = v.Meta().ID
 			for _, c := range v.Meta().Columns {
-				idxCols = append(idxCols, table.Meta().Columns[c.Offset])
+				idxCols = append(idxCols, t.Meta().Columns[c.Offset])
 			}
+			idx = v
 			break
 		}
 	}
-	return rh.getMvccByIdxValue(tableID, indexID, values, idxCols)
+	if idx == nil {
+		return nil, errors.NotFoundf("Index %s not found!", params[pIndexName])
+	}
+	return rh.getMvccByIdxValue(idx, values, idxCols, handleStr)
 }
 
 func (rh mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
-	recordID, err := strconv.ParseInt(params[pRecordID], 0, 64)
+	handle, err := strconv.ParseInt(params[pHandle], 0, 64)
 	if err != nil {
 		return nil, err
 	}
@@ -642,7 +648,7 @@ func (rh mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface
 	if err != nil {
 		return nil, err
 	}
-	return rh.getMvccByRecordID(tableID, recordID)
+	return rh.getMvccByHandle(tableID, handle)
 }
 
 func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
@@ -665,16 +671,19 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 	return rh.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
-func (t *regionHandlerTool) getMvccByIdxValue(tableID, indexID int64, values url.Values, idxCols []*model.ColumnInfo) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	idxRow, err := t.formValue2DatumRow(values, idxCols)
 	if err != nil {
 		return nil, err
 	}
-	valKey, err := codec.EncodeKey(nil, idxRow...)
+	handle, err := strconv.ParseInt(handleStr, 10, 64)
 	if err != nil {
 		return nil, err
 	}
-	encodeKey := tablecodec.EncodeIndexSeekKey(tableID, indexID, valKey)
+	encodeKey, _, err := idx.GenIndexKey(idxRow, handle)
+	if err != nil {
+		return nil, err
+	}
 	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
 	if err != nil {
 		return nil, err
@@ -701,7 +710,7 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 		var d types.Datum
 		vals, ok := values[col.Name.String()]
 		if !ok {
-			return nil, errInvalidSequence
+			return nil, errors.BadRequestf("Missing value for index column %s.", col.Name.String())
 		}
 		val := vals[0]
 		if len(val) > 0 {
@@ -782,6 +791,8 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 					return nil, errors.Trace(err)
 				}
 				d.SetMysqlJSON(elem)
+			default:
+				return nil, errors.NotSupportedf("Not supported datum type %d.", col.Tp)
 			}
 		} else {
 			d.SetNull()
@@ -791,8 +802,8 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 	return data, nil
 }
 
-func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, recordID)
+func (t *regionHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
 	if err != nil {
 		return nil, err

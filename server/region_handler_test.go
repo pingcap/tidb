@@ -233,8 +233,12 @@ func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
 	c.Assert(err, IsNil)
 	_, err = txn1.Exec("insert tidb.test values (2,2);")
 	c.Assert(err, IsNil)
+	_, err = txn1.Exec("insert into tidb.test (a) values (3);")
+	c.Assert(err, IsNil)
 	err = txn1.Commit()
 	c.Assert(err, IsNil)
+	dbt.mustExec("alter table tidb.test add index idx1 (a, b);")
+	dbt.mustExec("alter table tidb.test add unique index idx2 (a, b);")
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
@@ -282,6 +286,27 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1?a=1&b=2")
+	c.Assert(err, IsNil)
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2?a=1&b=2")
+	c.Assert(err, IsNil)
+
+	// tests for null
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1?a=1&b=")
+	c.Assert(err, IsNil)
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2?a=1&b=")
+	c.Assert(err, IsNil)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1?a=1&b=1")
+	c.Assert(err, IsNil)
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2?a=1&b=1")
+	c.Assert(err, IsNil)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1?a=1")
+	c.Assert(err, IsNil)
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2?a=1")
+	c.Assert(err, IsNil)
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
