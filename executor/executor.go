@@ -848,9 +848,24 @@ func (e *MaxOneRowExec) Next(goCtx goctx.Context) (Row, error) {
 	return nil, nil
 }
 
-// UnionExec represents union executor.
-// UnionExec has multiple source Executors, it executes them sequentially, and do conversion to the same type
-// as source Executors may has different field type, we need to do conversion.
+// UnionExec pulls all it's childrens result and returns to its parent directly.
+// A "resultPuller" is started for every child to pull result from that child and push it to the "resultPool", the used
+// "Chunk" is obtained from the corresponding "resourcePool". All resultPullers are running concurrently.
+//                             +----------------+
+//   +---> resourcePool 1 ---> | resultPuller 1 |-----+
+//   |                         +----------------+     |
+//   |                                                |
+//   |                         +----------------+     v
+//   +---> resourcePool 2 ---> | resultPuller 2 |-----> resultPool ---+
+//   |                         +----------------+     ^               |
+//   |                               ......           |               |
+//   |                         +----------------+     |               |
+//   +---> resourcePool n ---> | resultPuller n |-----+               |
+//   |                         +----------------+                     |
+//   |                                                                |
+//   |                          +-------------+                       |
+//   |--------------------------| main thread | <---------------------+
+//                              +-------------+
 type UnionExec struct {
 	baseExecutor
 
@@ -861,10 +876,10 @@ type UnionExec struct {
 	wg            sync.WaitGroup
 
 	// For chunk execution.
-	resourcePool   chan *executorResult
-	resultPool     chan *executorResult
-	initialized    bool
-	chunkExecution bool
+	finished      chan struct{}
+	resourcePools []chan *chunk.Chunk
+	resultPool    chan *unionWorkerResult
+	initialized   bool
 }
 
 type execResult struct {
@@ -872,14 +887,19 @@ type execResult struct {
 	err  error
 }
 
-type executorResult struct {
+// unionWorkerResult stores the result for a union worker.
+// A "resultPuller" is started for every child to pull result from that child, unionWorkerResult is used to store that pulled result.
+// "src" is used for Chunk resuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
+// enable the corresponding "resultPuller" continue to work.
+type unionWorkerResult struct {
 	chk *chunk.Chunk
 	err error
+	src chan<- *chunk.Chunk
 }
 
-func (e *UnionExec) waitAllFinished() {
+func (e *UnionExec) waitAllFinished(forChunk bool) {
 	e.wg.Wait()
-	if e.chunkExecution {
+	if forChunk {
 		close(e.resultPool)
 	} else {
 		close(e.resultCh)
@@ -900,20 +920,27 @@ func (e *UnionExec) fetchData(goCtx goctx.Context, idx int) {
 			}
 			row, err := e.children[idx].Next(goCtx)
 			if err != nil {
-				e.stopFetchData.Store(true)
-				result.err = err
-				e.resultCh <- result
-				return
+				result.err = errors.Trace(err)
+				break
 			}
 			if row == nil {
-				if len(result.rows) > 0 {
-					e.resultCh <- result
-				}
-				return
+				break
 			}
 			result.rows = append(result.rows, row)
 		}
-		e.resultCh <- result
+		if len(result.rows) == 0 && result.err == nil {
+			return
+		}
+		if result.err != nil {
+			e.stopFetchData.Store(true)
+		}
+		select {
+		case e.resultCh <- result:
+		case _, ok := <-e.finished:
+			if !ok {
+				return
+			}
+		}
 	}
 }
 
@@ -924,16 +951,17 @@ func (e *UnionExec) Open(goCtx goctx.Context) error {
 	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
+	e.finished = make(chan struct{})
 	return nil
 }
 
 func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
-	e.chunkExecution = forChunk
 	if forChunk {
-		e.resourcePool = make(chan *executorResult, len(e.children))
-		e.resultPool = make(chan *executorResult, len(e.children))
+		e.resultPool = make(chan *unionWorkerResult, len(e.children))
+		e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
 		for i := range e.children {
-			e.resourcePool <- &executorResult{chk: e.childrenResults[i], err: nil}
+			e.resourcePools[i] = make(chan *chunk.Chunk, 1)
+			e.resourcePools[i] <- e.childrenResults[i]
 			e.wg.Add(1)
 			go e.resultPuller(i)
 		}
@@ -945,24 +973,42 @@ func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 			go e.fetchData(goCtx, i)
 		}
 	}
-	go e.waitAllFinished()
+	go e.waitAllFinished(forChunk)
 }
 
 func (e *UnionExec) resultPuller(childID int) {
 	defer e.wg.Done()
+	result := &unionWorkerResult{
+		err: nil,
+		chk: nil,
+		src: e.resourcePools[childID],
+	}
 	for {
 		if e.stopFetchData.Load().(bool) {
 			return
 		}
-		resource := <-e.resourcePool
-		resource.err = errors.Trace(e.children[childID].NextChunk(resource.chk))
-		if resource.err != nil || resource.chk.NumRows() == 0 {
-			if resource.err != nil {
-				e.stopFetchData.Store(true)
+		select {
+		case _, ok := <-e.finished:
+			if !ok {
+				return
 			}
+		case result.chk = <-e.resourcePools[childID]:
+		}
+		result.err = errors.Trace(e.children[childID].NextChunk(result.chk))
+		if result.err == nil && result.chk.NumRows() == 0 {
 			return
 		}
-		e.resultPool <- resource
+		select {
+		case _, ok := <-e.finished:
+			if !ok {
+				return
+			}
+		case e.resultPool <- result:
+		}
+		if result.err != nil {
+			e.stopFetchData.Store(true)
+			return
+		}
 	}
 }
 
@@ -1007,15 +1053,14 @@ func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
 	}
 
 	chk.SwapColumns(result.chk)
-	e.resourcePool <- result
+	result.src <- result.chk
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	e.rows = nil
-	if e.chunkExecution {
-		close(e.resourcePool)
-	}
+	close(e.finished)
+	e.resourcePools = nil
 	return errors.Trace(e.baseExecutor.Close())
 }
