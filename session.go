@@ -607,7 +607,8 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	}
 	ret := make(map[string]string)
 	for _, r := range rows {
-		ret[r.GetString(0)] = ret[r.GetString(1)]
+		k, v := r.GetString(0), r.GetString(1)
+		ret[k] = v
 	}
 	return ret, nil
 }
