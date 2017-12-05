@@ -306,7 +306,7 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	return
 }
 
-// ServeHTTP handles request of list a table's regions.
+// ServeHTTP handles table related requests, such as table's region information, disk usage.
 func (rh tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse params
 	params := mux.Vars(req)
