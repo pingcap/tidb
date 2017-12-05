@@ -399,7 +399,11 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			return errors.Trace(err)
 		}
 		for _, varName := range unreachedVars {
-			row := types.MakeDatums(varName, systemVars[varName])
+			varValue, ok := systemVars[varName]
+			if !ok {
+				varValue = variable.SysVars[varName].Value
+			}
+			row := types.MakeDatums(varName, varValue)
 			e.rows = append(e.rows, row)
 		}
 	}
