@@ -48,7 +48,7 @@ var (
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideIntSig{}
-	_ builtinFunc = &builtinArithmeticRealDivideRealSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideRealSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticModIntSig{}
 	_ builtinFunc = &builtinArithmeticModRealSig{}
@@ -591,7 +591,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx context.Context, args
 		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticRealDivideRealSig{bf}
+		sig := &builtinArithmeticIntDivideRealSig{bf}
 		return sig, nil
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETDecimal, types.ETDecimal)
@@ -603,7 +603,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx context.Context, args
 }
 
 type builtinArithmeticIntDivideIntSig struct{ baseBuiltinFunc }
-type builtinArithmeticRealDivideRealSig struct{ baseBuiltinFunc }
+type builtinArithmeticIntDivideRealSig struct{ baseBuiltinFunc }
 type builtinArithmeticIntDivideDecimalSig struct{ baseBuiltinFunc }
 
 func (s *builtinArithmeticIntDivideIntSig) evalInt(row types.Row) (int64, bool, error) {
@@ -645,7 +645,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row types.Row) (int64, bool, 
 	return ret, err != nil, errors.Trace(err)
 }
 
-func (s *builtinArithmeticRealDivideRealSig) evalInt(row types.Row) (int64, bool, error) {
+func (s *builtinArithmeticIntDivideRealSig) evalInt(row types.Row) (int64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	b, isNull, err := s.args[1].EvalReal(row, sc)
 	if isNull || err != nil {
