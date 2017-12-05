@@ -605,9 +605,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
-			sv, ok := variable.SysVars[name]
-			isUninitializedGlobalVariable := ok && sv.Scope|variable.ScopeGlobal > 0
-			if isUninitializedGlobalVariable {
+			if sv, ok := variable.SysVars[name]; ok {
 				return sv.Value, nil
 			}
 			return "", variable.UnknownSystemVar.GenByArgs(name)
