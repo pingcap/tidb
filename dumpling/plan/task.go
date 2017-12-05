@@ -295,7 +295,7 @@ func (t *rootTask) plan() PhysicalPlan {
 	return t.p
 }
 
-func (p *Limit) attach2Task(tasks ...task) task {
+func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
 	if tasks[0].invalid() {
 		return invalidTask
@@ -305,7 +305,7 @@ func (p *Limit) attach2Task(tasks ...task) task {
 		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
 			// When limit be pushed down, it should remove its offset.
-			pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.ctx)
+			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx)
 			pushedDownLimit.profile = p.profile
 			if cop.tablePlan != nil {
 				pushedDownLimit.SetSchema(cop.tablePlan.Schema())
@@ -423,7 +423,7 @@ func (p *Projection) attach2Task(tasks ...task) task {
 	return nil
 }
 
-func (p *Union) attach2Task(tasks ...task) task {
+func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	np := p.Copy()
 	newTask := &rootTask{p: np}
 	newChildren := make([]Plan, 0, len(p.children))

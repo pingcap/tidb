@@ -123,6 +123,20 @@ func (p *PhysicalSelection) getChildrenPossibleProps(prop *requiredProp) [][]*re
 	return [][]*requiredProp{{prop}}
 }
 
+func (p *PhysicalLock) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	return [][]*requiredProp{{prop}}
+}
+
+func (p *PhysicalUnionAll) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	props := make([]*requiredProp, p.childNum)
+	for i := range props {
+		props[i] = prop
+	}
+	return [][]*requiredProp{props}
+}
+
 func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
@@ -155,7 +169,7 @@ func (p *PhysicalApply) getChildrenPossibleProps(prop *requiredProp) [][]*requir
 	return [][]*requiredProp{{lProp, &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}}}
 }
 
-func (p *Limit) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalLimit) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
 		return nil
