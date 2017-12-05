@@ -439,3 +439,29 @@ func (p *LogicalUnionAll) generatePhysicalPlans() []PhysicalPlan {
 	ua.SetSchema(p.schema)
 	return []PhysicalPlan{ua}
 }
+
+func (p *LogicalSort) getPhysicalSort() *PhysicalSort {
+	ps := PhysicalSort{ByItems: p.ByItems}.init(p.ctx)
+	ps.profile = p.profile
+	ps.SetSchema(p.schema)
+	return ps
+}
+
+func (p *LogicalSort) getNominalSort() *NominalSort {
+	prop, canPass := getPropByOrderByItems(p.ByItems)
+	if !canPass {
+		return nil
+	}
+	ps := &NominalSort{prop: prop}
+	return ps
+}
+
+func (p *LogicalSort) generatePhysicalPlans() []PhysicalPlan {
+	ret := make([]PhysicalPlan, 0, 2)
+	ret = append(ret, p.getPhysicalSort())
+	ps := p.getNominalSort()
+	if ps != nil {
+		ret = append(ret, ps)
+	}
+	return ret
+}

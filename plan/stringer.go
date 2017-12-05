@@ -119,7 +119,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *Sort:
+	case *LogicalSort, *PhysicalSort:
 		str = "Sort"
 	case *LogicalJoin:
 		last := len(idxs) - 1

@@ -96,6 +96,10 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 }
 
 func (p *DataSource) prepareStatsProfile() *statsProfile {
+	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	for i, expr := range p.pushedDownConds {
+		p.pushedDownConds[i] = expression.PushDownNot(expr, false, nil)
+	}
 	p.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 	return p.profile
 }

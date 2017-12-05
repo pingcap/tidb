@@ -34,7 +34,7 @@ var (
 	_ LogicalPlan = &TableDual{}
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &LogicalUnionAll{}
-	_ LogicalPlan = &Sort{}
+	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
 	_ LogicalPlan = &Show{}
@@ -321,16 +321,15 @@ type LogicalUnionAll struct {
 	baseLogicalPlan
 }
 
-// Sort stands for the order by plan.
-type Sort struct {
+// LogicalSort stands for the order by plan.
+type LogicalSort struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	ByItems []*ByItems
 }
 
-func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, item := range p.ByItems {
 		corCols = append(corCols, extractCorColumns(item.Expr)...)

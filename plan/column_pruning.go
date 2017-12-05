@@ -121,7 +121,7 @@ func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	for i := len(p.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(p.ByItems[i].Expr)

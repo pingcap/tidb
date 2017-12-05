@@ -322,7 +322,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *Sort) getCost(count float64) float64 {
+func (p *PhysicalSort) getCost(count float64) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
@@ -351,7 +351,7 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 	return len(schema.ColumnsIndices(cols)) > 0
 }
 
-func (p *Sort) attach2Task(tasks ...task) task {
+func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
@@ -359,6 +359,10 @@ func (p *Sort) attach2Task(tasks ...task) task {
 	t = attachPlan2Task(p.Copy(), t)
 	t.addCost(p.getCost(t.count()))
 	return t
+}
+
+func (p *NominalSort) attach2Task(tasks ...task) task {
+	return tasks[0]
 }
 
 func (p *TopN) attach2Task(tasks ...task) task {
@@ -380,16 +384,16 @@ func (p *TopN) attach2Task(tasks ...task) task {
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
 		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
+			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 			pushedDownTopN.SetChildren(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
-			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 		} else {
 			// FIXME: When we pushed down a top-N plan to table plan branch in case of double reading. The cost should
 			// be more expensive in case of single reading, because we may execute table scan multi times.
 			copTask.finishIndexPlan()
+			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 			pushedDownTopN.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
-			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
 		copTask.addCost(pushedDownTopN.getCost(t.count()))
 	}

@@ -579,6 +579,34 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
+func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
+	schema4Union := u.schema
+	for childID, child := range u.children {
+		exprs := make([]expression.Expression, len(child.Schema().Columns))
+		needProjection := false
+		for i, srcCol := range child.Schema().Columns {
+			dstType := schema4Union.Columns[i].RetType
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				needProjection = true
+			} else {
+				exprs[i] = srcCol.Clone()
+			}
+		}
+		if needProjection {
+			proj := Projection{Exprs: exprs}.init(b.ctx)
+			proj.schema = schema4Union.Clone()
+			for _, col := range proj.schema.Columns {
+				col.FromID = proj.ID()
+			}
+			setParentAndChildren(proj, u.children[childID])
+			u.children[childID] = proj
+		}
+	}
+	setParentAndChildren(u, u.children...)
+}
+
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := LogicalUnionAll{}.init(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
@@ -627,8 +655,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
 	}
-
 	u.SetSchema(firstSchema)
+	b.buildProjection4Union(u)
 	var p LogicalPlan = u
 	if union.Distinct {
 		p = b.buildDistinct(u, u.Schema().Len())
@@ -663,7 +691,7 @@ func (by *ByItems) Clone() *ByItems {
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	b.curClause = orderByClause
-	sort := Sort{}.init(b.ctx)
+	sort := LogicalSort{}.init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
@@ -1708,7 +1736,7 @@ out:
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *Projection, *Sort:
+		case *Projection, *LogicalSort:
 			p = p.Children()[0].(LogicalPlan)
 			p.SetParents()
 		case *LogicalAggregation:
