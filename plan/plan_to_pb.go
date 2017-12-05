@@ -68,7 +68,7 @@ func (p *TopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalLimit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	limitExec := &tipb.Limit{
 		Limit: p.Count,
 	}
