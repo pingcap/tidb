@@ -336,7 +336,7 @@ func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// TopN represents a top-n plan.
+// LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
 	*basePlan
 	baseLogicalPlan
