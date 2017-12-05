@@ -151,24 +151,25 @@ func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (a
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
-	span, ctx1 := opentracing.StartSpanFromContext(goCtx, "runStmt")
-	span.LogKV("sql", s.OriginText())
-	defer span.Finish()
+	if span := opentracing.SpanFromContext(goCtx); span != nil {
+		span, goCtx = opentracing.StartSpanFromContext(goCtx, "runStmt")
+		span.LogKV("sql", s.OriginText())
+		defer span.Finish()
+	}
 
 	var err error
 	var rs ast.RecordSet
 	se := ctx.(*session)
 	rs, err = s.Exec(goCtx)
-	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			err1 := se.RollbackTxn(ctx1)
+			err1 := se.RollbackTxn(goCtx)
 			terror.Log(errors.Trace(err1))
 		} else {
-			err = se.CommitTxn(ctx1)
+			err = se.CommitTxn(goCtx)
 		}
 	}
 	return rs, errors.Trace(err)

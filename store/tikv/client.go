@@ -24,6 +24,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
@@ -74,15 +75,24 @@ func newConnArray(maxSize int, addr string) (*connArray, error) {
 }
 
 func (a *connArray) Init(addr string) error {
-	for i := range a.v {
-		unaryInterceptor := grpc_middleware.ChainUnaryClient(
+	conf := config.GetGlobalConfig()
+	var unaryInterceptor grpc.UnaryClientInterceptor
+	var streamInterceptor grpc.StreamClientInterceptor
+	if conf.OpenTracing.Enable {
+		// gRPC middleware chain is poor implemented, avoid to use when possible!
+		unaryInterceptor = grpc_middleware.ChainUnaryClient(
 			grpc_prometheus.UnaryClientInterceptor,
 			grpc_opentracing.UnaryClientInterceptor(),
 		)
-		streamInterceptor := grpc_middleware.ChainStreamClient(
+		streamInterceptor = grpc_middleware.ChainStreamClient(
 			grpc_prometheus.StreamClientInterceptor,
 			grpc_opentracing.StreamClientInterceptor(),
 		)
+	} else {
+		unaryInterceptor = grpc_prometheus.UnaryClientInterceptor
+		streamInterceptor = grpc_prometheus.StreamClientInterceptor
+	}
+	for i := range a.v {
 		conn, err := grpc.Dial(
 			addr,
 			grpc.WithInsecure(),

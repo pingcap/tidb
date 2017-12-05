@@ -849,7 +849,7 @@ func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary b
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
-	data := make([]byte, 4, 1024)
+	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
 		return errors.Trace(err)
@@ -868,7 +868,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 }
 
 func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
-	data := make([]byte, 4, 1024)
+	data := cc.alloc.AllocWithLen(4, 1024)
 	chk := rs.NewChunk()
 	for {
 		err := rs.NextChunk(chk)
