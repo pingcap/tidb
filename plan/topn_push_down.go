@@ -44,7 +44,7 @@ func (s *TopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
 		return p
 	}
 	if s.isLimit() {
-		limit := Limit{
+		limit := LogicalLimit{
 			Count:   s.Count,
 			Offset:  s.Offset,
 			partial: s.partial,
@@ -71,11 +71,11 @@ func (s *LogicalSort) pushDownTopN(topN *TopN) LogicalPlan {
 	return s.children[0].(LogicalPlan).pushDownTopN(topN)
 }
 
-func (p *Limit) convertToTopN() *TopN {
+func (p *LogicalLimit) convertToTopN() *TopN {
 	return TopN{Offset: p.Offset, Count: p.Count}.init(p.ctx)
 }
 
-func (p *Limit) pushDownTopN(topN *TopN) LogicalPlan {
+func (p *LogicalLimit) pushDownTopN(topN *TopN) LogicalPlan {
 	child := p.children[0].(LogicalPlan).pushDownTopN(p.convertToTopN())
 	if topN != nil {
 		return topN.setChild(child, false)
@@ -83,7 +83,7 @@ func (p *Limit) pushDownTopN(topN *TopN) LogicalPlan {
 	return child
 }
 
-func (p *Union) pushDownTopN(topN *TopN) LogicalPlan {
+func (p *LogicalUnionAll) pushDownTopN(topN *TopN) LogicalPlan {
 	for i, child := range p.children {
 		var newTopN *TopN
 		if topN != nil {
