@@ -148,7 +148,7 @@ func (p *PhysicalSelection) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalAggregation) ResolveIndices() {
+func (p *basePhysicalAgg) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, aggFun := range p.AggFuncs {
 		for _, arg := range aggFun.GetArgs() {

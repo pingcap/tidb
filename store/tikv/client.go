@@ -30,13 +30,16 @@ import (
 	"google.golang.org/grpc"
 )
 
+// MaxConnectionCount is the max gRPC connections that will be established with
+// each tikv-server.
+var MaxConnectionCount = 16
+
 // Timeout durations.
 const (
-	maxConnectionNumber = 16
-	dialTimeout         = 5 * time.Second
-	readTimeoutShort    = 20 * time.Second  // For requests that read/write several key-values.
-	ReadTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
-	ReadTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
+	dialTimeout       = 5 * time.Second
+	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
+	ReadTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
+	ReadTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
@@ -59,7 +62,7 @@ type connArray struct {
 	v     []*grpc.ClientConn
 }
 
-func newConnArray(maxSize uint32, addr string) (*connArray, error) {
+func newConnArray(maxSize int, addr string) (*connArray, error) {
 	a := &connArray{
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),
@@ -155,7 +158,7 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		array, err = newConnArray(maxConnectionNumber, addr)
+		array, err = newConnArray(MaxConnectionCount, addr)
 		if err != nil {
 			return nil, err
 		}

@@ -195,15 +195,13 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 }
 
 func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
-	for i := len(conditions) - 1; i >= 0; i-- {
-		for _, cond := range accessConds {
-			if cond == conditions[i] {
-				conditions = append(conditions[:i], conditions[i+1:]...)
-				break
-			}
+	filterConds := make([]expression.Expression, 0, len(conditions))
+	for _, cond := range conditions {
+		if !expression.Contains(accessConds, cond) {
+			filterConds = append(filterConds, cond)
 		}
 	}
-	return conditions
+	return filterConds
 }
 
 // DetachCondsForSelectivity detaches the conditions used for range calculation from other useless conditions.
