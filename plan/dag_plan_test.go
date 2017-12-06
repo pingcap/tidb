@@ -559,7 +559,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// Test show.
 		{
 			sql:  "show tables",
-			best: "Show([])",
+			best: "Show",
 		},
 	}
 	for _, tt := range tests {
