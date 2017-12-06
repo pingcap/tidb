@@ -15,9 +15,6 @@
 package tikv
 
 import (
-	"crypto/tls"
-	"crypto/x509"
-	"io/ioutil"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,37 +78,11 @@ func newConnArray(maxSize int, addr string, security config.Security) (*connArra
 func (a *connArray) Init(addr string, security config.Security) error {
 	opt := grpc.WithInsecure()
 	if len(security.SSLCA) != 0 {
-		certificates := []tls.Certificate{}
-		if len(security.SSLCert) != 0 && len(security.SSLKey) != 0 {
-			// Load the client certificates from disk
-			certificate, err := tls.LoadX509KeyPair(security.SSLCert, security.SSLKey)
-			if err != nil {
-				a.Close()
-				return errors.Errorf("could not load key pair: %s", err)
-			}
-			certificates = append(certificates, certificate)
-		}
-
-		// Create a certificate pool from the certificate authority
-		certPool := x509.NewCertPool()
-		ca, err := ioutil.ReadFile(security.SSLCA)
+		tlsConfig, err := security.ToTLSConfig()
 		if err != nil {
-			a.Close()
-			return errors.Errorf("could not read ca certificate: %s", err)
+			return errors.Trace(err)
 		}
-
-		// Append the certificates from the CA
-		if !certPool.AppendCertsFromPEM(ca) {
-			a.Close()
-			return errors.New("failed to append ca certs")
-		}
-
-		creds := credentials.NewTLS(&tls.Config{
-			Certificates: certificates,
-			RootCAs:      certPool,
-		})
-
-		opt = grpc.WithTransportCredentials(creds)
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
 	for i := range a.v {
