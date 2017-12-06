@@ -127,37 +127,62 @@ func (p LogicalUnionScan) init(ctx context.Context) *LogicalUnionScan {
 	return &p
 }
 
-func (p Projection) init(ctx context.Context) *Projection {
+func (p LogicalProjection) init(ctx context.Context) *LogicalProjection {
 	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalProjection) init(ctx context.Context) *PhysicalProjection {
+	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Union) init(ctx context.Context) *Union {
+func (p LogicalUnionAll) init(ctx context.Context) *LogicalUnionAll {
 	p.basePlan = newBasePlan(TypeUnion, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalUnionAll) init(ctx context.Context) *PhysicalUnionAll {
+	p.basePlan = newBasePlan(TypeUnion, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Sort) init(ctx context.Context) *Sort {
+func (p LogicalSort) init(ctx context.Context) *LogicalSort {
 	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalSort) init(ctx context.Context) *PhysicalSort {
+	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p TopN) init(ctx context.Context) *TopN {
+func (p LogicalTopN) init(ctx context.Context) *LogicalTopN {
 	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalTopN) init(ctx context.Context) *PhysicalTopN {
+	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Limit) init(ctx context.Context) *Limit {
+func (p LogicalLimit) init(ctx context.Context) *LogicalLimit {
 	p.basePlan = newBasePlan(TypeLimit, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalLimit) init(ctx context.Context) *PhysicalLimit {
+	p.basePlan = newBasePlan(TypeLimit, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
@@ -205,9 +230,14 @@ func (p Show) init(ctx context.Context) *Show {
 	return &p
 }
 
-func (p SelectLock) init(ctx context.Context) *SelectLock {
+func (p LogicalLock) init(ctx context.Context) *LogicalLock {
 	p.basePlan = newBasePlan(TypeLock, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalLock) init(ctx context.Context) *PhysicalLock {
+	p.basePlan = newBasePlan(TypeLock, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
