@@ -44,7 +44,7 @@ const (
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// TiDBHashJoin is hint enforce hash join.
-	TiDBHashJoin = "tidb_hashjoin"
+	TiDBHashJoin = "tidb_hj"
 )
 
 const (
@@ -274,7 +274,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 		// If there're multiple join type and one of them is not the index join hints, then is conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 && (joinPlan.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
-			b.err = errors.New("Optimizer Hints is conflict")
+			b.err = errors.New("Join hints are conflict, you can only specify one type of join")
 			return nil
 		}
 	}
@@ -1824,7 +1824,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		}
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
-			b.err = errors.New("Optimizer Hints is conflict")
+			b.err = errors.New("Join hints are conflict, you can only specify one type of join")
 			return nil
 		}
 	}
