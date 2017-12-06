@@ -112,7 +112,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 				setParentAndChildren(apply, outerPlan, innerPlan)
 				return s.optimize(p, nil)
 			}
-		} else if proj, ok := innerPlan.(*Projection); ok {
+		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}

@@ -95,7 +95,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSet(v)
 	case *plan.PhysicalSort:
 		return b.buildSort(v)
-	case *plan.TopN:
+	case *plan.PhysicalTopN:
 		return b.buildTopN(v)
 	case *plan.PhysicalUnionAll:
 		return b.buildUnionAll(v)
@@ -117,7 +117,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildHashAgg(v)
 	case *plan.PhysicalStreamAgg:
 		return b.buildStreamAgg(v)
-	case *plan.Projection:
+	case *plan.PhysicalProjection:
 		return b.buildProjection(v)
 	case *plan.PhysicalMemTable:
 		return b.buildMemTable(v)
@@ -655,7 +655,7 @@ func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
+func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -718,7 +718,7 @@ func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
 	return &sortExec
 }
 
-func (b *executorBuilder) buildTopN(v *plan.TopN) Executor {
+func (b *executorBuilder) buildTopN(v *plan.PhysicalTopN) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
