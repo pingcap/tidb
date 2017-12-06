@@ -321,7 +321,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	retPlan = p
 	for _, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
@@ -345,8 +345,8 @@ func (p *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	retPlan = p
-	var exprsOriginal []expression.Expression
 	var condsToPush []expression.Expression
+	exprsOriginal := make([]expression.Expression, 0, len(p.AggFuncs))
 	for _, fun := range p.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.GetArgs()[0])
 	}
@@ -382,7 +382,7 @@ func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expressio
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	// Limit forbids any condition to push down.
 	p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p

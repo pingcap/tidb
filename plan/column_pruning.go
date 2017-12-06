@@ -121,7 +121,7 @@ func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	for i := len(p.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(p.ByItems[i].Expr)
@@ -136,7 +136,7 @@ func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -269,7 +269,7 @@ func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) {
 	if p.Lock != ast.SelectLockForUpdate {
 		p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	} else {

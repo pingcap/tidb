@@ -379,8 +379,8 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 	return nil
 }
 
-func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
-	selectLock := SelectLock{Lock: lock}.init(b.ctx)
+func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
+	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
 	setParentAndChildren(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
@@ -568,13 +568,14 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	var resultPlan Plan
 	p := Show{
-		Tp:     show.Tp,
-		DBName: show.DBName,
-		Table:  show.Table,
-		Column: show.Column,
-		Flag:   show.Flag,
-		Full:   show.Full,
-		User:   show.User,
+		Tp:          show.Tp,
+		DBName:      show.DBName,
+		Table:       show.Table,
+		Column:      show.Column,
+		Flag:        show.Flag,
+		Full:        show.Full,
+		User:        show.User,
+		GlobalScope: show.GlobalScope,
 	}.init(b.ctx)
 	resultPlan = p
 	switch showTp := show.Tp; showTp {

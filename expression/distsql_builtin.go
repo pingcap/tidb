@@ -521,7 +521,7 @@ func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFu
 	}, nil
 }
 
-// newDistSQLFunction only creates function for mock-tikv.
+// newDistSQLFunction only creates function for mocktikv.
 func newDistSQLFunction(sc *stmtctx.StatementContext, exprType tipb.ExprType, args []Expression) (Expression, error) {
 	name, ok := distFuncs[exprType]
 	if !ok {
