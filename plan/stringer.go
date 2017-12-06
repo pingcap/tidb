@@ -119,6 +119,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
+	case *Show:
+		str = fmt.Sprintf("Show(%s)", x.Conditions)
 	case *LogicalSort, *PhysicalSort:
 		str = "Sort"
 	case *LogicalJoin:
