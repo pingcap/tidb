@@ -84,7 +84,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	// Now we only consider rootTask.
 	if len(p.basePlan.children) == 0 {
 		// When the children length is 0, we process it specially.
-		t = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
+		t = &rootTask{p: p.basePlan.self.(LogicalPlan).generatePhysicalPlans()[0]}
 		t = prop.enforceProperty(t, p.basePlan.ctx)
 		p.storeTask(prop, t)
 		return t, nil
@@ -160,7 +160,7 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 				return nil, errors.Trace(err)
 			}
 			if !result {
-				dual := TableDual{}.init(p.ctx)
+				dual := PhysicalTableDual{}.init(p.ctx)
 				dual.SetSchema(p.schema)
 				dual.profile = p.profile
 				return &rootTask{

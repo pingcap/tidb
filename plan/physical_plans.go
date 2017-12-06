@@ -27,9 +27,9 @@ var (
 	_ PhysicalPlan = &PhysicalSelection{}
 	_ PhysicalPlan = &PhysicalProjection{}
 	_ PhysicalPlan = &PhysicalTopN{}
-	_ PhysicalPlan = &Exists{}
-	_ PhysicalPlan = &MaxOneRow{}
-	_ PhysicalPlan = &TableDual{}
+	_ PhysicalPlan = &PhysicalExists{}
+	_ PhysicalPlan = &PhysicalMaxOneRow{}
+	_ PhysicalPlan = &PhysicalTableDual{}
 	_ PhysicalPlan = &PhysicalUnionAll{}
 	_ PhysicalPlan = &PhysicalSort{}
 	_ PhysicalPlan = &NominalSort{}
@@ -470,6 +470,23 @@ type PhysicalSelection struct {
 	Conditions []expression.Expression
 }
 
+type PhysicalExists struct {
+	*basePlan
+	basePhysicalPlan
+}
+
+type PhysicalMaxOneRow struct {
+	*basePlan
+	basePhysicalPlan
+}
+
+type PhysicalTableDual struct {
+	*basePlan
+	basePhysicalPlan
+
+	RowCount int
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalSelection) Copy() PhysicalPlan {
 	np := *p
@@ -487,19 +504,17 @@ func (p *PhysicalProjection) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Exists) Copy() PhysicalPlan {
+func (p *PhysicalExists) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *MaxOneRow) Copy() PhysicalPlan {
+func (p *PhysicalMaxOneRow) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
@@ -542,10 +557,9 @@ func (p *PhysicalTopN) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *TableDual) Copy() PhysicalPlan {
+func (p *PhysicalTableDual) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
@@ -605,7 +619,7 @@ func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
 
 func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
-	case *PhysicalLimit, *PhysicalTopN, *PhysicalSort, *PhysicalSelection, *MaxOneRow, *PhysicalLock:
+	case *PhysicalLimit, *PhysicalTopN, *PhysicalSort, *PhysicalSelection, *PhysicalMaxOneRow, *PhysicalLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
 		p.SetSchema(buildJoinSchema(x.JoinType, p))

@@ -482,3 +482,24 @@ func (p *LogicalSort) generatePhysicalPlans() []PhysicalPlan {
 	}
 	return ret
 }
+
+func (p *LogicalExists) generatePhysicalPlans() []PhysicalPlan {
+	exists := PhysicalExists{}.init(p.ctx)
+	exists.profile = p.profile
+	exists.SetSchema(p.schema)
+	return []PhysicalPlan{exists}
+}
+
+func (p *LogicalMaxOneRow) generatePhysicalPlans() []PhysicalPlan {
+	mor := PhysicalMaxOneRow{}.init(p.ctx)
+	mor.profile = p.profile
+	mor.SetSchema(p.schema)
+	return []PhysicalPlan{mor}
+}
+
+func (p *LogicalTableDual) generatePhysicalPlans() []PhysicalPlan {
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
+	dual.profile = p.profile
+	dual.SetSchema(p.schema)
+	return []PhysicalPlan{dual}
+}

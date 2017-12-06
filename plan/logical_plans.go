@@ -29,9 +29,9 @@ var (
 	_ LogicalPlan = &LogicalProjection{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &Exists{}
-	_ LogicalPlan = &MaxOneRow{}
-	_ LogicalPlan = &TableDual{}
+	_ LogicalPlan = &LogicalExists{}
+	_ LogicalPlan = &LogicalMaxOneRow{}
+	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &LogicalUnionAll{}
 	_ LogicalPlan = &LogicalSort{}
@@ -239,24 +239,21 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // Exists checks if a query returns result.
-type Exists struct {
+type LogicalExists struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
 // MaxOneRow checks if a query returns no more than one row.
-type MaxOneRow struct {
+type LogicalMaxOneRow struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
 // TableDual represents a dual table plan.
-type TableDual struct {
+type LogicalTableDual struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	RowCount int
 }
