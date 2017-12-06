@@ -109,9 +109,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *Exists:
+	case *LogicalExists, *PhysicalExists:
 		str = "Exists"
-	case *MaxOneRow:
+	case *LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *LogicalLimit, *PhysicalLimit:
 		str = "Limit"
@@ -162,7 +162,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *PhysicalTopN:
 		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
-	case *TableDual:
+	case *LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
 		str = "HashAgg"
