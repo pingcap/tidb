@@ -26,7 +26,7 @@ import (
 var (
 	_ LogicalPlan = &LogicalJoin{}
 	_ LogicalPlan = &LogicalAggregation{}
-	_ LogicalPlan = &Projection{}
+	_ LogicalPlan = &LogicalProjection{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
 	_ LogicalPlan = &Exists{}
@@ -155,11 +155,10 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Projection represents a select fields plan.
-type Projection struct {
+// LogicalProjection represents a select fields plan.
+type LogicalProjection struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	Exprs []expression.Expression
 
@@ -168,7 +167,7 @@ type Projection struct {
 	calculateGenCols bool
 }
 
-func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, extractCorColumns(expr)...)
@@ -337,11 +336,10 @@ func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// TopN represents a top-n plan.
-type TopN struct {
+// LogicalTopN represents a top-n plan.
+type LogicalTopN struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	ByItems []*ByItems
 	Offset  uint64
@@ -352,7 +350,7 @@ type TopN struct {
 }
 
 // isLimit checks if TopN is a limit plan.
-func (t *TopN) isLimit() bool {
+func (t *LogicalTopN) isLimit() bool {
 	return len(t.ByItems) == 0
 }
 
