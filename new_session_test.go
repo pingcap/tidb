@@ -296,6 +296,16 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
 	result = tk.MustQuery("show session variables where variable_name='sql_select_limit';")
 	result.Check(testkit.Rows("sql_select_limit 100000000000"))
+
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("ON"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.autocommit = 1;")
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("ON"))
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
