@@ -475,7 +475,7 @@ type NestedLoopJoinExec struct {
 func (e *NestedLoopJoinExec) Close() error {
 	e.resultRows = nil
 	e.innerRows = nil
-	return e.BigExec.Close()
+	return errors.Trace(e.BigExec.Close())
 }
 
 // Open implements Executor Open interface.
