@@ -363,6 +363,12 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 		if it.req.KeepOrder {
 			close(ch)
 		}
+		select {
+		case <-it.finished:
+			return
+		case <-goCtx.Done():
+			return
+		}
 	}
 }
 
@@ -383,8 +389,8 @@ func (it *copIterator) run(ctx goctx.Context) {
 		childCtx, cancel := goctx.WithCancel(ctx)
 		defer cancel()
 		for _, t := range it.tasks {
-			finished, canceled := it.sendToTaskCh(childCtx, t, taskCh)
-			if finished || canceled {
+			exit := it.sendToTaskCh(childCtx, t, taskCh)
+			if exit {
 				break
 			}
 		}
@@ -398,23 +404,26 @@ func (it *copIterator) run(ctx goctx.Context) {
 	})
 }
 
-func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask, taskCh chan<- *copTask) (finished bool, canceled bool) {
+func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask, taskCh chan<- *copTask) (exit bool) {
 	select {
 	case taskCh <- t:
 	case <-it.finished:
-		finished = true
+		exit = true
 	case <-ctx.Done():
-		canceled = true
+		exit = true
 	}
 	return
 }
 
-func (it *copIterator) sendToRespCh(goCtx goctx.Context, resp copResponse, respCh chan copResponse) {
+func (it *copIterator) sendToRespCh(goCtx goctx.Context, resp copResponse, respCh chan copResponse) (exit bool) {
 	select {
 	case respCh <- resp:
 	case <-it.finished:
+		exit = true
 	case <-goCtx.Done():
+		exit = true
 	}
+	return
 }
 
 // Next returns next coprocessor result.
@@ -465,7 +474,7 @@ func (it *copIterator) Next() ([]byte, error) {
 	return resp.Data, nil
 }
 
-// handleTasks handles single copTask, sends the result to channel, retry automatically on error.
+// handleTask handles single copTask, sends the result to channel, retry automatically on error.
 func (it *copIterator) handleTask(goCtx goctx.Context, bo *Backoffer, task *copTask, ch chan copResponse) {
 	remainTasks := []*copTask{task}
 	for len(remainTasks) > 0 {
@@ -474,7 +483,7 @@ func (it *copIterator) handleTask(goCtx goctx.Context, bo *Backoffer, task *copT
 			ch <- copResponse{err: err}
 			return
 		}
-		if len(tasks) >= 0 {
+		if len(tasks) > 0 {
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
 			remainTasks = remainTasks[1:]
@@ -508,6 +517,7 @@ func (it *copIterator) handleTaskOnce(goCtx goctx.Context, bo *Backoffer, task *
 		return it.handleCopStreamResult(goCtx, bo, resp.CopStream, task, ch)
 	}
 
+	// Handles the response for non-streaming copTask.
 	tasks, err1 := it.checkCopResponse(bo, resp.Cop, task)
 	if err1 != nil {
 		return nil, errors.Trace(err1)
@@ -525,19 +535,20 @@ func (it *copIterator) handleCopStreamResult(goCtx goctx.Context, bo *Backoffer,
 		resp, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
-				break
+				return nil, nil
 			}
 			return nil, errors.Trace(err)
 		}
 
-		tasks, err := it.checkCopResponse(bo, resp, task)
-		if err != nil || len(tasks) != 0 {
-			return tasks, errors.Trace(err)
+		remainedTasks, err := it.checkCopResponse(bo, resp, task)
+		if err != nil || len(remainedTasks) != 0 {
+			return remainedTasks, errors.Trace(err)
 		}
 
-		it.sendToRespCh(goCtx, copResponse{resp, nil}, ch)
+		if exit := it.sendToRespCh(goCtx, copResponse{resp, nil}, ch); exit {
+			return nil, nil
+		}
 	}
-	return nil, nil
 }
 
 // checkCopResponse checks coprocessor Response for region split and lock.
@@ -593,6 +604,7 @@ func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) 
 		r := ranges.at(n - 1)
 		ret := ranges.slice(0, n-1)
 		ret.last = &kv.KeyRange{r.StartKey, r.EndKey}
+		// [r.StartKey -- split.EndKey -- r.EndKey) => [r.StartKey -- split.EndKey)
 		if bytes.Compare(split.End, r.EndKey) < 0 {
 			ret.last.EndKey = split.End
 		}
