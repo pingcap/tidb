@@ -142,7 +142,7 @@ func (p *LogicalLimit) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *TopN) prepareStatsProfile() *statsProfile {
+func (p *LogicalTopN) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
@@ -178,7 +178,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	return cardinality
 }
 
-func (p *Projection) prepareStatsProfile() *statsProfile {
+func (p *LogicalProjection) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       childProfile.count,
