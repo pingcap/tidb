@@ -350,7 +350,7 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 
 		bo := NewBackoffer(copNextMaxBackoff, ctx1)
 		startTime := time.Now()
-		it.handleTask(ctx1, bo, task, ch)
+		it.handleTask(bo, task, ch)
 		costTime := time.Since(startTime)
 		if costTime > minLogCopTaskTime {
 			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
@@ -475,12 +475,12 @@ func (it *copIterator) Next() ([]byte, error) {
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
-func (it *copIterator) handleTask(goCtx goctx.Context, bo *Backoffer, task *copTask, ch chan copResponse) {
+func (it *copIterator) handleTask(bo *Backoffer, task *copTask, ch chan copResponse) {
 	remainTasks := []*copTask{task}
 	for len(remainTasks) > 0 {
-		tasks, err := it.handleTaskOnce(goCtx, bo, remainTasks[0], ch)
+		tasks, err := it.handleTaskOnce(bo, remainTasks[0], ch)
 		if err != nil {
-			ch <- copResponse{err: err}
+			ch <- copResponse{err: errors.Trace(err)}
 			return
 		}
 		if len(tasks) > 0 {
@@ -493,7 +493,7 @@ func (it *copIterator) handleTask(goCtx goctx.Context, bo *Backoffer, task *copT
 
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
-func (it *copIterator) handleTaskOnce(goCtx goctx.Context, bo *Backoffer, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copResponse) ([]*copTask, error) {
 	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
 	task.storeAddr = sender.storeAddr
 	req := &tikvrpc.Request{
@@ -514,23 +514,21 @@ func (it *copIterator) handleTaskOnce(goCtx goctx.Context, bo *Backoffer, task *
 		return nil, errors.Trace(err)
 	}
 	if task.cmdType == tikvrpc.CmdCopStream {
-		return it.handleCopStreamResult(goCtx, bo, resp.CopStream, task, ch)
+		return it.handleCopStreamResult(bo, resp.CopStream, task, ch)
 	}
 
 	// Handles the response for non-streaming copTask.
-	tasks, err1 := it.checkCopResponse(bo, resp.Cop, task)
+	tasks, err1 := it.handleCopResponse(bo, resp.Cop, task, ch)
 	if err1 != nil {
 		return nil, errors.Trace(err1)
 	}
 	if len(tasks) > 0 {
 		return tasks, nil
 	}
-
-	it.sendToRespCh(goCtx, copResponse{Response: resp.Cop}, ch)
 	return nil, nil
 }
 
-func (it *copIterator) handleCopStreamResult(goCtx goctx.Context, bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse) ([]*copTask, error) {
 	for {
 		resp, err := stream.Recv()
 		if err != nil {
@@ -540,19 +538,16 @@ func (it *copIterator) handleCopStreamResult(goCtx goctx.Context, bo *Backoffer,
 			return nil, errors.Trace(err)
 		}
 
-		remainedTasks, err := it.checkCopResponse(bo, resp, task)
+		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
 		if err != nil || len(remainedTasks) != 0 {
 			return remainedTasks, errors.Trace(err)
-		}
-
-		if exit := it.sendToRespCh(goCtx, copResponse{resp, nil}, ch); exit {
-			return nil, nil
 		}
 	}
 }
 
-// checkCopResponse checks coprocessor Response for region split and lock.
-func (it *copIterator) checkCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask) ([]*copTask, error) {
+// handleCopResponse checks coprocessor Response for region split and lock,
+// returns more tasks when that happens, or handles the response if no error.
+func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask, ch chan copResponse) ([]*copTask, error) {
 	if regionErr := resp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
 			return nil, errors.Trace(err)
@@ -579,16 +574,16 @@ func (it *copIterator) checkCopResponse(bo *Backoffer, resp *coprocessor.Respons
 		log.Warnf("coprocessor err: %v", err)
 		return nil, errors.Trace(err)
 	}
+	it.sendToRespCh(bo, copResponse{resp, nil}, ch)
 	return nil, nil
 }
 
 func buildCopTasksFromRemain(bo *Backoffer, cache *RegionCache, resp *coprocessor.Response, task *copTask, desc bool, streaming bool) ([]*copTask, error) {
-	if !streaming {
-		return buildCopTasks(bo, cache, task.ranges, desc, streaming)
+	remainedRanges := task.ranges
+	if streaming {
+		remainedRanges = calculateRemain(task.ranges, resp.Range, desc)
 	}
-
-	ranges := calculateRemain(task.ranges, resp.Range, desc)
-	return buildCopTasks(bo, cache, ranges, desc, streaming)
+	return buildCopTasks(bo, cache, remainedRanges, desc, streaming)
 }
 
 func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) *copRanges {
@@ -599,7 +594,7 @@ func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) 
 			return bytes.Compare(split.End, r.StartKey) <= 0
 		})
 		if n == 0 {
-			panic("for any valid tikv response, n > 0 should always hold!")
+			log.Fatal("for any valid tikv response, n > 0 should always hold!")
 		}
 		r := ranges.at(n - 1)
 		ret := ranges.slice(0, n-1)
@@ -618,7 +613,7 @@ func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) 
 		return bytes.Compare(r.EndKey, key) > 0
 	})
 	if n >= len {
-		panic("for any valid tikv response, n < len should always hold!")
+		log.Fatal("for any valid tikv response, n < len should always hold!")
 	}
 	r := ranges.at(n)
 	// Adjust the start point in range r in this case:
