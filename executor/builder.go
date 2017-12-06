@@ -287,7 +287,14 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 	if e.Tp == ast.ShowGrants && e.User == nil {
 		e.User = e.ctx.GetSessionVars().User
 	}
-	return e
+	if len(v.Conditions) == 0 {
+		return e
+	}
+	sel := &SelectionExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, e),
+		filters:      v.Conditions,
+	}
+	return sel
 }
 
 func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {

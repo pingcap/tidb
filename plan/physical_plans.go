@@ -35,7 +35,6 @@ var (
 	_ PhysicalPlan = &NominalSort{}
 	_ PhysicalPlan = &PhysicalLock{}
 	_ PhysicalPlan = &PhysicalLimit{}
-	_ PhysicalPlan = &Show{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalTableReader{}
@@ -570,15 +569,6 @@ func (p *PhysicalHashAgg) Copy() PhysicalPlan {
 func (p *PhysicalStreamAgg) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Show) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
