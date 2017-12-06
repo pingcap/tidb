@@ -60,7 +60,7 @@ func exprHasSetVar(expr expression.Expression) bool {
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar functions, we do not prune it.
-func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
