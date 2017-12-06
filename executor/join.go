@@ -475,7 +475,7 @@ type NestedLoopJoinExec struct {
 func (e *NestedLoopJoinExec) Close() error {
 	e.resultRows = nil
 	e.innerRows = nil
-	return e.BigExec.Close()
+	return errors.Trace(e.BigExec.Close())
 }
 
 // Open implements Executor Open interface.
@@ -494,7 +494,7 @@ func (e *NestedLoopJoinExec) fetchBigRow(goCtx goctx.Context) (Row, bool, error)
 			return nil, false, errors.Trace(err)
 		}
 		if bigRow == nil {
-			return nil, false, e.BigExec.Close()
+			return nil, false, nil
 		}
 
 		matched, err := expression.EvalBool(e.BigFilter, bigRow, e.ctx)
@@ -630,7 +630,7 @@ type HashSemiJoinExec struct {
 func (e *HashSemiJoinExec) Close() error {
 	e.hashTable = nil
 	e.resultRows = nil
-	return e.bigExec.Close()
+	return errors.Trace(e.bigExec.Close())
 }
 
 // Open implements the Executor Open interface.
@@ -718,7 +718,7 @@ func (e *HashSemiJoinExec) fetchBigRow(goCtx goctx.Context) (Row, bool, error) {
 			return nil, false, errors.Trace(err)
 		}
 		if bigRow == nil {
-			return nil, false, errors.Trace(e.bigExec.Close())
+			return nil, false, nil
 		}
 
 		matched, err := expression.EvalBool(e.bigFilter, bigRow, e.ctx)
