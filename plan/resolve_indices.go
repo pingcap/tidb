@@ -148,7 +148,7 @@ func (p *PhysicalSelection) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalAggregation) ResolveIndices() {
+func (p *basePhysicalAgg) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, aggFun := range p.AggFuncs {
 		for _, arg := range aggFun.GetArgs() {
@@ -161,7 +161,7 @@ func (p *PhysicalAggregation) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *Sort) ResolveIndices() {
+func (p *PhysicalSort) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, item := range p.ByItems {
 		item.Expr.ResolveIndices(p.children[0].Schema())

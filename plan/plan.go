@@ -234,7 +234,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 		switch p.basePlan.self.(type) {
 		case *Exists, *LogicalAggregation, *Projection:
 			p.basePlan.schema.Keys = nil
-		case *SelectLock:
+		case *LogicalLock:
 			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
 		default:
 			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
