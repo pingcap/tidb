@@ -45,7 +45,7 @@ func (p *PhysicalUnionScan) getChildrenPossibleProps(prop *requiredProp) [][]*re
 // getChildrenPossibleProps will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *Projection) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalProjection) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	newProp := &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt}
 	newCols := make([]*expression.Column, 0, len(prop.cols))
@@ -186,7 +186,7 @@ func (p *PhysicalLimit) getChildrenPossibleProps(prop *requiredProp) [][]*requir
 	return props
 }
 
-func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalTopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
 		return nil
