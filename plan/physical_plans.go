@@ -470,16 +470,19 @@ type PhysicalSelection struct {
 	Conditions []expression.Expression
 }
 
+// PhysicalExists is the physical operator of Exists.
 type PhysicalExists struct {
 	*basePlan
 	basePhysicalPlan
 }
 
+// PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
 	*basePlan
 	basePhysicalPlan
 }
 
+// PhysicalTableDual is the physical operator of dual.
 type PhysicalTableDual struct {
 	*basePlan
 	basePhysicalPlan

@@ -238,19 +238,19 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Exists checks if a query returns result.
+// LogicalExists checks if a query returns result.
 type LogicalExists struct {
 	*basePlan
 	baseLogicalPlan
 }
 
-// MaxOneRow checks if a query returns no more than one row.
+// LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
 	*basePlan
 	baseLogicalPlan
 }
 
-// TableDual represents a dual table plan.
+// LogicalTableDual represents a dual table plan.
 type LogicalTableDual struct {
 	*basePlan
 	baseLogicalPlan

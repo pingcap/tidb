@@ -73,7 +73,7 @@ const (
 	TypeLock = "SelectLock"
 	// TypeInsert is the type of Insert
 	TypeInsert = "Insert"
-	// TypeUpate is the type of Update.
+	// TypeUpdate is the type of Update.
 	TypeUpdate = "Update"
 	// TypeDelete is the type of Delete.
 	TypeDelete = "Delete"
