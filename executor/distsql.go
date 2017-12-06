@@ -30,12 +30,15 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -53,10 +56,9 @@ var LookupTableTaskChannelSize int32 = 50
 // contains the handles in those index keys.
 type lookupTableTask struct {
 	handles []int64
-	rows    []Row
+	rows    []chunk.Row
 	cursor  int
 
-	done   bool
 	doneCh chan error
 
 	// indexOrder map is used to save the original index order for the handles.
@@ -66,46 +68,21 @@ type lookupTableTask struct {
 	indexOrder map[int64]int
 }
 
-func (task *lookupTableTask) getRow() (Row, error) {
-	if !task.done {
-		err := <-task.doneCh
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		task.done = true
-	}
-
+func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
 	if task.cursor < len(task.rows) {
 		row := task.rows[task.cursor]
 		task.cursor++
-		return row, nil
+		datumRow := make(types.DatumRow, row.Len())
+		for i := 0; i < len(datumRow); i++ {
+			datumRow[i] = row.GetDatum(i, schema.Columns[i].RetType)
+		}
+		return datumRow, nil
 	}
 
 	return nil, nil
 }
 
-// rowsSorter sorts the rows by its index order.
-type rowsSorter struct {
-	order     map[int64]int
-	rows      []Row
-	handleIdx int
-}
-
-func (s *rowsSorter) Less(i, j int) bool {
-	x := s.order[s.rows[i][s.handleIdx].GetInt64()]
-	y := s.order[s.rows[j][s.handleIdx].GetInt64()]
-	return x < y
-}
-
-func (s *rowsSorter) Len() int {
-	return len(s.rows)
-}
-
-func (s *rowsSorter) Swap(i, j int) {
-	s.rows[i], s.rows[j] = s.rows[j], s.rows[i]
-}
-
-func tableRangesToKVRanges(tid int64, tableRanges []types.IntColumnRange) []kv.KeyRange {
+func tableRangesToKVRanges(tid int64, tableRanges []ranger.IntColumnRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tableRanges))
 	for _, tableRange := range tableRanges {
 		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
@@ -169,7 +146,7 @@ func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRa
 	return krs, nil
 }
 
-func indexRangesToKVRanges(tid, idxID int64, ranges []*types.IndexRange) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(tid, idxID int64, ranges []*ranger.IndexRange) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		low, err := codec.EncodeKey(nil, ran.LowVal...)
@@ -193,45 +170,26 @@ func indexRangesToKVRanges(tid, idxID int64, ranges []*types.IndexRange) ([]kv.K
 	return krs, nil
 }
 
-func extractHandlesFromIndexResult(idxResult distsql.SelectResult) (handles []int64, finish bool, err error) {
-	subResult, e0 := idxResult.Next()
-	if e0 != nil {
-		err = errors.Trace(e0)
-		return
+func (w *indexWorker) extractTaskHandles(chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
+	handles = make([]int64, 0, w.batchSize)
+	for len(handles) < w.batchSize {
+		e0 := idxResult.NextChunk(chk)
+		if e0 != nil {
+			err = errors.Trace(e0)
+			return
+		}
+		if chk.NumRows() == 0 {
+			return
+		}
+		for i := 0; i < chk.NumRows(); i++ {
+			handles = append(handles, chk.GetRow(i).GetInt64(0))
+		}
 	}
-	if subResult == nil {
-		finish = true
-		return
-	}
-	handles, err = extractHandlesFromIndexSubResult(subResult)
-	if err != nil {
-		err = errors.Trace(err)
+	w.batchSize *= 2
+	if w.batchSize > w.maxBatchSize {
+		w.batchSize = w.maxBatchSize
 	}
 	return
-}
-
-func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64, error) {
-	defer terror.Call(subResult.Close)
-	var (
-		handles     []int64
-		handleDatum types.Datum
-	)
-	handleType := types.NewFieldType(mysql.TypeLonglong)
-	for {
-		data, err := subResult.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if data == nil {
-			break
-		}
-		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), handleType, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		handles = append(handles, handleDatum.GetInt64())
-	}
-	return handles, nil
 }
 
 // Closeable is a interface for closeable structures.
@@ -284,15 +242,21 @@ const (
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
 	FlagTruncateAsWarning uint64 = 1 << 1
+
+	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
+	FlagPadCharToFullLength uint64 = 1 << 2
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
-func statementContextToFlags(sc *variable.StatementContext) uint64 {
+func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.PadCharToFullLength {
+		flags |= FlagPadCharToFullLength
 	}
 	return flags
 }
@@ -336,7 +300,7 @@ type TableReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []types.IntColumnRange
+	ranges    []ranger.IntColumnRange
 	dagPB     *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
@@ -356,12 +320,12 @@ func (e *TableReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *TableReaderExecutor) Next() (Row, error) {
+func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
 			var err error
-			e.partialResult, err = e.result.Next()
+			e.partialResult, err = e.result.Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -371,7 +335,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		rowData, err := e.partialResult.Next()
+		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -390,9 +354,14 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableReaderExecutor) NextChunk(chk *chunk.Chunk) error {
+	return e.result.NextChunk(chk)
+}
+
 // Open implements the Executor Open interface.
-func (e *TableReaderExecutor) Open() error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.TableReader.Open")
+func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.TableReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
@@ -406,7 +375,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -435,7 +404,7 @@ type IndexReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*types.IndexRange
+	ranges    []*ranger.IndexRange
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -455,12 +424,12 @@ func (e *IndexReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next() (Row, error) {
+func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
 			var err error
-			e.partialResult, err = e.result.Next()
+			e.partialResult, err = e.result.Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -470,7 +439,7 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		rowData, err := e.partialResult.Next()
+		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -489,9 +458,14 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 	}
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *IndexReaderExecutor) NextChunk(chk *chunk.Chunk) error {
+	return e.result.NextChunk(chk)
+}
+
 // Open implements the Executor Open interface.
-func (e *IndexReaderExecutor) Open() error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexReader.Open")
+func (e *IndexReaderExecutor) Open(goCtx goctx.Context) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.IndexReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
@@ -505,7 +479,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.Len())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -522,27 +496,20 @@ type IndexLookUpExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*types.IndexRange
+	ranges    []*ranger.IndexRange
 	dagPB     *tipb.DAGRequest
-	// This is the column that represent the handle, we can use handleCol.Index to know its position.
-	handleCol    *expression.Column
+	// handleIdx is the index of handle, which is only used for case of keeping order.
+	handleIdx    int
 	tableRequest *tipb.DAGRequest
-	// When we need to sort the data in the second read, we must use handle to do this,
-	// In this case, schema that the table reader use is different with executor's schema.
-	// TODO: store it in table plan's schema. Not store it here.
-	tableReaderSchema *expression.Schema
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
 	*dataReaderBuilder
-	// All fields above is immutable.
+	// All fields above are immutable.
 
-	indexWorker
-	tableWorker
-	finished chan struct{}
-
-	// batchSize is for slow startup. It will slowly increase to the max batch size value.
-	batchSize int
+	idxWorkerWg sync.WaitGroup
+	tblWorkerWg sync.WaitGroup
+	finished    chan struct{}
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
@@ -550,11 +517,18 @@ type IndexLookUpExecutor struct {
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
 type indexWorker struct {
-	wg sync.WaitGroup
+	workCh    chan<- *lookupTableTask
+	finished  <-chan struct{}
+	resultCh  chan<- *lookupTableTask
+	keepOrder bool
+
+	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
+	batchSize    int
+	maxBatchSize int
 }
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
-func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
+func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
 	var builder requestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -567,23 +541,33 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, 1)
+	result, err := distsql.SelectDAG(goCtx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	result.Fetch(goCtx)
-	worker := &e.indexWorker
-	worker.wg.Add(1)
+	worker := &indexWorker{
+		workCh:       workCh,
+		finished:     e.finished,
+		resultCh:     e.resultCh,
+		keepOrder:    e.keepOrder,
+		batchSize:    e.maxChunkSize,
+		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+	}
+	if worker.batchSize > worker.maxBatchSize {
+		worker.batchSize = worker.maxBatchSize
+	}
+	e.idxWorkerWg.Add(1)
 	go func() {
 		goCtx1, cancel := goctx.WithCancel(goCtx)
-		worker.fetchHandles(e, result, workCh, goCtx1, finished)
+		worker.fetchHandles(goCtx1, result)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
 		}
 		close(workCh)
 		close(e.resultCh)
-		worker.wg.Done()
+		e.idxWorkerWg.Done()
 	}()
 	return nil
 }
@@ -591,195 +575,176 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, goCtx goctx.Context, finished <-chan struct{}) {
+func (w *indexWorker) fetchHandles(goCtx goctx.Context, result distsql.SelectResult) {
+	chk := chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	for {
-		handles, finish, err := extractHandlesFromIndexResult(result)
+		handles, err := w.extractTaskHandles(chk, result)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- errors.Trace(err)
-			e.resultCh <- &lookupTableTask{
+			w.resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
 			return
 		}
-		if finish {
+		if len(handles) == 0 {
 			return
 		}
-		tasks := e.buildTableTasks(handles)
-		for _, task := range tasks {
-			select {
-			case <-goCtx.Done():
-				return
-			case <-finished:
-				return
-			case workCh <- task:
-				e.resultCh <- task
-			}
+		task := w.buildTableTask(handles)
+		select {
+		case <-goCtx.Done():
+			return
+		case <-w.finished:
+			return
+		case w.workCh <- task:
+			w.resultCh <- task
 		}
 	}
 }
 
-func (worker *indexWorker) close() {
-	worker.wg.Wait()
-}
-
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
-	wg sync.WaitGroup
+	workCh         <-chan *lookupTableTask
+	finished       <-chan struct{}
+	buildTblReader func(ctx goctx.Context, handles []int64) (Executor, error)
+	keepOrder      bool
+	handleIdx      int
+}
+
+func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []int64) (Executor, error) {
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
+		baseExecutor: newBaseExecutor(e.schema, e.ctx),
+		table:        e.table,
+		tableID:      e.tableID,
+		dagPB:        e.tableRequest,
+		priority:     e.priority,
+	}, handles)
+	if err != nil {
+		log.Error(err)
+		return nil, errors.Trace(err)
+	}
+	return tableReader, nil
 }
 
 // startTableWorker launch some background goroutines which pick tasks from workCh and execute the task.
-func (e *IndexLookUpExecutor) startTableWorker(goCtx goctx.Context, workCh <-chan *lookupTableTask, finished <-chan struct{}) {
-	worker := &e.tableWorker
+func (e *IndexLookUpExecutor) startTableWorker(goCtx goctx.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
-	worker.wg.Add(lookupConcurrencyLimit)
+	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
+		worker := &tableWorker{
+			workCh:         workCh,
+			finished:       e.finished,
+			buildTblReader: e.buildTableReader,
+			keepOrder:      e.keepOrder,
+			handleIdx:      e.handleIdx,
+		}
 		goCtx1, cancel := goctx.WithCancel(goCtx)
 		go func() {
-			worker.pickAndExecTask(e, workCh, goCtx1, finished)
+			worker.pickAndExecTask(goCtx1)
 			cancel()
-			worker.wg.Done()
+			e.tblWorkerWg.Done()
 		}()
 	}
 }
 
 // pickAndExecTask picks tasks from workCh, and execute them.
-func (worker *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, goCtx goctx.Context, finished <-chan struct{}) {
+func (w *tableWorker) pickAndExecTask(goCtx goctx.Context) {
 	for {
 		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
 		// it may block reading task.doneCh forever.
 		select {
-		case task, ok := <-workCh:
+		case task, ok := <-w.workCh:
 			if !ok {
 				return
 			}
-			e.executeTask(task, goCtx)
-		case <-finished:
+			w.executeTask(goCtx, task)
+		case <-w.finished:
 			return
 		}
 	}
 }
 
-func (worker *tableWorker) close() {
-	worker.wg.Wait()
-}
-
 // Open implements the Executor Open interface.
-func (e *IndexLookUpExecutor) Open() error {
-	kvRanges, err := e.indexRangesToKVRanges()
+func (e *IndexLookUpExecutor) Open(goCtx goctx.Context) error {
+	kvRanges, err := indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.open(kvRanges)
+	return e.open(goCtx, kvRanges)
 }
 
-func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
-	span, goCtx := startSpanFollowsContext(e.ctx.GoCtx(), "executor.IndexLookUp.Open")
+func (e *IndexLookUpExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) error {
+	span, goCtx := startSpanFollowsContext(goCtx, "executor.IndexLookUp.Open")
 	defer span.Finish()
 
 	e.finished = make(chan struct{})
-	e.indexWorker = indexWorker{}
-	e.tableWorker = tableWorker{}
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	err := e.startIndexWorker(goCtx, kvRanges, workCh, e.finished)
+	err := e.startIndexWorker(goCtx, kvRanges, workCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.startTableWorker(goCtx, workCh, e.finished)
+	e.startTableWorker(goCtx, workCh)
 	return nil
-}
-
-func (e *IndexLookUpExecutor) indexRangesToKVRanges() ([]kv.KeyRange, error) {
-	return indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
 }
 
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
-func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Context) {
+func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 	var err error
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
-	var schema *expression.Schema
-	if e.tableReaderSchema != nil {
-		schema = e.tableReaderSchema
-	} else {
-		schema = e.schema
-	}
-
 	var tableReader Executor
-	tableReader, err = e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(schema, e.ctx),
-		table:        e.table,
-		tableID:      e.tableID,
-		dagPB:        e.tableRequest,
-	}, task.handles)
+	tableReader, err = w.buildTblReader(goCtx, task.handles)
 	if err != nil {
 		log.Error(err)
 		return
 	}
 	defer terror.Call(tableReader.Close)
-
+	task.rows = make([]chunk.Row, 0, len(task.handles))
 	for {
-		var row Row
-		row, err = tableReader.Next()
-		if err != nil || row == nil {
+		chk := tableReader.newChunk()
+		err = tableReader.NextChunk(chk)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+		if chk.NumRows() == 0 {
 			break
 		}
-		task.rows = append(task.rows, row)
-	}
-	if e.keepOrder {
-		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: e.handleCol.Index}
-		sort.Sort(sorter)
-		if e.tableReaderSchema != nil {
-			for i, row := range task.rows {
-				task.rows[i] = row[:len(row)-1]
-			}
+		for row := chk.Begin(); row != chk.End(); row = row.Next() {
+			task.rows = append(task.rows, row)
 		}
+	}
+	if w.keepOrder {
+		sort.Slice(task.rows, func(i, j int) bool {
+			hI := task.rows[i].GetInt64(w.handleIdx)
+			hJ := task.rows[j].GetInt64(w.handleIdx)
+			return task.indexOrder[hI] < task.indexOrder[hJ]
+		})
 	}
 }
 
-func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTask {
-	// Build tasks with increasing batch size.
-	var taskSizes []int
-	for remained := len(handles); remained > 0; e.batchSize *= 2 {
-		if e.batchSize > e.ctx.GetSessionVars().IndexLookupSize {
-			e.batchSize = e.ctx.GetSessionVars().IndexLookupSize
-		}
-		if e.batchSize > remained {
-			taskSizes = append(taskSizes, remained)
-			break
-		}
-		taskSizes = append(taskSizes, e.batchSize)
-		remained -= e.batchSize
-	}
-
+func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
 	var indexOrder map[int64]int
-	if e.keepOrder {
+	if w.keepOrder {
 		// Save the index order.
 		indexOrder = make(map[int64]int, len(handles))
 		for i, h := range handles {
 			indexOrder[h] = i
 		}
 	}
-
-	tasks := make([]*lookupTableTask, len(taskSizes))
-	for i, size := range taskSizes {
-		task := &lookupTableTask{
-			handles:    handles[:size],
-			indexOrder: indexOrder,
-		}
-		task.doneCh = make(chan error, 1)
-		handles = handles[size:]
-		tasks[i] = task
+	task := &lookupTableTask{
+		handles:    handles,
+		indexOrder: indexOrder,
 	}
-	return tasks
+	task.doneCh = make(chan error, 1)
+	return task
 }
 
 // Close implements Exec Close interface.
@@ -790,32 +755,68 @@ func (e *IndexLookUpExecutor) Close() error {
 		// consume the data, background worker still writing to resultCh and block forever.
 		for range e.resultCh {
 		}
-		e.indexWorker.close()
-		e.tableWorker.close()
+		e.idxWorkerWg.Wait()
+		e.tblWorkerWg.Wait()
 		e.finished = nil
 	}
 	return nil
 }
 
 // Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next() (Row, error) {
+func (e *IndexLookUpExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
-		if e.resultCurr == nil {
-			resultCurr, ok := <-e.resultCh
-			if !ok {
-				return nil, nil
-			}
-			e.resultCurr = resultCurr
+		resultTask, err := e.getResultTask()
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		row, err := e.resultCurr.getRow()
+		if resultTask == nil {
+			return nil, nil
+		}
+		row, err := resultTask.getRow(e.schema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
 			return row, nil
 		}
-		e.resultCurr = nil
 	}
+}
+
+// NextChunk implements Exec NextChunk interface.
+func (e *IndexLookUpExecutor) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	for {
+		resultTask, err := e.getResultTask()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if resultTask == nil {
+			return nil
+		}
+		for resultTask.cursor < len(resultTask.rows) {
+			chk.AppendRow(0, resultTask.rows[resultTask.cursor])
+			resultTask.cursor++
+			if chk.NumRows() >= e.maxChunkSize {
+				return nil
+			}
+		}
+	}
+}
+
+func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
+	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
+		return e.resultCurr, nil
+	}
+	task, ok := <-e.resultCh
+	if !ok {
+		return nil, nil
+	}
+	err := <-task.doneCh
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.resultCurr = task
+	return e.resultCurr, nil
 }
 
 type requestBuilder struct {
@@ -827,12 +828,12 @@ func (builder *requestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, errors.Trace(builder.err)
 }
 
-func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []types.IntColumnRange) *requestBuilder {
+func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []ranger.IntColumnRange) *requestBuilder {
 	builder.Request.KeyRanges = tableRangesToKVRanges(tid, tableRanges)
 	return builder
 }
 
-func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*types.IndexRange) *requestBuilder {
+func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*ranger.IndexRange) *requestBuilder {
 	if builder.err != nil {
 		return builder
 	}

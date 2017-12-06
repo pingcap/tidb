@@ -21,14 +21,14 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -303,20 +303,12 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		var selection *plan.Selection
-		for _, child := range p.Children() {
-			p, ok := child.(*plan.Selection)
-			if ok {
-				selection = p
-				break
-			}
-		}
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+		selection := p.Children()[0].(*plan.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
@@ -328,7 +320,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		conds, filter = ranger.DetachCondsForTableRange(ctx, conds, col)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
+		result, err := ranger.BuildRange(new(stmtctx.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -493,19 +485,12 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		var selection *plan.Selection
-		for _, child := range p.Children() {
-			p, ok := child.(*plan.Selection)
-			if ok {
-				selection = p
-				break
-			}
-		}
+		selection := p.Children()[0].(*plan.LogicalSelection)
 		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
@@ -518,7 +503,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		conds, filter = ranger.DetachIndexConditions(conds, cols, lengths)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
+		result, err := ranger.BuildRange(new(stmtctx.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -744,20 +729,12 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		var sel *plan.Selection
-		for _, child := range p.Children() {
-			plan, ok := child.(*plan.Selection)
-			if ok {
-				sel = plan
-				break
-			}
-		}
-		c.Assert(sel, NotNil, Commentf("expr:%v", tt.exprStr))
+		sel := p.Children()[0].(*plan.LogicalSelection)
 		ds, ok := sel.Children()[0].(*plan.DataSource)
 		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
@@ -770,7 +747,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		conds, filter = ranger.DetachCondsForSelectivity(conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
+		result, err := ranger.BuildRange(new(stmtctx.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%s", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))

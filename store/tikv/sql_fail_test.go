@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv"
@@ -33,30 +34,28 @@ func (s *testSQLSuite) SetUpSuite(c *C) {
 	s.store, _ = tikv.NewTestTiKVStorage(false, "")
 }
 
-func (s *testSQLSuite) TestBusyServerCop(c *C) {
-	client := tikv.NewBusyClient(s.store.GetTiKVClient())
-	s.store.SetTiKVClient(client)
+func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	session, err := tidb.CreateSession(s.store)
+	session, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	client.SetBusy(true)
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy", `return(true)`)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		client.SetBusy(false)
+		gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy")
 	}()
 
 	go func() {
 		defer wg.Done()
 		rs, err := session.Execute(goctx.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
 		c.Assert(err, IsNil)
-		row, err := rs[0].Next()
+		row, err := rs[0].Next(goctx.Background())
 		c.Assert(err, IsNil)
 		c.Assert(row, NotNil)
 		c.Assert(row.GetString(0), Equals, "True")

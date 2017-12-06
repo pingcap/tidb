@@ -30,10 +30,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -268,7 +268,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue1)
-	c.Assert(tk.Se.CommitTxn(tk.Se.GoCtx()), IsNil)
+	c.Assert(tk.Se.CommitTxn(goctx.TODO()), IsNil)
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	se1 := tk1.Se.(variable.GlobalVarAccessor)
@@ -280,12 +280,33 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
-	c.Assert(tk1.Se.CommitTxn(tk.Se.GoCtx()), IsNil)
+	c.Assert(tk1.Se.CommitTxn(goctx.TODO()), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
+
+	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	tk.MustExec("set session sql_select_limit=100000000000;")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 100000000000"))
+
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("ON"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.autocommit = 0;")
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.autocommit=1")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -299,7 +320,7 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
 
-	err := tk.Se.CommitTxn(tk.Se.GoCtx())
+	err := tk.Se.CommitTxn(goctx.TODO())
 	c.Assert(err, IsNil)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
 }
@@ -319,7 +340,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history := tidb.GetHistory(tk.Se)
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
-	stmt, _ := tidb.Compile(tk.Se, stmtNode)
+	stmt, _ := tidb.Compile(goctx.TODO(), tk.Se, stmtNode)
 	executor.ResetStmtCtx(tk.Se, stmtNode)
 	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
@@ -827,7 +848,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next()
+	row, err := rs.Next(goctx.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
@@ -1351,11 +1372,11 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
-	err := sessionctx.GetDomain(tk.Se).Reload()
+	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	err := domain.GetDomain(tk.Se).Reload()
 	c.Assert(err, NotNil)
 
-	lease := sessionctx.GetDomain(tk.Se).DDL().GetLease()
+	lease := domain.GetDomain(tk.Se).DDL().GetLease()
 	time.Sleep(lease * 2)
 
 	// Make sure executing insert statement is failed when server is invalid.
@@ -1372,7 +1393,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	sessionctx.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -1443,12 +1464,11 @@ func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	tk1.MustExec("execute stmt using @a, @a")
 	tk1.MustExec("commit")
 
-	// TODO: PrepareStmt should handle this.
-	//tk1.MustExec("begin")
-	//tk.MustExec("alter table t drop column b")
-	//tk1.MustExec("execute stmt using @a, @a")
-	//_, err := tk1.Exec("commit")
-	//c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
+	tk1.MustExec("begin")
+	tk.MustExec("alter table t drop column b")
+	tk1.MustExec("execute stmt using @a, @a")
+	_, err := tk1.Exec("commit")
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
@@ -1461,8 +1481,145 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 
 	tk.MustExec("alter table t drop column b")
 
-	// When s2 commit, it will find schema already changed.
+	// When tk1 commit, it will find schema already changed.
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+}
+
+func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set b = 5 where a = 1")
+
+	tk.MustExec("alter table t add index b_i (b)")
+
+	run := false
+	hook := func() {
+		if run == false {
+			tk.MustExec("update t set b = 3 where a = 1")
+			run = true
+		}
+	}
+
+	// In order to cover a bug that statement history is not updated during retry.
+	// See https://github.com/pingcap/tidb/pull/5202
+	// Step1: when tk1 commit, it find schema changed and retry().
+	// Step2: during retry, hook() is called, tk update primary key.
+	// Step3: tk1 continue commit in retry() meet a retryable error(write conflict), retry again.
+	// Step4: tk1 retry() success, if it use the stale statement, data and index will inconsistent.
+	err := tk1.Se.CommitTxn(goctx.WithValue(goctx.Background(), "preCommitHook", hook))
+	c.Assert(err, IsNil)
+	tk.MustQuery("select * from t where t.b = 5").Check(testkit.Rows("1 5"))
+}
+
+func (s *testSchemaSuite) TestRetryMissingUnionScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int primary key, b int unique, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set b = 1, c = 2 where b = 2")
+	tk1.MustExec("update t set b = 1, c = 2 where a = 1")
+
+	// Create a conflict to reproduces the bug that the second update statement in retry
+	// has a dirty table but doesn't use UnionScan.
+	tk.MustExec("update t set b = 2 where a = 1")
+
+	tk1.MustExec("commit")
+}
+
+func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
+	// Since normally a single region mock tikv only returns one partial result we need to manually split the
+	// table to test multiple chunks.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk (a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
+	}
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	c.Assert(err, IsNil)
+	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 10)
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+	chk := rs.NewChunk()
+	var count int
+	var numChunks int
+	for {
+		err = rs.NextChunk(chk)
+		c.Assert(err, IsNil)
+		numRows := chk.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			count++
+		}
+		numChunks++
+	}
+	c.Assert(count, Equals, 100)
+	c.Assert(numChunks, Equals, 50)
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
+	// Since normally a single region mock tikv only returns one partial result we need to manually split the
+	// table to test multiple chunks.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists chk")
+	tk.MustExec("create table chk (k int unique, c int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d, %d)", i, i))
+	}
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	c.Assert(err, IsNil)
+	s.cluster.SplitIndex(s.mvccStore, tbl.Meta().ID, tbl.Indices()[0].Meta().ID, 10)
+
+	tk.Se.GetSessionVars().IndexLookupSize = 10
+	rs, err := tk.Exec("select * from chk order by k")
+	c.Assert(err, IsNil)
+	chk := rs.NewChunk()
+	var count int
+	for {
+		err = rs.NextChunk(chk)
+		c.Assert(err, IsNil)
+		numRows := chk.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			c.Assert(chk.GetRow(i).GetInt64(1), Equals, int64(count))
+			count++
+		}
+	}
+	c.Assert(count, Equals, 100)
+	rs.Close()
+
+	rs, err = tk.Exec("select k from chk where c < 90 order by k")
+	c.Assert(err, IsNil)
+	chk = rs.NewChunk()
+	count = 0
+	for {
+		err = rs.NextChunk(chk)
+		c.Assert(err, IsNil)
+		numRows := chk.NumRows()
+		if numRows == 0 {
+			break
+		}
+		for i := 0; i < numRows; i++ {
+			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			count++
+		}
+	}
+	c.Assert(count, Equals, 90)
+	rs.Close()
 }

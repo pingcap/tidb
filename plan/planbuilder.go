@@ -43,6 +43,7 @@ var (
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
 	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
+	ErrKeyDoesNotExist      = terror.ClassOptimizerPlan.New(CodeKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
 )
 
 // Error codes.
@@ -58,6 +59,7 @@ const (
 	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
 	CodeBadTable                          = mysql.ErrBadTable
+	CodeKeyDoesNotExist                   = mysql.ErrKeyDoesNotExist
 )
 
 func init() {
@@ -69,6 +71,7 @@ func init() {
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
 		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
 		CodeBadTable:           mysql.ErrBadTable,
+		CodeKeyDoesNotExist:    mysql.ErrKeyDoesNotExist,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
@@ -148,12 +151,11 @@ var clauseMsg = map[clauseCode]string{
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
-	err           error
-	ctx           context.Context
-	is            infoschema.InfoSchema
-	outerSchemas  []*expression.Schema
-	inUpdateStmt  bool
-	needColHandle int
+	err          error
+	ctx          context.Context
+	is           infoschema.InfoSchema
+	outerSchemas []*expression.Schema
+	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.
@@ -224,7 +226,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	exprs := make([]expression.Expression, 0, len(v.Exprs))
-	dual := TableDual{RowCount: 1}.init(b.ctx)
+	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
@@ -234,7 +236,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		exprs = append(exprs, expr)
 	}
 	dual.SetSchema(expression.NewSchema())
-	p := Projection{Exprs: exprs}.init(b.ctx)
+	p := LogicalProjection{Exprs: exprs}.init(b.ctx)
 	setParentAndChildren(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
@@ -254,7 +256,7 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 				// Convert column name expression to string value expression.
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
 			}
-			mockTablePlan := TableDual{}.init(b.ctx)
+			mockTablePlan := LogicalTableDual{}.init(b.ctx)
 			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
@@ -300,7 +302,7 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool) {
+func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool, err error) {
 	var usableHints []*ast.IndexHint
 	for _, hint := range hints {
 		if hint.HintScope == ast.HintForScan {
@@ -314,7 +316,7 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 		}
 	}
 	if len(usableHints) == 0 {
-		return publicIndices, true
+		return publicIndices, true, nil
 	}
 	var hasUse bool
 	var ignores []*model.IndexInfo
@@ -327,6 +329,8 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 				idx := findIndexByName(publicIndices, idxName)
 				if idx != nil {
 					indices = append(indices, idx)
+				} else {
+					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
 				}
 			}
 		case ast.HintIgnore:
@@ -335,6 +339,8 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 				idx := findIndexByName(publicIndices, idxName)
 				if idx != nil {
 					ignores = append(ignores, idx)
+				} else {
+					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
 				}
 			}
 		}
@@ -342,13 +348,13 @@ func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indic
 	indices = removeIgnores(indices, ignores)
 	// If we have got FORCE or USE index hint, table scan is excluded.
 	if len(indices) != 0 {
-		return indices, false
+		return indices, false, nil
 	}
 	if hasUse {
 		// Empty use hint means don't use any index.
-		return nil, true
+		return nil, true, nil
 	}
-	return removeIgnores(publicIndices, ignores), true
+	return removeIgnores(publicIndices, ignores), true, nil
 }
 
 func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
@@ -373,8 +379,8 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 	return nil
 }
 
-func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
-	selectLock := SelectLock{Lock: lock}.init(b.ctx)
+func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
+	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
 	setParentAndChildren(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
@@ -429,16 +435,12 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 			}
 		}
 	}
-	indices, _ := availableIndices(tn.IndexHints, tn.TableInfo)
-	for _, index := range indices {
-		for _, idx := range tn.TableInfo.Indices {
-			if index.Name.L == idx.Name.L {
-				indicesInfo = append(indicesInfo, idx)
-				break
+	for _, idx := range tn.TableInfo.Indices {
+		if idx.State == model.StatePublic {
+			indicesInfo = append(indicesInfo, idx)
+			if len(idx.Columns) == 1 {
+				idxNames = append(idxNames, idx.Columns[0].Name.L)
 			}
-		}
-		if len(index.Columns) == 1 {
-			idxNames = append(idxNames, index.Columns[0].Name.L)
 		}
 	}
 	for _, col := range tbl.Columns {
@@ -564,17 +566,16 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
-	var resultPlan Plan
 	p := Show{
-		Tp:     show.Tp,
-		DBName: show.DBName,
-		Table:  show.Table,
-		Column: show.Column,
-		Flag:   show.Flag,
-		Full:   show.Full,
-		User:   show.User,
+		Tp:          show.Tp,
+		DBName:      show.DBName,
+		Table:       show.Table,
+		Column:      show.Column,
+		Flag:        show.Flag,
+		Full:        show.Full,
+		User:        show.User,
+		GlobalScope: show.GlobalScope,
 	}.init(b.ctx)
-	resultPlan = p
 	switch showTp := show.Tp; showTp {
 	case ast.ShowProcedureStatus:
 		p.SetSchema(buildShowProcedureSchema())
@@ -597,36 +598,31 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	for i, col := range p.schema.Columns {
 		col.Position = i
 	}
-	var conditions []expression.Expression
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	mockTablePlan.SetSchema(p.schema)
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
 		}
-		expr, _, err := b.rewrite(show.Pattern, p, nil, false)
+		expr, _, err := b.rewrite(show.Pattern, mockTablePlan, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		conditions = append(conditions, expr)
+		p.Conditions = append(p.Conditions, expr)
 	}
 	if show.Where != nil {
 		conds := splitWhere(show.Where)
 		for _, cond := range conds {
-			expr, _, err := b.rewrite(cond, p, nil, false)
+			expr, _, err := b.rewrite(cond, mockTablePlan, nil, false)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
 			}
-			conditions = append(conditions, expr)
+			p.Conditions = append(p.Conditions, expr)
 		}
 	}
-	if len(conditions) != 0 {
-		sel := Selection{Conditions: conditions}.init(b.ctx)
-		setParentAndChildren(sel, p)
-		sel.SetSchema(p.Schema())
-		resultPlan = sel
-	}
-	return resultPlan
+	return p
 }
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
@@ -783,7 +779,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
-	mockTablePlan := TableDual{}.init(b.ctx)
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 
 	checkRefColumn := func(n ast.Node) ast.Node {
@@ -918,7 +914,10 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				return nil
 			}
 		}
-		setParentAndChildren(insertPlan, selectPlan)
+		insertPlan.SelectPlan, b.err = doOptimize(b.optFlag, selectPlan.(LogicalPlan), b.ctx)
+		if b.err != nil {
+			return nil
+		}
 	}
 
 	// Calculate generated columns.
@@ -947,7 +946,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		return nil
 	}
 	schema := expression.TableInfo2Schema(tableInfo)
-	mockTablePlan := TableDual{}.init(b.ctx)
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	p.SetSchema(expression.NewSchema())
@@ -1038,8 +1037,25 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	setParents4FinalPlan(targetPlan.(PhysicalPlan))
-	p := &Explain{StmtPlan: targetPlan}
+	pp, ok := targetPlan.(PhysicalPlan)
+	if !ok {
+		switch x := targetPlan.(type) {
+		case *Delete:
+			pp = x.SelectPlan
+		case *Update:
+			pp = x.SelectPlan
+		case *Insert:
+			if x.SelectPlan != nil {
+				pp = x.SelectPlan
+			}
+		}
+		if pp == nil {
+			b.err = ErrUnsupportedType.GenByArgs(targetPlan)
+			return nil
+		}
+	}
+	setParents4FinalPlan(pp)
+	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
 		retFields := []string{"id", "parents", "children", "task", "operator info"}

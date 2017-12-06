@@ -24,10 +24,13 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -69,12 +72,24 @@ func (r *recordSet) setFields(tps ...uint8) {
 	}
 }
 
-func (r *recordSet) Next() (types.Row, error) {
+func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
 	r.cursor++
 	return types.DatumRow{r.data[r.cursor-1]}, nil
+}
+
+func (r *recordSet) NextChunk(chk *chunk.Chunk) error {
+	return nil
+}
+
+func (r *recordSet) NewChunk() *chunk.Chunk {
+	return nil
+}
+
+func (r *recordSet) SupportChunk() bool {
+	return false
 }
 
 func (r *recordSet) Close() error {
@@ -99,7 +114,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	for i := start; i < len(samples); i += 5 {
 		samples[i].SetInt64(samples[i].GetInt64() + 2)
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	err := types.SortDatums(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
@@ -146,8 +161,9 @@ func encodeKey(key types.Datum) types.Datum {
 
 func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
+	goCtx := goctx.Background()
 	for {
-		row, err := records.Next()
+		row, err := records.Next(goCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -166,8 +182,9 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
 	cms := NewCMSketch(8, 2048)
+	goCtx := goctx.Background()
 	for {
-		row, err := records.Next()
+		row, err := records.Next(goCtx)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
@@ -412,7 +429,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti.ID)
 	c.Assert(tbl.Count, Greater, int64(0))
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 3333)
@@ -452,7 +469,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
-	ran := []*types.ColumnRange{{
+	ran := []*ranger.ColumnRange{{
 		Low:  types.Datum{},
 		High: types.MaxValueDatum(),
 	}}
@@ -519,7 +536,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
-	ran := []types.IntColumnRange{{
+	ran := []ranger.IntColumnRange{{
 		LowVal:  math.MinInt64,
 		HighVal: math.MaxInt64,
 	}}
@@ -581,7 +598,7 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 		Count:   int64(idx.totalRowCount()),
 		Indices: make(map[int64]*Index),
 	}
-	ran := []*types.IndexRange{{
+	ran := []*ranger.IndexRange{{
 		LowVal:  []types.Datum{types.MinNotNullDatum()},
 		HighVal: []types.Datum{types.MaxValueDatum()},
 	}}
@@ -614,12 +631,12 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	ran[0].HighVal[0] = types.NewIntDatum(2000)
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 999)
+	c.Assert(int(count), Equals, 1000)
 	ran[0].LowVal[0] = types.NewIntDatum(1001)
 	ran[0].HighVal[0] = types.NewIntDatum(1990)
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 988)
+	c.Assert(int(count), Equals, 989)
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].HighVal[0] = types.NewIntDatum(1000)
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)

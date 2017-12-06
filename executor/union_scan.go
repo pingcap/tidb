@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	goctx "golang.org/x/net/context"
 )
 
 // dirtyDB stores uncommitted write operations for a transaction.
@@ -98,8 +99,6 @@ type UnionScanExec struct {
 
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
-	// handleColIsUsed checks whether this executor need to output handle column in its output row.
-	handleColIsUsed bool
 
 	addedRows   []Row
 	cursor      int
@@ -108,9 +107,9 @@ type UnionScanExec struct {
 }
 
 // Next implements Execution Next interface.
-func (us *UnionScanExec) Next() (Row, error) {
+func (us *UnionScanExec) Next(goCtx goctx.Context) (Row, error) {
 	for {
-		snapshotRow, err := us.getSnapshotRow()
+		snapshotRow, err := us.getSnapshotRow(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -138,9 +137,6 @@ func (us *UnionScanExec) Next() (Row, error) {
 		} else {
 			us.cursor++
 		}
-		if !us.handleColIsUsed {
-			row = append(row[:us.belowHandleIndex], row[us.belowHandleIndex+1:]...)
-		}
 		return row, nil
 	}
 }
@@ -162,14 +158,14 @@ func (us *UnionScanExec) twoRowsAreEqual(a, b Row) (bool, error) {
 	return true, nil
 }
 
-func (us *UnionScanExec) getSnapshotRow() (Row, error) {
+func (us *UnionScanExec) getSnapshotRow(goCtx goctx.Context) (Row, error) {
 	if us.dirty.truncated {
 		return nil, nil
 	}
 	var err error
 	if us.snapshotRow == nil {
 		for {
-			us.snapshotRow, err = us.children[0].Next()
+			us.snapshotRow, err = us.children[0].Next(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -91,7 +92,7 @@ func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next() (Row, error) {
+func (e *PrepareExec) Next(goCtx goctx.Context) (Row, error) {
 	e.DoPrepare()
 	return nil, e.Err
 }
@@ -102,7 +103,7 @@ func (e *PrepareExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *PrepareExec) Open() error {
+func (e *PrepareExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -200,13 +201,13 @@ type ExecuteExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next() (Row, error) {
+func (e *ExecuteExec) Next(goCtx goctx.Context) (Row, error) {
 	// Will never be called.
 	return nil, nil
 }
 
 // Open implements the Executor Open interface.
-func (e *ExecuteExec) Open() error {
+func (e *ExecuteExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -247,7 +248,7 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next() (Row, error) {
+func (e *DeallocateExec) Next(goCtx goctx.Context) (Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -264,7 +265,7 @@ func (e *DeallocateExec) Close() error {
 }
 
 // Open implements Executor Open interface.
-func (e *DeallocateExec) Open() error {
+func (e *DeallocateExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -281,15 +282,11 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		return nil, errors.Trace(err)
 	}
 
-	readOnly := false
-	if execute, ok := execPlan.(*plan.Execute); ok {
-		readOnly = ast.IsReadOnly(execute.Stmt)
-	}
-
 	stmt := &ExecStmt{
 		InfoSchema: GetInfoSchema(ctx),
 		Plan:       execPlan,
-		ReadOnly:   readOnly,
+		StmtNode:   execStmt,
+		Ctx:        ctx,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
 		stmt.Text = prepared.Stmt.Text()
@@ -301,7 +298,7 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 // Before every execution, we must clear statement context.
 func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
 
 	switch stmt := s.(type) {
@@ -351,6 +348,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
+		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
 	default:
 		sc.IgnoreTruncate = true
 		sc.OverflowAsWarning = false

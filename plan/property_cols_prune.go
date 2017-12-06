@@ -18,7 +18,8 @@ import (
 )
 
 func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
-	indices, includeTS := availableIndices(p.indexHints, p.tableInfo)
+	indices := p.availableIndices.indices
+	includeTS := p.availableIndices.includeTableScan
 	if includeTS {
 		col := p.getPKIsHandleCol()
 		if col != nil {
@@ -34,7 +35,7 @@ func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column)
 	return
 }
 
-func (p *Selection) preparePossibleProperties() (result [][]*expression.Column) {
+func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.Column) {
 	return p.children[0].(LogicalPlan).preparePossibleProperties()
 }
 

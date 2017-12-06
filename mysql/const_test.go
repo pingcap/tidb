@@ -15,16 +15,18 @@ package mysql_test
 
 import (
 	"flag"
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"testing"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -158,21 +160,26 @@ func (s *testMySQLConstSuite) TestPipesAsConcatMode(c *C) {
 
 func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	goCtx := goctx.Background()
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
 	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
 	r.Check(testkit.Rows("-1"))
 	rs, _ := tk.Exec("SELECT CAST(18446744073709551615 as UNSIGNED) - 1;")
-	_, err := tidb.GetRows(rs)
+	_, err := tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(-1 as UNSIGNED) - 1")
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 1")
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
@@ -190,6 +197,38 @@ func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	r.Check(testkit.Rows())
 	r = tk.MustQuery(`SELECT NOT 1 BETWEEN -5 AND 5;`)
 	r.Check(testkit.Rows("1"))
+}
+
+func (s *testMySQLConstSuite) TestPadCharToFullLengthMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// test type `CHAR(n)`
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a char(10));")
+	tk.MustExec("insert into t1 values ('xy');")
+	tk.MustExec("set sql_mode='';")
+	r := tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
+	r.Check(testkit.Rows("0 2"))
+	r = tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
+	r.Check(testkit.Rows("0"))
+	tk.MustExec("set sql_mode='PAD_CHAR_TO_FULL_LENGTH';")
+	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
+	r.Check(testkit.Rows("1 10"))
+	r = tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
+	r.Check(testkit.Rows("1"))
+
+	// test type `VARCHAR(n)`
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a varchar(10));")
+	tk.MustExec("insert into t1 values ('xy');")
+	tk.MustExec("set sql_mode='';")
+	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
+	r.Check(testkit.Rows("0 2"))
+	r = tk.MustQuery(`SELECT count(*) FROM t1 WHERE a='xy        ';`)
+	r.Check(testkit.Rows("0"))
+	tk.MustExec("set sql_mode='PAD_CHAR_TO_FULL_LENGTH';")
+	r = tk.MustQuery(`SELECT a='xy        ', char_length(a) FROM t1;`)
+	r.Check(testkit.Rows("0 2"))
 }
 
 func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {

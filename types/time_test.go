@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package types_test
 
 import (
 	"math"
@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -57,7 +58,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseDatetime(sc, test.Input)
+		t, err := types.ParseDatetime(sc, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -78,12 +79,12 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range fspTbl {
-		t, err := ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		t, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
 
-	t, _ := ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
+	t, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
 	c.Assert(t.Time.Second(), Equals, 46)
 	c.Assert(t.Time.Microsecond(), Equals, 0)
 
@@ -99,7 +100,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseDatetime(sc, test)
+		_, err := types.ParseDatetime(sc, test)
 		c.Assert(err, NotNil)
 	}
 }
@@ -114,7 +115,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseTimestamp(nil, test.Input)
+		t, err := types.ParseTimestamp(nil, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -125,7 +126,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseTimestamp(nil, test)
+		_, err := types.ParseTimestamp(nil, test)
 		c.Assert(err, NotNil)
 	}
 }
@@ -146,7 +147,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseDate(nil, test.Input)
+		t, err := types.ParseDate(nil, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -156,7 +157,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseDate(nil, test)
+		_, err := types.ParseDate(nil, test)
 		c.Assert(err, NotNil)
 	}
 }
@@ -193,7 +194,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseDuration(test.Input, MinFsp)
+		t, err := types.ParseDuration(test.Input, types.MinFsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -208,7 +209,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseDuration(test.Input, MaxFsp)
+		t, err := types.ParseDuration(test.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -219,7 +220,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseDuration(test, DefaultFsp)
+		_, err := types.ParseDuration(test, types.DefaultFsp)
 		c.Assert(err, NotNil)
 	}
 
@@ -235,8 +236,14 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, t := range cmpTable {
-		t1 := Duration{time.Duration(t.lhs), DefaultFsp}
-		t2 := Duration{time.Duration(t.rhs), DefaultFsp}
+		t1 := types.Duration{
+			Duration: time.Duration(t.lhs),
+			Fsp:      types.DefaultFsp,
+		}
+		t2 := types.Duration{
+			Duration: time.Duration(t.rhs),
+			Fsp:      types.DefaultFsp,
+		}
 		ret := t1.Compare(t2)
 		c.Assert(ret, Equals, t.ret)
 	}
@@ -257,23 +264,23 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
 	}
 	for _, test := range table {
-		t, err := ParseDuration(test.Input, test.Fsp)
+		t, err := types.ParseDuration(test.Input, test.Fsp)
 		c.Assert(err, IsNil)
-		ta, err := ParseDuration(test.InputAdd, test.FspAdd)
+		ta, err := types.ParseDuration(test.InputAdd, test.FspAdd)
 		c.Assert(err, IsNil)
 		result, err := t.Add(ta)
 		c.Assert(err, IsNil)
 		c.Assert(result.String(), Equals, test.Expect)
 	}
-	t, err := ParseDuration("00:00:00", 0)
+	t, err := types.ParseDuration("00:00:00", 0)
 	c.Assert(err, IsNil)
-	ta := new(Duration)
+	ta := new(types.Duration)
 	result, err := t.Add(*ta)
 	c.Assert(err, IsNil)
 	c.Assert(result.String(), Equals, "00:00:00")
 
-	t = Duration{Duration: math.MaxInt64, Fsp: 0}
-	tatmp, err := ParseDuration("00:01:00", 0)
+	t = types.Duration{Duration: math.MaxInt64, Fsp: 0}
+	tatmp, err := types.ParseDuration("00:01:00", 0)
 	c.Assert(err, IsNil)
 	_, err = t.Add(tatmp)
 	c.Assert(err, NotNil)
@@ -292,9 +299,9 @@ func (s *testTimeSuite) TestDurationSub(c *C) {
 		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
 	}
 	for _, test := range table {
-		t, err := ParseDuration(test.Input, test.Fsp)
+		t, err := types.ParseDuration(test.Input, test.Fsp)
 		c.Assert(err, IsNil)
-		ta, err := ParseDuration(test.InputAdd, test.FspAdd)
+		ta, err := types.ParseDuration(test.InputAdd, test.FspAdd)
 		c.Assert(err, IsNil)
 		result, err := t.Sub(ta)
 		c.Assert(err, IsNil)
@@ -316,10 +323,13 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 		// fsp -1 use default 0
 		{"00:00:00.777777", -1, "00:00:01"},
 		{"00:00:00.001", 3, "00:00:00.001"},
+		// fsp round overflow 60 seconds
+		{"08:29:59.537368", 0, "08:30:00"},
+		{"08:59:59.537368", 0, "09:00:00"},
 	}
 
 	for _, test := range table {
-		t, err := ParseDuration(test.Input, test.Fsp)
+		t, err := types.ParseDuration(test.Input, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -333,7 +343,7 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := ParseDuration(test.Input, test.Fsp)
+		_, err := types.ParseDuration(test.Input, test.Fsp)
 		c.Assert(err, NotNil)
 	}
 }
@@ -350,7 +360,7 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := ParseYear(test.Input)
+		t, err := types.ParseYear(test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t, Equals, test.Expect)
 	}
@@ -366,7 +376,7 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 
 	for _, test := range valids {
-		_, err := AdjustYear(test.Year)
+		_, err := types.AdjustYear(test.Year)
 		if test.Expect {
 			c.Assert(err, IsNil)
 		} else {
@@ -399,39 +409,39 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
 	// MySQL timestamp value doesn't allow month=0 or day=0.
-	t, err := ParseTimestamp(nil, "2016-12-00 00:00:00")
+	t, err := types.ParseTimestamp(nil, "2016-12-00 00:00:00")
 	c.Assert(err, NotNil)
 
-	t, err = ParseTimestamp(nil, "2010-10-10 10:11:11")
+	t, err = types.ParseTimestamp(nil, "2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
 	packed, err := t.ToPackedUint()
 	c.Assert(err, IsNil)
 
-	var t1 Time
+	var t1 types.Time
 	t1.Type = mysql.TypeTimestamp
-	t1.Time = FromGoTime(time.Now())
+	t1.Time = types.FromGoTime(time.Now())
 	packed, err = t1.ToPackedUint()
 	c.Assert(err, IsNil)
 
-	var t2 Time
+	var t2 types.Time
 	t2.Type = mysql.TypeTimestamp
 	err = t2.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t1.String(), Equals, t2.String())
 
-	packed, _ = ZeroDatetime.ToPackedUint()
+	packed, _ = types.ZeroDatetime.ToPackedUint()
 
-	var t3 Time
+	var t3 types.Time
 	t3.Type = mysql.TypeDatetime
 	err = t3.FromPackedUint(packed)
 	c.Assert(err, IsNil)
-	c.Assert(t3.String(), Equals, ZeroDatetime.String())
+	c.Assert(t3.String(), Equals, types.ZeroDatetime.String())
 
-	t, err = ParseDatetime(nil, "0001-01-01 00:00:00")
+	t, err = types.ParseDatetime(nil, "0001-01-01 00:00:00")
 	c.Assert(err, IsNil)
 	packed, _ = t.ToPackedUint()
 
-	var t4 Time
+	var t4 types.Time
 	t4.Type = mysql.TypeDatetime
 	err = t4.FromPackedUint(packed)
 	c.Assert(err, IsNil)
@@ -445,14 +455,14 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	}
 
 	for _, test := range tbl {
-		t, err := ParseTime(nil, test, mysql.TypeDatetime, MaxFsp)
+		t, err := types.ParseTime(nil, test, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 
 		packed, _ = t.ToPackedUint()
 
-		var dest Time
+		var dest types.Time
 		dest.Type = mysql.TypeDatetime
-		dest.Fsp = MaxFsp
+		dest.Fsp = types.MaxFsp
 		err = dest.FromPackedUint(packed)
 		c.Assert(err, IsNil)
 		c.Assert(dest.String(), Equals, test)
@@ -471,35 +481,35 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		ExpectDateValue      string
 	}{
 		{20101010111111, false, "2010-10-10 11:11:11", false, "2010-10-10 11:11:11", false, "2010-10-10"},
-		{2010101011111, false, "0201-01-01 01:11:11", true, ZeroDatetimeStr, false, "0201-01-01"},
+		{2010101011111, false, "0201-01-01 01:11:11", true, types.ZeroDatetimeStr, false, "0201-01-01"},
 		{201010101111, false, "2020-10-10 10:11:11", false, "2020-10-10 10:11:11", false, "2020-10-10"},
 		{20101010111, false, "2002-01-01 01:01:11", false, "2002-01-01 01:01:11", false, "2002-01-01"},
-		{2010101011, true, ZeroDatetimeStr, true, ZeroDatetimeStr, true, zeroDateStr},
+		{2010101011, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
 		{201010101, false, "2000-02-01 01:01:01", false, "2000-02-01 01:01:01", false, "2000-02-01"},
 		{20101010, false, "2010-10-10 00:00:00", false, "2010-10-10 00:00:00", false, "2010-10-10"},
-		{2010101, true, ZeroDatetimeStr, true, ZeroDatetimeStr, true, zeroDateStr},
+		{2010101, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
 		{201010, false, "2020-10-10 00:00:00", false, "2020-10-10 00:00:00", false, "2020-10-10"},
 		{20101, false, "2002-01-01 00:00:00", false, "2002-01-01 00:00:00", false, "2002-01-01"},
-		{2010, true, ZeroDatetimeStr, true, ZeroDatetimeStr, true, zeroDateStr},
+		{2010, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
 		{201, false, "2000-02-01 00:00:00", false, "2000-02-01 00:00:00", false, "2000-02-01"},
-		{20, true, ZeroDatetimeStr, true, ZeroDatetimeStr, true, zeroDateStr},
-		{2, true, ZeroDatetimeStr, true, ZeroDatetimeStr, true, zeroDateStr},
-		{0, false, ZeroDatetimeStr, false, ZeroDatetimeStr, false, zeroDateStr},
-		{-1, true, ZeroDatetimeStr, true, ZeroDatetimeStr, true, zeroDateStr},
-		{99999999999999, true, ZeroDatetimeStr, true, ZeroDatetimeStr, true, zeroDateStr},
-		{100000000000000, true, ZeroDatetimeStr, true, ZeroDatetimeStr, true, zeroDateStr},
-		{10000102000000, false, "1000-01-02 00:00:00", true, ZeroDatetimeStr, false, "1000-01-02"},
-		{19690101000000, false, "1969-01-01 00:00:00", true, ZeroDatetimeStr, false, "1969-01-01"},
+		{20, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
+		{2, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
+		{0, false, types.ZeroDatetimeStr, false, types.ZeroDatetimeStr, false, types.ZeroDateStr},
+		{-1, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
+		{99999999999999, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
+		{100000000000000, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
+		{10000102000000, false, "1000-01-02 00:00:00", true, types.ZeroDatetimeStr, false, "1000-01-02"},
+		{19690101000000, false, "1969-01-01 00:00:00", true, types.ZeroDatetimeStr, false, "1969-01-01"},
 		{991231235959, false, "1999-12-31 23:59:59", false, "1999-12-31 23:59:59", false, "1999-12-31"},
-		{691231235959, false, "2069-12-31 23:59:59", true, ZeroDatetimeStr, false, "2069-12-31"},
+		{691231235959, false, "2069-12-31 23:59:59", true, types.ZeroDatetimeStr, false, "2069-12-31"},
 		{370119031407, false, "2037-01-19 03:14:07", false, "2037-01-19 03:14:07", false, "2037-01-19"},
-		{380120031407, false, "2038-01-20 03:14:07", true, ZeroDatetimeStr, false, "2038-01-20"},
+		{380120031407, false, "2038-01-20 03:14:07", true, types.ZeroDatetimeStr, false, "2038-01-20"},
 		{11111111111, false, "2001-11-11 11:11:11", false, "2001-11-11 11:11:11", false, "2001-11-11"},
 	}
 
 	for ith, test := range table {
-		// test ParseDatetimeFromNum
-		t, err := ParseDatetimeFromNum(nil, test.Input)
+		// testtypes.ParseDatetimeFromNum
+		t, err := types.ParseDatetimeFromNum(nil, test.Input)
 		if test.ExpectDateTimeError {
 			c.Assert(err, NotNil, Commentf("%d", ith))
 		} else {
@@ -508,8 +518,8 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		}
 		c.Assert(t.String(), Equals, test.ExpectDateTimeValue)
 
-		// test ParseTimestampFromNum
-		t, err = ParseTimestampFromNum(nil, test.Input)
+		// testtypes.ParseTimestampFromNum
+		t, err = types.ParseTimestampFromNum(nil, test.Input)
 		if test.ExpectTimeStampError {
 			c.Assert(err, NotNil)
 		} else {
@@ -518,8 +528,8 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		}
 		c.Assert(t.String(), Equals, test.ExpectTimeStampValue)
 
-		// test ParseDateFromNum
-		t, err = ParseDateFromNum(nil, test.Input)
+		// testtypes.ParseDateFromNum
+		t, err = types.ParseDateFromNum(nil, test.Input)
 
 		if test.ExpectDateTimeError {
 			c.Assert(err, NotNil)
@@ -550,7 +560,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDateTime {
-		t, err := ParseTime(nil, test.Input, mysql.TypeDatetime, test.Fsp)
+		t, err := types.ParseTime(nil, test.Input, mysql.TypeDatetime, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -573,7 +583,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDate {
-		t, err := ParseTime(nil, test.Input, mysql.TypeDate, 0)
+		t, err := types.ParseTime(nil, test.Input, mysql.TypeDate, 0)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -596,9 +606,9 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDuration {
-		t, err := ParseDuration(test.Input, test.Fsp)
+		t, err := types.ParseDuration(test.Input, test.Fsp)
 		c.Assert(err, IsNil)
-		// now we can only change Duration's Fsp to check ToNumber with different Fsp
+		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
 }
@@ -633,7 +643,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, overflow, err := parseFrac(t.S, t.Fsp)
+		v, overflow, err := types.ParseFrac(t.S, t.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t.Ret)
 		c.Assert(overflow, Equals, t.Overflow)
@@ -661,7 +671,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := ParseTime(sc, t.Input, mysql.TypeDatetime, MaxFsp)
+		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 		nv, err := v.RoundFrac(t.Fsp)
 		c.Assert(err, IsNil)
@@ -682,7 +692,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := ParseDuration(t.Input, MaxFsp)
+		v, err := types.ParseDuration(t.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
 		nv, err := v.RoundFrac(t.Fsp)
 		c.Assert(err, IsNil)
@@ -707,7 +717,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := ParseTime(nil, t.Input, mysql.TypeDatetime, t.Fsp)
+		v, err := types.ParseTime(nil, t.Input, mysql.TypeDatetime, t.Fsp)
 		c.Assert(err, IsNil)
 		nv, err := v.ConvertToDuration()
 		c.Assert(err, IsNil)
@@ -725,7 +735,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	}
 
 	for _, t := range tblDuration {
-		v, err := ParseDuration(t.Input, t.Fsp)
+		v, err := types.ParseDuration(t.Input, t.Fsp)
 		c.Assert(err, IsNil)
 		year, month, day := time.Now().Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
@@ -752,7 +762,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := ParseTime(nil, t.Arg1, mysql.TypeDatetime, MaxFsp)
+		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 
 		ret, err := v1.CompareString(nil, t.Arg2)
@@ -771,7 +781,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := ParseDuration(t.Arg1, MaxFsp)
+		v1, err := types.ParseDuration(t.Arg1, types.MaxFsp)
 		c.Assert(err, IsNil)
 
 		ret, err := v1.CompareString(nil, t.Arg2)
@@ -796,7 +806,7 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 	}
 
 	for _, t := range tbl {
-		d, err := ParseDuration(t.Input, MaxFsp)
+		d, err := types.ParseDuration(t.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
 		c.Assert(d.Hour(), Equals, t.Hour)
 		c.Assert(d.Minute(), Equals, t.Minute)
@@ -824,7 +834,7 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 	}
 
 	for _, t := range tbl {
-		r := parseDateFormat(t.Input)
+		r := types.ParseDateFormat(t.Input)
 		c.Assert(r, DeepEquals, t.Result)
 	}
 }
@@ -832,23 +842,35 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	tests := []struct {
 		unit   string
-		t1     TimeInternal
-		t2     TimeInternal
+		t1     types.TimeInternal
+		t2     types.TimeInternal
 		expect int64
 	}{
-		{"MONTH", FromDate(2002, 5, 30, 0, 0, 0, 0), FromDate(2001, 1, 1, 0, 0, 0, 0), -16},
-		{"YEAR", FromDate(2002, 5, 1, 0, 0, 0, 0), FromDate(2001, 1, 1, 0, 0, 0, 0), -1},
-		{"MINUTE", FromDate(2003, 2, 1, 0, 0, 0, 0), FromDate(2003, 5, 1, 12, 5, 55, 0), 128885},
-		{"MICROSECOND", FromDate(2002, 5, 30, 0, 0, 0, 0), FromDate(2002, 5, 30, 0, 13, 25, 0), 805000000},
-		{"MICROSECOND", FromDate(2000, 1, 1, 0, 0, 0, 12345), FromDate(2000, 1, 1, 0, 0, 45, 32), 44987687},
-		{"QUARTER", FromDate(2000, 1, 12, 0, 0, 0, 0), FromDate(2016, 1, 1, 0, 0, 0, 0), 63},
-		{"QUARTER", FromDate(2016, 1, 1, 0, 0, 0, 0), FromDate(2000, 1, 12, 0, 0, 0, 0), -63},
+		{"MONTH", types.FromDate(2002, 5, 30, 0, 0, 0, 0), types.FromDate(2001, 1, 1, 0, 0, 0, 0), -16},
+		{"YEAR", types.FromDate(2002, 5, 1, 0, 0, 0, 0), types.FromDate(2001, 1, 1, 0, 0, 0, 0), -1},
+		{"MINUTE", types.FromDate(2003, 2, 1, 0, 0, 0, 0), types.FromDate(2003, 5, 1, 12, 5, 55, 0), 128885},
+		{"MICROSECOND", types.FromDate(2002, 5, 30, 0, 0, 0, 0), types.FromDate(2002, 5, 30, 0, 13, 25, 0), 805000000},
+		{"MICROSECOND", types.FromDate(2000, 1, 1, 0, 0, 0, 12345), types.FromDate(2000, 1, 1, 0, 0, 45, 32), 44987687},
+		{"QUARTER", types.FromDate(2000, 1, 12, 0, 0, 0, 0), types.FromDate(2016, 1, 1, 0, 0, 0, 0), 63},
+		{"QUARTER", types.FromDate(2016, 1, 1, 0, 0, 0, 0), types.FromDate(2000, 1, 12, 0, 0, 0, 0), -63},
 	}
 
 	for _, test := range tests {
-		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil, false}
-		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil, false}
-		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
+		t1 := types.Time{
+			Time:     test.t1,
+			Type:     mysql.TypeDatetime,
+			Fsp:      6,
+			TimeZone: nil,
+			Negative: false,
+		}
+		t2 := types.Time{
+			Time:     test.t2,
+			Type:     mysql.TypeDatetime,
+			Fsp:      6,
+			TimeZone: nil,
+			Negative: false,
+		}
+		c.Assert(types.TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
 
@@ -864,28 +886,28 @@ func (s *testTimeSuite) TestDateFSP(c *C) {
 	}
 
 	for _, test := range tests {
-		c.Assert(DateFSP(test.date), Equals, test.expect)
+		c.Assert(types.DateFSP(test.date), Equals, test.expect)
 	}
 }
 
 func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tests := []struct {
-		input  TimeInternal
+		input  types.TimeInternal
 		from   *time.Location
 		to     *time.Location
-		expect TimeInternal
+		expect types.TimeInternal
 	}{
-		{FromDate(2017, 1, 1, 0, 0, 0, 0), time.UTC, loc, FromDate(2017, 1, 1, 8, 0, 0, 0)},
-		{FromDate(2017, 1, 1, 8, 0, 0, 0), loc, time.UTC, FromDate(2017, 1, 1, 0, 0, 0, 0)},
-		{FromDate(0, 0, 0, 0, 0, 0, 0), loc, time.UTC, FromDate(0, 0, 0, 0, 0, 0, 0)},
+		{types.FromDate(2017, 1, 1, 0, 0, 0, 0), time.UTC, loc, types.FromDate(2017, 1, 1, 8, 0, 0, 0)},
+		{types.FromDate(2017, 1, 1, 8, 0, 0, 0), loc, time.UTC, types.FromDate(2017, 1, 1, 0, 0, 0, 0)},
+		{types.FromDate(0, 0, 0, 0, 0, 0, 0), loc, time.UTC, types.FromDate(0, 0, 0, 0, 0, 0, 0)},
 	}
 
 	for _, test := range tests {
-		var t Time
+		var t types.Time
 		t.Time = test.input
 		t.ConvertTimeZone(test.from, test.to)
-		c.Assert(compareTime(t.Time, test.expect), Equals, 0)
+		c.Assert(t.Compare(types.Time{Time: test.expect}), Equals, 0)
 	}
 }
 
@@ -904,11 +926,11 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := ParseTime(nil, t.Arg1, mysql.TypeDatetime, MaxFsp)
+		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
-		dur, err := ParseDuration(t.Arg2, MaxFsp)
+		dur, err := types.ParseDuration(t.Arg2, types.MaxFsp)
 		c.Assert(err, IsNil)
-		result, err := ParseTime(nil, t.Ret, mysql.TypeDatetime, MaxFsp)
+		result, err := types.ParseTime(nil, t.Ret, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 		v2, err := v1.Add(dur)
 		c.Assert(err, IsNil)
@@ -917,33 +939,33 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 }
 
 func (s *testTimeSuite) TestTruncateOverflowMySQLTime(c *C) {
-	t := MaxTime + 1
-	res, err := TruncateOverflowMySQLTime(t)
-	c.Assert(ErrTruncatedWrongVal.Equal(err), IsTrue)
-	c.Assert(res, Equals, MaxTime)
+	t := types.MaxTime + 1
+	res, err := types.TruncateOverflowMySQLTime(t)
+	c.Assert(types.ErrTruncatedWrongVal.Equal(err), IsTrue)
+	c.Assert(res, Equals, types.MaxTime)
 
-	t = MinTime - 1
-	res, err = TruncateOverflowMySQLTime(t)
-	c.Assert(ErrTruncatedWrongVal.Equal(err), IsTrue)
-	c.Assert(res, Equals, MinTime)
+	t = types.MinTime - 1
+	res, err = types.TruncateOverflowMySQLTime(t)
+	c.Assert(types.ErrTruncatedWrongVal.Equal(err), IsTrue)
+	c.Assert(res, Equals, types.MinTime)
 
-	t = MaxTime
-	res, err = TruncateOverflowMySQLTime(t)
+	t = types.MaxTime
+	res, err = types.TruncateOverflowMySQLTime(t)
 	c.Assert(err, IsNil)
-	c.Assert(res, Equals, MaxTime)
+	c.Assert(res, Equals, types.MaxTime)
 
-	t = MinTime
-	res, err = TruncateOverflowMySQLTime(t)
+	t = types.MinTime
+	res, err = types.TruncateOverflowMySQLTime(t)
 	c.Assert(err, IsNil)
-	c.Assert(res, Equals, MinTime)
+	c.Assert(res, Equals, types.MinTime)
 
-	t = MaxTime - 1
-	res, err = TruncateOverflowMySQLTime(t)
+	t = types.MaxTime - 1
+	res, err = types.TruncateOverflowMySQLTime(t)
 	c.Assert(err, IsNil)
-	c.Assert(res, Equals, MaxTime-1)
+	c.Assert(res, Equals, types.MaxTime-1)
 
-	t = MinTime + 1
-	res, err = TruncateOverflowMySQLTime(t)
+	t = types.MinTime + 1
+	res, err = types.TruncateOverflowMySQLTime(t)
 	c.Assert(err, IsNil)
-	c.Assert(res, Equals, MinTime+1)
+	c.Assert(res, Equals, types.MinTime+1)
 }

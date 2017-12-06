@@ -22,12 +22,14 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -65,10 +67,7 @@ type Bucket struct {
 
 // SaveStatsToStorage saves the stats to storage.
 func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
-	goCtx := ctx.GoCtx()
-	if goCtx == nil {
-		goCtx = goctx.Background()
-	}
+	goCtx := goctx.TODO()
 	exec := ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(goCtx, "begin")
 	if err != nil {
@@ -204,7 +203,7 @@ func (hg *Histogram) toString(isIndex bool) string {
 }
 
 // equalRowCount estimates the row count where the column equals to value.
-func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
+func (hg *Histogram) equalRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
 	index, match, err := hg.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -226,7 +225,7 @@ func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Da
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
-func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
+func (hg *Histogram) greaterRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
 	lessCount, err := hg.lessRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -243,7 +242,7 @@ func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.
 }
 
 // greaterAndEqRowCount estimates the row count where the column less than or equal to value.
-func (hg *Histogram) greaterAndEqRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
+func (hg *Histogram) greaterAndEqRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
 	greaterCount, err := hg.greaterRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -256,7 +255,7 @@ func (hg *Histogram) greaterAndEqRowCount(sc *variable.StatementContext, value t
 }
 
 // lessRowCount estimates the row count where the column less than value.
-func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
+func (hg *Histogram) lessRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
 	index, match, err := hg.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -286,7 +285,7 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 }
 
 // lessAndEqRowCount estimates the row count where the column less than or equal to value.
-func (hg *Histogram) lessAndEqRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
+func (hg *Histogram) lessAndEqRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
 	lessCount, err := hg.lessRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -299,7 +298,7 @@ func (hg *Histogram) lessAndEqRowCount(sc *variable.StatementContext, value type
 }
 
 // betweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (hg *Histogram) betweenRowCount(sc *variable.StatementContext, a, b types.Datum) (float64, error) {
+func (hg *Histogram) betweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum) (float64, error) {
 	lessCountA, err := hg.lessRowCount(sc, a)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -321,7 +320,7 @@ func (hg *Histogram) totalRowCount() float64 {
 	return float64(hg.Buckets[len(hg.Buckets)-1].Count)
 }
 
-func (hg *Histogram) lowerBound(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
+func (hg *Histogram) lowerBound(sc *stmtctx.StatementContext, target types.Datum) (index int, match bool, err error) {
 	index = sort.Search(len(hg.Buckets), func(i int) bool {
 		cmp, err1 := hg.Buckets[i].UpperBound.CompareDatum(sc, &target)
 		if err1 != nil {
@@ -404,7 +403,7 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 }
 
 // MergeHistograms merges two histograms.
-func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
+func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
 	if len(lh.Buckets) == 0 {
 		return rh, nil
 	}
@@ -469,7 +468,7 @@ func (c *Column) String() string {
 	return c.Histogram.toString(false)
 }
 
-func (c *Column) equalRowCount(sc *variable.StatementContext, val types.Datum) (float64, error) {
+func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(val)
 		return float64(count), errors.Trace(err)
@@ -479,7 +478,7 @@ func (c *Column) equalRowCount(sc *variable.StatementContext, val types.Datum) (
 }
 
 // getIntColumnRowCount estimates the row count by a slice of IntColumnRange.
-func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges []types.IntColumnRange,
+func (c *Column) getIntColumnRowCount(sc *stmtctx.StatementContext, intRanges []ranger.IntColumnRange,
 	totalRowCount float64) (float64, error) {
 	var rowCount float64
 	for _, rg := range intRanges {
@@ -513,7 +512,7 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 }
 
 // getColumnRowCount estimates the row count by a slice of ColumnRange.
-func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*types.ColumnRange) (float64, error) {
+func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.Low.CompareDatum(sc, &rg.High)
@@ -572,7 +571,7 @@ func (idx *Index) String() string {
 	return idx.Histogram.toString(true)
 }
 
-func (idx *Index) equalRowCount(sc *variable.StatementContext, b []byte) (float64, error) {
+func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) (float64, error) {
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.queryBytes(b)), nil
 	}
@@ -580,10 +579,9 @@ func (idx *Index) equalRowCount(sc *variable.StatementContext, b []byte) (float6
 	return count, errors.Trace(err)
 }
 
-func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange) (float64, error) {
+func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.IndexRange) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
-		indexRange.Align(len(idx.Info.Columns))
 		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -592,7 +590,8 @@ func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*type
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if bytes.Equal(lb, rb) {
+		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
+		if fullLen && bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
 				rowCount, err1 := idx.equalRowCount(sc, lb)
 				if err1 != nil {
@@ -603,10 +602,10 @@ func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*type
 			continue
 		}
 		if indexRange.LowExclude {
-			lb = append(lb, 0)
+			lb = kv.Key(lb).PrefixNext()
 		}
 		if !indexRange.HighExclude {
-			rb = append(rb, 0)
+			rb = kv.Key(rb).PrefixNext()
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)

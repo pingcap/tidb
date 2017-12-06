@@ -233,19 +233,10 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	for _, col := range t.WritableCols() {
 		var value types.Datum
 		if col.State != model.StatePublic {
-			// If col is in write only or write reorganization state
-			// and the value is not default, keep the original value.
-			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			cmp, errCmp := oldData[col.Offset].CompareDatum(ctx.GetSessionVars().StmtCtx, &value)
-			if errCmp != nil {
-				return errors.Trace(errCmp)
-			}
-			if cmp != 0 {
-				value = oldData[col.Offset]
-			}
+			// If col is in write only or write reorganization state we should keep the oldData.
+			// Because the oldData must be the orignal data(it's changed by other TiDBs.) or the orignal default value.
+			// TODO: Use newData directly.
+			value = oldData[col.Offset]
 		} else {
 			value = newData[col.Offset]
 		}
@@ -325,7 +316,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 		}
 	}
 	if !hasRecordID {
-		recordID, err = t.alloc.Alloc(t.ID)
+		recordID, err = t.AllocAutoID(ctx)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -582,14 +573,15 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec)
-		if vals == nil {
-			// TODO: check this
-			continue
+		if err != nil {
+			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
+			return errors.Trace(err)
 		}
 		if err = v.Delete(ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
+				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS, h)
 				continue
 			}
 			return errors.Trace(err)
@@ -705,18 +697,24 @@ func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []ty
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.
-func (t *Table) AllocAutoID() (int64, error) {
-	return t.alloc.Alloc(t.ID)
+func (t *Table) AllocAutoID(ctx context.Context) (int64, error) {
+	return t.Allocator(ctx).Alloc(t.ID)
 }
 
 // Allocator implements table.Table Allocator interface.
-func (t *Table) Allocator() autoid.Allocator {
+func (t *Table) Allocator(ctx context.Context) autoid.Allocator {
+	if ctx != nil {
+		sessAlloc := ctx.GetSessionVars().IDAllocator
+		if sessAlloc != nil {
+			return sessAlloc
+		}
+	}
 	return t.alloc
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
-	return t.alloc.Rebase(t.ID, newBase, isSetStep)
+func (t *Table) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
+	return t.Allocator(ctx).Rebase(t.ID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.

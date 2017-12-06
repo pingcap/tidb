@@ -33,7 +33,7 @@ func prepareBenchSession() Session {
 		log.Fatal(err)
 	}
 	log.SetLevel(log.ErrorLevel)
-	se, err := CreateSession(store)
+	se, err := CreateSession4Test(store)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -72,9 +72,9 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 	mustExecute(se, "commit")
 }
 
-func readResult(rs ast.RecordSet, count int) {
+func readResult(goCtx goctx.Context, rs ast.RecordSet, count int) {
 	for count > 0 {
-		x, err := rs.Next()
+		x, err := rs.Next(goCtx)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -94,7 +94,7 @@ func BenchmarkBasic(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }
 
@@ -109,7 +109,7 @@ func BenchmarkTableScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], smallCount)
+		readResult(goCtx, rs[0], smallCount)
 	}
 }
 
@@ -124,7 +124,7 @@ func BenchmarkExplainTableScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }
 
@@ -139,7 +139,7 @@ func BenchmarkTableLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }
 
@@ -154,7 +154,7 @@ func BenchmarkExplainTableLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }
 
@@ -169,7 +169,7 @@ func BenchmarkStringIndexScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], smallCount)
+		readResult(goCtx, rs[0], smallCount)
 	}
 }
 
@@ -184,7 +184,7 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }
 
@@ -199,7 +199,7 @@ func BenchmarkStringIndexLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }
 
@@ -214,7 +214,7 @@ func BenchmarkIntegerIndexScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], smallCount)
+		readResult(goCtx, rs[0], smallCount)
 	}
 }
 
@@ -229,7 +229,7 @@ func BenchmarkIntegerIndexLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }
 
@@ -244,7 +244,7 @@ func BenchmarkDecimalIndexScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], smallCount)
+		readResult(goCtx, rs[0], smallCount)
 	}
 }
 
@@ -259,7 +259,7 @@ func BenchmarkDecimalIndexLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }
 
@@ -296,7 +296,7 @@ func BenchmarkSort(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 50)
+		readResult(goCtx, rs[0], 50)
 	}
 }
 
@@ -311,7 +311,7 @@ func BenchmarkJoin(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], smallCount)
+		readResult(goCtx, rs[0], smallCount)
 	}
 }
 
@@ -326,6 +326,6 @@ func BenchmarkJoinLimit(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(rs[0], 1)
+		readResult(goCtx, rs[0], 1)
 	}
 }

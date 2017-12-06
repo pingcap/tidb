@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -47,7 +48,7 @@ type QueryCtx interface {
 	SetValue(key fmt.Stringer, value interface{})
 
 	// CommitTxn commits the transaction operations.
-	CommitTxn() error
+	CommitTxn(goCtx goctx.Context) error
 
 	// RollbackTxn undoes the transaction operations.
 	RollbackTxn() error
@@ -120,7 +121,10 @@ type PreparedStatement interface {
 
 // ResultSet is the result set of an query.
 type ResultSet interface {
-	Columns() ([]*ColumnInfo, error)
-	Next() (types.Row, error)
+	Columns() []*ColumnInfo
+	Next(goctx.Context) (types.Row, error)
+	SupportChunk() bool
+	NewChunk() *chunk.Chunk
+	NextChunk(chk *chunk.Chunk) error
 	Close() error
 }

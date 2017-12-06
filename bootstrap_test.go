@@ -19,10 +19,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
@@ -49,7 +49,8 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
 	c.Assert(r, NotNil)
-	row, err := r.Next()
+	goCtx := goctx.Background()
+	row, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	datums := ast.RowToDatums(row, r.Fields())
@@ -64,7 +65,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
-	v, err := r.Next()
+	v, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
 
@@ -74,16 +75,16 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "create table t (id int)")
 	delete(storeBootstrapped, store.UUID())
 	se.Close()
-	se, err = CreateSession(store)
+	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se, "USE test;")
 	mustExecSQL(c, se, "insert t values (?)", 3)
-	se, err = CreateSession(store)
+	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se, "USE test;")
 	r = mustExecSQL(c, se, "select * from t")
 	c.Assert(r, NotNil)
-	v, err = r.Next()
+	v, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	datums = ast.RowToDatums(v, r.Fields())
 	match(c, datums, 3)
@@ -92,7 +93,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 
 	// Try to do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
 	// For https://github.com/pingcap/tidb/issues/1096
-	se, err = CreateSession(store)
+	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)
 
@@ -119,9 +120,9 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	}
 	ss.mu.values = make(map[fmt.Stringer]interface{})
 	ss.SetValue(context.Initing, true)
-	domain, err := domap.Get(store)
+	dom, err := domap.Get(store)
 	c.Assert(err, IsNil)
-	sessionctx.BindDomain(ss, domain)
+	domain.BindDomain(ss, dom)
 	b, err := checkBootstrapped(ss)
 	c.Assert(b, IsFalse)
 	c.Assert(err, IsNil)
@@ -133,6 +134,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
 func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
+	goCtx := goctx.Background()
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
 	s.bootstrapWithOnlyDDLWork(store, c)
@@ -141,7 +143,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	datums := ast.RowToDatums(row, r.Fields())
@@ -153,12 +155,12 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
 	// Check global variables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
-	v, err := r.Next()
+	v, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Len(), Equals, 1)
@@ -170,6 +172,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 
 // TestUpgrade tests upgrading
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
+	goCtx := goctx.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
 	defer store.Close()
@@ -178,7 +181,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 
 	// bootstrap with currentBootstrapVersion
 	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Len(), Equals, 1)
@@ -205,7 +208,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	delete(storeBootstrapped, store.UUID())
 	// Make sure the version is downgraded.
 	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 
@@ -219,7 +222,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer dom1.Close()
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Len(), Equals, 1)

@@ -33,10 +33,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
-	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
+	mocktikv "github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -120,10 +119,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 
+	goCtx := goctx.Background()
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetInt64(0), Equals, int64(1))
@@ -131,7 +131,7 @@ func (s *testSuite) TestAdmin(c *C) {
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
@@ -144,7 +144,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 	err = txn.Rollback()
@@ -153,7 +153,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
@@ -176,7 +176,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, NotNil)
 	// different index values
 	ctx := tk.Se.(context.Context)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
@@ -241,7 +241,7 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
-// Issue 3685.
+// TestSelectBackslashN Issue 3685.
 func (s *testSuite) TestSelectBackslashN(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -332,7 +332,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
 }
 
-// Issue #4053.
+// TestSelectNull Issue #4053.
 func (s *testSuite) TestSelectNull(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -365,7 +365,7 @@ func (s *testSuite) TestSelectNull(c *C) {
 	c.Check(fields[0].Column.Name.O, Equals, `null+NULL`)
 }
 
-// Issue #3686.
+// TestSelectStringLiteral Issue #3686.
 func (s *testSuite) TestSelectStringLiteral(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -706,7 +706,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next()
+	row, err := rs.Next(goctx.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
 }
@@ -1517,20 +1517,19 @@ func (s *testSuite) TestTableScan(c *C) {
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
-	se.GetSessionVars().TxnCtx.InfoSchema = sessionctx.GetDomain(se).InfoSchema()
-	compiler := &executor.Compiler{}
-	ctx := se.(context.Context)
+	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
+	compiler := &executor.Compiler{Ctx: se}
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
-	stmt, err := compiler.Compile(ctx, stmtNode)
+	stmt, err := compiler.Compile(goctx.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
 	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
-	stmt, err = compiler.Compile(ctx, stmtNode)
+	stmt, err = compiler.Compile(goctx.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
@@ -1942,7 +1941,7 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
 }
 
-// This tests https://github.com/pingcap/tidb/issues/4024
+// TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
 func (s *testSuite) TestIssue4024(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database test2")
@@ -2040,8 +2039,15 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("create table t1 (id int, v int, unique index i_id (id))")
 	defer tk.MustExec("drop table t")
+	defer tk.MustExec("drop table t1")
 	tk.MustExec("insert into t values (1)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
 
 	cli := s.cli
 	cli.mu.Lock()
@@ -2049,6 +2055,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
@@ -2157,7 +2164,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	row, err := r.Next()
+	row, err := r.Next(goctx.Background())
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
@@ -2256,7 +2263,7 @@ func (s *testSuite) TestEnhancedRangeAccess(c *C) {
 	tk.MustQuery("select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)").Check(nil)
 }
 
-// Issue #4810
+// TestMaxInt64Handle Issue #4810
 func (s *testSuite) TestMaxInt64Handle(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -2270,4 +2277,13 @@ func (s *testSuite) TestMaxInt64Handle(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("delete from t where id = 9223372036854775807")
 	tk.MustQuery("select * from t").Check(nil)
+}
+
+func (s *testSuite) TestTableScanWithPointRanges(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t values(1), (5), (10)")
+	tk.MustQuery("select * from t where id in(1, 2, 10)").Check(testkit.Rows("1", "10"))
 }

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -384,7 +383,7 @@ func mockContext() context.Context {
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := &domain.Domain{}
 	do.CreateStatsHandle(ctx)
-	sessionctx.BindDomain(ctx, do)
+	domain.BindDomain(ctx, do)
 	return ctx
 }
 
@@ -477,7 +476,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
-			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Projection",
+			best: "UnionAll{DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection->DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection->DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t where t.a = k.a) from t k",
@@ -613,11 +612,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "update t set t.a = t.a * 1.5 where t.a >= 1000 order by t.a desc limit 10",
-			plan: "DataScan(t)->Sel([ge(test.t.a, 1000)])->Sort->Limit->*plan.Update",
+			plan: "TableReader(Table(t)->Limit)->Limit->Update",
 		},
 		{
 			sql:  "delete from t where t.a >= 1000 order by t.a desc limit 10",
-			plan: "DataScan(t)->Sel([ge(test.t.a, 1000)])->Sort->Limit->*plan.Delete",
+			plan: "TableReader(Table(t)->Limit)->Limit->Delete",
 		},
 		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
@@ -625,11 +624,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "insert into t select * from t",
-			plan: "DataScan(t)->Projection->*plan.Insert",
+			plan: "TableReader(Table(t))->Insert",
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "*plan.Show->Sel([eq(cast(key), 0)])",
+			plan: "Show([eq(cast(key), 0)])",
 		},
 		{
 			sql:  "do sleep(5)",
@@ -768,7 +767,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		},
 		{
 			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
-			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Projection->Aggr(sum(cast(a.c1)),firstrow(cast(a.c2)))->DataScan(b)->Projection->Aggr(sum(cast(b.c1)),firstrow(cast(b.c2)))->DataScan(c)->Projection->Aggr(sum(cast(c.c1)),firstrow(c.c2))}->Aggr(sum(join_agg_0))->Projection",
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
@@ -780,7 +779,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		},
 		{
 			sql:  "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
-			best: "UnionAll{DataScan(a)->Projection->Projection->DataScan(b)->Projection->Projection}->Aggr(max(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Projection->Aggr(max(cast(a.b)),firstrow(cast(a.a)))->DataScan(b)->Projection->Aggr(max(cast(b.b)),firstrow(cast(b.a)))}->Aggr(max(join_agg_0))->Projection",
 		},
 		{
 			sql:  "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
@@ -1070,6 +1069,10 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		//	sql: "(select a as b, b from t) union (select a, b from t) order by a",
 		//	err: ErrUnknownColumn,
 		//},
+		{
+			sql: "select * from t t1 use index(e)",
+			err: ErrKeyDoesNotExist,
+		},
 	}
 	for _, tt := range tests {
 		sql := tt.sql
@@ -1521,12 +1524,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
-			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([s.a s.b],0,5)->Projection}->TopN([t.a t.b],0,5)",
+			best: "UnionAll{DataScan(t)->TopN([cast(test.t.a) cast(test.t.b)],0,5)->Projection->DataScan(s)->TopN([cast(s.a) cast(s.b)],0,5)->Projection}->TopN([t.a t.b],0,5)",
 		},
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5, 5",
-			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([s.a s.b],0,10)->Projection}->TopN([t.a t.b],5,5)",
+			best: "UnionAll{DataScan(t)->TopN([cast(test.t.a) cast(test.t.b)],0,10)->Projection->DataScan(s)->TopN([cast(s.a) cast(s.b)],0,10)->Projection}->TopN([t.a t.b],5,5)",
 		},
 		// Test Limit + UA + Proj + Sort.
 		{

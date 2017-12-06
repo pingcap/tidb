@@ -17,7 +17,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	goctx "golang.org/x/net/context"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -30,7 +31,7 @@ import (
 type MergeJoinExec struct {
 	baseExecutor
 
-	stmtCtx  *variable.StatementContext
+	stmtCtx  *stmtctx.StatementContext
 	prepared bool
 
 	outerKeys   []*expression.Column
@@ -50,7 +51,7 @@ const rowBufferSize = 4096
 
 // rowBlockIterator represents a row block with the same join keys
 type rowBlockIterator struct {
-	stmtCtx   *variable.StatementContext
+	stmtCtx   *stmtctx.StatementContext
 	ctx       context.Context
 	reader    Executor
 	filter    []expression.Expression
@@ -75,8 +76,9 @@ func (rb *rowBlockIterator) init() error {
 }
 
 func (rb *rowBlockIterator) nextRow() (Row, error) {
+	goCtx := goctx.TODO()
 	for {
-		row, err := rb.reader.Next()
+		row, err := rb.reader.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -134,8 +136,8 @@ func (e *MergeJoinExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *MergeJoinExec) Open() error {
-	if err := e.baseExecutor.Open(); err != nil {
+func (e *MergeJoinExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
 	e.prepared = false
@@ -144,7 +146,7 @@ func (e *MergeJoinExec) Open() error {
 	return nil
 }
 
-func compareKeys(stmtCtx *variable.StatementContext,
+func compareKeys(stmtCtx *stmtctx.StatementContext,
 	leftRow Row, leftKeys []*expression.Column,
 	rightRow Row, rightKeys []*expression.Column) (int, error) {
 	for i, leftKey := range leftKeys {
@@ -268,7 +270,7 @@ func (e *MergeJoinExec) prepare() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next() (Row, error) {
+func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.prepared {
 		if err := e.prepare(); err != nil {
 			return nil, errors.Trace(err)

@@ -49,7 +49,9 @@ func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	dom, err := NewDomain(store, 80*time.Millisecond, 0, mockFactory, sysMockFactory)
+	ddlLease := 80 * time.Millisecond
+	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()

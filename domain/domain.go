@@ -317,9 +317,9 @@ func (do *Domain) Reload() error {
 }
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
+	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
-	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 	syncer := do.ddl.SchemaSyncer()
@@ -340,7 +340,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
 			do.SchemaValidator.Stop()
-			err := syncer.Restart(goctx.Background())
+			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
@@ -352,9 +352,36 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	}
 }
 
+// mustRestartSyncer tries to restart the SchemaSyncer.
+// It returns until it's successful or the domain is stoped.
+func (do *Domain) mustRestartSyncer() error {
+	ctx := goctx.Background()
+	syncer := do.ddl.SchemaSyncer()
+	timeout := 5 * time.Second
+
+	for {
+		childCtx, cancel := goctx.WithTimeout(ctx, timeout)
+		err := syncer.Restart(childCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		// If the domain has stopped, we return an error immediately.
+		select {
+		case <-do.exit:
+			return errors.Trace(err)
+		default:
+		}
+		time.Sleep(time.Second)
+		log.Infof("[ddl] restart the schema syncer failed %v", err)
+	}
+}
+
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
-	terror.Log(errors.Trace(do.ddl.Stop()))
+	if do.ddl != nil {
+		terror.Log(errors.Trace(do.ddl.Stop()))
+	}
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -408,19 +435,24 @@ type EtcdBackend interface {
 	StartGCWorker() error
 }
 
+const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
+
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory, sysFactory func(*Domain) (pools.Resource, error)) (*Domain, error) {
-	capacity := 200                // capacity of the sysSessionPool size
-	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
-	d := &Domain{
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) *Domain {
+	capacity := 200 // capacity of the sysSessionPool size
+	return &Domain{
 		store:           store,
 		SchemaValidator: NewSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, idleTimeout),
+		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
 		statsLease:      statsLease,
+		infoHandle:      infoschema.NewHandle(store),
 	}
+}
 
-	if ebd, ok := store.(EtcdBackend); ok {
+// Init initializes a domain.
+func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
+	if ebd, ok := do.store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cli, err := clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
@@ -431,54 +463,44 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 				},
 			})
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
-			d.etcdClient = cli
+			do.etcdClient = cli
 		}
 	}
 
-	d.infoHandle = infoschema.NewHandle(d.store)
-	ctx := goctx.Background()
-	callback := &ddlCallback{do: d}
-
 	// TODO: Here we create new sessions with sysFac in DDL,
-	// which will use `d` as Domain instead of call `domap.Get`.
+	// which will use `do` as Domain instead of call `domap.Get`.
 	// That's because `domap.Get` requires a lock, but before
 	// we initialize Domain finish, we can't require that again.
 	// After we remove the lazy logic of creating Domain, we
 	// can simplify code here.
 	sysFac := func() (pools.Resource, error) {
-		return sysFactory(d)
+		return sysFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, idleTimeout)
-	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease, sysCtxPool)
-	var err error
-	defer func() {
-		// Clean up domain when initializing syncer failed or reloading failed.
-		// If we don't clean it, there are some dirty data when retrying this function.
-		if err != nil {
-			d.Close()
-			log.Errorf("[ddl] new domain failed %v", errors.ErrorStack(errors.Trace(err)))
-		}
-	}()
+	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
+	ctx := goctx.Background()
+	callback := &ddlCallback{do: do}
+	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
 
-	err = d.ddl.SchemaSyncer().Init(ctx)
+	err := do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	err = d.Reload()
+	err = do.Reload()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
+		do.wg.Add(1)
 		// Local store needs to get the change information for every DDL state in each session.
-		go d.loadSchemaInLoop(ddlLease)
+		go do.loadSchemaInLoop(ddlLease)
 	}
 
-	return d, nil
+	return nil
 }
 
 // SysSessionPool returns the system session pool.
@@ -561,10 +583,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
-	err := statsHandle.Update(do.InfoSchema())
-	if err != nil {
-		return errors.Trace(err)
-	}
 	lease := do.statsLease
 	if lease <= 0 {
 		return nil
@@ -587,6 +605,13 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	loadHistogramTicker := time.NewTicker(lease)
 	defer loadHistogramTicker.Stop()
 	statsHandle := do.StatsHandle()
+	t := time.Now()
+	err := statsHandle.InitStats(do.InfoSchema())
+	if err != nil {
+		log.Error("[stats] init stats info failed: ", errors.ErrorStack(err))
+	} else {
+		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
+	}
 	for {
 		select {
 		case <-loadTicker.C:

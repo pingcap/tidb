@@ -26,7 +26,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -59,7 +59,8 @@ const (
 	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// ZeroDatetimeStr is the string representation of a zero datetime.
 	ZeroDatetimeStr = "0000-00-00 00:00:00"
-	zeroDateStr     = "0000-00-00"
+	// ZeroDateStr is the string representation of a zero date.
+	ZeroDateStr = "0000-00-00"
 
 	// TimeMaxHour is the max hour for mysql time type.
 	TimeMaxHour = 838
@@ -182,12 +183,12 @@ type Time struct {
 	// TODO: Define a type for timestamp, remove its representation from here.
 	// TimeZone is valid when Type is mysql.Timestamp, it's meaningless for date/datetime.
 	TimeZone *gotime.Location
-	negative bool
+	Negative bool
 }
 
 // MaxMySQLTime returns Time with maximum mysql time type.
 func MaxMySQLTime(neg bool, fsp int) Time {
-	return Time{Time: newMysqlTime(0, 0, 0, TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0), Type: mysql.TypeDuration, Fsp: fsp, negative: neg}
+	return Time{Time: newMysqlTime(0, 0, 0, TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0), Type: mysql.TypeDuration, Fsp: fsp, Negative: neg}
 }
 
 // CurrentTime returns current time with type tp.
@@ -212,7 +213,7 @@ func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
 
 // IsNegative returns a boolean to indicate whether the Time is negative.
 func (t *Time) IsNegative() bool {
-	return t.negative
+	return t.Negative
 }
 
 func (t Time) String() string {
@@ -283,7 +284,7 @@ func (t Time) ToNumber() *MyDecimal {
 }
 
 // Convert converts t with type tp.
-func (t Time) Convert(sc *variable.StatementContext, tp uint8) (Time, error) {
+func (t Time) Convert(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
 	if t.Type == tp || t.IsZero() {
 		return Time{Time: t.Time, Type: tp, Fsp: t.Fsp}, nil
 	}
@@ -306,7 +307,7 @@ func (t Time) ConvertToDuration() (Duration, error) {
 	frac := t.Time.Microsecond() * 1000
 
 	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
-	if t.negative {
+	if t.Negative {
 		return Duration{Duration: -d, Fsp: t.Fsp}, nil
 	}
 	// TODO: check convert validation
@@ -342,7 +343,7 @@ func compareTime(a, b TimeInternal) int {
 
 // CompareString is like Compare,
 // but parses string to Time then compares.
-func (t Time) CompareString(sc *variable.StatementContext, str string) (int, error) {
+func (t Time) CompareString(sc *stmtctx.StatementContext, str string) (int, error) {
 	// use MaxFsp to parse the string
 	o, err := ParseTime(sc, str, t.Type, MaxFsp)
 	if err != nil {
@@ -473,7 +474,7 @@ func (t *Time) FromPackedUint(packed uint64) error {
 // check whether t matches valid Time format.
 // If allowZeroInDate is false, it returns ErrZeroDate when month or day is zero.
 // FIXME: See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_no_zero_in_date
-func (t *Time) check(sc *variable.StatementContext) error {
+func (t *Time) check(sc *stmtctx.StatementContext) error {
 	allowZeroInDate := false
 	// We should avoid passing sc as nil here as far as possible.
 	if sc != nil {
@@ -560,7 +561,8 @@ func TimestampDiff(unit string, t1 Time, t2 Time) int64 {
 	return timestampDiff(unit, t1.Time, t2.Time)
 }
 
-func parseDateFormat(format string) []string {
+// ParseDateFormat parses a formatted date string and returns separated components.
+func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
@@ -599,7 +601,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 		format = format[:i]
 	}
 
-	seps = parseDateFormat(format)
+	seps = ParseDateFormat(format)
 	return
 }
 
@@ -695,7 +697,7 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 	var overflow bool
 	if hhmmss {
 		// If input string is "20170118.999", without hhmmss, fsp is meanless.
-		microsecond, overflow, err = parseFrac(fracStr, fsp)
+		microsecond, overflow, err = ParseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
 		}
@@ -917,7 +919,7 @@ func (d Duration) Compare(o Duration) int {
 
 // CompareString is like Compare,
 // but parses str to Duration then compares.
-func (d Duration) CompareString(sc *variable.StatementContext, str string) (int, error) {
+func (d Duration) CompareString(sc *stmtctx.StatementContext, str string) (int, error) {
 	// use MaxFsp to parse the string
 	o, err := ParseDuration(str, MaxFsp)
 	if err != nil {
@@ -969,6 +971,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		err       error
 		sign      = 0
 		dayExists = false
+		origStr   = str
 	)
 
 	fsp, err = CheckFsp(fsp)
@@ -995,7 +998,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		// It has fractional precision parts.
 		fracStr := str[n+1:]
-		frac, overflow, err = parseFrac(fracStr, fsp)
+		frac, overflow, err = ParseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDuration, errors.Trace(err)
 		}
@@ -1038,7 +1041,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 				if err1 == nil {
 					return t.ConvertToDuration()
 				}
-				return ZeroDuration, errors.Trace(ErrInvalidTimeFormat)
+				return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 			}
 		}
 	case 2:
@@ -1053,7 +1056,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			_, err = fmt.Sscanf(str, "%2d:%2d:%2d", &hour, &minute, &second)
 		}
 	default:
-		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat)
+		return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
 
 	if err != nil {
@@ -1063,6 +1066,11 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	if overflow {
 		second++
 		frac = 0
+	}
+	// Invalid TIME values are converted to '00:00:00'.
+	// See https://dev.mysql.com/doc/refman/5.7/en/time.html
+	if minute >= 60 || second > 60 || (!overflow && second == 60) {
+		return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
 	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
 	if sign == -1 {
@@ -1104,7 +1112,7 @@ func splitDuration(t gotime.Duration) (int, int, int, int, int) {
 
 var maxDaysInMonth = []int{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 
-func getTime(sc *variable.StatementContext, num int64, tp byte) (Time, error) {
+func getTime(sc *stmtctx.StatementContext, num int64, tp byte) (Time, error) {
 	s1 := num / 1000000
 	s2 := num - s1*1000000
 
@@ -1130,7 +1138,7 @@ func getTime(sc *variable.StatementContext, num int64, tp byte) (Time, error) {
 // parseDateTimeFromNum parses date time from num.
 // See number_to_datetime function.
 // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c
-func parseDateTimeFromNum(sc *variable.StatementContext, num int64) (Time, error) {
+func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	t := ZeroDate
 	// Check zero.
 	if num == 0 {
@@ -1219,16 +1227,16 @@ func parseDateTimeFromNum(sc *variable.StatementContext, num int64) (Time, error
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(sc *variable.StatementContext, str string, tp byte, fst int) (Time, error) {
+func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fst int) (Time, error) {
 	return parseTime(sc, str, tp, fst, false)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
-func ParseTimeFromFloatString(sc *variable.StatementContext, str string, tp byte, fst int) (Time, error) {
+func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fst int) (Time, error) {
 	return parseTime(sc, str, tp, fst, true)
 }
 
-func parseTime(sc *variable.StatementContext, str string, tp byte, fsp int, isFloat bool) (Time, error) {
+func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFloat bool) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
@@ -1247,24 +1255,24 @@ func parseTime(sc *variable.StatementContext, str string, tp byte, fsp int, isFl
 }
 
 // ParseDatetime is a helper function wrapping ParseTime with datetime type and default fsp.
-func ParseDatetime(sc *variable.StatementContext, str string) (Time, error) {
+func ParseDatetime(sc *stmtctx.StatementContext, str string) (Time, error) {
 	return ParseTime(sc, str, mysql.TypeDatetime, DefaultFsp)
 }
 
 // ParseTimestamp is a helper function wrapping ParseTime with timestamp type and default fsp.
-func ParseTimestamp(sc *variable.StatementContext, str string) (Time, error) {
+func ParseTimestamp(sc *stmtctx.StatementContext, str string) (Time, error) {
 	return ParseTime(sc, str, mysql.TypeTimestamp, DefaultFsp)
 }
 
 // ParseDate is a helper function wrapping ParseTime with date type.
-func ParseDate(sc *variable.StatementContext, str string) (Time, error) {
+func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 	// date has no fractional seconds precision
 	return ParseTime(sc, str, mysql.TypeDate, MinFsp)
 }
 
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
-func ParseTimeFromNum(sc *variable.StatementContext, num int64, tp byte, fsp int) (Time, error) {
+func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
@@ -1284,17 +1292,17 @@ func ParseTimeFromNum(sc *variable.StatementContext, num int64, tp byte, fsp int
 }
 
 // ParseDatetimeFromNum is a helper function wrapping ParseTimeFromNum with datetime type and default fsp.
-func ParseDatetimeFromNum(sc *variable.StatementContext, num int64) (Time, error) {
+func ParseDatetimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	return ParseTimeFromNum(sc, num, mysql.TypeDatetime, DefaultFsp)
 }
 
 // ParseTimestampFromNum is a helper function wrapping ParseTimeFromNum with timestamp type and default fsp.
-func ParseTimestampFromNum(sc *variable.StatementContext, num int64) (Time, error) {
+func ParseTimestampFromNum(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	return ParseTimeFromNum(sc, num, mysql.TypeTimestamp, DefaultFsp)
 }
 
 // ParseDateFromNum is a helper function wrapping ParseTimeFromNum with date type.
-func ParseDateFromNum(sc *variable.StatementContext, num int64) (Time, error) {
+func ParseDateFromNum(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	// date has no fractional seconds precision
 	return ParseTimeFromNum(sc, num, mysql.TypeDate, MinFsp)
 }
@@ -1789,7 +1797,7 @@ func IsClockUnit(unit string) bool {
 // IsDateFormat returns true when the specified time format could contain only date.
 func IsDateFormat(format string) bool {
 	format = strings.TrimSpace(format)
-	seps := parseDateFormat(format)
+	seps := ParseDateFormat(format)
 	length := len(format)
 	switch len(seps) {
 	case 1:
@@ -1803,7 +1811,7 @@ func IsDateFormat(format string) bool {
 }
 
 // ParseTimeFromInt64 parses mysql time value from int64.
-func ParseTimeFromInt64(sc *variable.StatementContext, num int64) (Time, error) {
+func ParseTimeFromInt64(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	return parseDateTimeFromNum(sc, num)
 }
 
@@ -1970,7 +1978,7 @@ func abbrDayOfMonth(day int) string {
 
 // StrToDate converts date string according to format.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func (t *Time) StrToDate(sc *variable.StatementContext, date, format string) bool {
+func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool {
 	ctx := make(map[string]int)
 	var tm mysqlTime
 	if !strToDate(&tm, date, format, ctx) {

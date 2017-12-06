@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -225,6 +225,10 @@ func (s *mockTikvGrpcServer) MvccGetByStartTs(goctx.Context, *kvrpcpb.MvccGetByS
 }
 func (s *mockTikvGrpcServer) SplitRegion(goctx.Context, *kvrpcpb.SplitRegionRequest) (*kvrpcpb.SplitRegionResponse, error) {
 	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
+	return errors.New("unreachable")
 }
 
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
