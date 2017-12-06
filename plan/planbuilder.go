@@ -566,7 +566,6 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
-	var resultPlan Plan
 	p := Show{
 		Tp:          show.Tp,
 		DBName:      show.DBName,
@@ -577,7 +576,6 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		User:        show.User,
 		GlobalScope: show.GlobalScope,
 	}.init(b.ctx)
-	resultPlan = p
 	switch showTp := show.Tp; showTp {
 	case ast.ShowProcedureStatus:
 		p.SetSchema(buildShowProcedureSchema())
@@ -600,36 +598,31 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	for i, col := range p.schema.Columns {
 		col.Position = i
 	}
-	var conditions []expression.Expression
+	mockTablePlan := TableDual{}.init(b.ctx)
+	mockTablePlan.SetSchema(p.schema)
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
 		}
-		expr, _, err := b.rewrite(show.Pattern, p, nil, false)
+		expr, _, err := b.rewrite(show.Pattern, mockTablePlan, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		conditions = append(conditions, expr)
+		p.Conditions = append(p.Conditions, expr)
 	}
 	if show.Where != nil {
 		conds := splitWhere(show.Where)
 		for _, cond := range conds {
-			expr, _, err := b.rewrite(cond, p, nil, false)
+			expr, _, err := b.rewrite(cond, mockTablePlan, nil, false)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
 			}
-			conditions = append(conditions, expr)
+			p.Conditions = append(p.Conditions, expr)
 		}
 	}
-	if len(conditions) != 0 {
-		sel := LogicalSelection{Conditions: conditions}.init(b.ctx)
-		setParentAndChildren(sel, p)
-		sel.SetSchema(p.Schema())
-		resultPlan = sel
-	}
-	return resultPlan
+	return p
 }
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
