@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"io"
 )
 
 type TidbRegionHandlerTestSuite struct {
@@ -233,12 +234,25 @@ func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
 	c.Assert(err, IsNil)
 	_, err = txn1.Exec("insert tidb.test values (2,2);")
 	c.Assert(err, IsNil)
-	_, err = txn1.Exec("insert into tidb.test (a) values (3);")
+	_, err = txn1.Exec("insert tidb.test (a) values (3);")
 	c.Assert(err, IsNil)
 	err = txn1.Commit()
 	c.Assert(err, IsNil)
 	dbt.mustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.mustExec("alter table tidb.test add unique index idx2 (a, b);")
+}
+
+func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
+	decoder := json.NewDecoder(closer)
+	var data kvrpcpb.MvccGetByKeyResponse
+	err := decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	if valid {
+		c.Assert(data.Info, NotNil)
+		c.Assert(len(data.Info.Writes), Greater, 0)
+	} else {
+		c.Assert(data.Info, IsNil)
+	}
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
@@ -287,26 +301,45 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
 
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1?a=1&b=2")
+	// tests for normal index key
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/1?a=1&b=2")
 	c.Assert(err, IsNil)
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2?a=1&b=2")
-	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
 
-	// tests for null
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1?a=1&b=")
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/1?a=1&b=2")
 	c.Assert(err, IsNil)
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2?a=1&b=")
-	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
 
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1?a=1&b=1")
+	// tests for index key which includes null
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/3?a=3&b=")
 	c.Assert(err, IsNil)
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2?a=1&b=1")
-	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
 
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1?a=1")
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/3?a=3&b=")
 	c.Assert(err, IsNil)
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2?a=1")
+	decodeKeyMvcc(resp.Body, c, true)
+
+	// tests for wrong key
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/5?a=5&b=1")
 	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, false)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/5?a=5&b=1")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, false)
+
+	// tests for missing column value
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/1?a=1")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, NotNil)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/1?a=1")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, NotNil)
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {

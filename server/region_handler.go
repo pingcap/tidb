@@ -671,6 +671,75 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 	return rh.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
+func (t *regionHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
+	if err != nil {
+		return nil, err
+	}
+
+	tikvReq := &tikvrpc.Request{
+		Type: tikvrpc.CmdMvccGetByKey,
+		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
+			Key: encodeKey,
+		},
+	}
+	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
+	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
+
+	if err != nil {
+		return nil, err
+	}
+	return kvResp.MvccGetByKey, nil
+}
+
+func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+	for {
+		curRegion, err := t.regionCache.LocateKey(t.bo, startKey)
+		if err != nil {
+			log.Error(startTS, startKey, err)
+			return nil, errors.Trace(err)
+		}
+
+		tikvReq := &tikvrpc.Request{
+			Type: tikvrpc.CmdMvccGetByStartTs,
+			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
+				StartTs: startTS,
+			},
+		}
+		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
+		kvResp, err := t.store.SendReq(t.bo, tikvReq, curRegion.Region, time.Hour)
+		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
+		if err != nil {
+			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			return nil, err
+		}
+		data := kvResp.MvccGetByStartTS
+		if err := data.GetRegionError(); err != nil {
+			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			continue
+		}
+
+		if len(data.GetError()) > 0 {
+			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
+			return nil, errors.New(data.GetError())
+		}
+
+		key := data.GetKey()
+		if len(key) > 0 {
+			return data, nil
+		}
+
+		if len(endKey) > 0 && curRegion.Contains(endKey) {
+			return nil, nil
+		}
+		if len(curRegion.EndKey) == 0 {
+			return nil, nil
+		}
+		startKey = curRegion.EndKey
+	}
+}
+
 func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	idxRow, err := t.formValue2DatumRow(values, idxCols)
 	if err != nil {
@@ -708,10 +777,12 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 	data := make([]types.Datum, len(idxCols))
 	for i, col := range idxCols {
 		var d types.Datum
+
 		vals, ok := values[col.Name.String()]
 		if !ok {
 			return nil, errors.BadRequestf("Missing value for index column %s.", col.Name.String())
 		}
+
 		val := vals[0]
 		if len(val) > 0 {
 			switch col.Tp {
@@ -800,75 +871,6 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 		data[i] = d
 	}
 	return data, nil
-}
-
-func (t *regionHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
-	if err != nil {
-		return nil, err
-	}
-
-	tikvReq := &tikvrpc.Request{
-		Type: tikvrpc.CmdMvccGetByKey,
-		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
-			Key: encodeKey,
-		},
-	}
-	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
-
-	if err != nil {
-		return nil, err
-	}
-	return kvResp.MvccGetByKey, nil
-}
-
-func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
-	for {
-		curRegion, err := t.regionCache.LocateKey(t.bo, startKey)
-		if err != nil {
-			log.Error(startTS, startKey, err)
-			return nil, errors.Trace(err)
-		}
-
-		tikvReq := &tikvrpc.Request{
-			Type: tikvrpc.CmdMvccGetByStartTs,
-			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
-				StartTs: startTS,
-			},
-		}
-		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
-		kvResp, err := t.store.SendReq(t.bo, tikvReq, curRegion.Region, time.Hour)
-		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
-		if err != nil {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
-			return nil, err
-		}
-		data := kvResp.MvccGetByStartTS
-		if err := data.GetRegionError(); err != nil {
-			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
-			continue
-		}
-
-		if len(data.GetError()) > 0 {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
-			return nil, errors.New(data.GetError())
-		}
-
-		key := data.GetKey()
-		if len(key) > 0 {
-			return data, nil
-		}
-
-		if len(endKey) > 0 && curRegion.Contains(endKey) {
-			return nil, nil
-		}
-		if len(curRegion.EndKey) == 0 {
-			return nil, nil
-		}
-		startKey = curRegion.EndKey
-	}
 }
 
 func (t *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) {
