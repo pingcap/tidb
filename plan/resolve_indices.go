@@ -19,7 +19,7 @@ import (
 )
 
 // ResolveIndices implements Plan interface.
-func (p *Projection) ResolveIndices() {
+func (p *PhysicalProjection) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, expr := range p.Exprs {
 		expr.ResolveIndices(p.children[0].Schema())
@@ -92,8 +92,8 @@ func (p *PhysicalIndexJoin) ResolveIndices() {
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
 	for i := range p.InnerJoinKeys {
-		p.OuterJoinKeys[i].ResolveIndices(lSchema)
-		p.InnerJoinKeys[i].ResolveIndices(rSchema)
+		p.OuterJoinKeys[i].ResolveIndices(p.children[p.OuterIndex].Schema())
+		p.InnerJoinKeys[i].ResolveIndices(p.children[1-p.OuterIndex].Schema())
 	}
 	for _, expr := range p.LeftConditions {
 		expr.ResolveIndices(lSchema)
@@ -148,7 +148,7 @@ func (p *PhysicalSelection) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalAggregation) ResolveIndices() {
+func (p *basePhysicalAgg) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, aggFun := range p.AggFuncs {
 		for _, arg := range aggFun.GetArgs() {
@@ -161,7 +161,7 @@ func (p *PhysicalAggregation) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *Sort) ResolveIndices() {
+func (p *PhysicalSort) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, item := range p.ByItems {
 		item.Expr.ResolveIndices(p.children[0].Schema())
@@ -169,7 +169,7 @@ func (p *Sort) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *TopN) ResolveIndices() {
+func (p *PhysicalTopN) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, item := range p.ByItems {
 		item.Expr.ResolveIndices(p.children[0].Schema())
@@ -211,6 +211,15 @@ func (p *Insert) ResolveIndices() {
 	for _, asgn := range p.GenCols.OnDuplicates {
 		asgn.Col.ResolveIndices(p.tableSchema)
 		asgn.Expr.ResolveIndices(p.tableSchema)
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *Show) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+
+	for _, expr := range p.Conditions {
+		expr.ResolveIndices(p.schema)
 	}
 }
 

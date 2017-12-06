@@ -96,6 +96,10 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 }
 
 func (p *DataSource) prepareStatsProfile() *statsProfile {
+	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	for i, expr := range p.pushedDownConds {
+		p.pushedDownConds[i] = expression.PushDownNot(expr, false, nil)
+	}
 	p.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 	return p.profile
 }
@@ -106,7 +110,7 @@ func (p *LogicalSelection) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *Union) prepareStatsProfile() *statsProfile {
+func (p *LogicalUnionAll) prepareStatsProfile() *statsProfile {
 	p.profile = &statsProfile{
 		cardinality: make([]float64, p.schema.Len()),
 	}
@@ -120,7 +124,7 @@ func (p *Union) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *Limit) prepareStatsProfile() *statsProfile {
+func (p *LogicalLimit) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
@@ -138,7 +142,7 @@ func (p *Limit) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *TopN) prepareStatsProfile() *statsProfile {
+func (p *LogicalTopN) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
@@ -174,7 +178,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	return cardinality
 }
 
-func (p *Projection) prepareStatsProfile() *statsProfile {
+func (p *LogicalProjection) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       childProfile.count,

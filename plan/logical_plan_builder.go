@@ -424,7 +424,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 					continue
 				} else {
 					// If there is condition which is always false, return dual plan directly.
-					dual := TableDual{}.init(b.ctx)
+					dual := LogicalTableDual{}.init(b.ctx)
 					dual.SetSchema(p.Schema().Clone())
 					return dual
 				}
@@ -527,7 +527,7 @@ func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
-	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.ctx)
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	for _, field := range fields {
@@ -579,8 +579,36 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
+func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
+	schema4Union := u.schema
+	for childID, child := range u.children {
+		exprs := make([]expression.Expression, len(child.Schema().Columns))
+		needProjection := false
+		for i, srcCol := range child.Schema().Columns {
+			dstType := schema4Union.Columns[i].RetType
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				needProjection = true
+			} else {
+				exprs[i] = srcCol.Clone()
+			}
+		}
+		if needProjection {
+			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
+			proj.schema = schema4Union.Clone()
+			for _, col := range proj.schema.Columns {
+				col.FromID = proj.ID()
+			}
+			setParentAndChildren(proj, u.children[childID])
+			u.children[childID] = proj
+		}
+	}
+	setParentAndChildren(u, u.children...)
+}
+
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := Union{}.init(b.ctx)
+	u := LogicalUnionAll{}.init(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
@@ -594,9 +622,9 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
 			return nil
 		}
-		if _, ok := sel.(*Projection); !ok {
+		if _, ok := sel.(*LogicalProjection); !ok {
 			b.optFlag |= flagEliminateProjection
-			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.ctx)
+			proj := LogicalProjection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.ctx)
 			schema := sel.Schema().Clone()
 			for _, col := range schema.Columns {
 				col.FromID = proj.ID()
@@ -627,8 +655,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
 	}
-
 	u.SetSchema(firstSchema)
+	b.buildProjection4Union(u)
 	var p LogicalPlan = u
 	if union.Distinct {
 		p = b.buildDistinct(u, u.Schema().Len())
@@ -663,7 +691,7 @@ func (by *ByItems) Clone() *ByItems {
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	b.curClause = orderByClause
-	sort := Sort{}.init(b.ctx)
+	sort := LogicalSort{}.init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
@@ -695,7 +723,7 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
 	}
-	return 0, errors.Errorf("Invalid type %T for Limit/Offset", val)
+	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
@@ -722,7 +750,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
 	}
-	li := Limit{
+	li := LogicalLimit{
 		Offset: offset,
 		Count:  count,
 	}.init(b.ctx)
@@ -1512,7 +1540,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
-		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
 		setParentAndChildren(proj, p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
@@ -1526,7 +1554,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
-	dual := TableDual{RowCount: 1}.init(b.ctx)
+	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
 	dual.SetSchema(expression.NewSchema())
 	return dual
 }
@@ -1628,7 +1656,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 // projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
 // we add a projection on the original DataSource, and calculate those columns in the projection
 // so that plans above it can reference generated columns by their name.
-func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) *Projection {
+func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) *LogicalProjection {
 	var hasVirtualGeneratedColumn = false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
@@ -1639,7 +1667,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	if !hasVirtualGeneratedColumn {
 		return nil
 	}
-	var proj = Projection{
+	var proj = LogicalProjection{
 		Exprs:            make([]expression.Expression, 0, len(columns)),
 		calculateGenCols: true,
 	}.init(b.ctx)
@@ -1708,7 +1736,7 @@ out:
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *Projection, *Sort:
+		case *LogicalProjection, *LogicalSort:
 			p = p.Children()[0].(LogicalPlan)
 			p.SetParents()
 		case *LogicalAggregation:
@@ -1722,7 +1750,7 @@ out:
 			break out
 		}
 	}
-	exists := Exists{}.init(b.ctx)
+	exists := LogicalExists{}.init(b.ctx)
 	setParentAndChildren(exists, p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
@@ -1733,7 +1761,7 @@ out:
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := MaxOneRow{}.init(b.ctx)
+	maxOneRow := LogicalMaxOneRow{}.init(b.ctx)
 	setParentAndChildren(maxOneRow, p)
 	maxOneRow.SetSchema(p.Schema().Clone())
 	return maxOneRow
@@ -1925,7 +1953,7 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 			}
 			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
 		}
-	case *Projection:
+	case *LogicalProjection:
 		if x.calculateGenCols {
 			ds := x.Children()[0].(*DataSource)
 			alias := extractTableAlias(x)

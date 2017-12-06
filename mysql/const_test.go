@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
@@ -165,17 +165,21 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
 	r.Check(testkit.Rows("-1"))
 	rs, _ := tk.Exec("SELECT CAST(18446744073709551615 as UNSIGNED) - 1;")
-	_, err := tidb.GetRows(goCtx, rs)
+	_, err := tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
-	_, err = tidb.GetRows(goCtx, rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(-1 as UNSIGNED) - 1")
-	_, err = tidb.GetRows(goCtx, rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 1")
-	_, err = tidb.GetRows(goCtx, rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {

@@ -76,7 +76,7 @@ func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]ex
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *TableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	return predicates, p
 }
 
@@ -193,7 +193,7 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *Projection) appendExpr(expr expression.Expression) *expression.Column {
+func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.Column {
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
@@ -209,13 +209,13 @@ func (p *Projection) appendExpr(expr expression.Expression) *expression.Column {
 	return col.Clone().(*expression.Column)
 }
 
-func (p *LogicalJoin) getProj(idx int) *Projection {
+func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	child := p.children[idx]
-	proj, ok := child.(*Projection)
+	proj, ok := child.(*LogicalProjection)
 	if ok {
 		return proj
 	}
-	proj = Projection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.ctx)
+	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.ctx)
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col.Clone())
 	}
@@ -306,7 +306,7 @@ func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	retPlan = p
 	var push = make([]expression.Expression, 0, p.Schema().Len())
 	for _, cond := range predicates {
@@ -321,7 +321,7 @@ func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret 
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	retPlan = p
 	for _, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
@@ -345,8 +345,8 @@ func (p *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	retPlan = p
-	var exprsOriginal []expression.Expression
 	var condsToPush []expression.Expression
+	exprsOriginal := make([]expression.Expression, 0, len(p.AggFuncs))
 	for _, fun := range p.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.GetArgs()[0])
 	}
@@ -382,14 +382,14 @@ func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expressio
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	// Limit forbids any condition to push down.
 	p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *MaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	// MaxOneRow forbids any condition to push down.
 	p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p

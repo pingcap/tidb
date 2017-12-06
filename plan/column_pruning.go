@@ -60,7 +60,7 @@ func exprHasSetVar(expr expression.Expression) bool {
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar functions, we do not prune it.
-func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
@@ -121,7 +121,7 @@ func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	for i := len(p.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(p.ByItems[i].Expr)
@@ -136,7 +136,7 @@ func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -190,11 +190,11 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *TableDual) PruneColumns(_ []*expression.Column) {
+func (p *LogicalTableDual) PruneColumns(_ []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Exists) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalExists) PruneColumns(parentUsedCols []*expression.Column) {
 	p.children[0].(LogicalPlan).PruneColumns(nil)
 }
 
@@ -269,7 +269,7 @@ func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) {
 	if p.Lock != ast.SelectLockForUpdate {
 		p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	} else {

@@ -51,6 +51,25 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// Equal checks whether two FieldType objects are equal.
+func (ft *FieldType) Equal(other *FieldType) bool {
+	partialEqual := ft.Tp == other.Tp &&
+		ft.Flag == other.Flag &&
+		ft.Flen == other.Flen &&
+		ft.Decimal == other.Decimal &&
+		ft.Charset == other.Charset &&
+		ft.Collate == other.Collate
+	if !partialEqual || len(ft.Elems) != len(other.Elems) {
+		return false
+	}
+	for i := range ft.Elems {
+		if ft.Elems[i] != other.Elems[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.
