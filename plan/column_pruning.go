@@ -190,11 +190,11 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *TableDual) PruneColumns(_ []*expression.Column) {
+func (p *LogicalTableDual) PruneColumns(_ []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Exists) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalExists) PruneColumns(parentUsedCols []*expression.Column) {
 	p.children[0].(LogicalPlan).PruneColumns(nil)
 }
 
