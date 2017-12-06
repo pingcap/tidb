@@ -306,6 +306,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select @@autocommit;")
 	result.Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.autocommit=1")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
