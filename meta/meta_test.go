@@ -144,7 +144,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.DropTable(1, 2, true)
+	err = t.DropTable(1, tbInfo2.ID, true)
 	c.Assert(err, IsNil)
 	// Make sure auto id key-value entry is gone.
 	n, err = t.GetAutoTableID(1, 2)
@@ -164,20 +164,21 @@ func (s *testSuite) TestMeta(c *C) {
 	// Create table.
 	err = t.CreateTable(1, tbInfo100)
 	c.Assert(err, IsNil)
-	// Update auto id.
-	n, err = t.GenAutoTableID(1, tid, 10)
+	// Update auto ID.
+	currentDBID := int64(1)
+	n, err = t.GenAutoTableID(currentDBID, tid, 10)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
-	n, err = t.GetAutoTableID(1, tid)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
-	// Drop table without touch auto id key-value entry.
-	err = t.DropTable(1, 100, false)
-	c.Assert(err, IsNil)
-	// Make sure that auto id key-value entry is still there.
-	n, err = t.GetAutoTableID(1, tid)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
+	// Fail to update auto ID.
+	// The table ID doesn't exist.
+	nonExistentID := int64(1234)
+	_, err = t.GenAutoTableID(currentDBID, nonExistentID, 10)
+	c.Assert(err, NotNil)
+	// Fail to update auto ID.
+	// The current database ID doesn't exist.
+	currentDBID = nonExistentID
+	_, err = t.GenAutoTableID(currentDBID, tid, 10)
+	c.Assert(err, NotNil)
 
 	err = t.DropDatabase(1)
 	c.Assert(err, IsNil)
