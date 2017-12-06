@@ -455,6 +455,27 @@ func (s *testDBSuite) testAlterLock(c *C) {
 	s.mustExec(c, "alter table t_indx_lock add index (c1, c2), lock=none")
 }
 
+func (s *testDBSuite) TestAddMultiColumnsIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("drop database if exists tidb;")
+	s.tk.MustExec("create database tidb;")
+	s.tk.MustExec("use tidb;")
+	s.tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	s.tk.MustExec("insert tidb.test values (1, 1);")
+	s.tk.MustExec("update tidb.test set b = b + 1 where a = 1;")
+	s.tk.MustExec("insert into tidb.test values (2, 2);")
+	// Test that the b value is nil.
+	s.tk.MustExec("insert into tidb.test (a) values (3);")
+	s.tk.MustExec("insert into tidb.test values (4, 4);")
+	// Test that the b value is nil again.
+	s.tk.MustExec("insert into tidb.test (a) values (5);")
+	s.tk.MustExec("insert tidb.test values (6, 6);")
+	s.tk.MustExec("alter table tidb.test add index idx1 (a, b);")
+	s.tk.MustExec("admin check table test")
+}
+
 func (s *testDBSuite) TestAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)

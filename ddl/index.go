@@ -460,6 +460,8 @@ func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType
 		idxColumnVal := w.rowMap[col.ID]
 		if _, ok := w.rowMap[col.ID]; ok {
 			idxVal[j] = idxColumnVal
+			// Make sure there is no dirty data.
+			delete(w.rowMap, col.ID)
 			continue
 		}
 		idxColumnVal, err = tables.GetColDefaultValue(w.ctx, col, w.defaultVals)
