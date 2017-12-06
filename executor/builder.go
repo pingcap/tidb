@@ -121,13 +121,13 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildProjection(v)
 	case *plan.PhysicalMemTable:
 		return b.buildMemTable(v)
-	case *plan.TableDual:
+	case *plan.PhysicalTableDual:
 		return b.buildTableDual(v)
 	case *plan.PhysicalApply:
 		return b.buildApply(v)
-	case *plan.Exists:
+	case *plan.PhysicalExists:
 		return b.buildExists(v)
-	case *plan.MaxOneRow:
+	case *plan.PhysicalMaxOneRow:
 		return b.buildMaxOneRow(v)
 	case *plan.Analyze:
 		return b.buildAnalyze(v)
@@ -676,7 +676,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
+func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 	return &TableDualExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		rowCount:     v.RowCount,
@@ -795,13 +795,18 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	return apply
 }
 
-func (b *executorBuilder) buildExists(v *plan.Exists) Executor {
+func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	return &ExistsExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 	}
 }
 
-func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
+func (b *executorBuilder) buildMaxOneRow(v *plan.PhysicalMaxOneRow) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
