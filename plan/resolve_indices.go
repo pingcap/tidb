@@ -215,6 +215,15 @@ func (p *Insert) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *Show) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+
+	for _, expr := range p.Conditions {
+		expr.ResolveIndices(p.schema)
+	}
+}
+
+// ResolveIndices implements Plan interface.
 func (p *basePlan) ResolveIndices() {
 	if p.schema != nil {
 		for _, cols := range p.schema.TblID2Handle {

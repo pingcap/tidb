@@ -224,9 +224,7 @@ func (p Insert) init(ctx context.Context) *Insert {
 }
 
 func (p Show) init(ctx context.Context) *Show {
-	p.basePlan = newBasePlan(TypeShow, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePlan = *newBasePlan(TypeShow, ctx, &p)
 	return &p
 }
 
