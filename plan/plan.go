@@ -232,7 +232,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 	if len(p.basePlan.children) == 1 {
 		switch p.basePlan.self.(type) {
-		case *Exists, *LogicalAggregation, *LogicalProjection:
+		case *LogicalExists, *LogicalAggregation, *LogicalProjection:
 			p.basePlan.schema.Keys = nil
 		case *LogicalLock:
 			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
