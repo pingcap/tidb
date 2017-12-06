@@ -14,6 +14,9 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"io/ioutil"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -70,6 +73,39 @@ type Security struct {
 	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
 	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
 	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
+}
+
+// ToTLSConfig generates tls's config based on security section of the config.
+func (s *Security) ToTLSConfig() (*tls.Config, error) {
+	tlsConfig := &tls.Config{}
+	if len(s.SSLCA) != 0 {
+		certificates := []tls.Certificate{}
+		if len(s.SSLCert) != 0 && len(s.SSLKey) != 0 {
+			// Load the client certificates from disk
+			certificate, err := tls.LoadX509KeyPair(s.SSLCert, s.SSLKey)
+			if err != nil {
+				return nil, errors.Errorf("could not load client key pair: %s", err)
+			}
+			certificates = append(certificates, certificate)
+		}
+
+		// Create a certificate pool from the certificate authority
+		certPool := x509.NewCertPool()
+		ca, err := ioutil.ReadFile(s.SSLCA)
+		if err != nil {
+			return nil, errors.Errorf("could not read ca certificate: %s", err)
+		}
+
+		// Append the certificates from the CA
+		if !certPool.AppendCertsFromPEM(ca) {
+			return nil, errors.New("failed to append ca certs")
+		}
+
+		tlsConfig.Certificates = certificates
+		tlsConfig.RootCAs = certPool
+	}
+
+	return tlsConfig, nil
 }
 
 // Status is the status section of the config.

@@ -15,9 +15,7 @@ package tikv
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net/url"
 	"strings"
@@ -96,7 +94,7 @@ func (d Driver) Open(path string, security config.Security) (kv.Storage, error) 
 		return store, nil
 	}
 
-	tlsConfig, err := newTLSConfig(security)
+	tlsConfig, err := security.ToTLSConfig()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -115,38 +113,6 @@ func (d Driver) Open(path string, security config.Security) (kv.Storage, error) 
 
 	mc.cache[uuid] = s
 	return s, nil
-}
-
-func newTLSConfig(security config.Security) (*tls.Config, error) {
-	tlsConfig := &tls.Config{}
-	if len(security.SSLCA) != 0 {
-		certificates := []tls.Certificate{}
-		if len(security.SSLCert) != 0 && len(security.SSLKey) != 0 {
-			// Load the client certificates from disk
-			certificate, err := tls.LoadX509KeyPair(security.SSLCert, security.SSLKey)
-			if err != nil {
-				return nil, errors.Errorf("could not load client key pair: %s", err)
-			}
-			certificates = append(certificates, certificate)
-		}
-
-		// Create a certificate pool from the certificate authority
-		certPool := x509.NewCertPool()
-		ca, err := ioutil.ReadFile(security.SSLCA)
-		if err != nil {
-			return nil, errors.Errorf("could not read ca certificate: %s", err)
-		}
-
-		// Append the certificates from the CA
-		if !certPool.AppendCertsFromPEM(ca) {
-			return nil, errors.New("failed to append ca certs")
-		}
-
-		tlsConfig.Certificates = certificates
-		tlsConfig.RootCAs = certPool
-	}
-
-	return tlsConfig, nil
 }
 
 // MockDriver is in memory mock TiKV driver.

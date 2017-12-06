@@ -63,7 +63,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 	}
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
 
-	tlsConfig, err := newTLSConfig(security)
+	tlsConfig, err := security.ToTLSConfig()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
