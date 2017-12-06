@@ -301,9 +301,9 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result.Check(testkit.Rows("ON"))
 	result = tk.MustQuery("select @@autocommit;")
 	result.Check(testkit.Rows("ON"))
-	tk.MustExec("set @@global.autocommit = 1;")
+	tk.MustExec("set @@global.autocommit = 0;")
 	result = tk.MustQuery("select @@global.autocommit;")
-	result.Check(testkit.Rows("1"))
+	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select @@autocommit;")
 	result.Check(testkit.Rows("ON"))
 }
