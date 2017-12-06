@@ -27,6 +27,7 @@ package parser
 
 import (
 	"strings"
+	"strconv"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/ast"
@@ -2682,26 +2683,32 @@ Literal:
 	"FALSE"
 	{
 		$$ = ast.NewValueExpr(false)
+		$$.SetText("FALSE")
 	}
 |	"NULL"
 	{
 		$$ = ast.NewValueExpr(nil)
+		$$.SetText("NULL")
 	}
 |	"TRUE"
 	{
 		$$ = ast.NewValueExpr(true)
+		$$.SetText("TRUE")
 	}
 |	floatLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 |	decLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 |	intLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 |	StringLiteral %prec lowerThanStringLitToken
 	{
@@ -2723,14 +2730,18 @@ Literal:
 			tp.Flag |= mysql.BinaryFlag
 		}
 		$$ = expr
+		// Because `Lexer` removes quotation marks, we add them back.
+		$$.SetText(strconv.Quote($2))
 	}
 |	hexLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 |	bitLit
 	{
 		$$ = ast.NewValueExpr($1)
+		$$.SetText(yyS[yypt].ident)
 	}
 
 StringLiteral:
@@ -2738,6 +2749,8 @@ StringLiteral:
 	{
 		expr := ast.NewValueExpr($1)
 		$$ = expr
+		// Because `Lexer` removes quotation marks, we add them back.
+		$$.SetText(strconv.Quote($1))
 	}
 |	StringLiteral stringLit
 	{
@@ -2751,6 +2764,8 @@ StringLiteral:
 			expr.SetProjectionOffset(len(strLit))
 		}
 		$$ = expr
+		// Because `Lexer` removes quotation marks, we add them back.
+		$$.SetText(strconv.Quote(strLit + $2))
 	}
 
 
