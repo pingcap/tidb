@@ -19,7 +19,7 @@ import (
 )
 
 // ResolveIndices implements Plan interface.
-func (p *Projection) ResolveIndices() {
+func (p *PhysicalProjection) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, expr := range p.Exprs {
 		expr.ResolveIndices(p.children[0].Schema())
@@ -169,7 +169,7 @@ func (p *PhysicalSort) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *TopN) ResolveIndices() {
+func (p *PhysicalTopN) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, item := range p.ByItems {
 		item.Expr.ResolveIndices(p.children[0].Schema())

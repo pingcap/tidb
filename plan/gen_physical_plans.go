@@ -320,8 +320,25 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	return joins
 }
 
-func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
-	plans := []PhysicalPlan{p.Copy()}
+func (p *LogicalProjection) generatePhysicalPlans() []PhysicalPlan {
+	proj := PhysicalProjection{
+		Exprs: p.Exprs,
+	}.init(p.ctx)
+	proj.profile = p.profile
+	proj.SetSchema(p.schema)
+	return []PhysicalPlan{proj}
+}
+
+func (p *LogicalTopN) generatePhysicalPlans() []PhysicalPlan {
+	topN := PhysicalTopN{
+		ByItems: p.ByItems,
+		Count:   p.Count,
+		Offset:  p.Offset,
+		partial: p.partial,
+	}.init(p.ctx)
+	topN.profile = p.profile
+	topN.SetSchema(p.schema)
+	plans := []PhysicalPlan{topN}
 	if prop, canPass := getPropByOrderByItems(p.ByItems); canPass {
 		limit := PhysicalLimit{
 			Count:        p.Count,
