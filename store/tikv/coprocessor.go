@@ -467,8 +467,7 @@ func (it *copIterator) Next() ([]byte, error) {
 
 // handleTasks handles single copTask, sends the result to channel, retry automatically on error.
 func (it *copIterator) handleTask(goCtx goctx.Context, bo *Backoffer, task *copTask, ch chan copResponse) {
-	var buf = [1]*copTask{task}
-	remainTasks := buf[:1]
+	remainTasks := []*copTask{task}
 	for len(remainTasks) > 0 {
 		tasks, err := it.handleTaskOnce(goCtx, bo, remainTasks[0], ch)
 		if err != nil {
@@ -584,19 +583,15 @@ func buildCopTasksFromRemain(bo *Backoffer, cache *RegionCache, resp *coprocesso
 func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) *copRanges {
 	len := ranges.len()
 	if desc {
-		i := len - 1
-		for ; i >= 0; i-- {
+		n := sort.Search(len, func(i int) bool {
 			r := ranges.at(i)
-			if bytes.Compare(r.StartKey, split.End) < 0 {
-				break
-			}
+			return bytes.Compare(split.End, r.StartKey) <= 0
+		})
+		if n == 0 {
+			panic("for any valid tikv response, n > 0 should always hold!")
 		}
-		if i < 0 {
-			log.Error("wrong response from tikv!")
-			return nil
-		}
-		r := ranges.at(i)
-		ret := ranges.slice(0, i)
+		r := ranges.at(n - 1)
+		ret := ranges.slice(0, n-1)
 		ret.last = &kv.KeyRange{r.StartKey, r.EndKey}
 		if bytes.Compare(split.End, r.EndKey) < 0 {
 			ret.last.EndKey = split.End
@@ -611,8 +606,7 @@ func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) 
 		return bytes.Compare(r.EndKey, key) > 0
 	})
 	if n >= len {
-		log.Error("for any valid tikv response, n < len should always hold!")
-		return nil
+		panic("for any valid tikv response, n < len should always hold!")
 	}
 	r := ranges.at(n)
 	// Adjust the start point in range r in this case:
