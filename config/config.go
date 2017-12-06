@@ -34,6 +34,7 @@ type Config struct {
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
 	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
+	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -44,6 +45,7 @@ type Config struct {
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 }
 
 // Log is the log section of config.
@@ -146,14 +148,22 @@ type ProxyProtocol struct {
 	HeaderTimeout int `toml:"header-timeout" json:"header-timeout"`
 }
 
+// TiKVClient is the config for tikv client.
+type TiKVClient struct {
+	// GrpcConnectionCount is the max gRPC connections that will be established
+	// with each tikv-server.
+	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
+}
+
 var defaultConf = Config{
-	Host:       "0.0.0.0",
-	Port:       4000,
-	Store:      "mocktikv",
-	Path:       "/tmp/tidb",
-	RunDDL:     true,
-	Lease:      "10s",
-	TokenLimit: 1000,
+	Host:        "0.0.0.0",
+	Port:        4000,
+	Store:       "mocktikv",
+	Path:        "/tmp/tidb",
+	RunDDL:      true,
+	Lease:       "10s",
+	TokenLimit:  1000,
+	EnableChunk: true,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
@@ -200,6 +210,9 @@ var defaultConf = Config{
 			Param: 1.0,
 		},
 		Reporter: OpenTracingReporter{},
+	},
+	TiKVClient: TiKVClient{
+		GrpcConnectionCount: 16,
 	},
 }
 

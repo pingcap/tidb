@@ -30,6 +30,9 @@ lease = "10s"
 # The limit of concurrent executed sessions.
 # token-limit = 1000
 
+# Enable chunk executors.
+enable-chunk = true
+
 [log]
 # Log level: info, debug, warn, error, fatal.
 level = "info"
@@ -188,3 +191,7 @@ log-spans = false
 
 #  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
 local-agent-host-port = ""
+
+[tikv-client]
+# Max gRPC connections that will be established with each tikv-server.
+grpc-connection-count = 16

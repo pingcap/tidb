@@ -73,7 +73,10 @@ func ConvertFloatToInt(sc *stmtctx.StatementContext, fval float64, lowerBound, u
 		return lowerBound, overflow(val, tp)
 	}
 
-	if val > float64(upperBound) {
+	if val >= float64(upperBound) {
+		if val == float64(upperBound) {
+			return upperBound, nil
+		}
 		return upperBound, overflow(val, tp)
 	}
 	return int64(val), nil

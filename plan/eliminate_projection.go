@@ -118,7 +118,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	children := make([]Plan, 0, len(p.Children()))
 
 	childFlag := canEliminate
-	if _, isUnion := p.(*Union); isUnion {
+	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		childFlag = false
 	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
 		childFlag = true
@@ -129,7 +129,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	setParentAndChildren(p, children...)
 
 	switch p.(type) {
-	case *Sort, *TopN, *Limit, *Selection, *MaxOneRow, *Update, *SelectLock:
+	case *LogicalSort, *TopN, *LogicalLimit, *LogicalSelection, *MaxOneRow, *LogicalLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *LogicalJoin, *LogicalApply:
 		var joinTp JoinType
@@ -239,7 +239,7 @@ func (p *LogicalAggregation) replaceExprColumns(replace map[string]*expression.C
 	p.collectGroupByColumns()
 }
 
-func (p *Selection) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
 		resolveExprAndReplace(expr, replace)
 	}
@@ -255,7 +255,7 @@ func (p *LogicalApply) replaceExprColumns(replace map[string]*expression.Column)
 	}
 }
 
-func (p *Sort) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range p.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
 	}

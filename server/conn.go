@@ -790,7 +790,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	defer terror.Call(rs.Close)
-	if rs.SupportChunk() {
+	if cc.server.cfg.EnableChunk && rs.SupportChunk() {
 		columns := rs.Columns()
 		err := cc.writeColumnInfo(columns)
 		if err != nil {

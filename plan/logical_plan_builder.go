@@ -236,8 +236,6 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
-	leftAlias := extractTableAlias(leftPlan)
-	rightAlias := extractTableAlias(rightPlan)
 
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 	joinPlan := LogicalJoin{}.init(b.ctx)
@@ -257,6 +255,8 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
 	if b.TableHints() != nil {
+		leftAlias := extractTableAlias(leftPlan)
+		rightAlias := extractTableAlias(rightPlan)
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
 		if b.TableHints().ifPreferINLJ(leftAlias) {
 			joinPlan.preferINLJ = joinPlan.preferINLJ | preferLeftAsOuter
@@ -405,7 +405,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
-	selection := Selection{}.init(b.ctx)
+	selection := LogicalSelection{}.init(b.ctx)
 	for _, cond := range conditions {
 		expr, np, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {
@@ -579,8 +579,36 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
+func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
+	schema4Union := u.schema
+	for childID, child := range u.children {
+		exprs := make([]expression.Expression, len(child.Schema().Columns))
+		needProjection := false
+		for i, srcCol := range child.Schema().Columns {
+			dstType := schema4Union.Columns[i].RetType
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				needProjection = true
+			} else {
+				exprs[i] = srcCol.Clone()
+			}
+		}
+		if needProjection {
+			proj := Projection{Exprs: exprs}.init(b.ctx)
+			proj.schema = schema4Union.Clone()
+			for _, col := range proj.schema.Columns {
+				col.FromID = proj.ID()
+			}
+			setParentAndChildren(proj, u.children[childID])
+			u.children[childID] = proj
+		}
+	}
+	setParentAndChildren(u, u.children...)
+}
+
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := Union{}.init(b.ctx)
+	u := LogicalUnionAll{}.init(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
@@ -627,8 +655,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
 	}
-
 	u.SetSchema(firstSchema)
+	b.buildProjection4Union(u)
 	var p LogicalPlan = u
 	if union.Distinct {
 		p = b.buildDistinct(u, u.Schema().Len())
@@ -663,7 +691,7 @@ func (by *ByItems) Clone() *ByItems {
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	b.curClause = orderByClause
-	sort := Sort{}.init(b.ctx)
+	sort := LogicalSort{}.init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
@@ -695,7 +723,7 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
 	}
-	return 0, errors.Errorf("Invalid type %T for Limit/Offset", val)
+	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
@@ -722,7 +750,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
 	}
-	li := Limit{
+	li := LogicalLimit{
 		Offset: offset,
 		Count:  count,
 	}.init(b.ctx)
@@ -1708,7 +1736,7 @@ out:
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *Projection, *Sort:
+		case *Projection, *LogicalSort:
 			p = p.Children()[0].(LogicalPlan)
 			p.SetParents()
 		case *LogicalAggregation:
@@ -1768,10 +1796,20 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			joinPlan.JoinType = SemiJoin
 		}
 	}
+	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
+	if b.TableHints() != nil {
+		outerAlias := extractTableAlias(outerPlan)
+		innerAlias := extractTableAlias(innerPlan)
+		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias)
+		// semi join's outer is always the left side.
+		if b.TableHints().ifPreferINLJ(outerAlias) {
+			joinPlan.preferINLJ = preferLeftAsOuter
+		}
+	}
 	return joinPlan
 }
 
-func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
+func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	b.inUpdateStmt = true
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
@@ -1817,8 +1855,8 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		OrderedList: orderedList,
 		IgnoreErr:   update.IgnoreErr,
 	}.init(b.ctx)
-	setParentAndChildren(updt, p)
 	updt.SetSchema(p.Schema())
+	updt.SelectPlan, b.err = doOptimize(b.optFlag, p, b.ctx)
 	return updt
 }
 
@@ -1933,7 +1971,7 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 	}
 }
 
-func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1968,7 +2006,10 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		Tables:       tables,
 		IsMultiTable: delete.IsMultiTable,
 	}.init(b.ctx)
-	setParentAndChildren(del, p)
+	del.SelectPlan, b.err = doOptimize(b.optFlag, p, b.ctx)
+	if b.err != nil {
+		return nil
+	}
 	del.SetSchema(expression.NewSchema())
 
 	var tableList []*ast.TableName

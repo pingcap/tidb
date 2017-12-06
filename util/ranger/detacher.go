@@ -160,10 +160,6 @@ func extractAccessAndFilterConds(conditions, accessConds, filterConds []expressi
 func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accessConds []expression.Expression, filterConds []expression.Expression) {
 	accessConds = make([]expression.Expression, len(cols))
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	for i, cond := range conditions {
-		conditions[i] = expression.PushDownNot(cond, false, nil)
-	}
 	var equalOrInCount int
 	for _, cond := range conditions {
 		offset := getEqOrInColOffset(cond, cols)
@@ -195,15 +191,13 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 }
 
 func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
-	for i := len(conditions) - 1; i >= 0; i-- {
-		for _, cond := range accessConds {
-			if cond == conditions[i] {
-				conditions = append(conditions[:i], conditions[i+1:]...)
-				break
-			}
+	filterConds := make([]expression.Expression, 0, len(conditions))
+	for _, cond := range conditions {
+		if !expression.Contains(accessConds, cond) {
+			filterConds = append(filterConds, cond)
 		}
 	}
-	return conditions
+	return filterConds
 }
 
 // DetachCondsForSelectivity detaches the conditions used for range calculation from other useless conditions.
@@ -229,7 +223,6 @@ func detachColumnConditions(conditions []expression.Expression, colName model.CI
 		length:  types.UnspecifiedLength,
 	}
 	for _, cond := range conditions {
-		cond = expression.PushDownNot(cond, false, nil)
 		if !checker.check(cond) {
 			filterConditions = append(filterConditions, cond)
 			continue
@@ -251,9 +244,6 @@ func DetachCondsForTableRange(ctx context.Context, conds []expression.Expression
 	checker := &conditionChecker{
 		colName: col.ColName,
 		length:  types.UnspecifiedLength,
-	}
-	for i, cond := range conds {
-		conds[i] = expression.PushDownNot(cond, false, ctx)
 	}
 	return detachColumnCNFConditions(conds, checker)
 }

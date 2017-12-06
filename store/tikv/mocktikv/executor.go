@@ -63,8 +63,10 @@ func (e *tableScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			e.seekKey = nil
 			e.cursor++
+			if value == nil {
+				continue
+			}
 			return value, nil
 		}
 
@@ -174,22 +176,79 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
+func (e *indexScanExec) isUnique() bool {
+	return e.Unique != nil && *e.Unique
+}
+
 func (e *indexScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
-		value, err = e.getRowFromRange(ran)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if value == nil {
+		if ran.IsPoint() && e.isUnique() {
+			value, err = e.getRowFromPoint(ran)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			e.cursor++
-			e.seekKey = nil
-			continue
+			if value == nil {
+				continue
+			}
+		} else {
+			value, err = e.getRowFromRange(ran)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if value == nil {
+				e.cursor++
+				e.seekKey = nil
+				continue
+			}
 		}
 		return value, nil
 	}
 
 	return nil, nil
+}
+
+// getRowFromPoint is only used for unique key.
+func (e *indexScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
+	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return nil, nil
+	}
+	return e.decodeIndexKV(Pair{Key: ran.StartKey, Value: val})
+}
+
+func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
+	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.colsLen)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		if e.pkStatus != pkColNotExists {
+			values = append(values, b)
+		}
+	} else if e.pkStatus != pkColNotExists {
+		handle, err := decodeHandle(pair.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var handleDatum types.Datum
+		if e.pkStatus == pkColIsUnsigned {
+			handleDatum = types.NewUintDatum(uint64(handle))
+		} else {
+			handleDatum = types.NewIntDatum(handle)
+		}
+		handleBytes, err := codec.EncodeValue(b, handleDatum)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values = append(values, handleBytes)
+	}
+
+	return values, nil
 }
 
 func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
@@ -229,35 +288,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
 	}
 
-	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.colsLen)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(b) > 0 {
-		if e.pkStatus != pkColNotExists {
-			values = append(values, b)
-		}
-	} else {
-		handle, err := decodeHandle(pair.Value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if e.pkStatus != pkColNotExists {
-			var handleDatum types.Datum
-			if e.pkStatus == pkColIsUnsigned {
-				handleDatum = types.NewUintDatum(uint64(handle))
-			} else {
-				handleDatum = types.NewIntDatum(handle)
-			}
-			handleBytes, err := codec.EncodeValue(b, handleDatum)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			values = append(values, handleBytes)
-		}
-	}
-
-	return values, nil
+	return e.decodeIndexKV(pair)
 }
 
 type selectionExec struct {

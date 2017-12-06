@@ -77,7 +77,7 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Selection) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	for _, cond := range p.Conditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(cond)...)
@@ -121,7 +121,7 @@ func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	for i := len(p.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(p.ByItems[i].Expr)
@@ -136,7 +136,7 @@ func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -196,15 +196,6 @@ func (p *TableDual) PruneColumns(_ []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *Exists) PruneColumns(parentUsedCols []*expression.Column) {
 	p.children[0].(LogicalPlan).PruneColumns(nil)
-}
-
-// PruneColumns implements LogicalPlan interface.
-func (p *Insert) PruneColumns(_ []*expression.Column) {
-	if len(p.Children()) == 0 {
-		return
-	}
-	child := p.children[0].(LogicalPlan)
-	child.PruneColumns(child.Schema().Columns)
 }
 
 func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
@@ -278,7 +269,7 @@ func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) {
 	if p.Lock != ast.SelectLockForUpdate {
 		p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	} else {
@@ -287,20 +278,4 @@ func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
 	}
-}
-
-// PruneColumns implements LogicalPlan interface.
-func (p *Update) PruneColumns(parentUsedCols []*expression.Column) {
-	p.baseLogicalPlan.PruneColumns(p.children[0].Schema().Columns)
-}
-
-// PruneColumns implements LogicalPlan interface.
-func (p *Delete) PruneColumns(parentUsedCols []*expression.Column) {
-	p.baseLogicalPlan.PruneColumns(p.children[0].Schema().Columns)
-}
-
-// PruneColumns implements LogicalPlan interface.
-// We should not prune columns for Analyze.
-func (p *Analyze) PruneColumns(parentUsedCols []*expression.Column) {
-
 }

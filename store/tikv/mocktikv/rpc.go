@@ -25,8 +25,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
+
+// For gofail injection.
+var undeterminedErr = terror.ErrResultUndetermined
 
 const requestMaxSize = 8 * 1024 * 1024
 
@@ -181,7 +185,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 
 func (h *rpcHandler) checkRequestSize(size int) *errorpb.Error {
 	// TiKV has a limitation on raft log size.
-	// mock-tikv has no raft inside, so we check the request's size instead.
+	// mocktikv has no raft inside, so we check the request's size instead.
 	if size >= requestMaxSize {
 		return &errorpb.Error{
 			RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{},
@@ -458,6 +462,10 @@ func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) (*rpcHandler, erro
 
 // SendReq sends a request to mock cluster.
 func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	// gofail: var rpcServerBusy bool
+	// if rpcServerBusy {
+	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
+	// }
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
 		return nil, err
@@ -489,12 +497,31 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		}
 		resp.Prewrite = handler.handleKvPrewrite(r)
 	case tikvrpc.CmdCommit:
+		// gofail: var rpcCommitResult string
+		// switch rpcCommitResult {
+		// case "timeout":
+		// 	return nil, errors.New("timeout")
+		// case "notLeader":
+		// 	return &tikvrpc.Response{
+		// 		Type:   tikvrpc.CmdCommit,
+		// 		Commit: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+		// 	}, nil
+		// case "keyError":
+		// 	return &tikvrpc.Response{
+		// 		Type:   tikvrpc.CmdCommit,
+		// 		Commit: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
+		// 	}, nil
+		// }
 		r := req.Commit
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Commit = &kvrpcpb.CommitResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.Commit = handler.handleKvCommit(r)
+		// gofail: var rpcCommitTimeout bool
+		// if rpcCommitTimeout {
+		//	return nil, undeterminedErr
+		// }
 	case tikvrpc.CmdCleanup:
 		r := req.Cleanup
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

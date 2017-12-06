@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -81,7 +82,7 @@ func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
 	return nil, nil
 }
 
-func tableRangesToKVRanges(tid int64, tableRanges []types.IntColumnRange) []kv.KeyRange {
+func tableRangesToKVRanges(tid int64, tableRanges []ranger.IntColumnRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tableRanges))
 	for _, tableRange := range tableRanges {
 		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
@@ -145,7 +146,7 @@ func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRa
 	return krs, nil
 }
 
-func indexRangesToKVRanges(tid, idxID int64, ranges []*types.IndexRange) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(tid, idxID int64, ranges []*ranger.IndexRange) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		low, err := codec.EncodeKey(nil, ran.LowVal...)
@@ -299,7 +300,7 @@ type TableReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []types.IntColumnRange
+	ranges    []ranger.IntColumnRange
 	dagPB     *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
@@ -374,7 +375,7 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -403,7 +404,7 @@ type IndexReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*types.IndexRange
+	ranges    []*ranger.IndexRange
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -478,7 +479,7 @@ func (e *IndexReaderExecutor) Open(goCtx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -495,7 +496,7 @@ type IndexLookUpExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*types.IndexRange
+	ranges    []*ranger.IndexRange
 	dagPB     *tipb.DAGRequest
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
@@ -540,7 +541,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.ctx.GetSessionVars().GetTimeZone())
+	result, err := distsql.SelectDAG(goCtx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -550,7 +551,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
-		batchSize:    chunk.MaxCapacity,
+		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 	}
 	if worker.batchSize > worker.maxBatchSize {
@@ -616,6 +617,7 @@ func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []in
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
+		priority:     e.priority,
 	}, handles)
 	if err != nil {
 		log.Error(err)
@@ -794,7 +796,7 @@ func (e *IndexLookUpExecutor) NextChunk(chk *chunk.Chunk) error {
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(0, resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= chunk.MaxCapacity {
+			if chk.NumRows() >= e.maxChunkSize {
 				return nil
 			}
 		}
@@ -826,12 +828,12 @@ func (builder *requestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, errors.Trace(builder.err)
 }
 
-func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []types.IntColumnRange) *requestBuilder {
+func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []ranger.IntColumnRange) *requestBuilder {
 	builder.Request.KeyRanges = tableRangesToKVRanges(tid, tableRanges)
 	return builder
 }
 
-func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*types.IndexRange) *requestBuilder {
+func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*ranger.IndexRange) *requestBuilder {
 	if builder.err != nil {
 		return builder
 	}
