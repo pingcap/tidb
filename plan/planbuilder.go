@@ -236,7 +236,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		exprs = append(exprs, expr)
 	}
 	dual.SetSchema(expression.NewSchema())
-	p := Projection{Exprs: exprs}.init(b.ctx)
+	p := LogicalProjection{Exprs: exprs}.init(b.ctx)
 	setParentAndChildren(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
