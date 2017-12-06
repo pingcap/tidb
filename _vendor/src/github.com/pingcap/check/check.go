@@ -534,6 +534,7 @@ type RunConf struct {
 	BenchmarkTime time.Duration // Defaults to 1 second
 	BenchmarkMem  bool
 	KeepWorkDir   bool
+	Exclude       string
 }
 
 // Create a new suiteRunner able to run all methods in the given suite.
@@ -578,6 +579,17 @@ func newSuiteRunner(suite interface{}, runConf *RunConf) *suiteRunner {
 		}
 	}
 
+	var excludeRegexp *regexp.Regexp
+	if conf.Exclude != "" {
+		if regexp, err := regexp.Compile(conf.Exclude); err != nil {
+			msg := "Bad exclude expression: " + err.Error()
+			runner.tracker.result.RunError = errors.New(msg)
+			return runner
+		} else {
+			excludeRegexp = regexp
+		}
+	}
+
 	for i := 0; i != suiteNumMethods; i++ {
 		method := newMethod(suiteValue, i)
 		switch method.Info.Name {
@@ -598,7 +610,9 @@ func newSuiteRunner(suite interface{}, runConf *RunConf) *suiteRunner {
 				continue
 			}
 			if filterRegexp == nil || method.matches(filterRegexp) {
-				runner.tests = append(runner.tests, method)
+				if excludeRegexp == nil || !method.matches(excludeRegexp) {
+					runner.tests = append(runner.tests, method)
+				}
 			}
 		}
 	}
