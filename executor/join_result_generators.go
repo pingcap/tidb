@@ -238,10 +238,12 @@ func (outputer *leftOuterSemiJoinResultGenerator) emitUnMatchedOuters(outers []R
 	if len(outers) == 0 {
 		return resultBuffer
 	}
-	buffer := make(Row, 0, len(outers[0])+1)
+	resultBuffer = outputer.growResultBufferIfNecessary(resultBuffer, len(outers))
+	buffer := make(Row, 0, (len(outers[0])+1)*len(outers))
 	inner := Row{types.NewIntDatum(0)}
 	for _, outer := range outers {
-		resultBuffer = append(resultBuffer, outputer.makeJoinRowToBuffer(buffer[:0], outer, inner))
+		buffer = outputer.makeJoinRowToBuffer(buffer[len(buffer):], outer, inner)
+		resultBuffer = append(resultBuffer, buffer)
 	}
 	return resultBuffer
 }
@@ -287,10 +289,12 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitUnMatchedOuters(outers
 	if len(outers) == 0 {
 		return resultBuffer
 	}
-	buffer := make(Row, 0, len(outers[0])+1)
+	resultBuffer = outputer.growResultBufferIfNecessary(resultBuffer, len(outers))
+	buffer := make(Row, 0, (len(outers[0])+1)*len(outers))
 	inner := Row{types.NewIntDatum(1)}
 	for _, outer := range outers {
-		resultBuffer = append(resultBuffer, outputer.makeJoinRowToBuffer(buffer[:0], outer, inner))
+		buffer = outputer.makeJoinRowToBuffer(buffer[len(buffer):], outer, inner)
+		resultBuffer = append(resultBuffer, buffer)
 	}
 	return resultBuffer
 }
