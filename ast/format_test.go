@@ -55,12 +55,14 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{` json_extract ( a,'$.b',"$.\"c d\"" ) `, "json_extract(`a`, \"$.b\", \"$.\\\"c d\\\"\")"},
 		{` length ( a )`, "length(`a`)"},
 		// Cast, Convert and Binary.
-		{` cast ( a as signed ) `, "CAST(`a` AS SIGNED)"},
-		{` cast ( a as unsigned integer) `, "CAST(`a` AS UNSIGNED)"},
-		{` cast ( a as char(3) binary) `, "CAST(`a` AS CHAR(3) BINARY)"},
-		{` cast ( a as decimal ) `, "CAST(`a` AS DECIMAL(11))"},
-		{` cast ( a as decimal (3) ) `, "CAST(`a` AS DECIMAL(3))"},
-		{` cast ( a as decimal (3,3) ) `, "CAST(`a` AS DECIMAL(3, 3))"},
+		// There should not be spaces between 'cast' and '(' unless 'IGNORE_SPACE' mode is set.
+		// see: https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html
+		{` cast( a as signed ) `, "CAST(`a` AS SIGNED)"},
+		{` cast( a as unsigned integer) `, "CAST(`a` AS UNSIGNED)"},
+		{` cast( a as char(3) binary) `, "CAST(`a` AS CHAR(3) BINARY)"},
+		{` cast( a as decimal ) `, "CAST(`a` AS DECIMAL(11))"},
+		{` cast( a as decimal (3) ) `, "CAST(`a` AS DECIMAL(3))"},
+		{` cast( a as decimal (3,3) ) `, "CAST(`a` AS DECIMAL(3, 3))"},
 		{` convert (a, signed) `, "CONVERT(`a`, SIGNED)"},
 		{` binary "hello"`, `BINARY "hello"`},
 	}
