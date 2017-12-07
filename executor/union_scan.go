@@ -178,7 +178,7 @@ func (us *UnionScanExec) getAddedRow() Row {
 }
 
 // pickRow picks the row in order.
-// The second value retruned is the first input row.
+// The second value retruned is used to determine whether to return the first input row.
 func (us *UnionScanExec) pickRow(a, b Row) (Row, bool, error) {
 	var isFirstRow bool
 	addedCmpSrc, err := us.compare(a, b)
