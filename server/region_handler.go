@@ -581,6 +581,58 @@ func (ir RegionFrameRange) lastTableID() int64 {
 	return ir.last.TableID
 }
 
+// parseQuery is used to parse query string in URL, due to golang http package can not distinguish
+// query like "?a=" and "?a". We rewrite it to separate these two queries. e.g.
+// "?a=" which means that a is an empty string "";
+// "?a"  which means that a is null.
+func parseQuery(query string, m url.Values) error {
+	var err error
+	for query != "" {
+		key := query
+		if i := strings.IndexAny(key, "&;"); i >= 0 {
+			key, query = key[:i], key[i+1:]
+		} else {
+			query = ""
+		}
+		if key == "" {
+			continue
+		}
+		if i := strings.Index(key, "="); i >= 0 {
+			value := ""
+			var err1 error
+			key, value = key[:i], key[i+1:]
+			key, err1 = url.QueryUnescape(key)
+			if err1 != nil {
+				if err == nil {
+					err = err1
+				}
+				continue
+			}
+			value, err1 = url.QueryUnescape(value)
+			if err1 != nil {
+				if err == nil {
+					err = err1
+				}
+				continue
+			}
+			m[key] = append(m[key], value)
+		} else {
+			var err1 error
+			key, err1 = url.QueryUnescape(key)
+			if err1 != nil {
+				if err == nil {
+					err = err1
+				}
+				continue
+			}
+			if _, ok := m[key]; !ok {
+				m[key] = nil
+			}
+		}
+	}
+	return err
+}
+
 // ServeHTTP handles request of list a table's regions.
 func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var data interface{}
@@ -590,9 +642,14 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case opMvccGetByHex:
 		data, err = rh.handleMvccGetByHex(params)
 	case opMvccGetByIdx:
-		err = req.ParseForm()
+		if req.URL == nil {
+			err = errors.BadRequestf("Invalid URL")
+			break
+		}
+		values := make(url.Values)
+		err = parseQuery(req.URL.RawQuery, values)
 		if err == nil {
-			data, err = rh.handleMvccGetByIdx(params, req.Form)
+			data, err = rh.handleMvccGetByIdx(params, values)
 		}
 	case opMvccGetByKey:
 		data, err = rh.handleMvccGetByKey(params)
@@ -608,6 +665,7 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// handleMvccGetByIdx gets MVCC info by an index key.
 func (rh mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
 	dbName := params[pDBName]
 	tableName := params[pTableName]
@@ -671,9 +729,8 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 	return rh.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
-func (t *regionHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
+func (t *regionHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	keyLocation, err := t.regionCache.LocateKey(t.bo, encodedKey)
 	if err != nil {
 		return nil, err
 	}
@@ -681,16 +738,21 @@ func (t *regionHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.Mvc
 	tikvReq := &tikvrpc.Request{
 		Type: tikvrpc.CmdMvccGetByKey,
 		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
-			Key: encodeKey,
+			Key: encodedKey,
 		},
 	}
 	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
+	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
 
 	if err != nil {
 		return nil, err
 	}
 	return kvResp.MvccGetByKey, nil
+}
+
+func (t *regionHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+	return t.getMvccByEncodedKey(encodedKey)
 }
 
 func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
@@ -749,42 +811,28 @@ func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values
 	if err != nil {
 		return nil, err
 	}
-	encodeKey, _, err := idx.GenIndexKey(idxRow, handle)
+	encodedKey, _, err := idx.GenIndexKey(idxRow, handle)
 	if err != nil {
 		return nil, err
 	}
-	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
-	if err != nil {
-		return nil, err
-	}
-
-	tikvReq := &tikvrpc.Request{
-		Type: tikvrpc.CmdMvccGetByKey,
-		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
-			Key: encodeKey,
-		},
-	}
-	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
-
-	if err != nil {
-		return nil, err
-	}
-	return kvResp.MvccGetByKey, nil
+	return t.getMvccByEncodedKey(encodedKey)
 }
 
+// formValue2DatumRow converts URL query string to a Datum Row.
 func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
 	data := make([]types.Datum, len(idxCols))
 	for i, col := range idxCols {
-		var d types.Datum
-
-		vals, ok := values[col.Name.String()]
+		colName := col.Name.String()
+		vals, ok := values[colName]
 		if !ok {
-			return nil, errors.BadRequestf("Missing value for index column %s.", col.Name.String())
+			return nil, errors.BadRequestf("Missing value for index column %s.", colName)
 		}
 
-		val := vals[0]
-		if len(val) > 0 {
+		switch len(vals) {
+		case 0:
+			data[i].SetNull()
+		case 1:
+			val := vals[0]
 			switch col.Tp {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 				if mysql.HasUnsignedFlag(col.Flag) {
@@ -792,48 +840,48 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
-					d.SetUint64(elem)
+					data[i].SetUint64(elem)
 				} else {
 					elem, err := strconv.ParseInt(val, 10, 64)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
-					d.SetInt64(elem)
+					data[i].SetInt64(elem)
 				}
 			case mysql.TypeFloat:
 				elem, err := strconv.ParseFloat(val, 32)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d.SetFloat32(float32(elem))
+				data[i].SetFloat32(float32(elem))
 			case mysql.TypeDouble:
 				elem, err := strconv.ParseFloat(val, 64)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d.SetFloat64(elem)
+				data[i].SetFloat64(elem)
 			case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
 				mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-				d.SetBytes([]byte(val))
+				data[i].SetBytes([]byte(val))
 			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 				elem, err := types.ParseTime(nil, val, col.Tp, col.Decimal)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d.SetMysqlTime(elem)
+				data[i].SetMysqlTime(elem)
 			case mysql.TypeDuration:
 				elem, err := types.ParseDuration(val, col.Decimal)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d.SetMysqlDuration(elem)
+				data[i].SetMysqlDuration(elem)
 			case mysql.TypeNewDecimal:
 				var elem types.MyDecimal
 				err := elem.FromString([]byte(val))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d.SetMysqlDecimal(&elem)
+				data[i].SetMysqlDecimal(&elem)
 			case mysql.TypeEnum:
 				num, err := strconv.ParseUint(val, 10, 64)
 				if err != nil {
@@ -843,7 +891,7 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d.SetMysqlEnum(elem)
+				data[i].SetMysqlEnum(elem)
 			case mysql.TypeSet:
 				num, err := strconv.ParseUint(val, 10, 64)
 				if err != nil {
@@ -853,22 +901,21 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d.SetMysqlSet(elem)
+				data[i].SetMysqlSet(elem)
 			case mysql.TypeBit:
-				d.SetMysqlBit([]byte(val))
+				data[i].SetMysqlBit([]byte(val))
 			case mysql.TypeJSON:
 				elem, err := tjson.ParseFromString(val)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d.SetMysqlJSON(elem)
+				data[i].SetMysqlJSON(elem)
 			default:
 				return nil, errors.NotSupportedf("Not supported datum type %d.", col.Tp)
 			}
-		} else {
-			d.SetNull()
+		default:
+			return nil, errors.BadRequestf("Invalid query form for column %s, it's values are %v", colName, vals)
 		}
-		data[i] = d
 	}
 	return data, nil
 }
