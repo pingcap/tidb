@@ -914,7 +914,8 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 				return nil, errors.NotSupportedf("Not supported datum type %d.", col.Tp)
 			}
 		default:
-			return nil, errors.BadRequestf("Invalid query form for column %s, it's values are %v", colName, vals)
+			return nil, errors.BadRequestf("Invalid query form for column '%s', it's values are %v."+
+				" Column value should be unique for one index record.", colName, vals)
 		}
 	}
 	return data, nil
