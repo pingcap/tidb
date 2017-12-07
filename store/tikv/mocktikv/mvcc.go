@@ -471,7 +471,7 @@ func (s *MvccStore) get(key MvccKey, startTS uint64, isoLevel kvrpcpb.IsolationL
 	return entry.(*mvccEntry).Get(startTS, isoLevel)
 }
 
-// A Pair is a KV pair read from MvccStore or an error if any occurs.
+// Pair is a KV pair read from MvccStore or an error if any occurs.
 type Pair struct {
 	Key   []byte
 	Value []byte
