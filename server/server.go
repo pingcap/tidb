@@ -163,13 +163,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if cfg.ProxyProtocol.Networks != "" {
-		pplistener, err := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks, cfg.ProxyProtocol.HeaderTimeout)
-		if err != nil {
+		pplistener, errProxy := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks, cfg.ProxyProtocol.HeaderTimeout)
+		if errProxy != nil {
 			log.Error("ProxyProtocol Networks parameter invalid")
-		} else {
-			log.Infof("Server is running MySQL Protocol (through PROXY Protocol) at [%s]", s.cfg.Host)
-			s.listener = pplistener
+			return nil, errors.Trace(errProxy)
 		}
+		log.Infof("Server is running MySQL Protocol (through PROXY Protocol) at [%s]", s.cfg.Host)
+		s.listener = pplistener
 	}
 
 	if err != nil {

@@ -189,3 +189,7 @@ func (m *mockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
 	m.vars[name] = value
 	return nil
 }
+
+func (m *mockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
+	return m.vars, nil
+}

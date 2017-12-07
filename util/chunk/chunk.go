@@ -92,6 +92,11 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	}
 }
 
+// SwapColumns swaps columns with another Chunk.
+func (c *Chunk) SwapColumns(other *Chunk) {
+	c.columns, other.columns = other.columns, c.columns
+}
+
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
@@ -393,6 +398,11 @@ func (c *column) appendNameValue(name string, val uint64) {
 type Row struct {
 	c   *Chunk
 	idx int
+}
+
+// Idx returns the row index of Chunk.
+func (r Row) Idx() int {
+	return r.idx
 }
 
 // Len returns the number of values in the row.

@@ -519,33 +519,33 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// Test complex update.
 		{
 			sql:  "update t set a = 5 where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Update",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Update",
 		},
 		// Test simple update.
 		{
 			sql:  "update t set a = 5",
-			best: "TableReader(Table(t))->*plan.Update",
+			best: "TableReader(Table(t))->Update",
 		},
 		// TODO: Test delete/update with join.
 		// Test complex delete.
 		{
 			sql:  "delete from t where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Delete",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete",
 		},
 		// Test simple delete.
 		{
 			sql:  "delete from t",
-			best: "TableReader(Table(t))->*plan.Delete",
+			best: "TableReader(Table(t))->Delete",
 		},
 		// Test complex insert.
 		{
 			sql:  "insert into t select * from t where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Insert",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Insert",
 		},
 		// Test simple insert.
 		{
 			sql:  "insert into t values(0,0,0,0,0,0,0)",
-			best: "*plan.Insert",
+			best: "Insert",
 		},
 		// Test dual.
 		{
@@ -559,7 +559,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// Test show.
 		{
 			sql:  "show tables",
-			best: "*plan.Show",
+			best: "Show",
 		},
 	}
 	for _, tt := range tests {
@@ -594,22 +594,22 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test simple union.
 		{
 			sql:  "select * from t union all select * from t",
-			best: "UnionAll{TableReader(Table(t))->TableReader(Table(t))}",
+			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}",
 		},
 		// Test Order by + Union.
 		{
 			sql:  "select * from t union all (select * from t) order by a ",
-			best: "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Sort",
+			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->Sort",
 		},
 		// Test Limit + Union.
 		{
 			sql:  "select * from t union all (select * from t) limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->TableReader(Table(t)->Limit)}->Limit",
+			best: "UnionAll{TableReader(Table(t)->Limit)->Projection->TableReader(Table(t)->Limit)->Projection}->Limit",
 		},
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)}->TopN([t.a],0,1)",
+			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->TopN([t.a],0,1)",
 		},
 	}
 	for _, tt := range tests {

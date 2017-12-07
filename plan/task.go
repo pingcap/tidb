@@ -137,15 +137,19 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
-	if tasks[p.outerIndex].invalid() {
+	if tasks[p.OuterIndex].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[p.outerIndex].copy(), p.ctx)
+	outerTask := finishCopTask(tasks[p.OuterIndex].copy(), p.ctx)
 	np := p.Copy()
-	np.SetChildren(lTask.plan(), p.innerPlan)
+	if p.OuterIndex == 0 {
+		np.SetChildren(outerTask.plan(), p.innerPlan)
+	} else {
+		np.SetChildren(p.innerPlan, outerTask.plan())
+	}
 	return &rootTask{
 		p:   np,
-		cst: lTask.cost() + p.getCost(lTask.count()),
+		cst: outerTask.cost() + p.getCost(outerTask.count()),
 	}
 }
 
@@ -291,7 +295,7 @@ func (t *rootTask) plan() PhysicalPlan {
 	return t.p
 }
 
-func (p *Limit) attach2Task(tasks ...task) task {
+func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
 	if tasks[0].invalid() {
 		return invalidTask
@@ -301,7 +305,7 @@ func (p *Limit) attach2Task(tasks ...task) task {
 		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
 			// When limit be pushed down, it should remove its offset.
-			pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.ctx)
+			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx)
 			pushedDownLimit.profile = p.profile
 			if cop.tablePlan != nil {
 				pushedDownLimit.SetSchema(cop.tablePlan.Schema())
@@ -318,19 +322,19 @@ func (p *Limit) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *Sort) getCost(count float64) float64 {
+func (p *PhysicalSort) getCost(count float64) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
 	return count*cpuFactor + count*memoryFactor
 }
 
-func (p *TopN) getCost(count float64) float64 {
+func (p *PhysicalTopN) getCost(count float64) float64 {
 	return count*cpuFactor + float64(p.Count)*memoryFactor
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *TopN) canPushDown() bool {
+func (p *PhysicalTopN) canPushDown() bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
@@ -339,7 +343,7 @@ func (p *TopN) canPushDown() bool {
 	return len(remained) == 0
 }
 
-func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
+func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
@@ -347,7 +351,7 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 	return len(schema.ColumnsIndices(cols)) > 0
 }
 
-func (p *Sort) attach2Task(tasks ...task) task {
+func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
@@ -357,7 +361,11 @@ func (p *Sort) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *TopN) attach2Task(tasks ...task) task {
+func (p *NominalSort) attach2Task(tasks ...task) task {
+	return tasks[0]
+}
+
+func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
 	if tasks[0].invalid() {
 		return invalidTask
@@ -365,7 +373,7 @@ func (p *TopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	// This is a topN plan.
 	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
-		pushedDownTopN := p.Copy().(*TopN)
+		pushedDownTopN := p.Copy().(*PhysicalTopN)
 		newByItems := make([]*ByItems, 0, len(p.ByItems))
 		for _, expr := range p.ByItems {
 			newByItems = append(newByItems, expr.Clone())
@@ -376,16 +384,16 @@ func (p *TopN) attach2Task(tasks ...task) task {
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
 		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
+			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 			pushedDownTopN.SetChildren(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
-			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 		} else {
 			// FIXME: When we pushed down a top-N plan to table plan branch in case of double reading. The cost should
 			// be more expensive in case of single reading, because we may execute table scan multi times.
 			copTask.finishIndexPlan()
+			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 			pushedDownTopN.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
-			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
 		copTask.addCost(pushedDownTopN.getCost(t.count()))
 	}
@@ -397,25 +405,24 @@ func (p *TopN) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *Projection) attach2Task(tasks ...task) task {
+func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
 	t := tasks[0].copy()
-	np := p.Copy()
 	switch tp := t.(type) {
 	case *copTask:
 		// TODO: Support projection push down.
 		t = finishCopTask(t, p.ctx)
-		t = attachPlan2Task(np, t)
+		t = attachPlan2Task(p, t)
 		return t
 	case *rootTask:
-		return attachPlan2Task(np, tp)
+		return attachPlan2Task(p, tp)
 	}
 	return nil
 }
 
-func (p *Union) attach2Task(tasks ...task) task {
+func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	np := p.Copy()
 	newTask := &rootTask{p: np}
 	newChildren := make([]Plan, 0, len(p.children))
@@ -441,8 +448,8 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *PhysicalAggregation) {
-	finalAgg = p.Copy().(*PhysicalAggregation)
+func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalHashAgg) {
+	finalAgg = p.Copy().(*PhysicalHashAgg)
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
@@ -456,7 +463,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	if len(remained) > 0 {
 		return
 	}
-	partialAgg = p.Copy().(*PhysicalAggregation)
+	partialAgg = p.Copy().(*PhysicalHashAgg)
 	// TODO: It's toooooo ugly here. Refactor in the future !!
 	gkType := types.NewFieldType(mysql.TypeBlob)
 	gkType.Charset = charset.CharsetBin
@@ -488,11 +495,9 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 		fun.SetMode(aggregation.FinalMode)
 		finalAggFuncs[i] = fun
 	}
-	finalAgg = PhysicalAggregation{
-		HasGby:   p.HasGby, // TODO: remove this field
-		AggType:  FinalAgg,
+	finalAgg = basePhysicalAgg{
 		AggFuncs: finalAggFuncs,
-	}.init(p.ctx)
+	}.initForHash(p.ctx)
 	finalAgg.profile = p.profile
 	finalAgg.SetSchema(p.schema)
 	// add group by columns
@@ -508,7 +513,19 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	return
 }
 
-func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
+func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
+	// If task is invalid, keep it remained.
+	if tasks[0].invalid() {
+		return invalidTask
+	}
+	t := tasks[0].copy()
+	np := p.Copy()
+	attachPlan2Task(np, t)
+	t.addCost(t.count() * cpuFactor)
+	return t
+}
+
+func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
 	if tasks[0].invalid() {
 		return invalidTask
@@ -528,16 +545,12 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 			}
 		}
 		task = finishCopTask(cop, p.ctx)
-		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 	} else {
 		np := p.Copy()
 		attachPlan2Task(np, task)
-		if p.AggType == StreamedAgg {
-			task.addCost(task.count() * cpuFactor)
-		} else {
-			task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
-		}
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 	}
 	return task
 }

@@ -333,7 +333,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 			}
 		}
 
-		meta, leader, err := c.pdClient.GetRegion(bo.ctx, key)
+		meta, leader, err := c.pdClient.GetRegion(bo, key)
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
@@ -367,7 +367,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 			}
 		}
 
-		meta, leader, err := c.pdClient.GetRegionByID(bo.ctx, regionID)
+		meta, leader, err := c.pdClient.GetRegionByID(bo, regionID)
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, regionID: %v, err: %v", regionID, err)
 			continue
@@ -427,7 +427,7 @@ func (c *RegionCache) ClearStoreByID(id uint64) {
 
 func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	for {
-		store, err := c.pdClient.GetStore(bo.ctx, id)
+		store, err := c.pdClient.GetStore(bo, id)
 		if err != nil {
 			if errors.Cause(err) == goctx.Canceled {
 				return "", errors.Trace(err)

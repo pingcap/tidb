@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv"
@@ -33,9 +34,7 @@ func (s *testSQLSuite) SetUpSuite(c *C) {
 	s.store, _ = tikv.NewTestTiKVStorage(false, "")
 }
 
-func (s *testSQLSuite) TestBusyServerCop(c *C) {
-	client := tikv.NewBusyClient(s.store.GetTiKVClient())
-	s.store.SetTiKVClient(client)
+func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
@@ -45,11 +44,11 @@ func (s *testSQLSuite) TestBusyServerCop(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	client.SetBusy(true)
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy", `return(true)`)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		client.SetBusy(false)
+		gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy")
 	}()
 
 	go func() {

@@ -55,11 +55,11 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	h.DumpStatsDeltaToKV()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"TableScan_9   cop table:t1, range:(-inf,+inf), keep order:false 6",
-		"TableReader_10 HashLeftJoin_7  root data:TableScan_9 6",
-		"TableScan_11   cop table:t2, range:(-inf,+inf), keep order:false 6",
-		"TableReader_12 HashLeftJoin_7  root data:TableScan_11 6",
-		"HashLeftJoin_7  TableReader_10,TableReader_12 root inner join, small:TableReader_12, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
+		"TableScan_10   cop table:t1, range:(-inf,+inf), keep order:false 6",
+		"TableReader_11 HashLeftJoin_8  root data:TableScan_10 6",
+		"TableScan_12   cop table:t2, range:(-inf,+inf), keep order:false 6",
+		"TableReader_13 HashLeftJoin_8  root data:TableScan_12 6",
+		"HashLeftJoin_8  TableReader_11,TableReader_13 root inner join, small:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
 	))
 }
 
@@ -86,10 +86,10 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	h.DumpStatsDeltaToKV()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"TableScan_5 HashAgg_4  cop table:t, range:(-inf,+inf), keep order:false 8",
-		"HashAgg_4  TableScan_5 cop type:complete, group by:test.t.a, funcs:count(1) 2",
-		"TableReader_7 HashAgg_6  root data:HashAgg_4 2",
-		"HashAgg_6  TableReader_7 root type:final, group by:, funcs:count(col_0) 2",
+		"TableScan_6 HashAgg_5  cop table:t, range:(-inf,+inf), keep order:false 8",
+		"HashAgg_5  TableScan_6 cop group by:test.t.a, funcs:count(1) 2",
+		"TableReader_8 HashAgg_7  root data:HashAgg_5 2",
+		"HashAgg_7  TableReader_8 root group by:, funcs:count(col_0) 2",
 	))
 }
 
@@ -143,7 +143,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[<nil> <nil>,+inf +inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
+			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",

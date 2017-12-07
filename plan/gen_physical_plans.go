@@ -13,7 +13,12 @@
 
 package plan
 
-import "github.com/pingcap/tidb/expression"
+import (
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/types"
+)
 
 func (p *LogicalUnionScan) generatePhysicalPlans() []PhysicalPlan {
 	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx)
@@ -137,6 +142,109 @@ func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
 	return hashJoin
 }
 
+// joinKeysMatchIndex checks if all keys match columns in index.
+func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
+	if len(index.Columns) < len(keys) {
+		return nil
+	}
+	matchOffsets := make([]int, len(keys))
+	for i, idxCol := range index.Columns {
+		if idxCol.Length != types.UnspecifiedLength {
+			return nil
+		}
+		found := false
+		for j, key := range keys {
+			if idxCol.Name.L == key.ColName.L {
+				matchOffsets[i] = j
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+		if i+1 == len(keys) {
+			break
+		}
+	}
+	return matchOffsets
+}
+
+func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
+	joinType := p.JoinType
+	join := PhysicalIndexJoin{
+		OuterIndex:      outerIdx,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+		JoinType:        joinType,
+		OuterJoinKeys:   outerJoinKeys,
+		InnerJoinKeys:   innerJoinKeys,
+		DefaultValues:   p.DefaultValues,
+		outerSchema:     p.children[outerIdx].Schema(),
+		innerPlan:       innerPlan,
+	}.init(p.ctx, p.children...)
+	join.SetSchema(p.schema)
+	join.profile = p.profile
+	orderJoin := join.Copy().(*PhysicalIndexJoin)
+	orderJoin.KeepOrder = true
+	return []PhysicalPlan{join, orderJoin}
+}
+
+// getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
+// because we will swap the children of join when the right child is outer child.
+// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or PK
+// column of inner child, we can apply the index join.
+func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
+	innerChild := p.children[1-outerIdx].(LogicalPlan)
+	var (
+		usedIndexInfo *model.IndexInfo
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
+	)
+	if outerIdx == 0 {
+		outerJoinKeys = p.LeftJoinKeys
+		innerJoinKeys = p.RightJoinKeys
+	} else {
+		innerJoinKeys = p.LeftJoinKeys
+		outerJoinKeys = p.RightJoinKeys
+	}
+	x, ok := innerChild.(*DataSource)
+	if !ok {
+		return nil
+	}
+	indices := x.availableIndices.indices
+	includeTableScan := x.availableIndices.includeTableScan
+	if includeTableScan && len(innerJoinKeys) == 1 {
+		pkCol := x.getPKIsHandleCol()
+		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
+			innerPlan := x.forceToTableScan()
+			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+		}
+	}
+	for _, indexInfo := range indices {
+		matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
+		if matchedOffsets == nil {
+			continue
+		}
+		usedIndexInfo = indexInfo
+		newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
+		newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
+		for i, offset := range matchedOffsets {
+			newOuterJoinKeys[i] = outerJoinKeys[offset]
+			newInnerJoinKeys[i] = innerJoinKeys[offset]
+		}
+		outerJoinKeys = newOuterJoinKeys
+		innerJoinKeys = newInnerJoinKeys
+		break
+	}
+	if usedIndexInfo != nil {
+		innerPlan := x.forceToIndexScan(usedIndexInfo)
+		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+	}
+	return nil
+}
+
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
@@ -212,10 +320,27 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	return joins
 }
 
-func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
-	plans := []PhysicalPlan{p.Copy()}
+func (p *LogicalProjection) generatePhysicalPlans() []PhysicalPlan {
+	proj := PhysicalProjection{
+		Exprs: p.Exprs,
+	}.init(p.ctx)
+	proj.profile = p.profile
+	proj.SetSchema(p.schema)
+	return []PhysicalPlan{proj}
+}
+
+func (p *LogicalTopN) generatePhysicalPlans() []PhysicalPlan {
+	topN := PhysicalTopN{
+		ByItems: p.ByItems,
+		Count:   p.Count,
+		Offset:  p.Offset,
+		partial: p.partial,
+	}.init(p.ctx)
+	topN.profile = p.profile
+	topN.SetSchema(p.schema)
+	plans := []PhysicalPlan{topN}
 	if prop, canPass := getPropByOrderByItems(p.ByItems); canPass {
-		limit := Limit{
+		limit := PhysicalLimit{
 			Count:        p.Count,
 			Offset:       p.Offset,
 			partial:      p.partial,
@@ -250,14 +375,42 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{np}
 }
 
+func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
+	if len(p.possibleProperties) == 0 {
+		return nil
+	}
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.GetMode() == aggregation.FinalMode {
+			return nil
+		}
+	}
+	// group by a + b is not interested in any order.
+	if len(p.groupByCols) != len(p.GroupByItems) {
+		return nil
+	}
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	for _, cols := range p.possibleProperties {
+		_, keys := getPermutation(cols, p.groupByCols)
+		if len(keys) != len(p.groupByCols) {
+			continue
+		}
+		agg := basePhysicalAgg{
+			GroupByItems: p.GroupByItems,
+			AggFuncs:     p.AggFuncs,
+		}.initForStream(p.ctx, keys, p.inputCount)
+		agg.SetSchema(p.schema.Clone())
+		agg.profile = p.profile
+		streamAggs = append(streamAggs, agg)
+	}
+	return streamAggs
+}
+
 func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
-	agg := PhysicalAggregation{
+	agg := basePhysicalAgg{
 		GroupByItems: p.GroupByItems,
 		AggFuncs:     p.AggFuncs,
-		HasGby:       len(p.GroupByItems) > 0,
-		AggType:      CompleteAgg,
-	}.init(p.ctx)
+	}.initForHash(p.ctx)
 	agg.SetSchema(p.schema.Clone())
 	agg.profile = p.profile
 	aggs = append(aggs, agg)
@@ -275,4 +428,78 @@ func (p *LogicalSelection) generatePhysicalPlans() []PhysicalPlan {
 	sel.profile = p.profile
 	sel.SetSchema(p.Schema())
 	return []PhysicalPlan{sel}
+}
+
+func (p *LogicalLimit) generatePhysicalPlans() []PhysicalPlan {
+	limit := PhysicalLimit{
+		Offset:  p.Offset,
+		Count:   p.Count,
+		partial: p.partial,
+	}.init(p.ctx)
+	limit.profile = p.profile
+	limit.SetSchema(p.Schema())
+	return []PhysicalPlan{limit}
+}
+
+func (p *LogicalLock) generatePhysicalPlans() []PhysicalPlan {
+	lock := PhysicalLock{
+		Lock: p.Lock,
+	}.init(p.ctx)
+	lock.profile = p.profile
+	lock.SetSchema(p.schema)
+	return []PhysicalPlan{lock}
+}
+
+func (p *LogicalUnionAll) generatePhysicalPlans() []PhysicalPlan {
+	ua := PhysicalUnionAll{childNum: len(p.children)}.init(p.ctx)
+	ua.profile = p.profile
+	ua.SetSchema(p.schema)
+	return []PhysicalPlan{ua}
+}
+
+func (p *LogicalSort) getPhysicalSort() *PhysicalSort {
+	ps := PhysicalSort{ByItems: p.ByItems}.init(p.ctx)
+	ps.profile = p.profile
+	ps.SetSchema(p.schema)
+	return ps
+}
+
+func (p *LogicalSort) getNominalSort() *NominalSort {
+	prop, canPass := getPropByOrderByItems(p.ByItems)
+	if !canPass {
+		return nil
+	}
+	ps := &NominalSort{prop: prop}
+	return ps
+}
+
+func (p *LogicalSort) generatePhysicalPlans() []PhysicalPlan {
+	ret := make([]PhysicalPlan, 0, 2)
+	ret = append(ret, p.getPhysicalSort())
+	ps := p.getNominalSort()
+	if ps != nil {
+		ret = append(ret, ps)
+	}
+	return ret
+}
+
+func (p *LogicalExists) generatePhysicalPlans() []PhysicalPlan {
+	exists := PhysicalExists{}.init(p.ctx)
+	exists.profile = p.profile
+	exists.SetSchema(p.schema)
+	return []PhysicalPlan{exists}
+}
+
+func (p *LogicalMaxOneRow) generatePhysicalPlans() []PhysicalPlan {
+	mor := PhysicalMaxOneRow{}.init(p.ctx)
+	mor.profile = p.profile
+	mor.SetSchema(p.schema)
+	return []PhysicalPlan{mor}
+}
+
+func (p *LogicalTableDual) generatePhysicalPlans() []PhysicalPlan {
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
+	dual.profile = p.profile
+	dual.SetSchema(p.schema)
+	return []PhysicalPlan{dual}
 }

@@ -375,7 +375,7 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -479,7 +479,7 @@ func (e *IndexReaderExecutor) Open(goCtx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, e.schema.GetTypes(), e.ctx.GetSessionVars().GetTimeZone())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -541,7 +541,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.ctx.GetSessionVars().GetTimeZone())
+	result, err := distsql.SelectDAG(goCtx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -551,7 +551,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
-		batchSize:    e.ctx.GetSessionVars().MaxChunkSize,
+		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 	}
 	if worker.batchSize > worker.maxBatchSize {
@@ -617,6 +617,7 @@ func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []in
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
+		priority:     e.priority,
 	}, handles)
 	if err != nil {
 		log.Error(err)
@@ -795,7 +796,7 @@ func (e *IndexLookUpExecutor) NextChunk(chk *chunk.Chunk) error {
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(0, resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= e.ctx.GetSessionVars().MaxChunkSize {
+			if chk.NumRows() >= e.maxChunkSize {
 				return nil
 			}
 		}

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -286,6 +286,27 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
+
+	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	tk.MustExec("set session sql_select_limit=100000000000;")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 100000000000"))
+
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("ON"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.autocommit = 0;")
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.autocommit=1")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -1545,7 +1566,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 		numChunks++
 	}
 	c.Assert(count, Equals, 100)
-	c.Assert(numChunks, Equals, 10)
+	c.Assert(numChunks, Equals, 50)
 	rs.Close()
 }
 

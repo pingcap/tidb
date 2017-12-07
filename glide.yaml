@@ -46,7 +46,7 @@ import:
 - package: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - package: github.com/pingcap/check
-  version: 9b266636177e249ec28b0aeffe8e86bc272bb481
+  version: 1c287c953996ab3a0bf535dba9d53d809d3dc0b6
 - package: github.com/pingcap/goleveldb
   version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
@@ -198,7 +198,6 @@ import:
   version: v1.0
 - package: github.com/pingcap/mysqlx-driver
   version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
-  repo: git@github.com:pingcap/mysqlx-driver.git
 - package: github.com/apache/thrift
   version: ">=0.9.3, <0.11.0"
   subpackages:
@@ -249,3 +248,9 @@ import:
   - tracing/opentracing
 - package: github.com/blacktear23/go-proxyprotocol
   version: 62e368e1c4700c34b4b6f77afd49b215211574c2
+- package: github.com/coreos/gofail
+  version: 38defe9971eda62d1b1c6a69c00acf001d46ecab
+  subpackages:
+  - runtime
+- package: gopkg.in/natefinch/lumberjack.v2
+  version: dd45e6a67c53f673bb49ca8a001fd3a63ceb640e

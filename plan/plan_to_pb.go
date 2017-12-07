@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -31,7 +32,7 @@ func (p *basePhysicalPlan) ToPB(_ context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalAggregation) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalHashAgg) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	aggExec := &tipb.Aggregation{
@@ -54,7 +55,7 @@ func (p *PhysicalSelection) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *TopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalTopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	topNExec := &tipb.TopN{
@@ -67,7 +68,7 @@ func (p *TopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalLimit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	limitExec := &tipb.Limit{
 		Limit: p.Count,
 	}
@@ -84,6 +85,21 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	}
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
+}
+
+// checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
+// range and index are equal.
+func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.IndexRange) bool {
+	// If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
+	if !idx.Unique {
+		return false
+	}
+	for _, rg := range ranges {
+		if len(rg.LowVal) != len(idx.Columns) {
+			return false
+		}
+	}
+	return true
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -105,6 +121,8 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
+	unique := checkCoverIndex(p.Index, p.Ranges)
+	idxExec.Unique = &unique
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 

@@ -47,13 +47,17 @@ func (s *Server) startHTTPServer() {
 	if s.cfg.Store == "tikv" {
 		tikvHandler := s.newRegionHandler()
 		// HTTP path for regions
-		router.Handle("/tables/{db}/{table}/regions", tableRegionsHandler{tikvHandler})
+		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandler, opTableRegions})
+		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandler, opTableDiskUsage})
 		router.Handle("/regions/meta", tikvHandler)
 		router.Handle("/regions/{regionID}", tikvHandler)
 		router.Handle("/mvcc/key/{db}/{table}/{recordID}", mvccTxnHandler{tikvHandler, opMvccGetByKey})
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandler, opMvccGetByHex})
+		router.Handle("/schema", schemaHandler{tikvHandler})
+		router.Handle("/schema/{db}", schemaHandler{tikvHandler})
+		router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandler})
 	}
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
