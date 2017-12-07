@@ -438,20 +438,16 @@ func (e *MergeJoinExec) NextChunk(chk *chunk.Chunk) error {
 
 		// reach here means there no more data in "e.resultChunk"
 		hasMore, err := e.joinToChunk(e.resultChunk)
-		if err != nil {
+		if err != nil || !hasMore {
 			return errors.Trace(err)
 		}
-		if !hasMore {
-			return nil
-		}
 	}
-	return nil
 }
 
 func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (bool, error) {
 	var (
-		cmpResult int   = 0
-		err       error = nil
+		cmpResult int
+		err       error
 	)
 	for {
 		if e.outerChunkRows == nil {
@@ -480,16 +476,13 @@ func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (bool, error) {
 			e.resultGenerator.emitUnMatchedOutersToChunk(e.outerChunkRows, chk)
 		} else {
 			for _, outer := range e.outerChunkRows {
-				matched, err := e.resultGenerator.emitMatchedInnersToChunk(outer, e.innerChunkRows, chk)
-				if err != nil {
-					return false, errors.Trace(err)
+				matched, err1 := e.resultGenerator.emitMatchedInnersToChunk(outer, e.innerChunkRows, chk)
+				if err1 != nil {
+					return false, errors.Trace(err1)
 				}
 				if !matched {
 					e.resultGenerator.emitUnMatchedOuterToChunk(outer, chk)
 				}
-			}
-			if err != nil {
-				return false, errors.Trace(err)
 			}
 			e.innerChunkRows, err = e.innerIter.rowsWithSameKey(nil)
 			if err != nil {
