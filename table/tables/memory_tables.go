@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+const btreeDegree = 32
+
 type itemKey int64
 
 type itemPair struct {
@@ -68,7 +70,7 @@ type MemoryTable struct {
 	alloc        autoid.Allocator
 	meta         *model.TableInfo
 
-	tree *llrb.LLRB
+	tree *llrb.BTree
 	mu   sync.RWMutex
 }
 
@@ -98,7 +100,7 @@ func newMemoryTable(tableID int64, tableName string, cols []*table.Column, alloc
 		alloc:        alloc,
 		Columns:      cols,
 		recordPrefix: tablecodec.GenTableRecordPrefix(tableID),
-		tree:         llrb.New(),
+		tree:         llrb.New(btreeDegree),
 	}
 	return t
 }
@@ -169,7 +171,7 @@ func (t *MemoryTable) FirstKey() kv.Key {
 
 // Truncate drops all data in Memory Table.
 func (t *MemoryTable) Truncate() {
-	t.tree = llrb.New()
+	t.tree = llrb.New(btreeDegree)
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.

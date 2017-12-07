@@ -28,6 +28,8 @@ import (
 
 type mvccValueType int
 
+const btreeDegree = 32
+
 const (
 	typePut mvccValueType = iota
 	typeDelete
@@ -443,15 +445,15 @@ type MVCCDebugger interface {
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
 type MvccStore struct {
 	sync.RWMutex
-	tree  *llrb.LLRB
-	rawkv *llrb.LLRB
+	tree  *llrb.BTree
+	rawkv *llrb.BTree
 }
 
 // NewMvccStore creates a MvccStore.
 func NewMvccStore() *MvccStore {
 	return &MvccStore{
-		tree:  llrb.New(),
-		rawkv: llrb.New(),
+		tree:  llrb.New(btreeDegree),
+		rawkv: llrb.New(btreeDegree),
 	}
 }
 

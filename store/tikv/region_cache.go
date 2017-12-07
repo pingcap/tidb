@@ -29,6 +29,7 @@ import (
 )
 
 const (
+	btreeDegree             = 32
 	rcDefaultRegionCacheTTL = time.Minute * 10
 )
 
@@ -51,7 +52,7 @@ type RegionCache struct {
 	mu struct {
 		sync.RWMutex
 		regions map[RegionVerID]*CachedRegion
-		sorted  *llrb.LLRB
+		sorted  *llrb.BTree
 	}
 	storeMu struct {
 		sync.RWMutex
@@ -65,7 +66,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 		pdClient: pdClient,
 	}
 	c.mu.regions = make(map[RegionVerID]*CachedRegion)
-	c.mu.sorted = llrb.New()
+	c.mu.sorted = llrb.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	return c
 }
