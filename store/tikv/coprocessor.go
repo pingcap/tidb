@@ -232,6 +232,26 @@ func (r *copRanges) toPBRanges() []*coprocessor.KeyRange {
 	return ranges
 }
 
+// Split ranges into (left, right) by key.
+func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
+	n := sort.Search(r.len(), func(i int) bool {
+		cur := r.at(i)
+		return len(cur.EndKey) == 0 || bytes.Compare(cur.EndKey, key) > 0
+	})
+	// If a range p contains the key, it will split to 2 parts.
+	if n < r.len() {
+		p := r.at(n)
+		if bytes.Compare(key, p.StartKey) > 0 {
+			left := r.slice(0, n)
+			left.last = &kv.KeyRange{StartKey: p.StartKey, EndKey: key}
+			right := r.slice(n+1, r.len())
+			right.first = &kv.KeyRange{StartKey: key, EndKey: p.EndKey}
+			return left, right
+		}
+	}
+	return r.slice(0, n), r.slice(n, r.len())
+}
+
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
 	coprocessorCounter.WithLabelValues("build_task").Inc()
 
@@ -368,6 +388,7 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 			return
 		case <-goCtx.Done():
 			return
+		default:
 		}
 	}
 }
@@ -518,14 +539,7 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 	}
 
 	// Handles the response for non-streaming copTask.
-	tasks, err1 := it.handleCopResponse(bo, resp.Cop, task, ch)
-	if err1 != nil {
-		return nil, errors.Trace(err1)
-	}
-	if len(tasks) > 0 {
-		return tasks, nil
-	}
-	return nil, nil
+	return it.handleCopResponse(bo, resp.Cop, task, ch)
 }
 
 func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse) ([]*copTask, error) {
@@ -586,44 +600,20 @@ func buildCopTasksFromRemain(bo *Backoffer, cache *RegionCache, resp *coprocesso
 	return buildCopTasks(bo, cache, remainedRanges, desc, streaming)
 }
 
+// calculateRemain splits the input ranges into two, and take one of them according to desc flag.
+// It's used in streaming API, to calculate which range is consumed and what needs to be retry.
+// For example:
+// ranges: [r1 --> r2) [r3 --> r4)
+// split:      [s1   -->   s2)
+// In normal scan order, all data before s1 is consumed, so the remain ranges should be [s1 --> r2) [r3 --> r4)
+// In reverse scan order, all data after s2 is consumed, so the remain ranges should be [r1 --> r2) [r3 --> s2)
 func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) *copRanges {
-	len := ranges.len()
 	if desc {
-		n := sort.Search(len, func(i int) bool {
-			r := ranges.at(i)
-			return bytes.Compare(split.End, r.StartKey) <= 0
-		})
-		if n == 0 {
-			log.Fatal("for any valid tikv response, n > 0 should always hold!")
-		}
-		r := ranges.at(n - 1)
-		ret := ranges.slice(0, n-1)
-		ret.last = &kv.KeyRange{r.StartKey, r.EndKey}
-		// [r.StartKey -- split.EndKey -- r.EndKey) => [r.StartKey -- split.EndKey)
-		if bytes.Compare(split.End, r.EndKey) < 0 {
-			ret.last.EndKey = split.End
-		}
-		return ret
+		left, _ := ranges.split(split.End)
+		return left
 	}
-
-	key := split.Start
-	// Binary search for the range r that [r, r+1) is not consumed.
-	n := sort.Search(len, func(i int) bool {
-		r := ranges.at(i)
-		return bytes.Compare(r.EndKey, key) > 0
-	})
-	if n >= len {
-		log.Fatal("for any valid tikv response, n < len should always hold!")
-	}
-	r := ranges.at(n)
-	// Adjust the start point in range r in this case:
-	// [r.StartKey -- split.Key -- r.EndKey) => [split.Key -- r.EndKey)
-	if bytes.Compare(r.StartKey, key) < 0 {
-		ran := ranges.slice(n+1, len)
-		ran.first = &kv.KeyRange{key, r.EndKey}
-		return ran
-	}
-	return ranges.slice(n, len)
+	_, right := ranges.split(split.Start)
+	return right
 }
 
 func (it *copIterator) Close() error {
