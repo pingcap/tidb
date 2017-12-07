@@ -29,7 +29,7 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context) task {
 		return task
 	}
 	task = finishCopTask(task, ctx)
-	sort := Sort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx)
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx)
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
 	}
@@ -45,7 +45,7 @@ func (p *PhysicalUnionScan) getChildrenPossibleProps(prop *requiredProp) [][]*re
 // getChildrenPossibleProps will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *Projection) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalProjection) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	newProp := &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt}
 	newCols := make([]*expression.Column, 0, len(prop.cols))
@@ -123,6 +123,20 @@ func (p *PhysicalSelection) getChildrenPossibleProps(prop *requiredProp) [][]*re
 	return [][]*requiredProp{{prop}}
 }
 
+func (p *PhysicalLock) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	return [][]*requiredProp{{prop}}
+}
+
+func (p *PhysicalUnionAll) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	props := make([]*requiredProp, p.childNum)
+	for i := range props {
+		props[i] = prop
+	}
+	return [][]*requiredProp{props}
+}
+
 func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
@@ -155,7 +169,7 @@ func (p *PhysicalApply) getChildrenPossibleProps(prop *requiredProp) [][]*requir
 	return [][]*requiredProp{{lProp, &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}}}
 }
 
-func (p *Limit) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalLimit) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
 		return nil
@@ -172,7 +186,7 @@ func (p *Limit) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	return props
 }
 
-func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalTopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	if !prop.isEmpty() {
 		return nil
@@ -208,4 +222,40 @@ func (p *PhysicalStreamAgg) getChildrenPossibleProps(prop *requiredProp) [][]*re
 		return nil
 	}
 	return [][]*requiredProp{{reqProp}}
+}
+
+func (p *PhysicalSort) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	if len(p.ByItems) >= len(prop.cols) {
+		for i, col := range prop.cols {
+			sortItem := p.ByItems[i]
+			if sortItem.Desc != prop.desc || !sortItem.Expr.Equal(col, p.ctx) {
+				return nil
+			}
+		}
+		return [][]*requiredProp{{{expectedCnt: math.MaxFloat64}}}
+	}
+	return nil
+}
+
+func (p *NominalSort) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	if prop.isPrefix(p.prop) {
+		p.prop.expectedCnt = prop.expectedCnt
+		return [][]*requiredProp{{p.prop}}
+	}
+	return nil
+}
+
+func (p *PhysicalExists) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	if prop.isEmpty() {
+		return [][]*requiredProp{{{expectedCnt: math.MaxFloat64}}}
+	}
+	return nil
+}
+
+func (p *PhysicalMaxOneRow) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	if prop.isEmpty() {
+		return [][]*requiredProp{{{expectedCnt: math.MaxFloat64}}}
+	}
+	return nil
 }

@@ -163,7 +163,7 @@ type LogicalPlan interface {
 	buildKeyInfo()
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *TopN) LogicalPlan
+	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
 	// prepareStatsProfile will prepare the stats for this plan.
 	prepareStatsProfile() *statsProfile
@@ -232,9 +232,9 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 	if len(p.basePlan.children) == 1 {
 		switch p.basePlan.self.(type) {
-		case *Exists, *LogicalAggregation, *Projection:
+		case *LogicalExists, *LogicalAggregation, *LogicalProjection:
 			p.basePlan.schema.Keys = nil
-		case *SelectLock:
+		case *LogicalLock:
 			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
 		default:
 			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
