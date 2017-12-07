@@ -2620,7 +2620,9 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
-	result.Check(testkit.Rows("TableScan_3   cop table:t, range:(-inf,+inf), keep order:false 8000", "TableReader_4 Projection_2  root data:TableScan_3 8000", "Projection_2  TableReader_4 root eq(test.t.a, test.t.a) 8000"))
+	result.Check(testkit.Rows("TableScan_4   cop table:t, range:(-inf,+inf), keep order:false 8000",
+		"TableReader_5 Projection_3  root data:TableScan_4 8000",
+		"Projection_3  TableReader_5 root eq(test.t.a, test.t.a) 8000"))
 
 	// for interval
 	result = tk.MustQuery(`select interval(null, 1, 2), interval(1, 2, 3), interval(2, 1, 3)`)

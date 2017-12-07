@@ -73,8 +73,8 @@ const (
 	TypeLock = "SelectLock"
 	// TypeInsert is the type of Insert
 	TypeInsert = "Insert"
-	// TypeUpate is the type of Update.
-	TypeUpate = "Update"
+	// TypeUpdate is the type of Update.
+	TypeUpdate = "Update"
 	// TypeDelete is the type of Delete.
 	TypeDelete = "Delete"
 	// TypeIndexLookUp is the type of IndexLookUp.
@@ -127,9 +127,14 @@ func (p LogicalUnionScan) init(ctx context.Context) *LogicalUnionScan {
 	return &p
 }
 
-func (p Projection) init(ctx context.Context) *Projection {
+func (p LogicalProjection) init(ctx context.Context) *LogicalProjection {
 	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalProjection) init(ctx context.Context) *PhysicalProjection {
+	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
@@ -158,9 +163,14 @@ func (p PhysicalSort) init(ctx context.Context) *PhysicalSort {
 	return &p
 }
 
-func (p TopN) init(ctx context.Context) *TopN {
+func (p LogicalTopN) init(ctx context.Context) *LogicalTopN {
 	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalTopN) init(ctx context.Context) *PhysicalTopN {
+	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
@@ -177,29 +187,44 @@ func (p PhysicalLimit) init(ctx context.Context) *PhysicalLimit {
 	return &p
 }
 
-func (p TableDual) init(ctx context.Context) *TableDual {
+func (p LogicalTableDual) init(ctx context.Context) *LogicalTableDual {
 	p.basePlan = newBasePlan(TypeDual, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalTableDual) init(ctx context.Context) *PhysicalTableDual {
+	p.basePlan = newBasePlan(TypeDual, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Exists) init(ctx context.Context) *Exists {
+func (p LogicalExists) init(ctx context.Context) *LogicalExists {
 	p.basePlan = newBasePlan(TypeExists, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalExists) init(ctx context.Context) *PhysicalExists {
+	p.basePlan = newBasePlan(TypeExists, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p MaxOneRow) init(ctx context.Context) *MaxOneRow {
+func (p LogicalMaxOneRow) init(ctx context.Context) *LogicalMaxOneRow {
 	p.basePlan = newBasePlan(TypeMaxOneRow, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalMaxOneRow) init(ctx context.Context) *PhysicalMaxOneRow {
+	p.basePlan = newBasePlan(TypeMaxOneRow, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
 func (p Update) init(ctx context.Context) *Update {
-	p.basePlan = *newBasePlan(TypeUpate, ctx, &p)
+	p.basePlan = *newBasePlan(TypeUpdate, ctx, &p)
 	return &p
 }
 
@@ -214,9 +239,7 @@ func (p Insert) init(ctx context.Context) *Insert {
 }
 
 func (p Show) init(ctx context.Context) *Show {
-	p.basePlan = newBasePlan(TypeShow, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePlan = *newBasePlan(TypeShow, ctx, &p)
 	return &p
 }
 
