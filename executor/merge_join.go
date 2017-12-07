@@ -68,15 +68,15 @@ type rowBlockIterator struct {
 	rowCache  []Row
 
 	// for chunk executions
-	firstRowForKey   chunk.Row
-	curRow           chunk.Row
-	curChunk         *chunk.Chunk
-	curChunkSelected bool
-	curSelected      []bool
-	resultPool       []*chunk.Chunk
-	resourcePool     []*chunk.Chunk
-	resultGenerator  joinResultGenerator
-	isOuter          bool
+	firstRowForKey  chunk.Row
+	curRow          chunk.Row
+	curChunk        *chunk.Chunk
+	curChunkInUse   bool
+	curSelected     []bool
+	resultPool      []*chunk.Chunk
+	resourcePool    []*chunk.Chunk
+	resultGenerator joinResultGenerator
+	isOuter         bool
 }
 
 func (rb *rowBlockIterator) init() error {
@@ -152,6 +152,7 @@ func (rb *rowBlockIterator) initForChunk(chk4Reader, chk4UnSelectedOuters *chunk
 	rb.curChunk = chk4Reader
 	rb.curSelected = make([]bool, 0, rb.ctx.GetSessionVars().MaxChunkSize)
 	rb.curRow = chk4Reader.End()
+	rb.curChunkInUse = false
 	rb.resultPool = append(rb.resultPool, chk4Reader)
 	rb.firstRowForKey, err = rb.nextSelectedRow(chk4UnSelectedOuters)
 	return errors.Trace(err)
@@ -159,6 +160,7 @@ func (rb *rowBlockIterator) initForChunk(chk4Reader, chk4UnSelectedOuters *chunk
 
 func (rb *rowBlockIterator) rowsWithSameKey(chk4UnSelectedOuters *chunk.Chunk) (rows []chunk.Row, err error) {
 	rb.resourcePool = append(rb.resourcePool, rb.resultPool[0:len(rb.resultPool)-1]...)
+	rb.resultPool = rb.resultPool[len(rb.resultPool)-1:]
 	// no more data.
 	if rb.firstRowForKey == rb.curChunk.End() {
 		return nil, nil
@@ -189,16 +191,16 @@ func (rb *rowBlockIterator) nextSelectedRow(chk4UnSelectedOuters *chunk.Chunk) (
 		for ; rb.curRow != rb.curChunk.End(); rb.curRow = rb.curRow.Next() {
 			if rb.curSelected[rb.curRow.Idx()] {
 				result := rb.curRow
+				rb.curChunkInUse = true
 				rb.curRow = rb.curRow.Next()
-				rb.curChunkSelected = true
 				return result, nil
 			} else if rb.isOuter {
 				rb.resultGenerator.emitUnMatchedOuterToChunk(rb.curRow, chk4UnSelectedOuters)
 			}
 		}
-		if !rb.curChunkSelected {
+		if !rb.curChunkInUse {
+			rb.resourcePool = append(rb.resourcePool, rb.resultPool[len(rb.resultPool)-1])
 			rb.resultPool = rb.resultPool[:len(rb.resultPool)-1]
-			rb.resourcePool = append(rb.resourcePool, rb.curChunk)
 		}
 		if len(rb.resourcePool) == 0 {
 			rb.resourcePool = append(rb.resourcePool, rb.reader.newChunk())
@@ -206,8 +208,9 @@ func (rb *rowBlockIterator) nextSelectedRow(chk4UnSelectedOuters *chunk.Chunk) (
 		rb.curChunk = rb.resourcePool[0]
 		rb.resourcePool = rb.resourcePool[1:]
 		rb.resultPool = append(rb.resultPool, rb.curChunk)
-		rb.curChunkSelected = false
+		rb.curChunkInUse = false
 		rb.curRow = rb.curChunk.Begin()
+		rb.curChunk.Reset()
 		err := rb.reader.NextChunk(rb.curChunk)
 		// error happens or no more data.
 		if err != nil || rb.curChunk.NumRows() == 0 {
