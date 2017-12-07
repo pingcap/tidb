@@ -122,9 +122,14 @@ func (us *UnionScanExec) Next(goCtx goctx.Context) (Row, error) {
 		} else if snapshotRow == nil {
 			row = addedRow
 		} else {
-			row, isSnapshotRow, err = us.pickRow(snapshotRow, addedRow)
+			isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
 			if err != nil {
 				return nil, errors.Trace(err)
+			}
+			if isSnapshotRow {
+				row = snapshotRow
+			} else {
+				row = addedRow
 			}
 		}
 		if row == nil {
@@ -177,32 +182,25 @@ func (us *UnionScanExec) getAddedRow() Row {
 	return addedRow
 }
 
-// pickRow picks the row in order.
-// The second value retruned is used to determine whether to return the first input row.
-func (us *UnionScanExec) pickRow(a, b Row) (Row, bool, error) {
+// shouldPickFirstRow picks the suitable row in order.
+// The value returned is used to determine whether to pick the first input row.
+func (us *UnionScanExec) shouldPickFirstRow(a, b Row) (bool, error) {
 	var isFirstRow bool
 	addedCmpSrc, err := us.compare(a, b)
 	if err != nil {
-		return nil, isFirstRow, errors.Trace(err)
+		return isFirstRow, errors.Trace(err)
 	}
-	var row Row
 	// Compare result will never be 0.
 	if us.desc {
-		if addedCmpSrc < 0 {
-			row = b
-		} else {
-			row = a
+		if addedCmpSrc > 0 {
 			isFirstRow = true
 		}
 	} else {
 		if addedCmpSrc < 0 {
-			row = a
 			isFirstRow = true
-		} else {
-			row = b
 		}
 	}
-	return row, isFirstRow, nil
+	return isFirstRow, nil
 }
 
 func (us *UnionScanExec) compare(a, b Row) (int, error) {
