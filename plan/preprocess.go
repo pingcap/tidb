@@ -139,13 +139,12 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 	for _, c := range constraints {
 		// If the constraint as follows: primary key(c1, c2)
 		// we only support c1 column can be auto_increment.
-		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
-			continue
-		}
-		switch c.Tp {
-		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
-			ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-			return true
+		if colDef.Name.Name.L == c.Keys[0].Column.Name.L {
+			switch c.Tp {
+			case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
+				ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
+				return true
+			}
 		}
 	}
 
@@ -218,11 +217,6 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 }
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
-	if stmt.Table == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
-		return
-	}
-
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
@@ -265,10 +259,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
-	if stmt.Tables == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
-		return
-	}
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenByArgs(t.Name.String())
@@ -296,11 +286,6 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 }
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
-	if stmt.Table == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
-		return
-	}
-
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
@@ -315,10 +300,12 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
-		if len(spec.NewColumns) > 0 && spec.NewColumns[0] != nil {
-			if err := checkColumn(spec.NewColumns[0]); err != nil {
-				p.err = err
-				return
+		if len(spec.NewColumns) > 0 {
+			for _, colDef := range spec.NewColumns {
+				if err := checkColumn(colDef); err != nil {
+					p.err = err
+					return
+				}
 			}
 		}
 		switch spec.Tp {
@@ -341,7 +328,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
 func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
-	for i := 0; i < len(indexColNames); i++ {
+	for i := 0; i < len(indexColNames)-1; i++ {
 		name1 := indexColNames[i].Column.Name
 		for j := i + 1; j < len(indexColNames); j++ {
 			name2 := indexColNames[j].Column.Name
