@@ -20,8 +20,8 @@ import (
 	"sort"
 	"sync"
 
+	llrb "github.com/google/btree"
 	"github.com/juju/errors"
-	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/util/codec"
 )

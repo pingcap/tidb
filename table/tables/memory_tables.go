@@ -17,8 +17,8 @@ import (
 	"sync"
 
 	log "github.com/Sirupsen/logrus"
+	llrb "github.com/google/btree"
 	"github.com/juju/errors"
-	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
