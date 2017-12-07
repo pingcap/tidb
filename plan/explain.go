@@ -153,7 +153,7 @@ func (p *PhysicalProjection) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *TableDual) ExplainInfo() string {
+func (p *PhysicalTableDual) ExplainInfo() string {
 	return fmt.Sprintf("rows:%v", p.RowCount)
 }
 

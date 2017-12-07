@@ -106,7 +106,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 			innerPlan = sel.children[0].(LogicalPlan)
 			setParentAndChildren(apply, outerPlan, innerPlan)
 			return s.optimize(p, nil)
-		} else if m, ok := innerPlan.(*MaxOneRow); ok {
+		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
 			if m.children[0].Schema().MaxOneRow {
 				innerPlan = m.children[0].(LogicalPlan)
 				setParentAndChildren(apply, outerPlan, innerPlan)
