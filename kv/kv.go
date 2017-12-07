@@ -187,6 +187,9 @@ type Request struct {
 	NotFillCache bool
 	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
 	SyncLog bool
+	// Streaming indicates using streaming API for this request, result in that one Next()
+	// call would not corresponds to a whole region result.
+	Streaming bool
 }
 
 // Response represents the response returned from KV layer.
