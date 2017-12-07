@@ -75,9 +75,9 @@ func Init() {
 	driver := tikv.Driver{}
 	var err error
 	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr), config.Security{
-		SSLCA:   *sslCA,
-		SSLCert: *sslCert,
-		SSLKey:  *sslKey,
+		ClusterSSLCA:   *sslCA,
+		ClusterSSLCert: *sslCert,
+		ClusterSSLKey:  *sslKey,
 	})
 	terror.MustNil(err)
 

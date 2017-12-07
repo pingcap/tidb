@@ -42,9 +42,9 @@ var (
 // batchRawPut blinds put bench.
 func batchRawPut(value []byte) {
 	cli, err := tikv.NewRawKVClient(strings.Split(*pdAddr, ","), config.Security{
-		SSLCA:   *sslCA,
-		SSLCert: *sslCert,
-		SSLKey:  *sslKey,
+		ClusterSSLCA:   *sslCA,
+		ClusterSSLCert: *sslCert,
+		ClusterSSLKey:  *sslKey,
 	})
 	if err != nil {
 		log.Fatal(err)

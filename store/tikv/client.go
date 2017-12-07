@@ -77,7 +77,7 @@ func newConnArray(maxSize int, addr string, security config.Security) (*connArra
 
 func (a *connArray) Init(addr string, security config.Security) error {
 	opt := grpc.WithInsecure()
-	if len(security.SSLCA) != 0 {
+	if len(security.ClusterSSLCA) != 0 {
 		tlsConfig, err := security.ToTLSConfig()
 		if err != nil {
 			return errors.Trace(err)

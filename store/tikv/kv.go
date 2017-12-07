@@ -76,9 +76,9 @@ func (d Driver) Open(path string, security config.Security) (kv.Storage, error) 
 	}
 
 	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
-		CAPath:   security.SSLCA,
-		CertPath: security.SSLCert,
-		KeyPath:  security.SSLKey,
+		CAPath:   security.ClusterSSLCA,
+		CertPath: security.ClusterSSLCert,
+		KeyPath:  security.ClusterSSLKey,
 	})
 
 	if err != nil {

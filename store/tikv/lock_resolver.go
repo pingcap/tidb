@@ -54,9 +54,9 @@ func newLockResolver(store Storage) *LockResolver {
 // to determine a transaction's commit state.
 func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolver, error) {
 	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
-		CAPath:   security.SSLCA,
-		CertPath: security.SSLCert,
-		KeyPath:  security.SSLKey,
+		CAPath:   security.ClusterSSLCA,
+		CertPath: security.ClusterSSLCert,
+		KeyPath:  security.ClusterSSLKey,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -99,9 +99,9 @@ type benchDB struct {
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
 	store, err := tidb.NewStore("tikv://"+*addr+"?disableGC=true", config.Security{
-		SSLCA:   *sslCA,
-		SSLCert: *sslCert,
-		SSLKey:  *sslKey,
+		ClusterSSLCA:   *sslCA,
+		ClusterSSLCert: *sslCert,
+		ClusterSSLKey:  *sslKey,
 	})
 	terror.MustNil(err)
 	_, err = tidb.BootstrapSession(store)

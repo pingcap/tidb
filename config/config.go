@@ -73,16 +73,19 @@ type Security struct {
 	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
 	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
 	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
 func (s *Security) ToTLSConfig() (*tls.Config, error) {
 	tlsConfig := &tls.Config{}
-	if len(s.SSLCA) != 0 {
+	if len(s.ClusterSSLCA) != 0 {
 		certificates := []tls.Certificate{}
-		if len(s.SSLCert) != 0 && len(s.SSLKey) != 0 {
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
 			// Load the client certificates from disk
-			certificate, err := tls.LoadX509KeyPair(s.SSLCert, s.SSLKey)
+			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
 			if err != nil {
 				return nil, errors.Errorf("could not load client key pair: %s", err)
 			}
@@ -91,7 +94,7 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 
 		// Create a certificate pool from the certificate authority
 		certPool := x509.NewCertPool()
-		ca, err := ioutil.ReadFile(s.SSLCA)
+		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
 		if err != nil {
 			return nil, errors.Errorf("could not read ca certificate: %s", err)
 		}

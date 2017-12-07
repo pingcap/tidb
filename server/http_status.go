@@ -66,8 +66,8 @@ func (s *Server) startHTTPServer() {
 	http.Handle("/", router)
 
 	var err error
-	if len(s.cfg.Security.SSLCA) != 0 {
-		err = http.ListenAndServeTLS(addr, s.cfg.Security.SSLCert, s.cfg.Security.SSLKey, nil)
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		err = http.ListenAndServeTLS(addr, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey, nil)
 	} else {
 		err = http.ListenAndServe(addr, nil)
 	}
