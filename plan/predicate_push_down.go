@@ -76,7 +76,7 @@ func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]ex
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *TableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	return predicates, p
 }
 
@@ -389,7 +389,7 @@ func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression) ([]
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *MaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	// MaxOneRow forbids any condition to push down.
 	p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p

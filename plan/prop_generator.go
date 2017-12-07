@@ -245,3 +245,17 @@ func (p *NominalSort) getChildrenPossibleProps(prop *requiredProp) [][]*required
 	}
 	return nil
 }
+
+func (p *PhysicalExists) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	if prop.isEmpty() {
+		return [][]*requiredProp{{{expectedCnt: math.MaxFloat64}}}
+	}
+	return nil
+}
+
+func (p *PhysicalMaxOneRow) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	if prop.isEmpty() {
+		return [][]*requiredProp{{{expectedCnt: math.MaxFloat64}}}
+	}
+	return nil
+}
