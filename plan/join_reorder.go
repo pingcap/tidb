@@ -28,8 +28,7 @@ func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
 	// Ignore reorder if:
 	// 1. already reordered
 	// 2. not inner join
-	// 3. forced merge join
-	// 4. forced index nested loop join
+	// 3. forced to choose join type
 	if j.reordered || !j.cartesianJoin || bits.OnesCount(j.preferJoinType) > 0 {
 		return nil, false
 	}
