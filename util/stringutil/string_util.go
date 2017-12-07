@@ -14,7 +14,6 @@
 package stringutil
 
 import (
-	"bytes"
 	"strings"
 	"unicode/utf8"
 
@@ -234,32 +233,4 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 		}
 	}
 	return sIdx == len(str)
-}
-
-// RemoveRedundantBlanks removes all redundant blanks, returns a new string.
-func RemoveRedundantBlanks(s string) string {
-	var buf = new(bytes.Buffer)
-	var cbuf [6]byte
-	var lastIsBlank = false
-	var quote = rune(0x00)
-	for _, c := range s {
-		if quote == 0 && (c == ' ' || c == rune('\t') || c == rune('\r') || c == rune('\n')) {
-			lastIsBlank = true
-			continue
-		}
-
-		if lastIsBlank {
-			lastIsBlank = false
-			buf.WriteByte(' ')
-		}
-		len := utf8.EncodeRune(cbuf[0:], c)
-		buf.Write(cbuf[0:len])
-
-		if quote == 0 && (c == '\'' || c == '"') {
-			quote = c
-		} else if quote == c {
-			quote = 0x00
-		}
-	}
-	return buf.String()
 }
