@@ -55,7 +55,7 @@ func (p *PhysicalSelection) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *TopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalTopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	topNExec := &tipb.TopN{
@@ -68,7 +68,7 @@ func (p *TopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalLimit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	limitExec := &tipb.Limit{
 		Limit: p.Count,
 	}

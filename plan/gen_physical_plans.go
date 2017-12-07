@@ -320,10 +320,27 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	return joins
 }
 
-func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
-	plans := []PhysicalPlan{p.Copy()}
+func (p *LogicalProjection) generatePhysicalPlans() []PhysicalPlan {
+	proj := PhysicalProjection{
+		Exprs: p.Exprs,
+	}.init(p.ctx)
+	proj.profile = p.profile
+	proj.SetSchema(p.schema)
+	return []PhysicalPlan{proj}
+}
+
+func (p *LogicalTopN) generatePhysicalPlans() []PhysicalPlan {
+	topN := PhysicalTopN{
+		ByItems: p.ByItems,
+		Count:   p.Count,
+		Offset:  p.Offset,
+		partial: p.partial,
+	}.init(p.ctx)
+	topN.profile = p.profile
+	topN.SetSchema(p.schema)
+	plans := []PhysicalPlan{topN}
 	if prop, canPass := getPropByOrderByItems(p.ByItems); canPass {
-		limit := Limit{
+		limit := PhysicalLimit{
 			Count:        p.Count,
 			Offset:       p.Offset,
 			partial:      p.partial,
@@ -411,4 +428,78 @@ func (p *LogicalSelection) generatePhysicalPlans() []PhysicalPlan {
 	sel.profile = p.profile
 	sel.SetSchema(p.Schema())
 	return []PhysicalPlan{sel}
+}
+
+func (p *LogicalLimit) generatePhysicalPlans() []PhysicalPlan {
+	limit := PhysicalLimit{
+		Offset:  p.Offset,
+		Count:   p.Count,
+		partial: p.partial,
+	}.init(p.ctx)
+	limit.profile = p.profile
+	limit.SetSchema(p.Schema())
+	return []PhysicalPlan{limit}
+}
+
+func (p *LogicalLock) generatePhysicalPlans() []PhysicalPlan {
+	lock := PhysicalLock{
+		Lock: p.Lock,
+	}.init(p.ctx)
+	lock.profile = p.profile
+	lock.SetSchema(p.schema)
+	return []PhysicalPlan{lock}
+}
+
+func (p *LogicalUnionAll) generatePhysicalPlans() []PhysicalPlan {
+	ua := PhysicalUnionAll{childNum: len(p.children)}.init(p.ctx)
+	ua.profile = p.profile
+	ua.SetSchema(p.schema)
+	return []PhysicalPlan{ua}
+}
+
+func (p *LogicalSort) getPhysicalSort() *PhysicalSort {
+	ps := PhysicalSort{ByItems: p.ByItems}.init(p.ctx)
+	ps.profile = p.profile
+	ps.SetSchema(p.schema)
+	return ps
+}
+
+func (p *LogicalSort) getNominalSort() *NominalSort {
+	prop, canPass := getPropByOrderByItems(p.ByItems)
+	if !canPass {
+		return nil
+	}
+	ps := &NominalSort{prop: prop}
+	return ps
+}
+
+func (p *LogicalSort) generatePhysicalPlans() []PhysicalPlan {
+	ret := make([]PhysicalPlan, 0, 2)
+	ret = append(ret, p.getPhysicalSort())
+	ps := p.getNominalSort()
+	if ps != nil {
+		ret = append(ret, ps)
+	}
+	return ret
+}
+
+func (p *LogicalExists) generatePhysicalPlans() []PhysicalPlan {
+	exists := PhysicalExists{}.init(p.ctx)
+	exists.profile = p.profile
+	exists.SetSchema(p.schema)
+	return []PhysicalPlan{exists}
+}
+
+func (p *LogicalMaxOneRow) generatePhysicalPlans() []PhysicalPlan {
+	mor := PhysicalMaxOneRow{}.init(p.ctx)
+	mor.profile = p.profile
+	mor.SetSchema(p.schema)
+	return []PhysicalPlan{mor}
+}
+
+func (p *LogicalTableDual) generatePhysicalPlans() []PhysicalPlan {
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
+	dual.profile = p.profile
+	dual.SetSchema(p.schema)
+	return []PhysicalPlan{dual}
 }
