@@ -164,7 +164,7 @@ func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *copRanges, ranges []k
 	}
 }
 
-func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
+func (s *testCoprocessorSuite) TestCopRangeSplit(c *C) {
 	first := &kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}
 	mid := []kv.KeyRange{
 		{StartKey: []byte("c"), EndKey: []byte("d")},
@@ -172,152 +172,55 @@ func (s *testCoprocessorSuite) TestCalculateRemain(c *C) {
 		{StartKey: []byte("l"), EndKey: []byte("o")},
 	}
 	last := &kv.KeyRange{StartKey: []byte("q"), EndKey: []byte("t")}
-	desc := false
+	left := true
+	right := false
 
-	// range:  [c-d) [e-g) [l-o)
-	//
-	// split:  [c-m)
-	// result: [c-d) [e-g) [l-o)
-	// split:  [d-g)
-	// result: [e-g) [l-o)
-	// split:  [f-g)
-	// result: [f-g) [l-o)
+	// input range:  [c-d) [e-g) [l-o)
 	ranges := &copRanges{mid: mid}
-	s.testZZZ(c, ranges, desc,
-		zzzCase{
-			coprocessorKeyRange("c", "m"),
-			buildKeyRanges("c", "d", "e", "g", "l", "o"),
-		},
-		zzzCase{
-			coprocessorKeyRange("d", "g"),
-			buildKeyRanges("e", "g", "l", "o"),
-		},
-		zzzCase{
-			coprocessorKeyRange("f", "g"),
-			buildKeyRanges("f", "g", "l", "o"),
-		},
+	s.testSplit(c, ranges, right,
+		splitCase{"c", buildKeyRanges("c", "d", "e", "g", "l", "o")},
+		splitCase{"d", buildKeyRanges("e", "g", "l", "o")},
+		splitCase{"f", buildKeyRanges("f", "g", "l", "o")},
 	)
 
-	// range:  [a-b) [c-d) [e-g) [l-o)
-	//
-	// split:  [a-d)
-	// result: [a-b) [c-d) [e-g) [l-o)
-	// split:  [b-d)
-	// result: [c-d) [e-g) [l-o)
-	// split:  [m-o)
-	// result: [m-o)
+	// input range:  [a-b) [c-d) [e-g) [l-o)
 	ranges = &copRanges{first: first, mid: mid}
-	s.testZZZ(c, ranges, desc,
-		zzzCase{
-			coprocessorKeyRange("a", "d"),
-			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
-		},
-		zzzCase{
-			coprocessorKeyRange("b", "d"),
-			buildKeyRanges("c", "d", "e", "g", "l", "o"),
-		},
-		zzzCase{
-			coprocessorKeyRange("m", "o"),
-			buildKeyRanges("m", "o"),
-		},
+	s.testSplit(c, ranges, right,
+		splitCase{"a", buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+		splitCase{"c", buildKeyRanges("c", "d", "e", "g", "l", "o")},
+		splitCase{"m", buildKeyRanges("m", "o")},
 	)
 
-	// range:  [a-b) [c-d) [e-g) [l-o) [q-t)
-	//
-	// split:  [f-o)
-	// result: [f-g) [l-o) [q-t)
-	// split:  [h-p)
-	// result: [l-o) [q-t)
-	// split:  [r-t)
-	// result: [r-t)
+	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
 	ranges = &copRanges{first: first, mid: mid, last: last}
-	s.testZZZ(c, ranges, desc,
-		zzzCase{
-			coprocessorKeyRange("f", "o"),
-			buildKeyRanges("f", "g", "l", "o", "q", "t"),
-		},
-		zzzCase{
-			coprocessorKeyRange("h", "p"),
-			buildKeyRanges("l", "o", "q", "t"),
-		},
-		zzzCase{
-			coprocessorKeyRange("r", "t"),
-			buildKeyRanges("r", "t"),
-		},
+	s.testSplit(c, ranges, right,
+		splitCase{"f", buildKeyRanges("f", "g", "l", "o", "q", "t")},
+		splitCase{"h", buildKeyRanges("l", "o", "q", "t")},
+		splitCase{"r", buildKeyRanges("r", "t")},
 	)
 
-	desc = true
-	// reverse, test the desc direction
-	// range:  [c-d) [e-g) [l-o)
-	//
-	// split:  [c-m)
-	// result: [c-d) [e-g) [l-m)
-	// split:  [d-g)
-	// result: [c-d) [e-g)
-	// split:  [f-g)
-	// result: [c-d) [e-g)
+	// input range:  [c-d) [e-g) [l-o)
 	ranges = &copRanges{mid: mid}
-	s.testZZZ(c, ranges, desc,
-		zzzCase{
-			coprocessorKeyRange("c", "m"),
-			buildKeyRanges("c", "d", "e", "g", "l", "m"),
-		},
-		zzzCase{
-			coprocessorKeyRange("d", "g"),
-			buildKeyRanges("c", "d", "e", "g"),
-		},
-		zzzCase{
-			coprocessorKeyRange("f", "g"),
-			buildKeyRanges("c", "d", "e", "g"),
-		},
+	s.testSplit(c, ranges, left,
+		splitCase{"m", buildKeyRanges("c", "d", "e", "g", "l", "m")},
+		splitCase{"g", buildKeyRanges("c", "d", "e", "g")},
+		splitCase{"g", buildKeyRanges("c", "d", "e", "g")},
 	)
 
-	// range:  [a-b) [c-d) [e-g) [l-o)
-	//
-	// split:  [a-d)
-	// result: [a-b) [c-d)
-	// split:  [b-d)
-	// result: [a-b) [c-d)
-	// split:  [m-o)
-	// result: [a-b) [c-d) [e-g) [l-o)
+	// input range:  [a-b) [c-d) [e-g) [l-o)
 	ranges = &copRanges{first: first, mid: mid}
-	s.testZZZ(c, ranges, desc,
-		zzzCase{
-			coprocessorKeyRange("a", "d"),
-			buildKeyRanges("a", "b", "c", "d"),
-		},
-		zzzCase{
-			coprocessorKeyRange("b", "d"),
-			buildKeyRanges("a", "b", "c", "d"),
-		},
-		zzzCase{
-			coprocessorKeyRange("m", "o"),
-			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
-		},
+	s.testSplit(c, ranges, left,
+		splitCase{"d", buildKeyRanges("a", "b", "c", "d")},
+		splitCase{"d", buildKeyRanges("a", "b", "c", "d")},
+		splitCase{"o", buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o")},
 	)
 
-	// range:  [a-b) [c-d) [e-g) [l-o) [q-t)
-	//
-	// split:  [f-o)
-	// result: [a-b) [c-d) [e-g) [l-o)
-	// split:  [h-p)
-	// result: [a-b) [c-d) [e-g) [l-o)
-	// split:  [r-t)
-	// result: [a-b) [c-d) [e-g) [l-o) [q-t)
+	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
 	ranges = &copRanges{first: first, mid: mid, last: last}
-	s.testZZZ(c, ranges, desc,
-		zzzCase{
-			coprocessorKeyRange("f", "o"),
-			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
-		},
-		zzzCase{
-			coprocessorKeyRange("h", "p"),
-			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o"),
-		},
-		zzzCase{
-			coprocessorKeyRange("r", "t"),
-			buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t"),
-		},
+	s.testSplit(c, ranges, left,
+		splitCase{"o", buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+		splitCase{"p", buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+		splitCase{"t", buildKeyRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
 	)
 }
 
@@ -328,16 +231,19 @@ func coprocessorKeyRange(start, end string) *coprocessor.KeyRange {
 	}
 }
 
-type zzzCase struct {
-	*coprocessor.KeyRange
+type splitCase struct {
+	key string
 	*copRanges
 }
 
-func (s *testCoprocessorSuite) testZZZ(c *C, ranges *copRanges, desc bool, cases ...zzzCase) {
+func (s *testCoprocessorSuite) testSplit(c *C, ranges *copRanges, checkLeft bool, cases ...splitCase) {
 	for _, t := range cases {
-		result := calculateRemain(ranges, t.KeyRange, desc)
+		left, right := ranges.split([]byte(t.key))
 		expect := t.copRanges
-
-		s.checkEqual(c, result, expect.mid, false)
+		if checkLeft {
+			s.checkEqual(c, left, expect.mid, false)
+		} else {
+			s.checkEqual(c, right, expect.mid, false)
+		}
 	}
 }
