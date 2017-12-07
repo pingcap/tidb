@@ -35,6 +35,11 @@ var (
 
 // joinResultGenerator is used to generate join results according the join type, see every implementor for detailed information.
 type joinResultGenerator interface {
+	// outerIdx returns the child index of outer table.
+	outerIdx() int
+	// initDefaultChunkInner converts default inner rows stored in a Datum slice to a chunk.Row.
+	initDefaultChunkInner(innerTypes []*types.FieldType)
+
 	// emitMatchedInners should be called when key in outer row is equal to key in every inner row.
 	// Reutrn true if outer row can be joined with any input inner row.
 	emitMatchedInners(outer Row, inners []Row, resultBuffer []Row) ([]Row, bool, error)
@@ -111,6 +116,13 @@ type baseJoinResultGenerator struct {
 	chk               *chunk.Chunk
 	selected          []bool
 	defaultInner      Row
+}
+
+func (outputer *baseJoinResultGenerator) outerIdx() int {
+	if outputer.outerIsRight {
+		return 1
+	}
+	return 0
 }
 
 func (outputer *baseJoinResultGenerator) initDefaultChunkInner(innerTypes []*types.FieldType) {

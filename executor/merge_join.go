@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -47,6 +48,11 @@ type MergeJoinExec struct {
 	resultGenerator joinResultGenerator
 	resultBuffer    []Row
 	resultCursor    int
+
+	// for chunk execution.
+	resultChunk    *chunk.Chunk
+	outerChunkRows []chunk.Row
+	innerChunkRows []chunk.Row
 }
 
 const rowBufferSize = 4096
@@ -69,6 +75,8 @@ type rowBlockIterator struct {
 	curSelected      []bool
 	resultPool       []*chunk.Chunk
 	resourcePool     []*chunk.Chunk
+	resultGenerator  joinResultGenerator
+	isOuter          bool
 }
 
 func (rb *rowBlockIterator) init() error {
@@ -136,20 +144,47 @@ func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 	}
 }
 
-func (rb *rowBlockIterator) initForChunk(chk *chunk.Chunk) error {
+func (rb *rowBlockIterator) initForChunk(chk4Reader, chk4UnSelectedOuters *chunk.Chunk) (err error) {
 	if rb.reader == nil || rb.joinKeys == nil || len(rb.joinKeys) == 0 || rb.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
 	rb.stmtCtx = rb.ctx.GetSessionVars().StmtCtx
-	rb.curRow = chk.End()
-	rb.curChunk = chk
+	rb.curChunk = chk4Reader
 	rb.curSelected = make([]bool, 0, rb.ctx.GetSessionVars().MaxChunkSize)
-	rb.curChunkSelected = false
-	rb.resultPool = append(rb.resultPool, chk)
-	return nil
+	rb.curRow = chk4Reader.End()
+	rb.resultPool = append(rb.resultPool, chk4Reader)
+	rb.firstRowForKey, err = rb.nextSelectedRow(chk4UnSelectedOuters)
+	return errors.Trace(err)
 }
 
-func (rb *rowBlockIterator) nextSelectedRow() (chunk.Row, error) {
+func (rb *rowBlockIterator) rowsWithSameKey(chk4UnSelectedOuters *chunk.Chunk) (rows []chunk.Row, err error) {
+	rb.resourcePool = append(rb.resourcePool, rb.resultPool[0:len(rb.resultPool)-1]...)
+	// no more data.
+	if rb.firstRowForKey == rb.curChunk.End() {
+		return nil, nil
+	}
+	rows = append(rows, rb.firstRowForKey)
+	for {
+		selectedRow, err := rb.nextSelectedRow(chk4UnSelectedOuters)
+		// error happens or no more data.
+		if err != nil || selectedRow == rb.curChunk.End() {
+			rb.firstRowForKey = rb.curChunk.End()
+			return rows, errors.Trace(err)
+		}
+		compareResult, err := compareKeys(rb.stmtCtx, selectedRow, rb.joinKeys, rb.firstRowForKey, rb.joinKeys)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if compareResult == 0 {
+			rows = append(rows, selectedRow)
+		} else {
+			rb.firstRowForKey = selectedRow
+			return rows, nil
+		}
+	}
+}
+
+func (rb *rowBlockIterator) nextSelectedRow(chk4UnSelectedOuters *chunk.Chunk) (chunk.Row, error) {
 	for {
 		for ; rb.curRow != rb.curChunk.End(); rb.curRow = rb.curRow.Next() {
 			if rb.curSelected[rb.curRow.Idx()] {
@@ -157,6 +192,8 @@ func (rb *rowBlockIterator) nextSelectedRow() (chunk.Row, error) {
 				rb.curRow = rb.curRow.Next()
 				rb.curChunkSelected = true
 				return result, nil
+			} else if rb.isOuter {
+				rb.resultGenerator.emitUnMatchedOuterToChunk(rb.curRow, chk4UnSelectedOuters)
 			}
 		}
 		if !rb.curChunkSelected {
@@ -166,51 +203,19 @@ func (rb *rowBlockIterator) nextSelectedRow() (chunk.Row, error) {
 		if len(rb.resourcePool) == 0 {
 			rb.resourcePool = append(rb.resourcePool, rb.reader.newChunk())
 		}
-		chk := rb.resourcePool[0]
+		rb.curChunk = rb.resourcePool[0]
 		rb.resourcePool = rb.resourcePool[1:]
-		err := rb.reader.NextChunk(chk)
+		rb.resultPool = append(rb.resultPool, rb.curChunk)
+		rb.curChunkSelected = false
+		rb.curRow = rb.curChunk.Begin()
+		err := rb.reader.NextChunk(rb.curChunk)
+		// error happens or no more data.
+		if err != nil || rb.curChunk.NumRows() == 0 {
+			return rb.curChunk.End(), errors.Trace(err)
+		}
+		rb.curSelected, err = expression.VectorizedFilter(rb.ctx, rb.filter, rb.curChunk, rb.curSelected)
 		if err != nil {
-			return rb.curRow, errors.Trace(err)
-		}
-		rb.resultPool = append(rb.resultPool, chk)
-		if chk.NumRows() == 0 {
-			return rb.curRow, errors.Trace(err)
-		}
-		rb.curSelected, err = expression.VectorizedFilter(rb.ctx, rb.filter, chk, rb.curSelected)
-		if err != nil {
-			return rb.curRow, errors.Trace(err)
-		}
-		rb.curChunk = chk
-		rb.curRow = chk.Begin()
-	}
-}
-
-func (rb *rowBlockIterator) rowsWithSameKey() (rows []chunk.Row, err error) {
-	rb.resourcePool = append(rb.resourcePool, rb.resultPool[0:len(rb.resultPool)-1]...)
-	rb.firstRowForKey, err = rb.nextSelectedRow()
-	// error happens or no more data.
-	if err != nil || rb.firstRowForKey == rb.curChunk.End() {
-		return nil, errors.Trace(err)
-	}
-
-	rows = append(rows, rb.firstRowForKey)
-	for {
-		curRow, err := rb.nextSelectedRow()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if curRow == rb.curChunk.End() {
-			return rows, nil
-		}
-		compareResult, err := compareKeys(rb.stmtCtx, curRow, rb.joinKeys, rb.firstRowForKey, rb.joinKeys)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if compareResult == 0 {
-			rows = append(rows, curRow)
-		} else {
-			rb.firstRowForKey = curRow
-			return rows, nil
+			return rb.curChunk.End(), errors.Trace(err)
 		}
 	}
 }
@@ -335,7 +340,37 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 	}
 }
 
-func (e *MergeJoinExec) prepare() error {
+func (e *MergeJoinExec) prepare(forChunk bool) error {
+	// prepare for chunk-oriented execution.
+	if forChunk {
+		e.resultChunk = e.newChunk()
+		e.outerIter.filter = e.outerFilter
+		e.outerIter.resultGenerator = e.resultGenerator
+		e.outerIter.isOuter = true
+		e.innerIter.isOuter = false
+		outerIdx := e.resultGenerator.outerIdx()
+		err := e.outerIter.initForChunk(e.childrenResults[outerIdx], e.resultChunk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = e.innerIter.initForChunk(e.childrenResults[outerIdx^1], nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		e.outerChunkRows, err = e.outerIter.rowsWithSameKey(e.resultChunk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.innerChunkRows, err = e.innerIter.rowsWithSameKey(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.prepared = true
+		return nil
+	}
+
+	// prepare for row-oriented execution.
 	err := e.outerIter.init()
 	if err != nil {
 		return errors.Trace(err)
@@ -353,7 +388,6 @@ func (e *MergeJoinExec) prepare() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	e.prepared = true
 	return nil
 }
@@ -361,7 +395,7 @@ func (e *MergeJoinExec) prepare() error {
 // Next implements the Executor Next interface.
 func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.prepared {
-		if err := e.prepare(); err != nil {
+		if err := e.prepare(false); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -384,5 +418,90 @@ func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *MergeJoinExec) NextChunk(chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.prepared {
+		if err := e.prepare(true); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	for {
+		numRequiredRows := e.ctx.GetSessionVars().MaxChunkSize - chk.NumRows()
+		numRetainedRows := e.resultChunk.NumRows()
+		numAppendedRows := mathutil.Min(numRequiredRows, numRetainedRows)
+
+		chk.Append(e.resultChunk, e.resultChunk.NumRows()-numAppendedRows, e.resultChunk.NumRows())
+		e.resultChunk.TruncateTo(e.resultChunk.NumRows() - numAppendedRows)
+
+		if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+			return nil
+		}
+
+		// reach here means there no more data in "e.resultChunk"
+		hasMore, err := e.joinToChunk(e.resultChunk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !hasMore {
+			return nil
+		}
+	}
 	return nil
+}
+
+func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (bool, error) {
+	var (
+		cmpResult int   = 0
+		err       error = nil
+	)
+	for {
+		if e.outerChunkRows == nil {
+			return false, nil
+		}
+
+		if e.innerChunkRows == nil {
+			// here we set cmpResult to -1 to emit unmatched outer rows.
+			cmpResult = -1
+		} else {
+			cmpResult, err = compareKeys(e.stmtCtx, e.outerChunkRows[0], e.outerKeys, e.innerChunkRows[0], e.innerKeys)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			if cmpResult > 0 {
+				e.innerChunkRows, err = e.innerIter.rowsWithSameKey(nil)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				continue
+			}
+		}
+
+		// reach here, cmpResult <= 0 is guaranteed.
+		if cmpResult < 0 {
+			e.resultGenerator.emitUnMatchedOutersToChunk(e.outerChunkRows, chk)
+		} else {
+			for _, outer := range e.outerChunkRows {
+				matched, err := e.resultGenerator.emitMatchedInnersToChunk(outer, e.innerChunkRows, chk)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				if !matched {
+					e.resultGenerator.emitUnMatchedOuterToChunk(outer, chk)
+				}
+			}
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			e.innerChunkRows, err = e.innerIter.rowsWithSameKey(nil)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+		e.outerChunkRows, err = e.outerIter.rowsWithSameKey(chk)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if chk.NumRows() > 0 {
+			return true, nil
+		}
+	}
 }
