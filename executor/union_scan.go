@@ -115,47 +115,34 @@ func (us *UnionScanExec) Next(goCtx goctx.Context) (Row, error) {
 		}
 		addedRow := us.getAddedRow()
 		var row Row
+		var isSnapshotRow bool
 		if addedRow == nil {
 			row = snapshotRow
+			isSnapshotRow = true
 		} else if snapshotRow == nil {
 			row = addedRow
 		} else {
-			row, err = us.pickRow(addedRow, snapshotRow)
+			isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
 			if err != nil {
 				return nil, errors.Trace(err)
+			}
+			if isSnapshotRow {
+				row = snapshotRow
+			} else {
+				row = addedRow
 			}
 		}
 		if row == nil {
 			return nil, nil
 		}
-		cmp, err := us.twoRowsAreEqual(row, snapshotRow)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cmp {
+
+		if isSnapshotRow {
 			us.snapshotRow = nil
 		} else {
 			us.cursor++
 		}
 		return row, nil
 	}
-}
-
-func (us *UnionScanExec) twoRowsAreEqual(a, b Row) (bool, error) {
-	if len(a) != len(b) {
-		return false, nil
-	}
-	sc := us.ctx.GetSessionVars().StmtCtx
-	for i := 0; i < len(a); i++ {
-		cmp, err := a[i].CompareDatum(sc, &b[i])
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if cmp != 0 {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 func (us *UnionScanExec) getSnapshotRow(goCtx goctx.Context) (Row, error) {
@@ -195,27 +182,25 @@ func (us *UnionScanExec) getAddedRow() Row {
 	return addedRow
 }
 
-func (us *UnionScanExec) pickRow(a, b Row) (Row, error) {
+// shouldPickFirstRow picks the suitable row in order.
+// The value returned is used to determine whether to pick the first input row.
+func (us *UnionScanExec) shouldPickFirstRow(a, b Row) (bool, error) {
+	var isFirstRow bool
 	addedCmpSrc, err := us.compare(a, b)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return isFirstRow, errors.Trace(err)
 	}
-	var row Row
 	// Compare result will never be 0.
 	if us.desc {
-		if addedCmpSrc < 0 {
-			row = b
-		} else {
-			row = a
+		if addedCmpSrc > 0 {
+			isFirstRow = true
 		}
 	} else {
 		if addedCmpSrc < 0 {
-			row = a
-		} else {
-			row = b
+			isFirstRow = true
 		}
 	}
-	return row, nil
+	return isFirstRow, nil
 }
 
 func (us *UnionScanExec) compare(a, b Row) (int, error) {

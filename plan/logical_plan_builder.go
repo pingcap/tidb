@@ -433,7 +433,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 					continue
 				} else {
 					// If there is condition which is always false, return dual plan directly.
-					dual := TableDual{}.init(b.ctx)
+					dual := LogicalTableDual{}.init(b.ctx)
 					dual.SetSchema(p.Schema().Clone())
 					return dual
 				}
@@ -1566,7 +1566,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
-	dual := TableDual{RowCount: 1}.init(b.ctx)
+	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
 	dual.SetSchema(expression.NewSchema())
 	return dual
 }
@@ -1762,7 +1762,7 @@ out:
 			break out
 		}
 	}
-	exists := Exists{}.init(b.ctx)
+	exists := LogicalExists{}.init(b.ctx)
 	setParentAndChildren(exists, p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
@@ -1773,7 +1773,7 @@ out:
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := MaxOneRow{}.init(b.ctx)
+	maxOneRow := LogicalMaxOneRow{}.init(b.ctx)
 	setParentAndChildren(maxOneRow, p)
 	maxOneRow.SetSchema(p.Schema().Clone())
 	return maxOneRow

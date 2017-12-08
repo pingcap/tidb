@@ -828,7 +828,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for date, day, weekday
 		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE()", true},
-		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE(1)", true},
+		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE(1)", false},
 		{"SELECT DATEDIFF('2003-12-31', '2003-12-30');", true},
 		{"SELECT DATE('2003-12-31 01:02:03');", true},
 		{"SELECT DATE();", true},

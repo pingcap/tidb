@@ -29,15 +29,14 @@ var (
 	_ LogicalPlan = &LogicalProjection{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &Exists{}
-	_ LogicalPlan = &MaxOneRow{}
-	_ LogicalPlan = &TableDual{}
+	_ LogicalPlan = &LogicalExists{}
+	_ LogicalPlan = &LogicalMaxOneRow{}
+	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &LogicalUnionAll{}
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
-	_ LogicalPlan = &Show{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -239,25 +238,22 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Exists checks if a query returns result.
-type Exists struct {
+// LogicalExists checks if a query returns result.
+type LogicalExists struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// MaxOneRow checks if a query returns no more than one row.
-type MaxOneRow struct {
+// LogicalMaxOneRow checks if a query returns no more than one row.
+type LogicalMaxOneRow struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// TableDual represents a dual table plan.
-type TableDual struct {
+// LogicalTableDual represents a dual table plan.
+type LogicalTableDual struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	RowCount int
 }
