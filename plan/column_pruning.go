@@ -138,7 +138,7 @@ func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *WindowFunction) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	var selfUsedCols []*expression.Column
+	selfUsedCols := make([]*expression.Column, 0, len(parentUsedCols))
 	windowColumn := p.GetWindowResultColumn()
 	for _, col := range parentUsedCols {
 		if !windowColumn.Equal(col, nil) {
