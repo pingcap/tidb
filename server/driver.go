@@ -125,6 +125,6 @@ type ResultSet interface {
 	Next(goctx.Context) (types.Row, error)
 	SupportChunk() bool
 	NewChunk() *chunk.Chunk
-	NextChunk(chk *chunk.Chunk) error
+	NextChunk(goctx.Context, *chunk.Chunk) error
 	Close() error
 }

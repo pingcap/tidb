@@ -146,10 +146,10 @@ func (e *SortExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
+func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
-		err := e.fetchRowChunks()
+		err := e.fetchRowChunks(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -179,12 +179,12 @@ func (e *SortExec) NextChunk(chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *SortExec) fetchRowChunks() error {
+func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
 	fields := e.schema.GetTypes()
 	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
 	for {
 		chk := chunk.NewChunk(fields)
-		err := e.children[0].NextChunk(chk)
+		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -461,16 +461,16 @@ func (h *topNChunkHeap) Swap(i, j int) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *TopNExec) NextChunk(chk *chunk.Chunk) error {
+func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
 		e.totalLimit = int(e.limit.Offset + e.limit.Count)
 		e.Idx = int(e.limit.Offset)
-		err := e.loadChunksUntilTotalLimit()
+		err := e.loadChunksUntilTotalLimit(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = e.executeTopN()
+		err = e.executeTopN(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -487,12 +487,12 @@ func (e *TopNExec) NextChunk(chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *TopNExec) loadChunksUntilTotalLimit() error {
+func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(e.schema.GetTypes(), e.maxChunkSize)
 	for e.rowChunks.Len() < e.totalLimit {
 		srcChk := e.children[0].newChunk()
-		err := e.children[0].NextChunk(srcChk)
+		err := e.children[0].NextChunk(goCtx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -516,7 +516,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit() error {
 
 const topNCompactionFactor = 4
 
-func (e *TopNExec) executeTopN() error {
+func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
 	heap.Init(e.chkHeap)
 	for len(e.rowPtrs) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
@@ -528,7 +528,7 @@ func (e *TopNExec) executeTopN() error {
 	}
 	childRowChk := e.children[0].newChunk()
 	for {
-		err := e.children[0].NextChunk(childRowChk)
+		err := e.children[0].NextChunk(goCtx, childRowChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
