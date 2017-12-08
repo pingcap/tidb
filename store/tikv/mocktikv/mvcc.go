@@ -20,13 +20,15 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/google/btree"
 	"github.com/juju/errors"
-	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/util/codec"
 )
 
 type mvccValueType int
+
+const btreeDegree = 32
 
 const (
 	typePut mvccValueType = iota
@@ -220,7 +222,7 @@ func (e *mvccEntry) Clone() *mvccEntry {
 	return &entry
 }
 
-func (e *mvccEntry) Less(than llrb.Item) bool {
+func (e *mvccEntry) Less(than btree.Item) bool {
 	return bytes.Compare(e.key, than.(*mvccEntry).key) < 0
 }
 
@@ -408,7 +410,7 @@ func newRawEntry(key []byte) *rawEntry {
 	}
 }
 
-func (e *rawEntry) Less(than llrb.Item) bool {
+func (e *rawEntry) Less(than btree.Item) bool {
 	return bytes.Compare(e.key, than.(*rawEntry).key) < 0
 }
 
@@ -443,15 +445,15 @@ type MVCCDebugger interface {
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
 type MvccStore struct {
 	sync.RWMutex
-	tree  *llrb.LLRB
-	rawkv *llrb.LLRB
+	tree  *btree.BTree
+	rawkv *btree.BTree
 }
 
 // NewMvccStore creates a MvccStore.
 func NewMvccStore() *MvccStore {
 	return &MvccStore{
-		tree:  llrb.New(),
-		rawkv: llrb.New(),
+		tree:  btree.New(btreeDegree),
+		rawkv: btree.New(btreeDegree),
 	}
 }
 
@@ -471,7 +473,7 @@ func (s *MvccStore) get(key MvccKey, startTS uint64, isoLevel kvrpcpb.IsolationL
 	return entry.(*mvccEntry).Get(startTS, isoLevel)
 }
 
-// A Pair is a KV pair read from MvccStore or an error if any occurs.
+// Pair is a KV pair read from MvccStore or an error if any occurs.
 type Pair struct {
 	Key   []byte
 	Value []byte
@@ -512,7 +514,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64, iso
 	endKey = NewMvccKey(endKey)
 
 	var pairs []Pair
-	iterator := func(item llrb.Item) bool {
+	iterator := func(item btree.Item) bool {
 		if len(pairs) >= limit {
 			return false
 		}
@@ -544,7 +546,7 @@ func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint
 	endKey = NewMvccKey(endKey)
 
 	var pairs []Pair
-	iterator := func(item llrb.Item) bool {
+	iterator := func(item btree.Item) bool {
 		if len(pairs) >= limit {
 			return false
 		}
@@ -654,7 +656,7 @@ func (s *MvccStore) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.
 	defer s.RUnlock()
 
 	var locks []*kvrpcpb.LockInfo
-	iterator := func(item llrb.Item) bool {
+	iterator := func(item btree.Item) bool {
 		ent := item.(*mvccEntry)
 		if !regionContains(startKey, endKey, ent.key) {
 			return false
@@ -679,7 +681,7 @@ func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint6
 
 	var ents []*mvccEntry
 	var err error
-	iterator := func(item llrb.Item) bool {
+	iterator := func(item btree.Item) bool {
 		ent := item.(*mvccEntry)
 		if !regionContains(startKey, endKey, ent.key) {
 			return false
@@ -748,7 +750,7 @@ func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
 	defer s.RUnlock()
 
 	var pairs []Pair
-	iterator := func(item llrb.Item) bool {
+	iterator := func(item btree.Item) bool {
 		if len(pairs) >= limit {
 			return false
 		}
@@ -773,7 +775,7 @@ func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*k
 
 	var info *kvrpcpb.MvccInfo
 	var key []byte
-	iterator := func(item llrb.Item) bool {
+	iterator := func(item btree.Item) bool {
 		k := item.(*mvccEntry)
 		if !regionContains(startKey, endKey, k.key) {
 			return false

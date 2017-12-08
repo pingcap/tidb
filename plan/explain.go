@@ -148,12 +148,12 @@ func (p *PhysicalSelection) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *Projection) ExplainInfo() string {
+func (p *PhysicalProjection) ExplainInfo() string {
 	return string(expression.ExplainExpressionList(p.Exprs))
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *TableDual) ExplainInfo() string {
+func (p *PhysicalTableDual) ExplainInfo() string {
 	return fmt.Sprintf("rows:%v", p.RowCount)
 }
 
@@ -306,7 +306,7 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *TopN) ExplainInfo() string {
+func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	for i, item := range p.ByItems {
 		order := "asc"

@@ -226,7 +226,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	exprs := make([]expression.Expression, 0, len(v.Exprs))
-	dual := TableDual{RowCount: 1}.init(b.ctx)
+	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
@@ -236,7 +236,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		exprs = append(exprs, expr)
 	}
 	dual.SetSchema(expression.NewSchema())
-	p := Projection{Exprs: exprs}.init(b.ctx)
+	p := LogicalProjection{Exprs: exprs}.init(b.ctx)
 	setParentAndChildren(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
@@ -256,7 +256,7 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 				// Convert column name expression to string value expression.
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
 			}
-			mockTablePlan := TableDual{}.init(b.ctx)
+			mockTablePlan := LogicalTableDual{}.init(b.ctx)
 			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
@@ -566,7 +566,6 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
-	var resultPlan Plan
 	p := Show{
 		Tp:          show.Tp,
 		DBName:      show.DBName,
@@ -577,7 +576,6 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		User:        show.User,
 		GlobalScope: show.GlobalScope,
 	}.init(b.ctx)
-	resultPlan = p
 	switch showTp := show.Tp; showTp {
 	case ast.ShowProcedureStatus:
 		p.SetSchema(buildShowProcedureSchema())
@@ -600,36 +598,31 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	for i, col := range p.schema.Columns {
 		col.Position = i
 	}
-	var conditions []expression.Expression
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	mockTablePlan.SetSchema(p.schema)
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
 		}
-		expr, _, err := b.rewrite(show.Pattern, p, nil, false)
+		expr, _, err := b.rewrite(show.Pattern, mockTablePlan, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		conditions = append(conditions, expr)
+		p.Conditions = append(p.Conditions, expr)
 	}
 	if show.Where != nil {
 		conds := splitWhere(show.Where)
 		for _, cond := range conds {
-			expr, _, err := b.rewrite(cond, p, nil, false)
+			expr, _, err := b.rewrite(cond, mockTablePlan, nil, false)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
 			}
-			conditions = append(conditions, expr)
+			p.Conditions = append(p.Conditions, expr)
 		}
 	}
-	if len(conditions) != 0 {
-		sel := LogicalSelection{Conditions: conditions}.init(b.ctx)
-		setParentAndChildren(sel, p)
-		sel.SetSchema(p.Schema())
-		resultPlan = sel
-	}
-	return resultPlan
+	return p
 }
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
@@ -786,7 +779,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
-	mockTablePlan := TableDual{}.init(b.ctx)
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 
 	checkRefColumn := func(n ast.Node) ast.Node {
@@ -953,7 +946,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		return nil
 	}
 	schema := expression.TableInfo2Schema(tableInfo)
-	mockTablePlan := TableDual{}.init(b.ctx)
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	p.SetSchema(expression.NewSchema())

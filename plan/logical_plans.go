@@ -26,18 +26,17 @@ import (
 var (
 	_ LogicalPlan = &LogicalJoin{}
 	_ LogicalPlan = &LogicalAggregation{}
-	_ LogicalPlan = &Projection{}
+	_ LogicalPlan = &LogicalProjection{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &Exists{}
-	_ LogicalPlan = &MaxOneRow{}
-	_ LogicalPlan = &TableDual{}
+	_ LogicalPlan = &LogicalExists{}
+	_ LogicalPlan = &LogicalMaxOneRow{}
+	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &LogicalUnionAll{}
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
-	_ LogicalPlan = &Show{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -155,11 +154,10 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Projection represents a select fields plan.
-type Projection struct {
+// LogicalProjection represents a select fields plan.
+type LogicalProjection struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	Exprs []expression.Expression
 
@@ -168,7 +166,7 @@ type Projection struct {
 	calculateGenCols bool
 }
 
-func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, extractCorColumns(expr)...)
@@ -239,25 +237,22 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Exists checks if a query returns result.
-type Exists struct {
+// LogicalExists checks if a query returns result.
+type LogicalExists struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// MaxOneRow checks if a query returns no more than one row.
-type MaxOneRow struct {
+// LogicalMaxOneRow checks if a query returns no more than one row.
+type LogicalMaxOneRow struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// TableDual represents a dual table plan.
-type TableDual struct {
+// LogicalTableDual represents a dual table plan.
+type LogicalTableDual struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	RowCount int
 }
@@ -337,11 +332,10 @@ func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// TopN represents a top-n plan.
-type TopN struct {
+// LogicalTopN represents a top-n plan.
+type LogicalTopN struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	ByItems []*ByItems
 	Offset  uint64
@@ -352,7 +346,7 @@ type TopN struct {
 }
 
 // isLimit checks if TopN is a limit plan.
-func (t *TopN) isLimit() bool {
+func (t *LogicalTopN) isLimit() bool {
 	return len(t.ByItems) == 0
 }
 

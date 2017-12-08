@@ -320,8 +320,25 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	return joins
 }
 
-func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
-	plans := []PhysicalPlan{p.Copy()}
+func (p *LogicalProjection) generatePhysicalPlans() []PhysicalPlan {
+	proj := PhysicalProjection{
+		Exprs: p.Exprs,
+	}.init(p.ctx)
+	proj.profile = p.profile
+	proj.SetSchema(p.schema)
+	return []PhysicalPlan{proj}
+}
+
+func (p *LogicalTopN) generatePhysicalPlans() []PhysicalPlan {
+	topN := PhysicalTopN{
+		ByItems: p.ByItems,
+		Count:   p.Count,
+		Offset:  p.Offset,
+		partial: p.partial,
+	}.init(p.ctx)
+	topN.profile = p.profile
+	topN.SetSchema(p.schema)
+	plans := []PhysicalPlan{topN}
 	if prop, canPass := getPropByOrderByItems(p.ByItems); canPass {
 		limit := PhysicalLimit{
 			Count:        p.Count,
@@ -464,4 +481,25 @@ func (p *LogicalSort) generatePhysicalPlans() []PhysicalPlan {
 		ret = append(ret, ps)
 	}
 	return ret
+}
+
+func (p *LogicalExists) generatePhysicalPlans() []PhysicalPlan {
+	exists := PhysicalExists{}.init(p.ctx)
+	exists.profile = p.profile
+	exists.SetSchema(p.schema)
+	return []PhysicalPlan{exists}
+}
+
+func (p *LogicalMaxOneRow) generatePhysicalPlans() []PhysicalPlan {
+	mor := PhysicalMaxOneRow{}.init(p.ctx)
+	mor.profile = p.profile
+	mor.SetSchema(p.schema)
+	return []PhysicalPlan{mor}
+}
+
+func (p *LogicalTableDual) generatePhysicalPlans() []PhysicalPlan {
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
+	dual.profile = p.profile
+	dual.SetSchema(p.schema)
+	return []PhysicalPlan{dual}
 }

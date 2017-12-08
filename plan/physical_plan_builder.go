@@ -84,7 +84,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	// Now we only consider rootTask.
 	if len(p.basePlan.children) == 0 {
 		// When the children length is 0, we process it specially.
-		t = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
+		t = &rootTask{p: p.basePlan.self.(LogicalPlan).generatePhysicalPlans()[0]}
 		t = prop.enforceProperty(t, p.basePlan.ctx)
 		p.storeTask(prop, t)
 		return t, nil
@@ -160,7 +160,7 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 				return nil, errors.Trace(err)
 			}
 			if !result {
-				dual := TableDual{}.init(p.ctx)
+				dual := PhysicalTableDual{}.init(p.ctx)
 				dual.SetSchema(p.schema)
 				dual.profile = p.profile
 				return &rootTask{
@@ -317,7 +317,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.filterCondition = p.pushedDownConds
 		}
 	}
-	is.profile = p.getStatsProfileByFilter(p.pushedDownConds)
+	is.profile = p.profile
 
 	cop := &copTask{
 		indexPlan: is,
@@ -421,11 +421,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			indexConds = is.filterCondition
 		}
 		if indexConds != nil {
-			condsClone := make([]expression.Expression, 0, len(indexConds))
-			for _, cond := range indexConds {
-				condsClone = append(condsClone, cond.Clone())
-			}
-			indexSel := PhysicalSelection{Conditions: condsClone}.init(is.ctx)
+			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx)
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
 			indexSel.profile = p.getStatsProfileByFilter(append(is.AccessCondition, indexConds...))
@@ -555,7 +551,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			ts.filterCondition = p.pushedDownConds
 		}
 	}
-	ts.profile = p.getStatsProfileByFilter(p.pushedDownConds)
+	ts.profile = p.profile
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
 	if pkCol != nil {
