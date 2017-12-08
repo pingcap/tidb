@@ -1,5 +1,5 @@
-hash: 706074c30615e1e0a706adef7eaeaab84e7acaeaa98132e5a1d487173ebfd5ef
-updated: 2017-11-29T15:54:56.281890071+09:00
+hash: 080ae78e166cc53c0b3bebbf823894461ab61e5c1f1f716aacc00dc1c3a8c2e8
+updated: 2017-12-08T12:15:42.491167+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -147,7 +147,7 @@ imports:
 - name: github.com/pingcap/mysqlx-driver
   version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
 - name: github.com/pingcap/pd
-  version: 96db717124a5bd980e8a244af2db8952e04159d6
+  version: 5d2c405e548f93aba033278018fcda6bd69fad7e
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
