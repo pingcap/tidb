@@ -1,5 +1,5 @@
-hash: 080ae78e166cc53c0b3bebbf823894461ab61e5c1f1f716aacc00dc1c3a8c2e8
-updated: 2017-12-08T12:15:42.491167+08:00
+hash: 947ae351a4de2ce0eff92de0f70a84103568cd08e7736ba797d938c5a1882fa2
+updated: 2017-12-08T14:24:36.676737+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -112,10 +112,6 @@ imports:
   subpackages:
   - ext
   - log
-- name: github.com/petar/GoLLRB
-  version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
-  subpackages:
-  - llrb
 - name: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - name: github.com/pingcap/check
