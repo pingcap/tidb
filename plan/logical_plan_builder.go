@@ -16,6 +16,7 @@ package plan
 import (
 	"fmt"
 	"math"
+	"math/bits"
 	"reflect"
 	"strings"
 	"unicode"
@@ -42,6 +43,8 @@ const (
 	TiDBMergeJoin = "tidb_smj"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
+	// TiDBHashJoin is hint enforce hash join.
+	TiDBHashJoin = "tidb_hj"
 )
 
 const (
@@ -257,15 +260,21 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	if b.TableHints() != nil {
 		leftAlias := extractTableAlias(leftPlan)
 		rightAlias := extractTableAlias(rightPlan)
-		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
+		if b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias) {
+			joinPlan.preferJoinType |= preferMergeJoin
+		}
+		if b.TableHints().ifPreferHashJoin(leftAlias, rightAlias) {
+			joinPlan.preferJoinType |= preferHashJoin
+		}
 		if b.TableHints().ifPreferINLJ(leftAlias) {
-			joinPlan.preferINLJ = joinPlan.preferINLJ | preferLeftAsOuter
+			joinPlan.preferJoinType |= preferLeftAsIndexOuter
 		}
 		if b.TableHints().ifPreferINLJ(rightAlias) {
-			joinPlan.preferINLJ = joinPlan.preferINLJ | preferRightAsOuter
+			joinPlan.preferJoinType |= preferRightAsIndexOuter
 		}
-		if joinPlan.preferMergeJoin && joinPlan.preferINLJ > 0 {
-			b.err = errors.New("Optimizer Hints is conflict")
+		// If there're multiple join type and one of them is not the index join hints, then is conflict.
+		if bits.OnesCount(joinPlan.preferJoinType) > 1 && (joinPlan.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
+			b.err = errors.New("Join hints are conflict, you can only specify one type of join")
 			return nil
 		}
 	}
@@ -1411,21 +1420,24 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 }
 
 func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	var sortMergeTables, INLJTables []model.CIStr
+	var sortMergeTables, INLJTables, hashJoinTables []model.CIStr
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin:
 			sortMergeTables = append(sortMergeTables, hint.Tables...)
 		case TiDBIndexNestedLoopJoin:
 			INLJTables = append(INLJTables, hint.Tables...)
+		case TiDBHashJoin:
+			hashJoinTables = append(hashJoinTables, hint.Tables...)
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables) != 0 || len(INLJTables) != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
+			hashJoinTables:            hashJoinTables,
 		})
 		return true
 	}
@@ -1800,10 +1812,20 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	if b.TableHints() != nil {
 		outerAlias := extractTableAlias(outerPlan)
 		innerAlias := extractTableAlias(innerPlan)
-		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias)
+		if b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias) {
+			joinPlan.preferJoinType |= preferMergeJoin
+		}
+		if b.TableHints().ifPreferHashJoin(outerAlias, innerAlias) {
+			joinPlan.preferJoinType |= preferHashJoin
+		}
 		// semi join's outer is always the left side.
 		if b.TableHints().ifPreferINLJ(outerAlias) {
-			joinPlan.preferINLJ = preferLeftAsOuter
+			joinPlan.preferJoinType = preferLeftAsIndexOuter
+		}
+		// If there're multiple join hints, they're conflict.
+		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
+			b.err = errors.New("Join hints are conflict, you can only specify one type of join")
+			return nil
 		}
 	}
 	return joinPlan
