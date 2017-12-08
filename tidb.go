@@ -27,7 +27,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -243,11 +242,11 @@ func RegisterStore(name string, driver kv.Driver) error {
 //    boltdb:///absolute/path
 //
 // The engine should be registered before creating storage.
-func NewStore(path string, security config.Security) (kv.Storage, error) {
-	return newStoreWithRetry(path, util.DefaultMaxRetries, security)
+func NewStore(path string) (kv.Storage, error) {
+	return newStoreWithRetry(path, util.DefaultMaxRetries)
 }
 
-func newStoreWithRetry(path string, maxRetries int, security config.Security) (kv.Storage, error) {
+func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	url, err := url.Parse(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -262,7 +261,7 @@ func newStoreWithRetry(path string, maxRetries int, security config.Security) (k
 	var s kv.Storage
 	err1 := util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		log.Infof("new store")
-		s, err = d.Open(path, security)
+		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
 	return s, errors.Trace(err1)

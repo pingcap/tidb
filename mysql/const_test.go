@@ -19,7 +19,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -63,7 +62,7 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 		tidb.SetSchemaLease(0)
 		tidb.SetStatsLease(0)
 	} else {
-		store, err := tidb.NewStore("memory://test/test", config.Security{})
+		store, err := tidb.NewStore("memory://test/test")
 		c.Assert(err, IsNil)
 		s.store = store
 	}

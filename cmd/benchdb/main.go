@@ -23,7 +23,6 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
@@ -98,11 +97,7 @@ type benchDB struct {
 
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
-	store, err := tidb.NewStore("tikv://"+*addr+"?disableGC=true", config.Security{
-		ClusterSSLCA:   *sslCA,
-		ClusterSSLCert: *sslCert,
-		ClusterSSLKey:  *sslKey,
-	})
+	store, err := tidb.NewStore("tikv://" + *addr + "?disableGC=true")
 	terror.MustNil(err)
 	_, err = tidb.BootstrapSession(store)
 	terror.MustNil(err)

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	goctx "golang.org/x/net/context"
 )
@@ -114,7 +113,7 @@ func NewTestTiKVStorage(withTiKV bool, pdAddrs string) (Storage, error) {
 
 	if withTiKV {
 		var d Driver
-		store, err := d.Open(fmt.Sprintf("tikv://%s", pdAddrs), config.Security{})
+		store, err := d.Open(fmt.Sprintf("tikv://%s", pdAddrs))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

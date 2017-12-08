@@ -26,7 +26,6 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
@@ -74,11 +73,7 @@ var (
 func Init() {
 	driver := tikv.Driver{}
 	var err error
-	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr), config.Security{
-		ClusterSSLCA:   *sslCA,
-		ClusterSSLCert: *sslCert,
-		ClusterSSLKey:  *sslKey,
-	})
+	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr))
 	terror.MustNil(err)
 
 	prometheus.MustRegister(txnCounter)

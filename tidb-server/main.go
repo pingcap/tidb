@@ -161,7 +161,7 @@ func registerStores() {
 func createStoreAndDomain() {
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
-	storage, err = tidb.NewStore(fullPath, cfg.Security)
+	storage, err = tidb.NewStore(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
 	dom, err = tidb.BootstrapSession(storage)

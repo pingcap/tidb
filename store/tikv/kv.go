@@ -66,10 +66,11 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 
 // Open opens or creates an TiKV storage with given path.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
-func (d Driver) Open(path string, security config.Security) (kv.Storage, error) {
+func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
+	security := config.GetGlobalConfig().Security
 	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -120,7 +121,7 @@ type MockDriver struct {
 }
 
 // Open creates a MockTiKV storage.
-func (d MockDriver) Open(path string, security config.Security) (kv.Storage, error) {
+func (d MockDriver) Open(path string) (kv.Storage, error) {
 	u, err := url.Parse(path)
 	if err != nil {
 		return nil, errors.Trace(err)

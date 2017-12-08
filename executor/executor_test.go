@@ -25,7 +25,6 @@ import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -86,7 +85,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		tidb.SetSchemaLease(0)
 		tidb.SetStatsLease(0)
 	} else {
-		store, err := tidb.NewStore("memory://test/test", config.Security{})
+		store, err := tidb.NewStore("memory://test/test")
 		c.Assert(err, IsNil)
 		s.store = store
 	}
