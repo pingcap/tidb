@@ -55,7 +55,7 @@ func (bf *bitAndFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	ft.Flen = 21
 	types.SetBinChsClnFlag(ft)
-	ft.Flag |= mysql.UnsignedFlag
+	ft.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	return ft
 }
 
