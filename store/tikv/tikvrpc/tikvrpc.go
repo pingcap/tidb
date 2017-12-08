@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -45,6 +46,7 @@ const (
 	CmdRawScan
 
 	CmdCop CmdType = 512 + iota
+	CmdCopStream
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
@@ -95,6 +97,7 @@ type Response struct {
 	RawDelete        *kvrpcpb.RawDeleteResponse
 	RawScan          *kvrpcpb.RawScanResponse
 	Cop              *coprocessor.Response
+	CopStream        tikvpb.Tikv_CoprocessorStreamClient
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion      *kvrpcpb.SplitRegionResponse
