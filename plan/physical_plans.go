@@ -642,10 +642,8 @@ func buildSchema(p PhysicalPlan) {
 func rebuildSchema(p PhysicalPlan) bool {
 	needRebuild := false
 	for _, ch := range p.Children() {
-		needRebuild = needRebuild || rebuildSchema(ch.(PhysicalPlan))
-	}
-	if needRebuild {
-		buildSchema(p)
+		childRebuilt := rebuildSchema(ch.(PhysicalPlan))
+		needRebuild = needRebuild || childRebuilt
 	}
 	switch p.(type) {
 	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexLookUpReader:
@@ -653,6 +651,9 @@ func rebuildSchema(p PhysicalPlan) bool {
 		// If there is projection or aggregation, the index of column will be resolved so no need to rebuild the schema.
 	case *PhysicalProjection, *PhysicalHashAgg, *PhysicalStreamAgg:
 		needRebuild = false
+	}
+	if needRebuild {
+		buildSchema(p)
 	}
 	return needRebuild
 }
