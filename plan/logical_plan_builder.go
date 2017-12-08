@@ -589,6 +589,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
 				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				exprs[i].GetType().Flag |= mysql.ParseToJSONFlag
 				needProjection = true
 			} else {
 				exprs[i] = srcCol.Clone()
@@ -1686,6 +1687,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				// Because the expression maybe return different type from
 				// the generated column, we should wrap a CAST on the result.
 				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+				expr.GetType().Flag |= mysql.ParseToJSONFlag
 				exprIsGen = true
 			}
 		}
@@ -1936,6 +1938,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			return nil, nil
 		}
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
+		newExpr.GetType().Flag |= mysql.ParseToJSONFlag
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}

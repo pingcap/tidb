@@ -709,6 +709,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 			return
 		}
 		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+		expr.GetType().Flag |= mysql.ParseToJSONFlag
 
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
