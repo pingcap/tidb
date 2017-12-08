@@ -52,7 +52,7 @@ const (
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
 	// TypeWindowFunction is the type of window function.
-	TypeWindowFunction = "WindowFunction"
+	TypeWindowFunction = "Window"
 	// TypeHashSemiJoin is the type of hash semi join.
 	TypeHashSemiJoin = "HashSemiJoin"
 	// TypeHashLeftJoin is the type of left hash join.
