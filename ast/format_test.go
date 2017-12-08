@@ -54,6 +54,8 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		// Functions.
 		{` json_extract ( a,'$.b',"$.\"c d\"" ) `, "json_extract(`a`, \"$.b\", \"$.\\\"c d\\\"\")"},
 		{` length ( a )`, "length(`a`)"},
+		{`a -> '$.a'`, "json_extract(`a`, \"$.a\")"},
+		{`a.b ->> '$.a'`, "json_unquote(json_extract(`a`.`b`, \"$.a\"))"},
 		// Cast, Convert and Binary.
 		// There should not be spaces between 'cast' and '(' unless 'IGNORE_SPACE' mode is set.
 		// see: https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html

@@ -3069,11 +3069,13 @@ SimpleExpr:
 |	SimpleIdent jss stringLit
 	{
 	    expr := ast.NewValueExpr($3)
+	    expr.SetText(strconv.Quote($3))
 	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{$1, expr}}
 	}
 |	SimpleIdent juss stringLit
 	{
 	    expr := ast.NewValueExpr($3)
+	    expr.SetText(strconv.Quote($3))
 	    extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{$1, expr}}
 	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
 	}
