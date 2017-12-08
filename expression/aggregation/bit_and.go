@@ -61,9 +61,6 @@ func (bf *bitAndFunction) GetType() *types.FieldType {
 
 // Update implements Aggregation interface.
 func (bf *bitAndFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if len(bf.Args) != 1 {
-		return errors.New("Wrong number of args for AggFuncBitAnd")
-	}
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
