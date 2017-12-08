@@ -59,29 +59,19 @@ func (bf *bitOrFunction) GetType() *types.FieldType {
 
 // Update implements Aggregation interface.
 func (bf *bitOrFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if bf.mode == CompleteMode {
-		if len(bf.Args) == 0 {
-			return nil
-		} else if len(bf.Args) != 1 {
-			return errors.New("Wrong number of args for AggFuncBitOr")
-		}
-		a := bf.Args[0]
-		value, err := a.Eval(row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if ctx.Value.IsNull() {
-			ctx.Value.SetUint64(0)
-		}
-		if !value.IsNull() {
-			ctx.Value.SetUint64(ctx.Value.GetUint64() | value.GetUint64())
-		}
-	} else {
-		if ctx.Value.IsNull() {
-			ctx.Value.SetUint64(0)
-		}
-		v := row.GetUint64(0)
-		ctx.Value.SetUint64(ctx.Value.GetUint64() | v)
+	if len(bf.Args) != 1 {
+		return errors.New("Wrong number of args for AggFuncBitOr")
+	}
+	a := bf.Args[0]
+	value, err := a.Eval(row)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ctx.Value.IsNull() {
+		ctx.Value.SetUint64(0)
+	}
+	if !value.IsNull() {
+		ctx.Value.SetUint64(ctx.Value.GetUint64() | value.GetUint64())
 	}
 	return nil
 }
