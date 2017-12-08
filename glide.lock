@@ -1,5 +1,5 @@
-hash: 706074c30615e1e0a706adef7eaeaab84e7acaeaa98132e5a1d487173ebfd5ef
-updated: 2017-11-29T15:54:56.281890071+09:00
+hash: fd41f4cdbce457fae92cca9c4ceeaccc9de4e6437a200dbdc539745b2bf93b17
+updated: 2017-12-07T14:42:24.016476632+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -75,6 +75,8 @@ imports:
   - ptypes/any
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- name: github.com/google/btree
+  version: 316fb6d3f031ae8f4d457c6c5186b9e3ded70435
 - name: github.com/gorilla/context
   version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
 - name: github.com/gorilla/mux
