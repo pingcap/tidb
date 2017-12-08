@@ -731,6 +731,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	return li
 }
 
+// TODO: Generate different types of results according to different concrete window functions.
 func (b *planBuilder) buildWindowFunction(src LogicalPlan, expr *ast.WindowFuncExpr) *WindowFunction {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	ft.Flen = 21
