@@ -80,7 +80,7 @@ var (
 		"unsupported drop integer primary key")
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
-	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
+	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
@@ -131,8 +131,8 @@ var (
 	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
 	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
-	// ErrTooLongIdent returns for too long name of database/table/column.
-	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
+	// ErrTooLongIdent returns for too long name of database/table/column/index.
+	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, mysql.MySQLErrName[mysql.ErrTooLongIdent])
 	// ErrWrongDBName returns for wrong database name.
 	ErrWrongDBName = terror.ClassDDL.New(codeWrongDBName, mysql.MySQLErrName[mysql.ErrWrongDBName])
 	// ErrWrongTableName returns for wrong table name.
@@ -199,22 +199,13 @@ type ddl struct {
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
-
-	// reorgDoneCh is for reorganization, if the reorganization job is done,
-	// we will use this channel to notify outer.
-	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
-	// use a persistent job list.
-	reorgDoneCh chan error
-	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
-	reorgRowCount int64
-	// notifyCancelReorgJob is for reorganization, it used to notify the backfilling goroutine if the DDL job is cancelled.
-	notifyCancelReorgJob chan struct{}
+	// reorgCtx is for reorganization.
+	reorgCtx *reorgCtx
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
 
-	workerVars *variable.SessionVars
-
+	workerVars      *variable.SessionVars
 	delRangeManager delRangeManager
 }
 
@@ -273,17 +264,17 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
-		infoHandle:           infoHandle,
-		hook:                 hook,
-		store:                store,
-		uuid:                 id,
-		lease:                lease,
-		ddlJobCh:             make(chan struct{}, 1),
-		ddlJobDoneCh:         make(chan struct{}, 1),
-		notifyCancelReorgJob: make(chan struct{}, 1),
-		ownerManager:         manager,
-		schemaSyncer:         syncer,
-		workerVars:           variable.NewSessionVars(),
+		infoHandle:   infoHandle,
+		hook:         hook,
+		store:        store,
+		uuid:         id,
+		lease:        lease,
+		ddlJobCh:     make(chan struct{}, 1),
+		ddlJobDoneCh: make(chan struct{}, 1),
+		reorgCtx:     &reorgCtx{notifyCancelReorgJob: make(chan struct{}, 1)},
+		ownerManager: manager,
+		schemaSyncer: syncer,
+		workerVars:   variable.NewSessionVars(),
 	}
 	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 

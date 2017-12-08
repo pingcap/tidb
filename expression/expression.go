@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -40,25 +40,25 @@ type Expression interface {
 	Eval(row types.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(row types.Row, sc *variable.StatementContext) (val int64, isNull bool, err error)
+	EvalInt(row types.Row, sc *stmtctx.StatementContext) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(row types.Row, sc *variable.StatementContext) (val float64, isNull bool, err error)
+	EvalReal(row types.Row, sc *stmtctx.StatementContext) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(row types.Row, sc *variable.StatementContext) (val string, isNull bool, err error)
+	EvalString(row types.Row, sc *stmtctx.StatementContext) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(row types.Row, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(row types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
+	EvalTime(row types.Row, sc *stmtctx.StatementContext) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(row types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
+	EvalDuration(row types.Row, sc *stmtctx.StatementContext) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(row types.Row, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
+	EvalJSON(row types.Row, sc *stmtctx.StatementContext) (val json.JSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -215,35 +215,25 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) (Expression, error) {
+func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		var err error
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i], err = EvaluateExprWithNull(ctx, schema, arg)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		newFunc, err := NewFunction(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return newFunc, nil
+		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 	case *Column:
 		if !schema.Contains(x) {
-			return x, nil
+			return x
 		}
-		constant := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
-		return constant, nil
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:
 		if x.DeferredExpr != nil {
-			newConst := FoldConstant(x)
-			return newConst, nil
+			return FoldConstant(x)
 		}
 	}
-	return expr.Clone(), nil
+	return expr.Clone()
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.

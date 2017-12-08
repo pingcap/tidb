@@ -17,8 +17,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	goctx "golang.org/x/net/context"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -29,9 +29,9 @@ import (
 // 2. For other cases its preferred not to use SMJ and operator
 // will throw error.
 type MergeJoinExec struct {
-	ctx      context.Context
-	stmtCtx  *variable.StatementContext
-	schema   *expression.Schema
+	baseExecutor
+
+	stmtCtx  *stmtctx.StatementContext
 	prepared bool
 
 	outerKeys   []*expression.Column
@@ -51,7 +51,7 @@ const rowBufferSize = 4096
 
 // rowBlockIterator represents a row block with the same join keys
 type rowBlockIterator struct {
-	stmtCtx   *variable.StatementContext
+	stmtCtx   *stmtctx.StatementContext
 	ctx       context.Context
 	reader    Executor
 	filter    []expression.Expression
@@ -76,8 +76,9 @@ func (rb *rowBlockIterator) init() error {
 }
 
 func (rb *rowBlockIterator) nextRow() (Row, error) {
+	goCtx := goctx.TODO()
 	for {
-		row, err := rb.reader.Next()
+		row, err := rb.reader.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -128,39 +129,24 @@ func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.resultBuffer = nil
-
-	lErr := e.outerIter.reader.Close()
-	if lErr != nil {
-		terror.Log(errors.Trace(e.innerIter.reader.Close()))
-		return errors.Trace(lErr)
+	if err := e.baseExecutor.Close(); err != nil {
+		return errors.Trace(err)
 	}
-	rErr := e.innerIter.reader.Close()
-	if rErr != nil {
-		return errors.Trace(rErr)
-	}
-
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *MergeJoinExec) Open() error {
-	e.prepared = false
-	e.resultCursor = 0
-	e.resultBuffer = nil
-
-	err := e.outerIter.reader.Open()
-	if err != nil {
+func (e *MergeJoinExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(e.innerIter.reader.Open())
+	e.prepared = false
+	e.resultCursor = 0
+	e.resultBuffer = make([]Row, 0, rowBufferSize)
+	return nil
 }
 
-// Schema implements the Executor Schema interface.
-func (e *MergeJoinExec) Schema() *expression.Schema {
-	return e.schema
-}
-
-func compareKeys(stmtCtx *variable.StatementContext,
+func compareKeys(stmtCtx *stmtctx.StatementContext,
 	leftRow Row, leftKeys []*expression.Column,
 	rightRow Row, rightKeys []*expression.Column) (int, error) {
 	for i, leftKey := range leftKeys {
@@ -199,13 +185,12 @@ func (e *MergeJoinExec) doJoin() (err error) {
 			}
 		}
 
-		initLen := len(e.resultBuffer)
-		e.resultBuffer, err = e.resultGenerator.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
+		matched := false
+		e.resultBuffer, matched, err = e.resultGenerator.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if initLen == len(e.resultBuffer) {
+		if !matched {
 			e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)
 		}
 	}
@@ -262,9 +247,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 }
 
 func (e *MergeJoinExec) prepare() error {
-	e.stmtCtx = e.ctx.GetSessionVars().StmtCtx
-	e.resultBuffer = make([]Row, 0, rowBufferSize)
-
 	err := e.outerIter.init()
 	if err != nil {
 		return errors.Trace(err)
@@ -288,7 +270,7 @@ func (e *MergeJoinExec) prepare() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next() (Row, error) {
+func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
 	if !e.prepared {
 		if err := e.prepare(); err != nil {
 			return nil, errors.Trace(err)

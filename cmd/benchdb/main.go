@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -100,7 +100,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	session, err := tidb.CreateSession(store)
 	terror.MustNil(err)
-	_, err = session.Execute("use test")
+	_, err = session.Execute(goctx.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
@@ -110,14 +110,15 @@ func newBenchDB() *benchDB {
 }
 
 func (ut *benchDB) mustExec(sql string) {
-	rss, err := ut.session.Execute(sql)
+	rss, err := ut.session.Execute(goctx.Background(), sql)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if len(rss) > 0 {
+		goCtx := goctx.Background()
 		rs := rss[0]
 		for {
-			row, err1 := rs.Next()
+			row, err1 := rs.Next(goCtx)
 			if err1 != nil {
 				log.Fatal(err1)
 			}
@@ -280,7 +281,7 @@ func (ut *benchDB) manualGC(done chan bool) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = gcworker.RunGCJob(context.Background(), ut.store, ver.Ver, "benchDB")
+	err = gcworker.RunGCJob(goctx.Background(), ut.store, ver.Ver, "benchDB")
 	if err != nil {
 		log.Fatal(err)
 	}

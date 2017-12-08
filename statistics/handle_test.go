@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
@@ -113,11 +113,22 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 	c.Assert(len(a.Columns), Equals, len(b.Columns))
 	for i := range a.Columns {
+		c.Assert(a.Columns[i].Count, Equals, b.Columns[i].Count)
 		assertHistogramEqual(c, a.Columns[i].Histogram, b.Columns[i].Histogram)
+		if a.Columns[i].CMSketch == nil {
+			c.Assert(b.Columns[i].CMSketch, IsNil)
+		} else {
+			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
+		}
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
 		assertHistogramEqual(c, a.Indices[i].Histogram, b.Indices[i].Histogram)
+		if a.Columns[i].CMSketch == nil {
+			c.Assert(b.Columns[i].CMSketch, IsNil)
+		} else {
+			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
+		}
 	}
 }
 
@@ -170,7 +181,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 0.0)
@@ -189,7 +200,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(1))
@@ -338,7 +349,32 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	c.Assert(newStatsTbl2.Columns[int64(3)].LastUpdateVersion, Greater, newStatsTbl2.Columns[int64(1)].LastUpdateVersion)
 }
 
-func (s *testStatsUpdateSuite) TestLoadHistogram(c *C) {
+func (s *testStatsCacheSuite) TestInitStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6)")
+	testKit.MustExec("analyze table t")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.Lease = time.Millisecond
+
+	h.Clear()
+	c.Assert(h.InitStats(is), IsNil)
+	table0 := h.GetTableStats(tbl.Meta().ID)
+	h.Clear()
+	c.Assert(h.Update(is), IsNil)
+	table1 := h.GetTableStats(tbl.Meta().ID)
+	assertTableEqual(c, table0, table1)
+	h.Lease = 0
+}
+
+func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	store, do, err := newStoreWithBootstrap(10 * time.Millisecond)
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -358,10 +394,16 @@ func (s *testStatsUpdateSuite) TestLoadHistogram(c *C) {
 	stat := h.GetTableStats(tableInfo.ID)
 	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
 	c.Assert(len(hg.Buckets), Greater, 0)
+	cms := stat.Columns[tableInfo.Columns[0].ID].CMSketch
+	c.Assert(cms, IsNil)
 	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
 	c.Assert(len(hg.Buckets), Greater, 0)
+	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
+	c.Assert(cms.TotalCount(), Greater, uint64(0))
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(len(hg.Buckets), Equals, 0)
+	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch
+	c.Assert(cms, IsNil)
 	_, err = stat.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo.Columns[2].ID)
 	c.Assert(err, IsNil)
 	time.Sleep(1 * time.Second)

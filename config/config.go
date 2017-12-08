@@ -33,6 +33,8 @@ type Config struct {
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
+	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
+	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -42,6 +44,8 @@ type Config struct {
 	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 }
 
 // Log is the log section of config.
@@ -134,13 +138,32 @@ type OpenTracingReporter struct {
 	LocalAgentHostPort  string        `toml:"local-agent-host-port" json:"local-agent-host-port"`
 }
 
+// ProxyProtocol is the PROXY protocol section of the config.
+type ProxyProtocol struct {
+	// PROXY protocol acceptable client networks.
+	// Empty string means disable PROXY protocol,
+	// * means all networks.
+	Networks string `toml:"networks" json:"networks"`
+	// PROXY protocol header read timeout, Unit is second.
+	HeaderTimeout int `toml:"header-timeout" json:"header-timeout"`
+}
+
+// TiKVClient is the config for tikv client.
+type TiKVClient struct {
+	// GrpcConnectionCount is the max gRPC connections that will be established
+	// with each tikv-server.
+	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
+}
+
 var defaultConf = Config{
-	Host:   "0.0.0.0",
-	Port:   4000,
-	Store:  "mocktikv",
-	Path:   "/tmp/tidb",
-	RunDDL: true,
-	Lease:  "10s",
+	Host:        "0.0.0.0",
+	Port:        4000,
+	Store:       "mocktikv",
+	Path:        "/tmp/tidb",
+	RunDDL:      true,
+	Lease:       "10s",
+	TokenLimit:  1000,
+	EnableChunk: true,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
@@ -167,6 +190,10 @@ var defaultConf = Config{
 		XHost: "0.0.0.0",
 		XPort: 14000,
 	},
+	ProxyProtocol: ProxyProtocol{
+		Networks:      "",
+		HeaderTimeout: 5,
+	},
 	PlanCache: PlanCache{
 		Enabled:  false,
 		Capacity: 2560,
@@ -183,6 +210,9 @@ var defaultConf = Config{
 			Param: 1.0,
 		},
 		Reporter: OpenTracingReporter{},
+	},
+	TiKVClient: TiKVClient{
+		GrpcConnectionCount: 16,
 	},
 }
 
@@ -204,6 +234,9 @@ func GetGlobalConfig() *Config {
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	_, err := toml.DecodeFile(confFile, c)
+	if c.TokenLimit <= 0 {
+		c.TokenLimit = 1000
+	}
 	return errors.Trace(err)
 }
 

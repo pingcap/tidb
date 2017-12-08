@@ -15,7 +15,7 @@ package codec
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -73,7 +73,7 @@ func testFrac(c *C, v *types.MyDecimal) {
 	b := EncodeDecimal([]byte{}, d1)
 	_, d2, err := DecodeDecimal(b)
 	c.Assert(err, IsNil)
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	cmp, err := d1.CompareDatum(sc, &d2)
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)

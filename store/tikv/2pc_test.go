@@ -21,11 +21,9 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
 
@@ -43,7 +41,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := newTikvStore("mock-tikv-store", pdCli, spkv, client, false)
+	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
 	c.Assert(err, IsNil)
 	s.store = store
 	commitMaxBackoff = 2000
@@ -375,121 +373,4 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	v, err = txn.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a3"))
-}
-
-// interceptCommitClient wraps rpcClient and returns specified response and error for commit command.
-type interceptCommitClient struct {
-	Client
-	resp *tikvrpc.Response
-	err  error
-}
-
-func (c *interceptCommitClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	if req.Type == tikvrpc.CmdCommit {
-		return c.resp, c.err
-	}
-	return c.Client.SendReq(ctx, addr, req)
-}
-
-// TestCommitPrimaryRpcError tests rpc errors are handled properly
-// when committing primary region task.
-func (s *testCommitterSuite) TestCommitPrimaryRpcErrors(c *C) {
-	s.store.client = &interceptCommitClient{
-		Client: s.store.client,
-		resp:   nil,
-		err:    errors.Errorf("timeout"),
-	}
-
-	// The rpc error may or may not be wrapped to ErrResultUndetermined.
-	t1 := s.begin(c)
-	err := t1.Set([]byte("a"), []byte("a1"))
-	c.Assert(err, IsNil)
-	err = t1.Commit(goctx.Background())
-	c.Assert(err, NotNil)
-	// TODO: refine errors of region cache and rpc, so that every the rpc error
-	// could be easily wrapped to ErrResultUndetermined, but RegionError would not.
-	// c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
-}
-
-// TestCommitPrimaryRegionError tests RegionError is handled properly
-// when committing primary region task.
-func (s *testCommitterSuite) TestCommitPrimaryRegionError(c *C) {
-	s.store.client = &interceptCommitClient{
-		Client: s.store.client,
-		resp: &tikvrpc.Response{
-			Type: tikvrpc.CmdCommit,
-			Commit: &kvrpcpb.CommitResponse{
-				RegionError: &errorpb.Error{
-					NotLeader: &errorpb.NotLeader{},
-				},
-			},
-		},
-		err: nil,
-	}
-	// Ensure it returns the original error without wrapped to ErrResultUndetermined
-	// if it exceeds max retry timeout on RegionError.
-	t2 := s.begin(c)
-	err := t2.Set([]byte("b"), []byte("b1"))
-	c.Assert(err, IsNil)
-	err = t2.Commit(goctx.Background())
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
-}
-
-// TestCommitPrimaryKeyError tests KeyError is handled properly
-// when committing primary region task.
-func (s *testCommitterSuite) TestCommitPrimaryKeyError(c *C) {
-	s.store.client = &interceptCommitClient{
-		Client: s.store.client,
-		resp: &tikvrpc.Response{
-			Type: tikvrpc.CmdCommit,
-			Commit: &kvrpcpb.CommitResponse{
-				Error: &kvrpcpb.KeyError{},
-			},
-		},
-		err: nil,
-	}
-	// Ensure it returns the original error without wrapped to ErrResultUndetermined
-	// if it meets KeyError.
-	t3 := s.begin(c)
-	err := t3.Set([]byte("c"), []byte("c1"))
-	c.Assert(err, IsNil)
-	err = t3.Commit(goctx.Background())
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
-}
-
-type commitWithUndeterminedErrClient struct {
-	Client
-}
-
-func (c *commitWithUndeterminedErrClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendReq(ctx, addr, req)
-	if err != nil || req.Type != tikvrpc.CmdCommit {
-		return resp, err
-	}
-	return nil, terror.ErrResultUndetermined
-}
-
-func (s *testCommitterSuite) TestCommitTimeout(c *C) {
-	s.store.client = &commitWithUndeterminedErrClient{
-		Client: s.store.client,
-	}
-	txn := s.begin(c)
-	err := txn.Set([]byte("a"), []byte("a1"))
-	c.Assert(err, IsNil)
-	err = txn.Set([]byte("b"), []byte("b1"))
-	c.Assert(err, IsNil)
-	err = txn.Set([]byte("c"), []byte("c1"))
-	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
-	c.Assert(err, NotNil)
-
-	txn2 := s.begin(c)
-	value, err := txn2.Get([]byte("a"))
-	c.Assert(err, IsNil)
-	c.Assert(len(value), Greater, 0)
-	_, err = txn2.Get([]byte("b"))
-	c.Assert(err, IsNil)
-	c.Assert(len(value), Greater, 0)
 }

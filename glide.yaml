@@ -14,7 +14,6 @@ import:
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
-  - contrib/recipes
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -40,14 +39,12 @@ import:
   version: 6352e005618615ffaf1cb1c6622b8e91435751fe
 - package: github.com/ngaut/sync2
   version: 7a24ed77b2efb460c1468b7dc917821c66e80e55
-- package: github.com/petar/GoLLRB
-  version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
-  subpackages:
-  - llrb
+- package: github.com/google/btree
+  version: 316fb6d3f031ae8f4d457c6c5186b9e3ded70435
 - package: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - package: github.com/pingcap/check
-  version: 9b266636177e249ec28b0aeffe8e86bc272bb481
+  version: 1c287c953996ab3a0bf535dba9d53d809d3dc0b6
 - package: github.com/pingcap/goleveldb
   version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
@@ -137,9 +134,11 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
+  version: 96db717124a5bd980e8a244af2db8952e04159d6
+  subpackages:
+  - pd-client
 - package: github.com/pingcap/tipb
-  version: eccd39c3992538c382a6351430a77233f42b1344
+  version: a497eca3b8920e192aae1a5af81e573f90e59a6b
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -155,7 +154,7 @@ import:
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: 3c5b40fb2000acb6b3441d5695cb470a23e8f1b5
+  version: e33073e1475021e04c795c3de5e1f4e28baa708a
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
@@ -197,7 +196,6 @@ import:
   version: v1.0
 - package: github.com/pingcap/mysqlx-driver
   version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
-  repo: git@github.com:pingcap/mysqlx-driver.git
 - package: github.com/apache/thrift
   version: ">=0.9.3, <0.11.0"
   subpackages:
@@ -224,7 +222,7 @@ import:
   - suite
 - package: github.com/crossdock/crossdock-go
 - package: github.com/uber/jaeger-lib
-  version: ^1.0.0
+  version: v1.1.0
   subpackages:
   - metrics
 - package: github.com/uber/jaeger-client-go
@@ -246,3 +244,11 @@ import:
   subpackages:
   - tags
   - tracing/opentracing
+- package: github.com/blacktear23/go-proxyprotocol
+  version: 62e368e1c4700c34b4b6f77afd49b215211574c2
+- package: github.com/coreos/gofail
+  version: 38defe9971eda62d1b1c6a69c00acf001d46ecab
+  subpackages:
+  - runtime
+- package: gopkg.in/natefinch/lumberjack.v2
+  version: dd45e6a67c53f673bb49ca8a001fd3a63ceb640e

@@ -27,6 +27,12 @@ lease = "10s"
 # When create table, split a separated region for it.
 # split-table = false
 
+# The limit of concurrent executed sessions.
+# token-limit = 1000
+
+# Enable chunk executors.
+enable-chunk = true
+
 [log]
 # Log level: info, debug, warn, error, fatal.
 level = "info"
@@ -118,6 +124,14 @@ xport = 14000
 # The socket file to use for x protocol connection.
 xsocket = ""
 
+[proxy-protocol]
+# PROXY protocol acceptable client networks.
+# Empty string means disable PROXY protocol, * means all networks.
+networks = ""
+
+# PROXY protocol header read timeout, unit is second
+header-timeout = 5
+
 [plan-cache]
 enabled = false
 capacity = 2560
@@ -177,3 +191,7 @@ log-spans = false
 
 #  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
 local-agent-host-port = ""
+
+[tikv-client]
+# Max gRPC connections that will be established with each tikv-server.
+grpc-connection-count = 16

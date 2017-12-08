@@ -17,12 +17,14 @@ import (
 	"bytes"
 	"math"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -701,7 +703,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{uint64(math.MaxUint64), uint64(0), 1},
 		{uint64(0), uint64(math.MaxUint64), -1},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, t := range tblCmp {
 		d1 := types.NewDatum(t.Arg1)
 		dec1, err := d1.ToDecimal(sc)
@@ -727,7 +729,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
 		-0.0099, 0, 0.001, 0.0012, 0.12, 1.2, 1.23, 123.3, 2424.242424}
-	var decs [][]byte
+	decs := make([][]byte, 0, len(floats))
 	for i := range floats {
 		dec := types.NewDecFromFloatForTest(floats[i])
 		var d types.Datum
@@ -864,5 +866,75 @@ func (s *testCodecSuite) TestSetRawValues(c *C) {
 		encoded, err1 := EncodeValue(nil, datums[i])
 		c.Assert(err1, IsNil)
 		c.Assert(encoded, BytesEquals, rawVal.GetBytes())
+	}
+}
+
+func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		value interface{}
+		tp    *types.FieldType
+	}{
+		{nil, types.NewFieldType(mysql.TypeLonglong)},
+		{int64(1), types.NewFieldType(mysql.TypeTiny)},
+		{int64(1), types.NewFieldType(mysql.TypeShort)},
+		{int64(1), types.NewFieldType(mysql.TypeInt24)},
+		{int64(1), types.NewFieldType(mysql.TypeLong)},
+		{int64(1), types.NewFieldType(mysql.TypeLonglong)},
+		{float32(1), types.NewFieldType(mysql.TypeFloat)},
+		{float64(1), types.NewFieldType(mysql.TypeDouble)},
+		{types.NewDecFromInt(1), types.NewFieldType(mysql.TypeNewDecimal)},
+		{"abc", types.NewFieldType(mysql.TypeString)},
+		{"def", types.NewFieldType(mysql.TypeVarchar)},
+		{"ghi", types.NewFieldType(mysql.TypeVarString)},
+		{[]byte("abc"), types.NewFieldType(mysql.TypeBlob)},
+		{[]byte("abc"), types.NewFieldType(mysql.TypeTinyBlob)},
+		{[]byte("abc"), types.NewFieldType(mysql.TypeMediumBlob)},
+		{[]byte("abc"), types.NewFieldType(mysql.TypeLongBlob)},
+		{types.CurrentTime(mysql.TypeDatetime), types.NewFieldType(mysql.TypeDatetime)},
+		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
+		{types.Time{
+			Time:     types.FromGoTime(time.Now()),
+			Type:     mysql.TypeTimestamp,
+			TimeZone: time.Local,
+		}, types.NewFieldType(mysql.TypeTimestamp)},
+		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
+		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
+		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
+		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
+		{json.CreateJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
+		{int64(1), types.NewFieldType(mysql.TypeYear)},
+	}
+
+	datums := make([]types.Datum, 0, len(table))
+	tps := make([]*types.FieldType, 0, len(table))
+	for _, t := range table {
+		tps = append(tps, t.tp)
+		datums = append(datums, types.NewDatum(t.value))
+	}
+	chk := chunk.NewChunk(tps)
+	rowCount := 3
+	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
+		encoded, err := EncodeValue(nil, datums...)
+		c.Assert(err, IsNil)
+		for colIdx, t := range table {
+			encoded, err = DecodeOneToChunk(encoded, chk, colIdx, t.tp, time.Local)
+			c.Assert(err, IsNil)
+		}
+	}
+
+	sc := new(stmtctx.StatementContext)
+	for colIdx, t := range table {
+		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
+			got := chk.GetRow(rowIdx).GetDatum(colIdx, t.tp)
+			expect := datums[colIdx]
+			if got.IsNull() {
+				c.Assert(expect.IsNull(), IsTrue)
+			} else {
+				cmp, err := got.CompareDatum(sc, &expect)
+				c.Assert(err, IsNil)
+				c.Assert(cmp, Equals, 0)
+			}
+		}
 	}
 }

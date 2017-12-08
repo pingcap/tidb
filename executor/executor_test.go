@@ -33,10 +33,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
-	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
+	mocktikv "github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -120,31 +119,32 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 
+	goCtx := goctx.Background()
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 2)
-	c.Assert(row.Data[0].GetInt64(), Equals, int64(1))
-	c.Assert(row.Data[1].GetString(), Equals, "error: Can't find this job")
+	c.Assert(row.Len(), Equals, 2)
+	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 4)
+	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	ddlInfo, err := admin.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetInt64(), Equals, ddlInfo.SchemaVer)
+	c.Assert(row.GetInt64(0), Equals, ddlInfo.SchemaVer)
 	// TODO: Pass this test.
 	// rowOwnerInfos := strings.Split(row.Data[1].GetString(), ",")
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	c.Assert(row.Data[2].GetString(), Equals, "")
-	row, err = r.Next()
+	c.Assert(row.GetString(2), Equals, "")
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 	err = txn.Rollback()
@@ -153,16 +153,16 @@ func (s *testSuite) TestAdmin(c *C) {
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	row, err = r.Next()
+	row, err = r.Next(goCtx)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 2)
+	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
-	c.Assert(len(row.Data[0].GetString()), Greater, 0)
+	c.Assert(len(row.GetString(0)), Greater, 0)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[1].GetString(), Equals, historyJobs[0].State.String())
+	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -176,7 +176,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, NotNil)
 	// different index values
 	ctx := tk.Se.(context.Context)
-	dom := sessionctx.GetDomain(ctx)
+	dom := domain.GetDomain(ctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
@@ -241,7 +241,7 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
-// Issue 3685.
+// TestSelectBackslashN Issue 3685.
 func (s *testSuite) TestSelectBackslashN(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -250,8 +250,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("<nil>"))
 	rs, err := tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err := rs.Fields()
-	c.Check(err, IsNil)
+	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "NULL")
 
@@ -260,8 +259,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("N"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
 
@@ -274,8 +272,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("1"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
 
@@ -284,7 +281,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("<nil>"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
+	fields = rs.Fields()
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
@@ -294,8 +291,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("<nil>"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
 
@@ -304,8 +300,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("1"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
 
@@ -314,8 +309,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("1"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
 
@@ -324,8 +318,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("N"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
 
@@ -334,13 +327,12 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	r.Check(testkit.Rows("N"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
 }
 
-// Issue #4053.
+// TestSelectNull Issue #4053.
 func (s *testSuite) TestSelectNull(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -349,8 +341,7 @@ func (s *testSuite) TestSelectNull(c *C) {
 	r.Check(testkit.Rows("<nil>"))
 	rs, err := tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err := rs.Fields()
-	c.Check(err, IsNil)
+	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
 
@@ -359,8 +350,7 @@ func (s *testSuite) TestSelectNull(c *C) {
 	r.Check(testkit.Rows("<nil>"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
 
@@ -369,13 +359,13 @@ func (s *testSuite) TestSelectNull(c *C) {
 	r.Check(testkit.Rows("<nil>"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
+	fields = rs.Fields()
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `null+NULL`)
 }
 
-// Issue #3686.
+// TestSelectStringLiteral Issue #3686.
 func (s *testSuite) TestSelectStringLiteral(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -384,8 +374,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("abc"))
 	rs, err := tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err := rs.Fields()
-	c.Check(err, IsNil)
+	fields := rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `abc`)
 
@@ -394,8 +383,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("abc"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `abc`)
 
@@ -404,8 +392,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("0"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `'abc'+'def'`)
 
@@ -415,48 +402,42 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("\n"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "")
 
 	sql = "select '\t   col';" // Lowercased letter is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "col")
 
 	sql = "select '\t   Col';" // Uppercased letter is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "Col")
 
 	sql = "select '\n\t   中文 col';" // Chinese char is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "中文 col")
 
 	sql = "select ' \r\n  .col';" // Punctuation is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, ".col")
 
 	sql = "select '   😆col';" // Emoji is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "😆col")
 
@@ -464,16 +445,14 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	sql = `select 'abc   ';`
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "abc   ")
 
 	sql = `select '  abc   123   ';`
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "abc   123   ")
 
@@ -483,8 +462,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("a string"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "a")
 
@@ -493,8 +471,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("a string"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "a")
 
@@ -503,8 +480,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("stringstring"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "string")
 
@@ -513,8 +489,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("ssa"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
 
@@ -523,8 +498,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("ssab"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
 
@@ -533,8 +507,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("ssa b"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
 
@@ -543,8 +516,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	r.Check(testkit.Rows("ssa b d"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "ss")
 }
@@ -734,10 +706,9 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next()
+	row, err := rs.Next(goctx.Background())
 	c.Assert(err, IsNil)
-	str := row.Data[0].GetMysqlDuration().String()
-	c.Assert(str, Equals, "-46:09:02")
+	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -770,6 +741,18 @@ func (s *testSuite) TestIssue345(c *C) {
 
 	_, err := tk.Exec(`update t1 as a, t2 set t1.c1 = 10;`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestIssue5055(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1 (a int);`)
+	tk.MustExec(`create table t2 (a int);`)
+	tk.MustExec(`insert into t1 values(1);`)
+	tk.MustExec(`insert into t2 values(1);`)
+	result := tk.MustQuery("select tbl1.* from (select t1.a, 1 from t1) tbl1 left join t2 tbl2 on tbl1.a = tbl2.a order by tbl1.a desc limit 1;")
+	result.Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestUnion(c *C) {
@@ -1333,10 +1316,10 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 
 	// Test generated column in subqueries.
 	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.a not in (SELECT t.a FROM test_gc_read t where t.c > 5)`)
-	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`))
+	result.Sort().Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`))
 
 	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.c in (SELECT t.c FROM test_gc_read t where t.c > 5)`)
-	result.Check(testkit.Rows(`3 4 7 12`, `8 8 16 64`))
+	result.Sort().Check(testkit.Rows(`3 4 7 12`, `8 8 16 64`))
 
 	result = tk.MustQuery(`SELECT tt.b FROM test_gc_read tt WHERE tt.a = (SELECT max(t.a) FROM test_gc_read t WHERE t.c = tt.c) ORDER BY b`)
 	result.Check(testkit.Rows(`2`, `4`, `8`))
@@ -1534,20 +1517,19 @@ func (s *testSuite) TestTableScan(c *C) {
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
-	se.GetSessionVars().TxnCtx.InfoSchema = sessionctx.GetDomain(se).InfoSchema()
-	compiler := &executor.Compiler{}
-	ctx := se.(context.Context)
+	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
+	compiler := &executor.Compiler{Ctx: se}
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
-	stmt, err := compiler.Compile(ctx, stmtNode)
+	stmt, err := compiler.Compile(goctx.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
 	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
-	stmt, err = compiler.Compile(ctx, stmtNode)
+	stmt, err = compiler.Compile(goctx.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
@@ -1566,9 +1548,6 @@ func (s *testSuite) TestPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plan.ResolveName(stmtNode, infoSchema, ctx)
-		c.Check(err, IsNil)
-		// Preprocess should be after NameResolve.
 		err = plan.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
 		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
@@ -1634,23 +1613,20 @@ func (s *testSuite) TestColumnName(c *C) {
 	tk.MustExec("create table t (c int, d int)")
 	rs, err := tk.Exec("select 1 + c, count(*) from t")
 	c.Check(err, IsNil)
-	fields, err := rs.Fields()
-	c.Check(err, IsNil)
+	fields := rs.Fields()
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
 	tk.MustExec("begin")
 	tk.MustExec("insert t values(1,1)")
 	rs, err = tk.Exec("select c d, d c from t")
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
-	c.Check(err, IsNil)
+	fields = rs.Fields()
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "d")
 	c.Check(fields[1].Column.Name.L, Equals, "c")
@@ -1658,7 +1634,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	// In this case, all attributes have values.
 	rs, err = tk.Exec("select c as a from t as t2")
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
+	fields = rs.Fields()
 	c.Check(fields[0].Column.Name.L, Equals, "a")
 	c.Check(fields[0].ColumnAsName.L, Equals, "a")
 	c.Check(fields[0].Table.Name.L, Equals, "t")
@@ -1668,7 +1644,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	// In this case, the table, org_table and database attributes will all be empty.
 	rs, err = tk.Exec("select hour(1) as a from t as t2")
 	c.Check(err, IsNil)
-	fields, err = rs.Fields()
+	fields = rs.Fields()
 	c.Check(fields[0].Column.Name.L, Equals, "a")
 	c.Check(fields[0].ColumnAsName.L, Equals, "a")
 	c.Check(fields[0].Table.Name.L, Equals, "")
@@ -1965,7 +1941,7 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
 }
 
-// This tests https://github.com/pingcap/tidb/issues/4024
+// TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
 func (s *testSuite) TestIssue4024(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database test2")
@@ -2063,8 +2039,15 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("create table t1 (id int, v int, unique index i_id (id))")
 	defer tk.MustExec("drop table t")
+	defer tk.MustExec("drop table t1")
 	tk.MustExec("insert into t values (1)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
 
 	cli := s.cli
 	cli.mu.Lock()
@@ -2072,6 +2055,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
@@ -2180,9 +2164,9 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	row, err := r.Next()
+	row, err := r.Next(goctx.Background())
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")
@@ -2279,7 +2263,7 @@ func (s *testSuite) TestEnhancedRangeAccess(c *C) {
 	tk.MustQuery("select * from t where (a = 1 and b = 1) or (a = 2 and b = 2)").Check(nil)
 }
 
-// Issue #4810
+// TestMaxInt64Handle Issue #4810
 func (s *testSuite) TestMaxInt64Handle(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -2293,4 +2277,13 @@ func (s *testSuite) TestMaxInt64Handle(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("delete from t where id = 9223372036854775807")
 	tk.MustQuery("select * from t").Check(nil)
+}
+
+func (s *testSuite) TestTableScanWithPointRanges(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t values(1), (5), (10)")
+	tk.MustQuery("select * from t where id in(1, 2, 10)").Check(testkit.Rows("1", "10"))
 }

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
+	goctx "golang.org/x/net/context"
 )
 
 // ShowExec represents a show executor.
@@ -59,7 +60,7 @@ type ShowExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *ShowExec) Next() (Row, error) {
+func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.rows == nil {
 		err := e.fetchAll()
 		if err != nil {
@@ -369,22 +370,49 @@ func (e *ShowExec) fetchShowCharset() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() error {
-	sessionVars := e.ctx.GetSessionVars()
+func (e *ShowExec) fetchShowVariables() (err error) {
+	var (
+		value         string
+		ok            bool
+		sessionVars   = e.ctx.GetSessionVars()
+		unreachedVars = make([]string, 0, len(variable.SysVars))
+	)
 	for _, v := range variable.SysVars {
-		var err error
-		var value string
 		if !e.GlobalScope {
-			// Try to get Session Scope variable value first.
-			value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
+			// For a session scope variable,
+			// 1. try to fetch value from SessionVars.Systems;
+			// 2. if this variable is session-only, fetch value from SysVars
+			//		otherwise, fetch the value from table `mysql.Global_Variables`.
+			value, ok, err = varsutil.GetSessionOnlySysVars(sessionVars, v.Name)
 		} else {
-			value, err = varsutil.GetGlobalSystemVar(sessionVars, v.Name)
+			// If the scope of a system variable is ScopeNone,
+			// it's a read-only variable, so we return the default value of it.
+			// Otherwise, we have to fetch the values from table `mysql.Global_Variables` for global variable names.
+			value, ok, err = varsutil.GetScopeNoneSystemVar(v.Name)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if !ok {
+			unreachedVars = append(unreachedVars, v.Name)
+			continue
+		}
 		row := types.MakeDatums(v.Name, value)
 		e.rows = append(e.rows, row)
+	}
+	if len(unreachedVars) != 0 {
+		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, varName := range unreachedVars {
+			varValue, ok := systemVars[varName]
+			if !ok {
+				varValue = variable.SysVars[varName].Value
+			}
+			row := types.MakeDatums(varName, varValue)
+			e.rows = append(e.rows, row)
+		}
 	}
 	return nil
 }

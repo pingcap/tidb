@@ -21,11 +21,11 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -70,9 +70,23 @@ func (t *Table) copy() *Table {
 	return nt
 }
 
-func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo *model.TableInfo) error {
-	histID, distinct := row.Data[2].GetInt64(), row.Data[3].GetInt64()
-	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
+func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSketch, error) {
+	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return decodeCMSketch(rows[0].GetBytes(0))
+}
+
+func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
+	histID := row.GetInt64(2)
+	distinct := row.GetInt64(3)
+	histVer := row.GetUint64(4)
+	nullCount := row.GetInt64(5)
 	idx := table.Indices[histID]
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
@@ -83,7 +97,11 @@ func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &Index{Histogram: *hg, Info: idxInfo}
+			cms, err := h.cmSketchFromStorage(tableInfo.ID, 1, idxInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idx = &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 		}
 		break
 	}
@@ -95,9 +113,11 @@ func (h *Handle) indexHistogramFromStorage(row *ast.Row, table *Table, tableInfo
 	return nil
 }
 
-func (h *Handle) columnHistogramFromStorage(row *ast.Row, table *Table, tableInfo *model.TableInfo) error {
-	histID, distinct := row.Data[2].GetInt64(), row.Data[3].GetInt64()
-	histVer, nullCount := row.Data[4].GetUint64(), row.Data[5].GetInt64()
+func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
+	histID := row.GetInt64(2)
+	distinct := row.GetInt64(3)
+	histVer := row.GetUint64(4)
+	nullCount := row.GetInt64(5)
 	col := table.Columns[histID]
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
@@ -121,7 +141,11 @@ func (h *Handle) columnHistogramFromStorage(row *ast.Row, table *Table, tableInf
 			if err != nil {
 				return errors.Trace(err)
 			}
-			col = &Column{Histogram: *hg, Info: colInfo, Count: int64(hg.totalRowCount())}
+			cms, err := h.cmSketchFromStorage(tableInfo.ID, 0, colInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			col = &Column{Histogram: *hg, Info: colInfo, CMSketch: cms, Count: int64(hg.totalRowCount())}
 		}
 		break
 	}
@@ -159,12 +183,12 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 		return nil, nil
 	}
 	for _, row := range rows {
-		if row.Data[1].GetInt64() > 0 {
-			if err := h.indexHistogramFromStorage(row, table, tableInfo); err != nil {
+		if row.GetInt64(1) > 0 {
+			if err := h.indexStatsFromStorage(row, table, tableInfo); err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
-			if err := h.columnHistogramFromStorage(row, table, tableInfo); err != nil {
+			if err := h.columnStatsFromStorage(row, table, tableInfo); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -221,7 +245,7 @@ var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 
 // ColumnIsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
-func (t *Table) ColumnIsInvalid(sc *variable.StatementContext, colID int64) bool {
+func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool {
 	if t.Pseudo {
 		return true
 	}
@@ -234,7 +258,7 @@ func (t *Table) ColumnIsInvalid(sc *variable.StatementContext, colID int64) bool
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
@@ -245,7 +269,7 @@ func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
-func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
@@ -256,7 +280,7 @@ func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Da
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoBetweenRate, nil
 	}
@@ -267,7 +291,7 @@ func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
-func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
@@ -278,7 +302,7 @@ func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.D
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []types.IntColumnRange) (float64, error) {
+func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []ranger.IntColumnRange) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
@@ -287,7 +311,7 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colI
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
-func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID int64, colRanges []*types.ColumnRange) (float64, error) {
+func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.ColumnRange) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
 	}
@@ -296,7 +320,7 @@ func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID i
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
-func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*types.IndexRange) (float64, error) {
+func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.IndexRange) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
@@ -315,7 +339,7 @@ func PseudoTable(tableID int64) *Table {
 	return t
 }
 
-func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges []*types.IndexRange,
+func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.IndexRange,
 	tableRowCount float64) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
@@ -330,7 +354,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
 		}
-		colRange := []*types.ColumnRange{{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}}
+		colRange := []*ranger.ColumnRange{{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}}
 		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, colRange)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -349,7 +373,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 	return totalCount, nil
 }
 
-func getPseudoRowCountByColumnRanges(sc *variable.StatementContext, tableRowCount float64, columnRanges []*types.ColumnRange) (float64, error) {
+func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.ColumnRange) (float64, error) {
 	var rowCount float64
 	var err error
 	for _, ran := range columnRanges {
@@ -387,7 +411,7 @@ func getPseudoRowCountByColumnRanges(sc *variable.StatementContext, tableRowCoun
 	return rowCount, nil
 }
 
-func getPseudoRowCountByIntRanges(intRanges []types.IntColumnRange, tableRowCount float64) float64 {
+func getPseudoRowCountByIntRanges(intRanges []ranger.IntColumnRange, tableRowCount float64) float64 {
 	var rowCount float64
 	for _, rg := range intRanges {
 		var cnt float64

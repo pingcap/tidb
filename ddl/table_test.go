@@ -177,7 +177,7 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(d.store, tblInfo.OldSchemaID, schemaID)
+	alloc := autoid.NewAllocator(d.store, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -217,7 +217,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	count := 2000
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= count; i++ {
-		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
 

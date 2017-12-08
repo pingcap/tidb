@@ -96,17 +96,21 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 }
 
 func (p *DataSource) prepareStatsProfile() *statsProfile {
+	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	for i, expr := range p.pushedDownConds {
+		p.pushedDownConds[i] = expression.PushDownNot(expr, false, nil)
+	}
 	p.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 	return p.profile
 }
 
-func (p *Selection) prepareStatsProfile() *statsProfile {
+func (p *LogicalSelection) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = childProfile.collapse(selectionFactor)
 	return p.profile
 }
 
-func (p *Union) prepareStatsProfile() *statsProfile {
+func (p *LogicalUnionAll) prepareStatsProfile() *statsProfile {
 	p.profile = &statsProfile{
 		cardinality: make([]float64, p.schema.Len()),
 	}
@@ -120,7 +124,7 @@ func (p *Union) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *Limit) prepareStatsProfile() *statsProfile {
+func (p *LogicalLimit) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
@@ -138,7 +142,7 @@ func (p *Limit) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *TopN) prepareStatsProfile() *statsProfile {
+func (p *LogicalTopN) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
@@ -174,7 +178,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	return cardinality
 }
 
-func (p *Projection) prepareStatsProfile() *statsProfile {
+func (p *LogicalProjection) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       childProfile.count,
@@ -189,7 +193,7 @@ func (p *Projection) prepareStatsProfile() *statsProfile {
 
 func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
-	var gbyCols []*expression.Column
+	gbyCols := make([]*expression.Column, 0, len(p.GroupByItems))
 	for _, gbyExpr := range p.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
@@ -243,7 +247,8 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 		}
 		return p.profile
 	}
-	var leftKeys, rightKeys []*expression.Column
+	leftKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	rightKeys := make([]*expression.Column, 0, len(p.EqualConditions))
 	for _, eqCond := range p.EqualConditions {
 		leftKeys = append(leftKeys, eqCond.GetArgs()[0].(*expression.Column))
 		rightKeys = append(rightKeys, eqCond.GetArgs()[1].(*expression.Column))

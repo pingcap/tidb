@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testValidatorSuite{})
@@ -171,9 +172,9 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 	ctx := se.(context.Context)
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})

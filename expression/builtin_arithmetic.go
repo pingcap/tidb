@@ -277,9 +277,10 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx context.Context, args []E
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig, nil
 	} else {
+
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
+		if (mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag)) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticMinusIntSig{baseBuiltinFunc: bf}
@@ -346,9 +347,20 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row types.Row) (val int64, isNull
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
+	forceToSigned := s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+	isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
+	isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	if forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag) {
+		if a < 0 || (a > math.MaxInt64) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
+	}
+	if forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag) {
+		if b < 0 || (b > math.MaxInt64) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
+	}
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
@@ -371,7 +383,6 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row types.Row) (val int64, isNull
 			return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	}
-
 	return a - b, false, nil
 }
 

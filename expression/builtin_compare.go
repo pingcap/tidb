@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -754,7 +754,7 @@ func (b *builtinIntervalIntSig) evalInt(row types.Row) (int64, bool, error) {
 // All arguments are treated as integers.
 // It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
 // This is because a binary search is used (very fast).
-func (b *builtinIntervalIntSig) binSearch(sc *variable.StatementContext, target int64, isUint1 bool, args []Expression, row types.Row) (_ int, err error) {
+func (b *builtinIntervalIntSig) binSearch(sc *stmtctx.StatementContext, target int64, isUint1 bool, args []Expression, row types.Row) (_ int, err error) {
 	i, j, cmp := 0, len(args), false
 	for i < j {
 		mid := i + (j-i)/2
@@ -805,7 +805,7 @@ func (b *builtinIntervalRealSig) evalInt(row types.Row) (int64, bool, error) {
 	return int64(idx), err != nil, errors.Trace(err)
 }
 
-func (b *builtinIntervalRealSig) binSearch(sc *variable.StatementContext, target float64, args []Expression, row types.Row) (_ int, err error) {
+func (b *builtinIntervalRealSig) binSearch(sc *stmtctx.StatementContext, target float64, args []Expression, row types.Row) (_ int, err error) {
 	i, j := 0, len(args)
 	for i < j {
 		mid := i + (j-i)/2
@@ -854,9 +854,9 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	return types.ETReal
 }
 
-// getAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
+// GetAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
 // getBaseCmpType does.
-func getAccurateCmpType(lhs, rhs Expression) types.EvalType {
+func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
@@ -946,8 +946,8 @@ func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 	}
 }
 
-// refineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func refineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
+// RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
+func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
 	sc := ctx.GetSessionVars().StmtCtx
 	dt, err := con.Eval(nil)
 	if err != nil {
@@ -994,12 +994,12 @@ func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression
 	arg1, arg1IsCon := args[1].(*Constant)
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1 = refineConstantArg(ctx, arg1, c.op)
+		arg1 = RefineConstantArg(ctx, arg1, c.op)
 		return []Expression{args[0], arg1}
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0 = refineConstantArg(ctx, arg0, symmetricOp[c.op])
+		arg0 = RefineConstantArg(ctx, arg0, symmetricOp[c.op])
 		return []Expression{arg0, args[1]}
 	}
 	return args
@@ -1011,7 +1011,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 		return nil, errors.Trace(err)
 	}
 	args := c.refineArgs(ctx, rawArgs)
-	cmpType := getAccurateCmpType(args[0], args[1])
+	cmpType := GetAccurateCmpType(args[0], args[1])
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
 	return sig, errors.Trace(err)
 }

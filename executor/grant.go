@@ -20,15 +20,14 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 /***
@@ -41,24 +40,20 @@ var (
 
 // GrantExec executes GrantStmt.
 type GrantExec struct {
+	baseExecutor
+
 	Privs      []*ast.PrivElem
 	ObjectType ast.ObjectTypeType
 	Level      *ast.GrantLevel
 	Users      []*ast.UserSpec
 	WithGrant  bool
 
-	ctx  context.Context
 	is   infoschema.InfoSchema
 	done bool
 }
 
-// Schema implements the Executor Schema interface.
-func (e *GrantExec) Schema() *expression.Schema {
-	return expression.NewSchema()
-}
-
 // Next implements Execution Next interface.
-func (e *GrantExec) Next() (Row, error) {
+func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -79,13 +74,17 @@ func (e *GrantExec) Next() (Row, error) {
 				if user.AuthOpt.ByAuthString {
 					pwd = auth.EncodePassword(user.AuthOpt.AuthString)
 				} else {
-					pwd = auth.EncodePassword(user.AuthOpt.HashString)
+					if len(user.AuthOpt.HashString) == 41 && strings.HasPrefix(user.AuthOpt.HashString, "*") {
+						pwd = user.AuthOpt.HashString
+					} else {
+						return nil, errors.Trace(ErrPasswordFormat)
+					}
 				}
 			}
 
 			user := fmt.Sprintf(`("%s", "%s", "%s")`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
+			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -128,7 +127,7 @@ func (e *GrantExec) Next() (Row, error) {
 		}
 	}
 	e.done = true
-	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil, nil
 }
 
@@ -138,7 +137,7 @@ func (e *GrantExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *GrantExec) Open() error {
+func (e *GrantExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
@@ -503,7 +502,7 @@ func columnPrivEntryExists(ctx context.Context, name string, host string, db str
 // Return Table_priv and Column_priv.
 func getTablePriv(ctx context.Context, name string, host string, db string, tbl string) (string, string, error) {
 	sql := fmt.Sprintf(`SELECT Table_priv, Column_priv FROM %s.%s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s";`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, tbl)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", "", errors.Trace(err)
 	}
@@ -512,12 +511,12 @@ func getTablePriv(ctx context.Context, name string, host string, db string, tbl 
 	}
 	var tPriv, cPriv string
 	row := rows[0]
-	if row.Data[0].Kind() == types.KindMysqlSet {
-		tablePriv := row.Data[0].GetMysqlSet()
+	if fields[0].Column.Tp == mysql.TypeSet {
+		tablePriv := row.GetSet(0)
 		tPriv = tablePriv.Name
 	}
-	if row.Data[1].Kind() == types.KindMysqlSet {
-		columnPriv := row.Data[1].GetMysqlSet()
+	if fields[1].Column.Tp == mysql.TypeSet {
+		columnPriv := row.GetSet(1)
 		cPriv = columnPriv.Name
 	}
 	return tPriv, cPriv, nil
@@ -527,7 +526,7 @@ func getTablePriv(ctx context.Context, name string, host string, db string, tbl 
 // Return Column_priv.
 func getColumnPriv(ctx context.Context, name string, host string, db string, tbl string, col string) (string, error) {
 	sql := fmt.Sprintf(`SELECT Column_priv FROM %s.%s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s" AND Column_name="%s";`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, db, tbl, col)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -535,8 +534,9 @@ func getColumnPriv(ctx context.Context, name string, host string, db string, tbl
 		return "", errors.Errorf("get column privilege fail for %s %s %s %s %s", name, host, db, tbl, col)
 	}
 	cPriv := ""
-	if rows[0].Data[0].Kind() == types.KindMysqlSet {
-		cPriv = rows[0].Data[0].GetMysqlSet().Name
+	if fields[0].Column.Tp == mysql.TypeSet {
+		setVal := rows[0].GetSet(0)
+		cPriv = setVal.Name
 	}
 	return cPriv, nil
 }

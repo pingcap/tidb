@@ -161,6 +161,10 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.MaxRowCountForINLJ, Equals, 128)
 	SetSessionSystemVar(v, variable.TiDBMaxRowCountForINLJ, types.NewStringDatum("127"))
 	c.Assert(v.MaxRowCountForINLJ, Equals, 127)
+
+	c.Assert(v.MaxChunkSize, Equals, 1024)
+	SetSessionSystemVar(v, variable.TiDBMaxChunkSize, types.NewStringDatum("2"))
+	c.Assert(v.MaxChunkSize, Equals, 2)
 }
 
 type mockGlobalAccessor struct {
@@ -184,4 +188,8 @@ func (m *mockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
 func (m *mockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
 	m.vars[name] = value
 	return nil
+}
+
+func (m *mockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
+	return m.vars, nil
 }

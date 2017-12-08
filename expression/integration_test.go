@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -127,6 +127,7 @@ func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
 }
 
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
+	goCtx := goctx.Background()
 	defer s.cleanEnv(c)
 
 	tk := testkit.NewTestKit(c, s.store)
@@ -153,8 +154,9 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	rs, err := tk.Exec("select sleep(-1);")
 	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
+	c.Assert(rs.Close(), IsNil)
 
 	tk.MustQuery("SELECT INET_ATON('10.0.5.9');").Check(testkit.Rows("167773449"))
 	tk.MustQuery("SELECT INET_NTOA(167773449);").Check(testkit.Rows("10.0.5.9"))
@@ -232,6 +234,7 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 }
 
 func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
+	goCtx := goctx.Background()
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -379,10 +382,11 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("0.6420926159343308"))
 	rs, err := tk.Exec("select cot(0)")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	c.Assert(rs.Close(), IsNil)
 
 	//for exp
 	result = tk.MustQuery("select exp(0), exp(1), exp(-1), exp(1.2), exp(NULL)")
@@ -391,10 +395,11 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("1 2.718281828459045"))
 	rs, err = tk.Exec("select exp(1000000)")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	c.Assert(rs.Close(), IsNil)
 
 	// for conv
 	result = tk.MustQuery("SELECT CONV('a', 16, 2);")
@@ -429,10 +434,11 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	rs, err = tk.Exec("SELECT ABS(-9223372036854775808);")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	c.Assert(rs.Close(), IsNil)
 
 	// for round
 	result = tk.MustQuery("SELECT ROUND(2.5), ROUND(-2.5), ROUND(25E-1);")
@@ -487,10 +493,11 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("0 0 0"))
 	rs, err = tk.Exec("SELECT POW(0, -1);")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	c.Assert(rs.Close(), IsNil)
 
 	// for sign
 	result = tk.MustQuery("SELECT SIGN('12'), SIGN(1.2e1), SIGN(12), SIGN(0.0000012);")
@@ -521,6 +528,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	goCtx := goctx.Background()
 
 	// for length
 	tk.MustExec("drop table if exists t")
@@ -864,9 +872,10 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> <nil>"))
 	rs, err := tk.Exec(`select format(12332.2, 2,'es_EC');`)
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "not support for the specific locale")
+	c.Assert(rs.Close(), IsNil)
 
 	// for field
 	result = tk.MustQuery(`select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);`)
@@ -883,6 +892,7 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	goCtx := goctx.Background()
 
 	// for password
 	tk.MustExec("drop table if exists t")
@@ -986,10 +996,11 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	for _, len := range lengths {
 		rs, err := tk.Exec(fmt.Sprintf("SELECT RANDOM_BYTES(%d);", len))
 		c.Assert(err, IsNil, Commentf("%v", len))
-		_, err = tidb.GetRows(rs)
+		_, err = tidb.GetRows4Test(goCtx, rs)
 		c.Assert(err, NotNil, Commentf("%v", len))
 		terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 		c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange), Commentf("%v", len))
+		c.Assert(rs.Close(), IsNil)
 	}
 	tk.MustQuery("SELECT RANDOM_BYTES('1');")
 	tk.MustQuery("SELECT RANDOM_BYTES(1024);")
@@ -1729,6 +1740,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	goCtx := goctx.Background()
 
 	// for is true && is false
 	tk.MustExec("drop table if exists t")
@@ -1806,6 +1818,41 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("2012-00-00 00:00:00"))
 	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
 	result.Check(testkit.Rows("-838:59:59"))
+
+	// fix issue #4324. cast decimal/int/string to time compability.
+	invalidTimes := []string{
+		"10009010",
+		"239010",
+		"233070",
+		"23:90:10",
+		"23:30:70",
+		"239010.2",
+		"233070.8",
+	}
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (ix TIME);")
+	tk.MustExec("SET SQL_MODE='';")
+	for _, invalidTime := range invalidTimes {
+		msg := fmt.Sprintf("Warning 1292 Truncated incorrect time value: '%s'", invalidTime)
+		result = tk.MustQuery(fmt.Sprintf("select cast('%s' as time);", invalidTime))
+		result.Check(testkit.Rows("<nil>"))
+		result = tk.MustQuery("show warnings")
+		result.Check(testkit.Rows(msg))
+		_, err := tk.Exec(fmt.Sprintf("insert into t select cast('%s' as time);", invalidTime))
+		c.Assert(err, IsNil)
+		result = tk.MustQuery("show warnings")
+		result.Check(testkit.Rows(msg))
+	}
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	for _, invalidTime := range invalidTimes {
+		msg := fmt.Sprintf("Warning 1292 Truncated incorrect time value: '%s'", invalidTime)
+		result = tk.MustQuery(fmt.Sprintf("select cast('%s' as time);", invalidTime))
+		result.Check(testkit.Rows("<nil>"))
+		result = tk.MustQuery("show warnings")
+		result.Check(testkit.Rows(msg))
+		_, err := tk.Exec(fmt.Sprintf("insert into t select cast('%s' as time);", invalidTime))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[types:1292]Truncated incorrect time value: '%s'", invalidTime))
+	}
 
 	// Fix issue #3691, cast compatibility.
 	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
@@ -1899,9 +1946,10 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	// test case decimal precision less than the scale.
 	rs, err := tk.Exec("select cast(12.1 as decimal(3, 4));")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').")
+	c.Assert(rs.Close(), IsNil)
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -1937,6 +1985,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select from_unixtime(1451606400.999999)")
 	unixTime = time.Unix(1451606400, 999999000).String()[:26]
 	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(1511247196661)")
+	result.Check(testkit.Rows("<nil>"))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
@@ -2007,8 +2057,9 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	charRecordSet, err := tk.Exec("select char(97, null, 100, 256, 89 using tidb)")
 	c.Assert(err, IsNil)
 	c.Assert(charRecordSet, NotNil)
-	_, err = tidb.GetRows(charRecordSet)
+	_, err = tidb.GetRows4Test(goCtx, charRecordSet)
 	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
+	c.Assert(rs.Close(), IsNil)
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")
@@ -2265,6 +2316,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	goCtx := goctx.Background()
 
 	// for plus
 	tk.MustExec("DROP TABLE IF EXISTS t;")
@@ -2282,24 +2334,27 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rs, err := tk.Exec("SELECT a+b FROM t;")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err := tidb.GetRows(rs)
+	rows, err := tidb.GetRows4Test(goCtx, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a + test.t.b)'")
+	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-3 as signed) + cast(2 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err = tidb.GetRows(rs)
+	rows, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-3 + 2)'")
+	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(2 as unsigned) + cast(-3 as signed);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err = tidb.GetRows(rs)
+	rows, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(2 + -3)'")
+	c.Assert(rs.Close(), IsNil)
 
 	// for minus
 	tk.MustExec("DROP TABLE IF EXISTS t;")
@@ -2317,47 +2372,54 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rs, err = tk.Exec("SELECT a-b FROM t;")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err = tidb.GetRows(rs)
+	rows, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
+	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-1 as signed) - cast(-1 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err = tidb.GetRows(rs)
+	rows, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'")
+	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-1 as unsigned) - cast(-1 as signed);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err = tidb.GetRows(rs)
+	rows, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'")
+	c.Assert(rs.Close(), IsNil)
 
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
 	rs, err = tk.Exec("select 1234567890 * 12345671890")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 	tk.MustQuery("select cast(1234567890 as unsigned int) * 12345671890").Check(testkit.Rows("15241570095869612100"))
 	tk.MustQuery("select 123344532434234234267890.0 * 1234567118923479823749823749.230").Check(testkit.Rows("152277104042296270209916846800130443726237424001224.7000"))
 	rs, err = tk.Exec("select 123344532434234234267890.0 * 12345671189234798237498232384982309489238402830480239849238048239084749.230")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 	// FIXME: There is something wrong in showing float number.
 	//tk.MustQuery("select 1.797693134862315708145274237317043567981e+308 * 1").Check(testkit.Rows("1.7976931348623157e308"))
 	//tk.MustQuery("select 1.797693134862315708145274237317043567981e+308 * -1").Check(testkit.Rows("-1.7976931348623157e308"))
 	rs, err = tk.Exec("select 1.797693134862315708145274237317043567981e+308 * 1.1")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select 1.797693134862315708145274237317043567981e+308 * -1.1")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 	result = tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`)
 	result.Check(testkit.Rows("18446744073709551614"))
 
@@ -2369,8 +2431,9 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
 	rs, err = tk.Exec("select 1e200/1e-200")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 
 	// for intDiv
 	result = tk.MustQuery("SELECT 13 DIV 12, 13 DIV 0.01, -13 DIV 2, 13 DIV NULL, NULL DIV 13, NULL DIV NULL;")
@@ -2379,8 +2442,9 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result.Check(testkit.Rows("2 2 1"))
 	rs, err = tk.Exec("select 1e300 DIV 1.5")
 	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));")
@@ -2556,7 +2620,9 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
-	result.Check(testkit.Rows("TableScan_3   cop table:t, range:(-inf,+inf), keep order:false 8000", "TableReader_4 Projection_2  root data:TableScan_3 8000", "Projection_2  TableReader_4 root eq(test.t.a, test.t.a) 8000"))
+	result.Check(testkit.Rows("TableScan_4   cop table:t, range:(-inf,+inf), keep order:false 8000",
+		"TableReader_5 Projection_3  root data:TableScan_4 8000",
+		"Projection_3  TableReader_5 root eq(test.t.a, test.t.a) 8000"))
 
 	// for interval
 	result = tk.MustQuery(`select interval(null, 1, 2), interval(1, 2, 3), interval(2, 1, 3)`)
@@ -2599,6 +2665,56 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	tk.MustExec("insert into t values(1.123456), (1.123456)")
 	result := tk.MustQuery("select avg(a) from t")
 	result.Check(testkit.Rows("1.1234560000"))
+}
+
+func (s *testIntegrationSuite) TestAggregationBuiltinBitXor(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint)")
+	tk.MustExec("insert into t values(null);")
+	result := tk.MustQuery("select bit_xor(a) from t")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values(1);")
+	result = tk.MustQuery("select bit_xor(a) from t")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2);")
+	result = tk.MustQuery("select bit_xor(a) from t")
+	result.Check(testkit.Rows("3"))
+	tk.MustExec("insert into t values(3);")
+	result = tk.MustQuery("select bit_xor(a) from t")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values(3);")
+	result = tk.MustQuery("select bit_xor(a) from t")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select a, bit_xor(a) from t group by a order by a")
+	result.Check(testkit.Rows("<nil> 0", "1 1", "2 2", "3 0"))
+}
+
+func (s *testIntegrationSuite) TestAggregationBuiltinBitAnd(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint)")
+	tk.MustExec("insert into t values(null);")
+	result := tk.MustQuery("select bit_and(a) from t")
+	result.Check(testkit.Rows("18446744073709551615"))
+	tk.MustExec("insert into t values(7);")
+	result = tk.MustQuery("select bit_and(a) from t")
+	result.Check(testkit.Rows("7"))
+	tk.MustExec("insert into t values(5);")
+	result = tk.MustQuery("select bit_and(a) from t")
+	result.Check(testkit.Rows("5"))
+	tk.MustExec("insert into t values(3);")
+	result = tk.MustQuery("select bit_and(a) from t")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2);")
+	result = tk.MustQuery("select bit_and(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select a, bit_and(a) from t group by a order by a desc")
+	result.Check(testkit.Rows("7 7", "5 5", "3 3", "2 2", "<nil> 18446744073709551615"))
 }
 
 func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
@@ -2686,6 +2802,7 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
+	goCtx := goctx.Background()
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
@@ -2715,9 +2832,10 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	rs, err := tk.Exec("select date '0000-00-00';")
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00")), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 
 	tk.MustExec("set sql_mode = ''")
 	r = tk.MustQuery("select date '2007-10-00';")
@@ -2725,9 +2843,10 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE'")
 	rs, _ = tk.Exec("select date '2007-10-00';")
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-10-00")), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	r = tk.MustQuery("select date '2007-10-00';")
@@ -2736,14 +2855,16 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE'")
 
 	rs, _ = tk.Exec("select date '2007-10-00';")
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-10-00")), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 
 	rs, err = tk.Exec("select date '0000-00-00';")
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goCtx, rs)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00")), IsTrue)
+	c.Assert(rs.Close(), IsNil)
 
 	r = tk.MustQuery("select date'1998~01~02'")
 	r.Check(testkit.Rows("1998-01-02"))
@@ -2902,6 +3023,10 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 
 	r = tk.MustQuery(`select json_extract(json_object(1,2,3,4), '$."1"')`)
 	r.Check(testkit.Rows("2"))
+
+	tk.MustExec(`update table_json set a=json_set(a,'$.a',json_object('a',1,'b',2)) where json_extract(a,'$.a[1]') = '2'`)
+	r = tk.MustQuery(`select json_extract(a, '$.a.a'), json_extract(a, '$.a.b') from table_json`)
+	r.Check(testkit.Rows("1 2", "<nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
@@ -2912,7 +3037,7 @@ func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
 	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
 	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
 	ctx := testKit.Se.(context.Context)
-	is := sessionctx.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
 	c.Assert(col.Tp, Equals, mysql.TypeLong)
@@ -2953,7 +3078,8 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
 }
 
-func (s *testIntegrationSuite) TestIssue4954(c *C) {
+func (s *testIntegrationSuite) TestIssues(c *C) {
+	// for issue #4954
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 	tk.MustExec("use test")
@@ -2965,6 +3091,32 @@ func (s *testIntegrationSuite) TestIssue4954(c *C) {
 	r.Check(testkit.Rows("oe"))
 	r = tk.MustQuery(`SELECT HEX(a) FROM t WHERE a= 0xf6;`)
 	r.Check(testkit.Rows("F6"))
+
+	// for issue #4006
+	tk.MustExec(`drop table if exists tb`)
+	tk.MustExec("create table tb(id int auto_increment primary key, v varchar(32));")
+	tk.MustExec("insert into tb(v) (select v from tb);")
+	r = tk.MustQuery(`SELECT * FROM tb;`)
+	r.Check(testkit.Rows())
+	tk.MustExec(`insert into tb(v) values('hello');`)
+	tk.MustExec("insert into tb(v) (select v from tb);")
+	r = tk.MustQuery(`SELECT * FROM tb;`)
+	r.Check(testkit.Rows("1 hello", "2 hello"))
+
+	// for issue #5111
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("create table t(c varchar(32));")
+	tk.MustExec("insert into t values('1e649'),('-1e649');")
+	r = tk.MustQuery(`SELECT * FROM t where c < 1;`)
+	r.Check(testkit.Rows("-1e649"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
+		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
+	r = tk.MustQuery(`SELECT * FROM t where c > 1;`)
+	r.Check(testkit.Rows("1e649"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
+		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

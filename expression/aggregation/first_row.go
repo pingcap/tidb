@@ -14,11 +14,10 @@
 package aggregation
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -41,7 +40,7 @@ func (ff *firstRowFunction) GetType() *types.FieldType {
 }
 
 // Update implements Aggregation interface.
-func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	if ctx.GotFirstRow {
 		return nil
 	}
@@ -70,11 +69,7 @@ func (ff *firstRowFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Da
 // CalculateDefaultValue implements Aggregation interface.
 func (ff *firstRowFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
-	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if err != nil {
-		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
-		return d, false
-	}
+	result := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if con, ok := result.(*expression.Constant); ok {
 		return con.Value, true
 	}

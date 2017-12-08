@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -27,21 +26,17 @@ import (
 var (
 	_ LogicalPlan = &LogicalJoin{}
 	_ LogicalPlan = &LogicalAggregation{}
-	_ LogicalPlan = &Projection{}
-	_ LogicalPlan = &Selection{}
+	_ LogicalPlan = &LogicalProjection{}
+	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &Exists{}
-	_ LogicalPlan = &MaxOneRow{}
-	_ LogicalPlan = &TableDual{}
+	_ LogicalPlan = &LogicalExists{}
+	_ LogicalPlan = &LogicalMaxOneRow{}
+	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
-	_ LogicalPlan = &Union{}
-	_ LogicalPlan = &Sort{}
-	_ LogicalPlan = &Update{}
-	_ LogicalPlan = &Delete{}
-	_ LogicalPlan = &SelectLock{}
-	_ LogicalPlan = &Limit{}
-	_ LogicalPlan = &Show{}
-	_ LogicalPlan = &Insert{}
+	_ LogicalPlan = &LogicalUnionAll{}
+	_ LogicalPlan = &LogicalSort{}
+	_ LogicalPlan = &LogicalLock{}
+	_ LogicalPlan = &LogicalLimit{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -159,11 +154,10 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Projection represents a select fields plan.
-type Projection struct {
+// LogicalProjection represents a select fields plan.
+type LogicalProjection struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	Exprs []expression.Expression
 
@@ -172,7 +166,7 @@ type Projection struct {
 	calculateGenCols bool
 }
 
-func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, extractCorColumns(expr)...)
@@ -207,30 +201,18 @@ func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCol
 	return corCols
 }
 
-// Selection means a filter.
-type Selection struct {
+// LogicalSelection represents a where or having predicate.
+type LogicalSelection struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
-
-	// onTable means if this selection's child is a table scan or index scan.
-	onTable bool
-
-	// If ScanController is true, then the child of this selection is a scan,
-	// which use pk or index. we will record the accessConditions, idxConditions,
-	// and tblConditions to control the below plan.
-	ScanController bool
-
-	// We will check this at decorrelate phase.
-	controllerStatus int
 }
 
-func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalSelection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, cond := range p.Conditions {
 		corCols = append(corCols, extractCorColumns(cond)...)
@@ -255,27 +237,32 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Exists checks if a query returns result.
-type Exists struct {
+// LogicalExists checks if a query returns result.
+type LogicalExists struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// MaxOneRow checks if a query returns no more than one row.
-type MaxOneRow struct {
+// LogicalMaxOneRow checks if a query returns no more than one row.
+type LogicalMaxOneRow struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// TableDual represents a dual table plan.
-type TableDual struct {
+// LogicalTableDual represents a dual table plan.
+type LogicalTableDual struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	RowCount int
+}
+
+// LogicalUnionScan is only used in non read-only txn.
+type LogicalUnionScan struct {
+	*basePlan
+	baseLogicalPlan
+
+	conditions []expression.Expression
 }
 
 // DataSource represents a tablescan without condition push down.
@@ -297,11 +284,13 @@ type DataSource struct {
 
 	statisticTable *statistics.Table
 
-	// NeedColHandle is used in execution phase.
-	NeedColHandle bool
+	// availableIndices is used for storing result of avalableIndices function.
+	availableIndices *avalableIndices
+}
 
-	// This is schema the PhysicalUnionScan should be.
-	unionScanSchema *expression.Schema
+type avalableIndices struct {
+	indices          []*model.IndexInfo
+	includeTableScan bool
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
@@ -321,32 +310,21 @@ func (p *DataSource) TableInfo() *model.TableInfo {
 	return p.tableInfo
 }
 
-// Schema implements the plan interface.
-func (p *DataSource) Schema() *expression.Schema {
-	if p.unionScanSchema != nil {
-		return p.unionScanSchema
-	}
-	return p.schema
-}
-
-// Union represents Union plan.
-type Union struct {
+// LogicalUnionAll represents LogicalUnionAll plan.
+type LogicalUnionAll struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// Sort stands for the order by plan.
-type Sort struct {
+// LogicalSort stands for the order by plan.
+type LogicalSort struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
-	ByItems   []*ByItems
-	ExecLimit *Limit // no longer be used by new plan
+	ByItems []*ByItems
 }
 
-func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, item := range p.ByItems {
 		corCols = append(corCols, extractCorColumns(item.Expr)...)
@@ -354,11 +332,10 @@ func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// TopN represents a top-n plan.
-type TopN struct {
+// LogicalTopN represents a top-n plan.
+type LogicalTopN struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	ByItems []*ByItems
 	Offset  uint64
@@ -369,88 +346,26 @@ type TopN struct {
 }
 
 // isLimit checks if TopN is a limit plan.
-func (t *TopN) isLimit() bool {
+func (t *LogicalTopN) isLimit() bool {
 	return len(t.ByItems) == 0
 }
 
-// Limit represents offset and limit plan.
-type Limit struct {
+// LogicalLimit represents offset and limit plan.
+type LogicalLimit struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
 	Offset uint64
 	Count  uint64
 
 	// partial is true if this topn is generated by push-down optimization.
 	partial bool
-
-	expectedProp *requiredProp
 }
 
-// Update represents Update plan.
-type Update struct {
+// LogicalLock represents a select lock plan.
+type LogicalLock struct {
 	*basePlan
 	baseLogicalPlan
-	basePhysicalPlan
 
-	OrderedList []*expression.Assignment
-	IgnoreErr   bool
-}
-
-// Delete represents a delete plan.
-type Delete struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	Tables       []*ast.TableName
-	IsMultiTable bool
-}
-
-// setParentAndChildren sets parent and children relationship.
-func setParentAndChildren(parent Plan, children ...Plan) {
-	if children == nil || parent == nil {
-		return
-	}
-	for _, child := range children {
-		child.SetParents(parent)
-	}
-	parent.SetChildren(children...)
-}
-
-// InsertPlan means inserting plan between two plans.
-func InsertPlan(parent Plan, child Plan, insert Plan) error {
-	err := child.ReplaceParent(parent, insert)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = parent.ReplaceChild(child, insert)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insert.AddChild(child)
-	insert.AddParent(parent)
-	return nil
-}
-
-// RemovePlan means removing a plan.
-func RemovePlan(p Plan) error {
-	parents := p.Parents()
-	children := p.Children()
-	if len(parents) > 1 || len(children) != 1 {
-		return SystemInternalErrorType.Gen("can't remove this plan")
-	}
-	if len(parents) == 0 {
-		child := children[0]
-		child.SetParents()
-		return nil
-	}
-	parent, child := parents[0], children[0]
-	err := parent.ReplaceChild(p, child)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = child.ReplaceParent(p, parent)
-	return errors.Trace(err)
+	Lock ast.SelectLockType
 }

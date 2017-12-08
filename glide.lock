@@ -1,5 +1,5 @@
-hash: d5b53dbf492fd8ed8ec327ee4f66837a6c6ee8263dbec54f77776ee3a68894ab
-updated: 2017-11-03T21:08:22.127776139+08:00
+hash: fd41f4cdbce457fae92cca9c4ceeaccc9de4e6437a200dbdc539745b2bf93b17
+updated: 2017-12-07T14:42:24.016476632+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -11,6 +11,8 @@ imports:
   version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
   subpackages:
   - quantile
+- name: github.com/blacktear23/go-proxyprotocol
+  version: 62e368e1c4700c34b4b6f77afd49b215211574c2
 - name: github.com/BurntSushi/toml
   version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - name: github.com/cloudfoundry-incubator/candiedyaml
@@ -23,11 +25,14 @@ imports:
   - auth/authpb
   - clientv3
   - clientv3/concurrency
-  - contrib/recipes
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
+- name: github.com/coreos/gofail
+  version: 38defe9971eda62d1b1c6a69c00acf001d46ecab
+  subpackages:
+  - runtime
 - name: github.com/crossdock/crossdock-go
   version: 049aabb0122b03bc9bd30cab8f3f91fb60166361
 - name: github.com/cznic/golex
@@ -70,6 +75,8 @@ imports:
   - ptypes/any
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- name: github.com/google/btree
+  version: 316fb6d3f031ae8f4d457c6c5186b9e3ded70435
 - name: github.com/gorilla/context
   version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
 - name: github.com/gorilla/mux
@@ -112,7 +119,7 @@ imports:
 - name: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - name: github.com/pingcap/check
-  version: 9b266636177e249ec28b0aeffe8e86bc272bb481
+  version: 1c287c953996ab3a0bf535dba9d53d809d3dc0b6
 - name: github.com/pingcap/goleveldb
   version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
@@ -129,7 +136,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 3c5b40fb2000acb6b3441d5695cb470a23e8f1b5
+  version: e33073e1475021e04c795c3de5e1f4e28baa708a
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -141,13 +148,12 @@ imports:
   - pkg/tikvpb
 - name: github.com/pingcap/mysqlx-driver
   version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
-  repo: git@github.com:pingcap/mysqlx-driver.git
 - name: github.com/pingcap/pd
-  version: 91e4257196bb714005f80a6e075bc1e19a9687b1
+  version: 96db717124a5bd980e8a244af2db8952e04159d6
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: eccd39c3992538c382a6351430a77233f42b1344
+  version: a497eca3b8920e192aae1a5af81e573f90e59a6b
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -208,7 +214,7 @@ imports:
   subpackages:
   - metrics
 - name: github.com/uber/tchannel-go
-  version: a7ad9ecb640b5f10a0395b38d6319175172b3ab2
+  version: 7bcb33f4bb908c21374f8bfdc9d4b1ebcbb8dab0
   subpackages:
   - atomic
   - thrift

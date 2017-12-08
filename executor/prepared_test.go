@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestPrepared(c *C) {
@@ -76,6 +77,16 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
 
+		// Check that rebuild plan works.
+		tk.Se.PrepareTxnCtx(goctx.Background())
+		err = stmt.RebuildPlan()
+		c.Assert(err, IsNil)
+		rs, err := stmt.Exec(goctx.Background())
+		c.Assert(err, IsNil)
+		_, err = rs.Next(goctx.Background())
+		c.Assert(err, IsNil)
+		c.Assert(rs.Close(), IsNil)
+
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")
 		tk.Exec("create table prepare2 (a int)")
@@ -87,7 +98,10 @@ func (s *testSuite) TestPrepared(c *C) {
 		// Drop a column so the prepared statement become invalid.
 		tk.MustExec("alter table prepare_test drop column c2")
 
-		// There should be schema changed error.
+		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
+		c.Assert(plan.ErrUnknownColumn.Equal(err), IsTrue)
+
+		tk.MustExec("drop table prepare_test")
 		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
 		c.Assert(plan.ErrSchemaChanged.Equal(err), IsTrue)
 
@@ -100,7 +114,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.Next()
+		exec.Next(goctx.Background())
 		exec.Close()
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
@@ -174,4 +188,14 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
 	cfg.PreparedPlanCache.Capacity = orgCapacity
+}
+
+func (s *testSuite) TestPreparedNameResolver(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, KEY id (id))")
+	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
+	_, err := tk.Exec("prepare stmt from 'select b from t'")
+	c.Assert(err.Error(), Equals, "[plan:1054]Unknown column 'b' in 'field list'")
 }

@@ -70,6 +70,10 @@ const (
 	nmMetricsAddr     = "metrics-addr"
 	nmMetricsInterval = "metrics-interval"
 	nmDdlLease        = "lease"
+	nmTokenLimit      = "token-limit"
+
+	nmProxyProtocolNetworks      = "proxy-protocol-networks"
+	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 )
 
 var (
@@ -85,6 +89,7 @@ var (
 	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
+	tokenLimit   = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -96,6 +101,10 @@ var (
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+
+	// PROXY Protocol
+	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
+	proxyProtocolHeaderTimeout = flag.Int(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -277,6 +286,9 @@ func overrideConfig() {
 	if actualFlags[nmDdlLease] {
 		cfg.Lease = *ddlLease
 	}
+	if actualFlags[nmTokenLimit] {
+		cfg.TokenLimit = *tokenLimit
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -302,6 +314,14 @@ func overrideConfig() {
 	}
 	if actualFlags[nmMetricsInterval] {
 		cfg.Status.MetricsInterval = *metricsInterval
+	}
+
+	// PROXY Protocol
+	if actualFlags[nmProxyProtocolNetworks] {
+		cfg.ProxyProtocol.Networks = *proxyProtocolNetworks
+	}
+	if actualFlags[nmProxyProtocolHeaderTimeout] {
+		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
 	}
 }
 
@@ -336,6 +356,10 @@ func setGlobalVars() {
 	if plan.PreparedPlanCacheEnabled {
 		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
+
+	if cfg.TiKVClient.GrpcConnectionCount > 0 {
+		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
+	}
 }
 
 func setupLog() {
@@ -359,8 +383,9 @@ func createServer() {
 	terror.MustNil(err)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
-			Addr:   fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
-			Socket: cfg.XProtocol.XSocket,
+			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
+			Socket:     cfg.XProtocol.XSocket,
+			TokenLimit: cfg.TokenLimit,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
 		terror.MustNil(err)

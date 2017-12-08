@@ -73,8 +73,8 @@ const (
 	TypeLock = "SelectLock"
 	// TypeInsert is the type of Insert
 	TypeInsert = "Insert"
-	// TypeUpate is the type of Update.
-	TypeUpate = "Update"
+	// TypeUpdate is the type of Update.
+	TypeUpdate = "Update"
 	// TypeDelete is the type of Delete.
 	TypeDelete = "Delete"
 	// TypeIndexLookUp is the type of IndexLookUp.
@@ -85,215 +85,268 @@ const (
 	TypeIndexReader = "IndexReader"
 )
 
-func (p LogicalAggregation) init(allocator *idAllocator, ctx context.Context) *LogicalAggregation {
-	p.basePlan = newBasePlan(TypeAgg, allocator, ctx, &p)
+func (p LogicalAggregation) init(ctx context.Context) *LogicalAggregation {
+	p.basePlan = newBasePlan(TypeAgg, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	return &p
 }
 
-func (p LogicalJoin) init(allocator *idAllocator, ctx context.Context) *LogicalJoin {
-	p.basePlan = newBasePlan(TypeJoin, allocator, ctx, &p)
+func (p LogicalJoin) init(ctx context.Context) *LogicalJoin {
+	p.basePlan = newBasePlan(TypeJoin, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	return &p
 }
 
-func (p DataSource) init(allocator *idAllocator, ctx context.Context) *DataSource {
-	p.basePlan = newBasePlan(TypeTableScan, allocator, ctx, &p)
+func (p DataSource) init(ctx context.Context) *DataSource {
+	p.basePlan = newBasePlan(TypeTableScan, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	return &p
 }
 
-func (p LogicalApply) init(allocator *idAllocator, ctx context.Context) *LogicalApply {
-	p.basePlan = newBasePlan(TypeApply, allocator, ctx, &p)
+func (p LogicalApply) init(ctx context.Context) *LogicalApply {
+	p.basePlan = newBasePlan(TypeApply, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Selection) init(allocator *idAllocator, ctx context.Context) *Selection {
-	p.basePlan = newBasePlan(TypeSel, allocator, ctx, &p)
+func (p LogicalSelection) init(ctx context.Context) *LogicalSelection {
+	p.basePlan = newBasePlan(TypeSel, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalSelection) init(ctx context.Context) *PhysicalSelection {
+	p.basePlan = newBasePlan(TypeSel, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Projection) init(allocator *idAllocator, ctx context.Context) *Projection {
-	p.basePlan = newBasePlan(TypeProj, allocator, ctx, &p)
+func (p LogicalUnionScan) init(ctx context.Context) *LogicalUnionScan {
+	p.basePlan = newBasePlan(TypeUnionScan, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Union) init(allocator *idAllocator, ctx context.Context) *Union {
-	p.basePlan = newBasePlan(TypeUnion, allocator, ctx, &p)
+func (p LogicalProjection) init(ctx context.Context) *LogicalProjection {
+	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalProjection) init(ctx context.Context) *PhysicalProjection {
+	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Sort) init(allocator *idAllocator, ctx context.Context) *Sort {
-	p.basePlan = newBasePlan(TypeSort, allocator, ctx, &p)
+func (p LogicalUnionAll) init(ctx context.Context) *LogicalUnionAll {
+	p.basePlan = newBasePlan(TypeUnion, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalUnionAll) init(ctx context.Context) *PhysicalUnionAll {
+	p.basePlan = newBasePlan(TypeUnion, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p TopN) init(allocator *idAllocator, ctx context.Context) *TopN {
-	p.basePlan = newBasePlan(TypeTopN, allocator, ctx, &p)
+func (p LogicalSort) init(ctx context.Context) *LogicalSort {
+	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalSort) init(ctx context.Context) *PhysicalSort {
+	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Limit) init(allocator *idAllocator, ctx context.Context) *Limit {
-	p.basePlan = newBasePlan(TypeLimit, allocator, ctx, &p)
+func (p LogicalTopN) init(ctx context.Context) *LogicalTopN {
+	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalTopN) init(ctx context.Context) *PhysicalTopN {
+	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p TableDual) init(allocator *idAllocator, ctx context.Context) *TableDual {
-	p.basePlan = newBasePlan(TypeDual, allocator, ctx, &p)
+func (p LogicalLimit) init(ctx context.Context) *LogicalLimit {
+	p.basePlan = newBasePlan(TypeLimit, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalLimit) init(ctx context.Context) *PhysicalLimit {
+	p.basePlan = newBasePlan(TypeLimit, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Exists) init(allocator *idAllocator, ctx context.Context) *Exists {
-	p.basePlan = newBasePlan(TypeExists, allocator, ctx, &p)
+func (p LogicalTableDual) init(ctx context.Context) *LogicalTableDual {
+	p.basePlan = newBasePlan(TypeDual, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalTableDual) init(ctx context.Context) *PhysicalTableDual {
+	p.basePlan = newBasePlan(TypeDual, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p MaxOneRow) init(allocator *idAllocator, ctx context.Context) *MaxOneRow {
-	p.basePlan = newBasePlan(TypeMaxOneRow, allocator, ctx, &p)
+func (p LogicalExists) init(ctx context.Context) *LogicalExists {
+	p.basePlan = newBasePlan(TypeExists, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalExists) init(ctx context.Context) *PhysicalExists {
+	p.basePlan = newBasePlan(TypeExists, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Update) init(allocator *idAllocator, ctx context.Context) *Update {
-	p.basePlan = newBasePlan(TypeUpate, allocator, ctx, &p)
+func (p LogicalMaxOneRow) init(ctx context.Context) *LogicalMaxOneRow {
+	p.basePlan = newBasePlan(TypeMaxOneRow, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalMaxOneRow) init(ctx context.Context) *PhysicalMaxOneRow {
+	p.basePlan = newBasePlan(TypeMaxOneRow, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Delete) init(allocator *idAllocator, ctx context.Context) *Delete {
-	p.basePlan = newBasePlan(TypeDelete, allocator, ctx, &p)
+func (p Update) init(ctx context.Context) *Update {
+	p.basePlan = *newBasePlan(TypeUpdate, ctx, &p)
+	return &p
+}
+
+func (p Delete) init(ctx context.Context) *Delete {
+	p.basePlan = *newBasePlan(TypeDelete, ctx, &p)
+	return &p
+}
+
+func (p Insert) init(ctx context.Context) *Insert {
+	p.basePlan = *newBasePlan(TypeInsert, ctx, &p)
+	return &p
+}
+
+func (p Show) init(ctx context.Context) *Show {
+	p.basePlan = *newBasePlan(TypeShow, ctx, &p)
+	return &p
+}
+
+func (p LogicalLock) init(ctx context.Context) *LogicalLock {
+	p.basePlan = newBasePlan(TypeLock, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalLock) init(ctx context.Context) *PhysicalLock {
+	p.basePlan = newBasePlan(TypeLock, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Insert) init(allocator *idAllocator, ctx context.Context) *Insert {
-	p.basePlan = newBasePlan(TypeInsert, allocator, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+func (p PhysicalTableScan) init(ctx context.Context) *PhysicalTableScan {
+	p.basePlan = newBasePlan(TypeTableScan, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Show) init(allocator *idAllocator, ctx context.Context) *Show {
-	p.basePlan = newBasePlan(TypeShow, allocator, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+func (p PhysicalIndexScan) init(ctx context.Context) *PhysicalIndexScan {
+	p.basePlan = newBasePlan(TypeIdxScan, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p SelectLock) init(allocator *idAllocator, ctx context.Context) *SelectLock {
-	p.basePlan = newBasePlan(TypeLock, allocator, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+func (p PhysicalMemTable) init(ctx context.Context) *PhysicalMemTable {
+	p.basePlan = newBasePlan(TypeMemTableScan, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p PhysicalTableScan) init(allocator *idAllocator, ctx context.Context) *PhysicalTableScan {
-	p.basePlan = newBasePlan(TypeTableScan, allocator, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
-}
-
-func (p PhysicalIndexScan) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexScan {
-	p.basePlan = newBasePlan(TypeIdxScan, allocator, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
-}
-
-func (p PhysicalMemTable) init(allocator *idAllocator, ctx context.Context) *PhysicalMemTable {
-	p.basePlan = newBasePlan(TypeMemTableScan, allocator, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
-}
-
-func (p PhysicalHashJoin) init(allocator *idAllocator, ctx context.Context) *PhysicalHashJoin {
+func (p PhysicalHashJoin) init(ctx context.Context) *PhysicalHashJoin {
 	tp := TypeHashRightJoin
-	if p.SmallTable == 1 {
+	if p.SmallChildIdx == 1 {
 		tp = TypeHashLeftJoin
 	}
-	p.basePlan = newBasePlan(tp, allocator, ctx, &p)
+	p.basePlan = newBasePlan(tp, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p PhysicalHashSemiJoin) init(allocator *idAllocator, ctx context.Context) *PhysicalHashSemiJoin {
-	p.basePlan = newBasePlan(TypeHashSemiJoin, allocator, ctx, &p)
+func (p PhysicalHashSemiJoin) init(ctx context.Context) *PhysicalHashSemiJoin {
+	p.basePlan = newBasePlan(TypeHashSemiJoin, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p PhysicalMergeJoin) init(allocator *idAllocator, ctx context.Context) *PhysicalMergeJoin {
-	p.basePlan = newBasePlan(TypeMergeJoin, allocator, ctx, &p)
+func (p PhysicalMergeJoin) init(ctx context.Context) *PhysicalMergeJoin {
+	p.basePlan = newBasePlan(TypeMergeJoin, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p PhysicalAggregation) init(allocator *idAllocator, ctx context.Context) *PhysicalAggregation {
-	tp := TypeHashAgg
-	if p.AggType == StreamedAgg {
-		tp = TypeStreamAgg
+func (base basePhysicalAgg) initForHash(ctx context.Context) *PhysicalHashAgg {
+	p := &PhysicalHashAgg{base}
+	p.basePlan = newBasePlan(TypeHashAgg, ctx, p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return p
+}
+
+func (base basePhysicalAgg) initForStream(ctx context.Context, keys []*expression.Column, inputCnt float64) *PhysicalStreamAgg {
+	p := &PhysicalStreamAgg{
+		basePhysicalAgg: base,
+		propKeys:        keys,
+		inputCount:      inputCnt,
 	}
-	p.basePlan = newBasePlan(tp, allocator, ctx, &p)
+	p.basePlan = newBasePlan(TypeStreamAgg, ctx, p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return p
+}
+
+func (p PhysicalApply) init(ctx context.Context) *PhysicalApply {
+	p.basePlan = newBasePlan(TypeApply, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p PhysicalApply) init(allocator *idAllocator, ctx context.Context) *PhysicalApply {
-	p.basePlan = newBasePlan(TypeApply, allocator, ctx, &p)
+func (p PhysicalUnionScan) init(ctx context.Context) *PhysicalUnionScan {
+	p.basePlan = newBasePlan(TypeUnionScan, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
 
-func (p PhysicalUnionScan) init(allocator *idAllocator, ctx context.Context) *PhysicalUnionScan {
-	p.basePlan = newBasePlan(TypeUnionScan, allocator, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
-}
-
-func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexLookUpReader {
-	p.basePlan = newBasePlan(TypeIndexLookUp, allocator, ctx, &p)
+func (p PhysicalIndexLookUpReader) init(ctx context.Context) *PhysicalIndexLookUpReader {
+	p.basePlan = newBasePlan(TypeIndexLookUp, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.NeedColHandle = p.IndexPlans[0].(*PhysicalIndexScan).NeedColHandle
 	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
-func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *PhysicalTableReader {
-	p.basePlan = newBasePlan(TypeTableReader, allocator, ctx, &p)
+func (p PhysicalTableReader) init(ctx context.Context) *PhysicalTableReader {
+	p.basePlan = newBasePlan(TypeTableReader, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.NeedColHandle = p.TablePlans[0].(*PhysicalTableScan).NeedColHandle
 	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
-func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexReader {
-	p.basePlan = newBasePlan(TypeIndexReader, allocator, ctx, &p)
+func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
+	p.basePlan = newBasePlan(TypeIndexReader, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.NeedColHandle = p.IndexPlans[0].(*PhysicalIndexScan).NeedColHandle
-	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
+	if _, ok := p.indexPlan.(*PhysicalHashAgg); ok {
 		p.schema = p.indexPlan.Schema()
 	} else {
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -303,11 +356,10 @@ func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *
 	return &p
 }
 
-func (p PhysicalIndexJoin) init(allocator *idAllocator, ctx context.Context, children ...Plan) *PhysicalIndexJoin {
-	p.basePlan = newBasePlan(TypeIndexJoin, allocator, ctx, &p)
+func (p PhysicalIndexJoin) init(ctx context.Context, children ...Plan) *PhysicalIndexJoin {
+	p.basePlan = newBasePlan(TypeIndexJoin, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.children = children
-	p.schema = expression.MergeSchema(p.children[0].Schema(), p.children[1].Schema())
 	return &p
 }
 

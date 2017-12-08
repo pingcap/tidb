@@ -56,15 +56,6 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
-// SelectLock represents a select lock plan.
-type SelectLock struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	Lock ast.SelectLockType
-}
-
 // Prepare represents prepare plan.
 type Prepare struct {
 	basePlan
@@ -119,9 +110,9 @@ func (e *Execute) optimizePreparedPlan(ctx context.Context, is infoschema.InfoSc
 		vars.PreparedParams[i] = val
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
-		// If the schema version has changed we need to prepare it again,
+		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := PrepareStmt(is, ctx, prepared.Stmt)
+		err := Preprocess(ctx, prepared.Stmt, is, true)
 		if err != nil {
 			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
 		}
@@ -165,9 +156,7 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
+	basePlan
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -176,6 +165,8 @@ type Show struct {
 	Flag   int             // Some flag parsed from sql, such as FULL.
 	Full   bool
 	User   *auth.UserIdentity // Used for show grants.
+
+	Conditions []expression.Expression
 
 	// Used by show variables
 	GlobalScope bool
@@ -205,9 +196,7 @@ type InsertGeneratedColumns struct {
 
 // Insert represents an insert plan.
 type Insert struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
+	basePlan
 
 	Table       table.Table
 	tableSchema *expression.Schema
@@ -224,6 +213,28 @@ type Insert struct {
 	NeedFillDefaultValue bool
 
 	GenCols InsertGeneratedColumns
+
+	SelectPlan PhysicalPlan
+}
+
+// Update represents Update plan.
+type Update struct {
+	basePlan
+
+	OrderedList []*expression.Assignment
+	IgnoreErr   bool
+
+	SelectPlan PhysicalPlan
+}
+
+// Delete represents a delete plan.
+type Delete struct {
+	basePlan
+
+	Tables       []*ast.TableName
+	IsMultiTable bool
+
+	SelectPlan PhysicalPlan
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
