@@ -509,6 +509,12 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 func (cc *clientConn) dispatch(data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
 	goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
+
+	goCtx1, cancelFunc := goctx.WithCancel(goCtx)
+	cc.mu.Lock()
+	cc.mu.cancelFunc = cancelFunc
+	cc.mu.Unlock()
+
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
@@ -534,11 +540,11 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		return cc.handleQuery(goCtx, hack.String(data))
+		return cc.handleQuery(goCtx1, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(goCtx, hack.String(data)); err != nil {
+		if err := cc.useDB(goCtx1, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
@@ -547,7 +553,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
-		return cc.handleStmtExecute(goCtx, data)
+		return cc.handleStmtExecute(goCtx1, data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -745,27 +751,22 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
 func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
-	goCtx1, cancelFunc := goctx.WithCancel(goCtx)
-	cc.mu.Lock()
-	cc.mu.cancelFunc = cancelFunc
-	cc.mu.Unlock()
-
-	rs, err := cc.ctx.Execute(goCtx1, sql)
+	rs, err := cc.ctx.Execute(goCtx, sql)
 	if err != nil {
 		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
 	if rs != nil {
 		if len(rs) == 1 {
-			err = cc.writeResultset(goCtx1, rs[0], false, false)
+			err = cc.writeResultset(goCtx, rs[0], false, false)
 		} else {
-			err = cc.writeMultiResultset(goCtx1, rs, false)
+			err = cc.writeMultiResultset(goCtx, rs, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(goCtx1, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			if err = cc.handleLoadData(goCtx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
 			}
 		}
