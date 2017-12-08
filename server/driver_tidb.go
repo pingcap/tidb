@@ -280,11 +280,6 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
-// Cancel implements QueryCtx Cancel method.
-func (tc *TiDBContext) Cancel() {
-	tc.session.Cancel()
-}
-
 type tidbResultSet struct {
 	recordSet ast.RecordSet
 	columns   []*ColumnInfo

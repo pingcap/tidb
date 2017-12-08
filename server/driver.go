@@ -84,9 +84,6 @@ type QueryCtx interface {
 	ShowProcess() util.ProcessInfo
 
 	SetSessionManager(util.SessionManager)
-
-	// Cancel the execution of current transaction.
-	Cancel()
 }
 
 // PreparedStatement is the interface to use a prepared statement.

@@ -44,6 +44,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -77,7 +78,13 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	killed       bool
+
+	// cancelFunc is used for cancelling the execution of current transaction.
+	mu struct {
+		sync.RWMutex
+		cancelFunc goctx.CancelFunc
+	}
+	killed bool
 }
 
 func (cc *clientConn) String() string {
@@ -738,22 +745,27 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
 func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
-	rs, err := cc.ctx.Execute(goCtx, sql)
+	goCtx1, cancelFunc := goctx.WithCancel(goCtx)
+	cc.mu.Lock()
+	cc.mu.cancelFunc = cancelFunc
+	cc.mu.Unlock()
+
+	rs, err := cc.ctx.Execute(goCtx1, sql)
 	if err != nil {
 		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
 	if rs != nil {
 		if len(rs) == 1 {
-			err = cc.writeResultset(goCtx, rs[0], false, false)
+			err = cc.writeResultset(goCtx1, rs[0], false, false)
 		} else {
-			err = cc.writeMultiResultset(goCtx, rs, false)
+			err = cc.writeMultiResultset(goCtx1, rs, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(goCtx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			if err = cc.handleLoadData(goCtx1, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
 			}
 		}
