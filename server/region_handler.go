@@ -1015,24 +1015,9 @@ func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {
 }
 
 func (t *regionHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
-	encodeKey, err := hex.DecodeString(params[pHexKey])
+	encodedKey, err := hex.DecodeString(params[pHexKey])
 	if err != nil {
 		return nil, err
 	}
-	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
-	if err != nil {
-		return nil, err
-	}
-	tikvReq := &tikvrpc.Request{
-		Type: tikvrpc.CmdMvccGetByKey,
-		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
-			Key: encodeKey,
-		},
-	}
-	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
-	if err != nil {
-		return nil, err
-	}
-	return kvResp.MvccGetByKey, nil
+	return t.getMvccByEncodedKey(encodedKey)
 }
