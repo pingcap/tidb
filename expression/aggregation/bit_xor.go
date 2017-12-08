@@ -87,9 +87,8 @@ func (bf *bitXorFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 }
 
 // GetResult implements Aggregation interface.
-func (bf *bitXorFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	d.SetUint64(ctx.Value.GetUint64())
-	return d
+func (bf *bitXorFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
+	return ctx.Value
 }
 
 // GetPartialResult implements Aggregation interface.

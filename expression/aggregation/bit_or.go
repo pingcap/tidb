@@ -87,7 +87,7 @@ func (bf *bitOrFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCo
 }
 
 // GetResult implements Aggregation interface.
-func (bf *bitOrFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
+func (bf *bitOrFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
 	return ctx.Value
 }
 
