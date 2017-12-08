@@ -250,7 +250,7 @@ func (b *executorBuilder) buildWindowFunction(v *plan.WindowFunction) Executor {
 	}
 	e := &WindowFunctionExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
-		F:            v.F,
+		f:            v.F,
 	}
 	return e
 }

@@ -350,9 +350,9 @@ func (e *LimitExec) Open() error {
 type WindowFunctionExec struct {
 	baseExecutor
 
-	F string
+	f string
 	// Idx is the index of current row in row_number() window function.
-	Idx int64
+	idx int64
 }
 
 // Next implements the Executor Next interface.
@@ -361,10 +361,10 @@ func (e *WindowFunctionExec) Next() (Row, error) {
 	if row == nil {
 		return nil, err
 	}
-	switch e.F {
+	switch e.f {
 	case ast.WindowFuncRowNumber:
-		e.Idx++
-		row = append(row, types.NewIntDatum(e.Idx))
+		e.idx++
+		row = append(row, types.NewIntDatum(e.idx))
 	case ast.WindowFuncRank:
 		row = append(row, types.NewIntDatum(1))
 	}
@@ -373,9 +373,9 @@ func (e *WindowFunctionExec) Next() (Row, error) {
 
 // Open implements the Executor Open interface.
 func (e *WindowFunctionExec) Open() error {
-	switch e.F {
+	switch e.f {
 	case ast.WindowFuncRowNumber:
-		e.Idx = 0
+		e.idx = 0
 	}
 	return errors.Trace(e.baseExecutor.Open())
 }
