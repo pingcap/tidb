@@ -80,7 +80,7 @@ type Security struct {
 
 // ToTLSConfig generates tls's config based on security section of the config.
 func (s *Security) ToTLSConfig() (*tls.Config, error) {
-	tlsConfig := &tls.Config{}
+	var tlsConfig *tls.Config
 	if len(s.ClusterSSLCA) != 0 {
 		certificates := []tls.Certificate{}
 		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
@@ -104,8 +104,10 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 			return nil, errors.New("failed to append ca certs")
 		}
 
-		tlsConfig.Certificates = certificates
-		tlsConfig.RootCAs = certPool
+		tlsConfig = &tls.Config{
+			Certificates: certificates,
+			RootCAs:      certPool,
+		}
 	}
 
 	return tlsConfig, nil
