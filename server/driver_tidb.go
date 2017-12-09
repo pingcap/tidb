@@ -64,8 +64,8 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) {
-	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ts.id, args...)
+func (ts *TiDBStatement) Execute(goCtx goctx.Context, args ...interface{}) (rs ResultSet, err error) {
+	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(goCtx, ts.id, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -278,11 +278,6 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 // ShowProcess implements QueryCtx ShowProcess method.
 func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
-}
-
-// Cancel implements QueryCtx Cancel method.
-func (tc *TiDBContext) Cancel() {
-	tc.session.Cancel()
 }
 
 type tidbResultSet struct {
