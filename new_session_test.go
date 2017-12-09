@@ -1554,7 +1554,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	var count int
 	var numChunks int
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1590,7 +1590,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk := rs.NewChunk()
 	var count int
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1610,7 +1610,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk = rs.NewChunk()
 	count = 0
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
