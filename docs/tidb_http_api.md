@@ -1,8 +1,8 @@
 #  TiDB HTTP API
 
-`TiDBIP` is the ip of tidb, `10080` is the default status port, and it can be changed in the tidb.toml when start. 
+`TiDBIP` is the ip of the TiDB server. `10080` is the default status port, and it can be changed in tidb.toml when started. 
 
-> 1. Get present TiDB's status, about connections, version and git_hash
+> 1. Get the current status of TiDB, including the connections, version and git_hash
 
 ```
 curl http://{TiDBIP}:10080/status
