@@ -8,13 +8,13 @@
 curl http://{TiDBIP}:10080/status
 ```
 
-> 2. Get TiDB all metrics
+> 2. Get all metrics of TiDB
 
 ```
 curl http://{TiDBIP}:10080/metrics
 ```
 
-> 3. Get all regions metadata
+> 3. Get the metadata of all regions
 
 ```
 curl http://{TiDBIP}:10080/regions/meta
