@@ -50,3 +50,9 @@ curl http://{TiDBIP}:10080/schema/{db}
 curl http://{TiDBIP}:10080/schema/{db}/{table}
 ```
 
+> 9. Get disk-usage info about db.table
+
+```
+curl http://{TiDBIP}:10080/tables/{db}/{table}/disk-usage
+```
+
