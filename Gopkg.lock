@@ -169,9 +169,10 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
+  branch = "master"
   name = "github.com/pingcap/kvproto"
   packages = ["pkg/coprocessor","pkg/eraftpb","pkg/errorpb","pkg/kvrpcpb","pkg/metapb","pkg/pdpb","pkg/raft_serverpb","pkg/tikvpb"]
-  revision = "e33073e1475021e04c795c3de5e1f4e28baa708a"
+  revision = "d21ce07c35b9ea66436dc632210a01d927361ed4"
 
 [[projects]]
   name = "github.com/pingcap/pd"
@@ -261,6 +262,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "726b12038b0c14cd51ebf74dc1e653fff3fccc8af96a39003622260b0025ff31"
+  inputs-digest = "296544a39b3c5a64adc1d35b4d1019c5eca84f92478d478e8fac958ec7f493f9"
   solver-name = "gps-cdcl"
   solver-version = 1

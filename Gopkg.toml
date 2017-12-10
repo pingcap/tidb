@@ -87,6 +87,7 @@
 
 [[constraint]]
   name = "github.com/pingcap/kvproto"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/pingcap/pd"
@@ -118,3 +119,8 @@
 
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
+
+[prune]
+  non-go = true
+  go-tests = true
+  unused-packages = true
