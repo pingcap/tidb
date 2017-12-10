@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -706,8 +707,7 @@ var BatchInsertSize = 20000
 // This will be used when tidb_batch_delete is set to ON.
 var BatchDeleteSize = 20000
 
-// Next implements the Executor Next interface.
-func (e *InsertExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *InsertExec) exec(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -777,6 +777,11 @@ func (e *InsertExec) Next(goCtx goctx.Context) (Row, error) {
 	return nil, nil
 }
 
+// Next implements the Executor Next interface.
+func (e *InsertExec) Next(goCtx goctx.Context) (Row, error) {
+	return e.exec(goCtx)
+}
+
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
 	e.ctx.GetSessionVars().CurrInsertValues = nil
@@ -792,6 +797,13 @@ func (e *InsertExec) Open(goCtx goctx.Context) error {
 		return e.SelectExec.Open(goCtx)
 	}
 	return nil
+}
+
+// NextChunk implements Exec NextChunk interface.
+func (e *InsertExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	_, err := e.exec(goCtx)
+	return errors.Trace(err)
 }
 
 // getColumns gets the explicitly specified columns of an insert statement. There are three cases:
