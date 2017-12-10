@@ -41,7 +41,7 @@ default: server buildsucc
 buildsucc:
 	@echo Build TiDB Server successfully!
 
-all: dev server benchkv
+all: dev update server benchkv
 
 dev: checklist parserlib test check
 
@@ -163,6 +163,7 @@ else
 	dep ensure -update
 endif
 	@echo "removing test files"
+	dep ensure
 	dep prune
 
 checklist:
