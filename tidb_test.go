@@ -208,8 +208,9 @@ func removeStore(c *C, dbPath string) {
 }
 
 func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
+	goCtx := goctx.Background()
 	if len(args) == 0 {
-		rs, err := se.Execute(goctx.Background(), sql)
+		rs, err := se.Execute(goCtx, sql)
 		if err == nil && len(rs) > 0 {
 			return rs[0], nil
 		}
@@ -219,7 +220,7 @@ func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	rs, err := se.ExecutePreparedStmt(stmtID, args...)
+	rs, err := se.ExecutePreparedStmt(goCtx, stmtID, args...)
 	if err != nil {
 		return nil, err
 	}

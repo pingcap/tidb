@@ -126,6 +126,20 @@ func (p *LogicalJoin) getHashSemiJoin() PhysicalPlan {
 	return semiJoin
 }
 
+func (p *LogicalJoin) getHashJoins() []PhysicalPlan {
+	joins := make([]PhysicalPlan, 0, 2)
+	switch p.JoinType {
+	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
+		joins = append(joins, p.getHashJoin(1))
+	case RightOuterJoin:
+		joins = append(joins, p.getHashJoin(0))
+	case InnerJoin:
+		joins = append(joins, p.getHashJoin(1))
+		joins = append(joins, p.getHashJoin(0))
+	}
+	return joins
+}
+
 func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
 	hashJoin := PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
@@ -252,8 +266,8 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 		return nil, false
 	}
 	plans := make([]PhysicalPlan, 0, 2)
-	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
-	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
+	leftOuter := (p.preferJoinType & preferLeftAsIndexOuter) > 0
+	rightOuter := (p.preferJoinType & preferRightAsIndexOuter) > 0
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(0)
@@ -296,7 +310,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 
 func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	mergeJoins := p.getMergeJoin()
-	if p.preferMergeJoin && len(mergeJoins) > 0 {
+	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
 		return mergeJoins
 	}
 	joins := make([]PhysicalPlan, 0, 5)
@@ -308,15 +322,11 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	}
 	joins = append(joins, indexJoins...)
 
-	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		joins = append(joins, p.getHashJoin(1))
-	case RightOuterJoin:
-		joins = append(joins, p.getHashJoin(0))
-	case InnerJoin:
-		joins = append(joins, p.getHashJoin(1))
-		joins = append(joins, p.getHashJoin(0))
+	hashJoins := p.getHashJoins()
+	if (p.preferJoinType & preferHashJoin) > 0 {
+		return hashJoins
 	}
+	joins = append(joins, hashJoins...)
 	return joins
 }
 

@@ -47,7 +47,7 @@ type SelectResult interface {
 	// NextRaw gets the next raw result.
 	NextRaw() ([]byte, error)
 	// NextChunk reads the data into chunk.
-	NextChunk(*chunk.Chunk) error
+	NextChunk(goctx.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -141,7 +141,7 @@ func (r *selectResult) NextRaw() ([]byte, error) {
 }
 
 // NextChunk reads data to the chunk.
-func (r *selectResult) NextChunk(chk *chunk.Chunk) error {
+func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
