@@ -1,0 +1,12 @@
+language: go
+
+go_import_path: github.com/blacktear23/go-proxyprotocol
+
+go:
+  - 1.9.x
+
+before_install:
+  - go get github.com/pingcap/check
+
+script:
+  - go test -cover
