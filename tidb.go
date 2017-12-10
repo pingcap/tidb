@@ -195,7 +195,7 @@ func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()
-			err := rs.NextChunk(chk)
+			err := rs.NextChunk(goCtx, chk)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

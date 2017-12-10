@@ -29,6 +29,7 @@ func (s *testSuite) TestPrepared(c *C) {
 	orgEnable := cfg.PreparedPlanCache.Enabled
 	orgCapacity := cfg.PreparedPlanCache.Capacity
 	flags := []bool{false, true}
+	goCtx := goctx.Background()
 	for _, flag := range flags {
 		cfg.PreparedPlanCache.Enabled = flag
 		cfg.PreparedPlanCache.Capacity = 100
@@ -69,7 +70,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		query := "select c1, c2 from prepare_test where c1 = ?"
 		stmtId, _, _, err := tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(err, IsNil)
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
@@ -78,12 +79,12 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(stmt.OriginText(), Equals, query)
 
 		// Check that rebuild plan works.
-		tk.Se.PrepareTxnCtx(goctx.Background())
+		tk.Se.PrepareTxnCtx(goCtx)
 		err = stmt.RebuildPlan()
 		c.Assert(err, IsNil)
-		rs, err := stmt.Exec(goctx.Background())
+		rs, err := stmt.Exec(goCtx)
 		c.Assert(err, IsNil)
-		_, err = rs.Next(goctx.Background())
+		_, err = rs.Next(goCtx)
 		c.Assert(err, IsNil)
 		c.Assert(rs.Close(), IsNil)
 
@@ -92,17 +93,17 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.Exec("create table prepare2 (a int)")
 
 		// Should success as the changed schema do not affect the prepared statement.
-		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(err, IsNil)
 
 		// Drop a column so the prepared statement become invalid.
 		tk.MustExec("alter table prepare_test drop column c2")
 
-		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(plan.ErrUnknownColumn.Equal(err), IsTrue)
 
 		tk.MustExec("drop table prepare_test")
-		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(plan.ErrSchemaChanged.Equal(err), IsTrue)
 
 		// issue 3381
@@ -114,7 +115,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.Next(goctx.Background())
+		exec.Next(goCtx)
 		exec.Close()
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
@@ -126,6 +127,7 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	orgEnable := cfg.PreparedPlanCache.Enabled
 	orgCapacity := cfg.PreparedPlanCache.Capacity
 	flags := []bool{false, true}
+	goCtx := goctx.Background()
 	for _, flag := range flags {
 		cfg.PreparedPlanCache.Enabled = flag
 		cfg.PreparedPlanCache.Capacity = 100
@@ -148,7 +150,7 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 
 		stmtID, _, _, err := tk.Se.PrepareStmt("select id from prepare_test limit ?")
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(stmtID, 1)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtID, 1)
 		c.Assert(err, IsNil)
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
