@@ -1,0 +1,21 @@
+// Copyright (c) 2014 The parser Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+daccent = "^^" .
+dot = "." .
+eol = .
+iriref = .
+label = .
+langtag = .
+string = .
+
+GraphLabel = iriref | label .
+Literal = string [ daccent iriref | langtag ] .
+Object = iriref
+	| label
+	| Literal .
+Predicate = iriref .
+SourceFile = [ Statement ] { eol Statement } [ eol ] .
+Statement = Subject Predicate Object [ GraphLabel ] dot .
+Subject = iriref | label .

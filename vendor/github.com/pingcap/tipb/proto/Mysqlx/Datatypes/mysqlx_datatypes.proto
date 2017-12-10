@@ -1,0 +1,94 @@
+/*
+ * Copyright (c) 2015, 2016 Oracle and/or its affiliates. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; version 2 of the
+ * License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301  USA
+ */
+syntax = "proto2";
+
+// ifdef PROTOBUF_LITE: option optimize_for = LITE_RUNTIME;
+
+package Mysqlx.Datatypes;
+option java_package = "com.mysql.cj.mysqlx.protobuf";
+
+
+// a scalar
+message Scalar {
+  // a string with a charset/collation
+  message String {
+    required bytes value = 1;
+    optional uint64 collation = 2;
+  };
+
+  // an opaque octet sequence, with an optional content_type
+  // See ``Mysqlx.Resultset.ColumnMetadata`` for list of known values.
+  message Octets {
+    required bytes value = 1;
+    optional uint32 content_type = 2;
+  };
+
+  enum Type {
+    V_SINT = 1;
+    V_UINT = 2;
+    V_NULL = 3;
+    V_OCTETS = 4;
+    V_DOUBLE = 5;
+    V_FLOAT = 6;
+    V_BOOL  = 7;
+    V_STRING  = 8;
+  };
+
+  required Type type = 1;
+
+  optional sint64 v_signed_int = 2;
+  optional uint64 v_unsigned_int = 3;
+  // 4 is unused, was Null which doesn't have a storage anymore
+  optional Octets v_octets = 5;
+  optional double v_double = 6;
+  optional float  v_float = 7;
+  optional bool   v_bool = 8;
+  optional String v_string = 9;
+}
+
+// a object
+message Object {
+  message ObjectField {
+    required string key = 1;
+    required Any value = 2;
+  }
+
+  repeated ObjectField fld = 1;
+}
+
+// a Array
+message Array {
+  repeated Any value = 1;
+}
+
+// a helper to allow all field types
+message Any {
+  enum Type {
+    SCALAR = 1;
+    OBJECT = 2;
+    ARRAY  = 3;
+  };
+
+  required Type type = 1;
+
+  optional Scalar scalar = 2;
+  optional Object obj    = 3;
+  optional Array  array  = 4;
+}
+

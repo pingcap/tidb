@@ -1,0 +1,81 @@
+syntax = "proto3";
+package raft_serverpb;
+
+import "eraftpb.proto";
+import "metapb.proto";
+
+option java_package = "com.pingcap.tikv.kvproto";
+
+message RaftMessage {
+    uint64 region_id = 1;
+    metapb.Peer from_peer = 2;
+    metapb.Peer to_peer = 3;
+    eraftpb.Message message = 4;
+    metapb.RegionEpoch region_epoch = 5;
+    // true means to_peer is a tombstone peer and it should remove itself.
+    bool is_tombstone = 6;
+    // Region key range [start_key, end_key).
+    bytes start_key = 7;
+    bytes end_key = 8;
+}
+
+message RaftTruncatedState {
+    uint64 index = 1;
+    uint64 term = 2;
+}
+
+message SnapshotCFFile {
+    string cf = 1;
+    uint64 size = 2;
+    uint32 checksum = 3;
+}
+
+message SnapshotMeta {
+    repeated SnapshotCFFile cf_files = 1;
+}
+
+message SnapshotChunk {
+    RaftMessage message = 1;
+    bytes data = 2;
+}
+
+message Done {}
+
+message KeyValue {
+    bytes key      = 1;
+    bytes value    = 2;
+}
+
+message RaftSnapshotData {
+    metapb.Region region = 1;
+    uint64 file_size = 2;
+    repeated KeyValue data = 3;
+    uint64 version = 4;
+    SnapshotMeta meta = 5;
+}
+
+message StoreIdent {
+    uint64 cluster_id = 1;
+    uint64 store_id = 2;
+}
+
+message RaftLocalState {
+    eraftpb.HardState hard_state = 1;
+    uint64 last_index = 2;
+}
+
+message RaftApplyState {
+    uint64 applied_index = 1;
+    RaftTruncatedState truncated_state = 2;
+}
+
+enum PeerState {
+    Normal = 0;
+    Applying = 1;
+    Tombstone = 2;
+}
+
+message RegionLocalState {
+    PeerState state = 1;
+    metapb.Region region = 2;
+}

@@ -1,0 +1,109 @@
+/*
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; version 2 of the
+ * License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301  USA
+ */
+syntax = "proto2";
+
+// ifdef PROTOBUF_LITE: option optimize_for = LITE_RUNTIME;
+
+// Expect operations
+package Mysqlx.Expect;
+option java_package = "com.mysql.cj.mysqlx.protobuf";
+
+// Pipelining messages is a core feature of the Mysqlx Protocol. It
+// sends messages to the server without waiting for a response to
+// save latency.
+//
+// * in case of success the time to wait and check the result as been saved
+//   and the latency is reduced.
+//
+// * in the case of an error a mechanism is need to ensure that the following
+//   messages are not executed, but skipped with an error instead.
+//
+// ::
+//
+//   Mysqlx.Crud::PrepareFind(stmt_id=1,...)
+//   Mysqlx.Expect::Open([no_error]) // if a execute fails
+//   Mysqlx.PreparedStmt::Execute(stmt_id=1,...)
+//   Mysqlx.PreparedStmt::Execute(stmt_id=1,...)
+//   Mysqlx.Expect::Close()
+//   Mysqlx.PreparedStmt::Close(stmt_id=1,...)
+//
+// This basic mechanism is extended to carry a arbitrary set of conditions that are
+// checked before executing message:
+//
+// ::
+//
+//   Mysqlx.Expect::Open([+no_error, +gtid_executed_contains = "...", +max_stmt_exec_time_ms = 10])
+//
+//   Mysqlx.Expect::Close()
+//
+// Expect blocks can be nested to increase/change the restrictions for a subset of the
+// messages. At the end of the Expect block the previous restrictions are restored.
+//
+// ::
+//
+//   Mysqlx.Expect::Open([+no_error]) // if preparing the Find fails, don't try to close it
+//   Mysqlx.Crud::PrepareFind(stmt_id=1,...)
+//   Mysqlx.Expect::Open([+no_error]) // if a Execute fails, skip the rest of them and continue with Close
+//   Mysqlx.PreparedStmt::Execute(stmt_id=1,...)
+//   Mysqlx.PreparedStmt::Execute(stmt_id=1,...)
+//   Mysqlx.Expect::Close()
+//   Mysqlx.PreparedStmt::Close(stmt_id=1,...)
+//   Mysqlx.Expect::Close()
+
+// open an Expect block and set/unset the conditions that have to be fulfilled
+//
+// if any of the conditions fail, all enclosed messages will fail with
+// a Mysqlx.Error message.
+//
+// :returns: :protobuf:msg:`Mysqlx::Ok` on success, :protobuf:msg:`Mysqlx::Error` on error
+//
+message Open {
+  message Condition {
+    enum ConditionOperation {
+      // set the condition
+      //
+      // set, if not set
+      // overwrite, if set
+      EXPECT_OP_SET = 0;
+      // unset the condition
+      EXPECT_OP_UNSET = 1;
+    };
+    required uint32 condition_key = 1;
+    optional bytes condition_value = 2;
+    optional ConditionOperation op = 3 [ default = EXPECT_OP_SET ];
+  };
+  enum CtxOperation {
+    // copy the operations from the parent Expect-block
+    EXPECT_CTX_COPY_PREV = 0;
+    // start with a empty set of operations
+    EXPECT_CTX_EMPTY = 1;
+  };
+  optional CtxOperation op = 1 [ default = EXPECT_CTX_COPY_PREV ];
+  repeated Condition cond = 2;
+}
+
+// close a Expect block
+//
+// closing a Expect block restores the state of the previous Expect block
+// for the following messages
+//
+// :returns: :protobuf:msg:`Mysqlx::Ok` on success, :protobuf:msg:`Mysqlx::Error` on error
+message Close {
+}
+

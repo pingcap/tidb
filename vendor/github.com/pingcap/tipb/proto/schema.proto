@@ -1,0 +1,42 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+message TableInfo {
+	optional int64 table_id = 1 [(gogoproto.nullable) = false];
+	repeated ColumnInfo columns = 2;
+}
+
+message ColumnInfo {
+	optional int64 column_id = 1 [(gogoproto.nullable) = false];
+	optional int32 tp = 2 [(gogoproto.nullable) = false]; // MySQL type.
+	optional int32 collation = 3 [(gogoproto.nullable) = false];
+	optional int32 columnLen = 4 [(gogoproto.nullable) = false];
+	optional int32 decimal = 5 [(gogoproto.nullable) = false];
+	optional int32 flag = 6 [(gogoproto.nullable) = false];
+	repeated string elems = 7;
+	optional bytes default_val = 8; // Encoded datum.
+	optional bool pk_handle = 21 [(gogoproto.nullable) = false]; // PK handle column value is row handle.
+}
+
+message IndexInfo {
+	optional int64 table_id = 1 [(gogoproto.nullable) = false];
+	optional int64 index_id = 2 [(gogoproto.nullable) = false];
+	repeated ColumnInfo columns = 3;
+	optional bool unique = 4 [(gogoproto.nullable) = false];
+}
+
+// KeyRange is the encoded index key range, low is closed, high is open. (low <= x < high)
+message KeyRange {
+	optional bytes low = 1;
+	optional bytes high = 2;
+}

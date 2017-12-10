@@ -1,0 +1,240 @@
+syntax = "proto3";
+package raft_cmdpb;
+
+import "metapb.proto";
+import "errorpb.proto";
+import "eraftpb.proto";
+
+option java_package = "com.pingcap.tikv.kvproto";
+
+message GetRequest {
+    string cf = 1;
+    bytes key = 2;
+}
+
+message GetResponse {
+    bytes value = 1;
+}
+
+message PutRequest {
+    string cf = 1;
+    bytes key = 2;
+    bytes value = 3;
+}
+
+message PutResponse {}
+
+message DeleteRequest {
+    string cf = 1;
+    bytes key = 2;
+}
+
+message DeleteResponse {}
+
+message DeleteRangeRequest {
+    string cf = 1;
+    bytes start_key = 2;
+    bytes end_key = 3;
+}
+
+message DeleteRangeResponse {}
+
+message SnapRequest {}
+
+message SnapResponse {
+    metapb.Region region = 1;
+}
+
+message PrewriteRequest {
+    bytes key = 1;
+    bytes value = 2;
+    bytes lock = 3;
+}
+
+message PrewriteResponse {}
+
+enum CmdType {
+    Invalid = 0;
+    Get = 1;
+    Put = 3;
+    Delete = 4;
+    Snap = 5;
+    Prewrite = 6;
+    DeleteRange = 7;
+}
+
+message Request {
+    CmdType cmd_type = 1;
+    GetRequest get = 2;
+    PutRequest put = 4;
+    DeleteRequest delete = 5;
+    SnapRequest snap = 6;
+    PrewriteRequest prewrite = 7;
+    DeleteRangeRequest delete_range = 8;
+}
+
+message Response {
+    CmdType cmd_type = 1;
+    GetResponse get = 2;
+    PutResponse put = 4;
+    DeleteResponse delete = 5;
+    SnapResponse snap = 6;
+    PrewriteResponse prewrite = 7;
+    DeleteRangeResponse delte_range = 8;
+}
+
+message ChangePeerRequest {
+    // This can be only called in internal RaftStore now.
+    eraftpb.ConfChangeType change_type = 1;
+    metapb.Peer peer = 2;
+}
+
+message ChangePeerResponse {
+    metapb.Region region = 1;
+}
+
+message SplitRequest {
+    // This can be only called in internal RaftStore now.
+    // The split_key must be in the been splitting region.
+    bytes split_key = 1;
+    // We split the region into two, first uses the origin 
+    // parent region id, and the second uses the new_region_id.
+    // We must guarantee that the new_region_id is global unique.
+    uint64 new_region_id = 2;
+    // The peer ids for the new split region.
+    repeated uint64 new_peer_ids = 3;
+    // If true, right region derive the origin region_id, 
+    // left region use new_region_id.
+    bool right_derive = 4;
+}
+
+message SplitResponse {
+    metapb.Region left = 1;
+    metapb.Region right = 2;
+}
+
+message CompactLogRequest {
+    uint64 compact_index = 1;
+    uint64 compact_term = 2;
+}
+
+message CompactLogResponse {}
+
+message TransferLeaderRequest {
+    metapb.Peer peer = 1;
+}
+
+message TransferLeaderResponse {}
+
+message VerifyHashRequest {
+    uint64 index = 1;
+    bytes hash = 2;
+}
+
+message VerifyHashResponse {}
+
+enum AdminCmdType {
+    InvalidAdmin = 0;
+    ChangePeer = 1;
+    Split = 2;
+    CompactLog = 3;
+    TransferLeader = 4;
+    ComputeHash = 5;
+    VerifyHash = 6;
+}
+
+message AdminRequest {
+    AdminCmdType cmd_type = 1;
+    ChangePeerRequest change_peer = 2;
+    SplitRequest split = 3;
+    CompactLogRequest compact_log = 4;
+    TransferLeaderRequest transfer_leader = 5;
+    VerifyHashRequest verify_hash = 6;
+}
+
+message AdminResponse {
+    AdminCmdType cmd_type = 1;
+    ChangePeerResponse change_peer = 2;
+    SplitResponse split = 3;
+    CompactLogResponse compact_log = 4;
+    TransferLeaderResponse transfer_leader = 5;
+    VerifyHashResponse verify_hash = 6;
+}
+
+// For get the leader of the region.
+message RegionLeaderRequest {}
+
+message RegionLeaderResponse {
+    metapb.Peer leader = 1;
+}
+
+// For getting more information of the region.
+// We add some admin operations (ChangePeer, Split...) into the pb job list,
+// then pd server will peek the first one, handle it and then pop it from the job lib. 
+// But sometimes, the pd server may crash before popping. When another pd server
+// starts and finds the job is running but not finished, it will first check whether
+// the raft server already has handled this job.
+// E,g, for ChangePeer, if we add Peer10 into region1 and find region1 has already had
+// Peer10, we can think this ChangePeer is finished, and can pop this job from job list
+// directly.
+message RegionDetailRequest {}
+
+message RegionDetailResponse {
+    metapb.Region region = 1;
+    metapb.Peer leader = 2;
+}
+
+
+enum StatusCmdType {
+    InvalidStatus = 0;
+    RegionLeader = 1;
+    RegionDetail = 2;
+}
+
+message StatusRequest {
+    StatusCmdType cmd_type = 1;
+    RegionLeaderRequest region_leader = 2;
+    RegionDetailRequest region_detail = 3;
+}
+
+message StatusResponse {
+    StatusCmdType cmd_type = 1;
+    RegionLeaderResponse region_leader = 2;
+    RegionDetailResponse region_detail = 3;
+}
+
+message RaftRequestHeader {
+    uint64 region_id = 1;
+    metapb.Peer peer = 2;
+    // true for read linearization
+    bool read_quorum = 3;
+    // 16 bytes, to distinguish request.  
+    bytes uuid = 4;
+    
+    metapb.RegionEpoch region_epoch = 5;
+    uint64 term = 6;
+
+    bool sync_log = 7;
+}
+
+message RaftResponseHeader {
+    errorpb.Error error = 1;
+    bytes uuid = 2;
+    uint64 current_term = 3;
+}
+
+message RaftCmdRequest {
+    RaftRequestHeader header = 1;
+    // We can't enclose normal requests and administrator request
+    // at same time. 
+    repeated Request requests = 2;
+    AdminRequest admin_request = 3;
+    StatusRequest status_request = 4;
+}
+
+message RaftCmdResponse {
+    RaftResponseHeader header = 1;
+    repeated Response responses = 2;
+    AdminResponse admin_response = 3;
+    StatusResponse status_response = 4;
+}

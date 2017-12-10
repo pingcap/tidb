@@ -1,0 +1,33 @@
+syntax = "proto3";
+package coprocessor;
+
+import "errorpb.proto";
+import "kvrpcpb.proto";
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+option java_package = "com.pingcap.tikv.kvproto";
+
+// [start, end)
+message KeyRange {
+    bytes start = 1;
+    bytes end = 2;
+}
+
+message Request {
+    kvrpcpb.Context context = 1;
+    int64 tp = 2;
+    bytes data = 3;
+    repeated KeyRange ranges = 4;
+}
+
+message Response {
+    bytes data = 1 [(gogoproto.customtype) = "github.com/pingcap/tipb/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
+    errorpb.Error region_error = 2;
+    kvrpcpb.LockInfo locked = 3;
+    string other_error = 4;
+    KeyRange range = 5;
+}

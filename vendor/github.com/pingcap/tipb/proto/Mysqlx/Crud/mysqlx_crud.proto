@@ -1,0 +1,276 @@
+/*
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; version 2 of the
+ * License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301  USA
+ */
+syntax = "proto2";
+
+// ifdef PROTOBUF_LITE: option optimize_for = LITE_RUNTIME;
+
+// Basic CRUD operations
+package Mysqlx.Crud;
+option java_package = "com.mysql.cj.mysqlx.protobuf";
+
+import "Mysqlx/Expr/mysqlx_expr.proto";
+import "Mysqlx/Datatypes/mysqlx_datatypes.proto";
+
+// column definition
+message Column {
+  optional string name = 1;
+  optional string alias = 2;
+  repeated Mysqlx.Expr.DocumentPathItem document_path = 3;
+}
+
+// a projection
+//
+// :param source: the expression identifying an element from the source data
+//                which can include a column identifier or any expression
+// :param alias: optional alias. Required for DOCUMENTs (clients may use 
+//              the source string as default)
+message Projection {
+    required Mysqlx.Expr.Expr source = 1;
+    optional string alias = 2;
+}
+
+// DataModel to use for filters, names, ...
+enum DataModel {
+  DOCUMENT = 1;
+  TABLE = 2;
+};
+
+// collection
+message Collection {
+  required string name = 1;
+  optional string schema = 2;
+}
+
+// limit
+//
+// :param row_count: maximum rows to filter
+// :param offset: maximum rows to skip before applying the row_count
+message Limit {
+  required uint64 row_count = 1;
+  optional uint64 offset = 2;
+}
+
+// sort order
+message Order {
+  enum Direction {
+    ASC = 1;
+    DESC = 2;
+  };
+
+  required Mysqlx.Expr.Expr expr = 1;
+  optional Direction direction = 2 [ default=ASC ];
+}
+
+// update operations
+//
+// :param source: specification of the value to be updated
+//      if data_model is TABLE, a column name may be specified and also a document path, if the column has type JSON
+//      if data_model is DOCUMENT, only document paths are allowed
+//      in both cases, schema and table must be not set
+// :param operation: the type of operation to be performed
+// :param value: an expression to be computed as the new value for the operation
+message UpdateOperation {
+  enum UpdateType {
+    SET = 1;            // only allowed for TABLE
+    ITEM_REMOVE = 2;    // no value (removes the identified path from a object or array)
+    ITEM_SET = 3;       // sets the new value on the identified path
+    ITEM_REPLACE = 4;   // replaces a value if the path exists
+    ITEM_MERGE = 5;     // source and value must be documents
+    ARRAY_INSERT = 6;   // insert the value in the array at the index identified in the source path
+    ARRAY_APPEND = 7;   // append the value on the array at the identified path
+  }
+  required Mysqlx.Expr.ColumnIdentifier source = 1;
+  required UpdateType operation = 2;
+  optional Mysqlx.Expr.Expr value = 3;
+}
+
+// Find Documents/Rows in a Collection/Table
+//
+// .. uml::
+//
+//   client -> server: Find
+//   ... one or more Resultset ...
+//
+// :param collection: collection to insert into
+// :param data_model: datamodel that the operations refer to
+// :param projection: list of column projections that shall be returned
+// :param args: values for parameters used in filter expression
+// :param criteria: filter criteria
+// :param limit: numbers of rows that shall be skipped and returned
+// :param order: sort-order in which the rows/document shall be returned in
+// :param grouping: column expression list for aggregation (GROUP BY)
+// :param grouping_criteria: filter criteria for aggregated groups
+// :Returns: :protobuf:msg:`Mysqlx.Resultset::`
+message Find {
+  required Collection collection = 2;
+
+  optional DataModel data_model = 3;
+  repeated Projection projection = 4;
+  optional Mysqlx.Expr.Expr criteria = 5;
+  repeated Mysqlx.Datatypes.Scalar args = 11;
+  optional Limit limit = 6;
+  repeated Order order = 7;
+  repeated Mysqlx.Expr.Expr grouping = 8;
+  optional Mysqlx.Expr.Expr grouping_criteria = 9;
+};
+
+// Insert documents/rows into a collection/table
+//
+// :param collection: collection to insert into
+// :param data_model: datamodel that the operations refer to
+// :param projection: name of the columns to insert data into (empty if data_model is DOCUMENT)
+// :param row: set of rows to insert into the collection/table (a single expression with a JSON document literal or an OBJECT expression)
+// :param args: values for parameters used in row expressions
+// :Returns: :protobuf:msg:`Mysqlx.Resultset::`
+message Insert {
+  required Collection collection = 1;
+
+  optional DataModel data_model = 2;
+  repeated Column projection = 3;
+
+  message TypedRow {
+    repeated Mysqlx.Expr.Expr field = 1;
+  };
+  repeated TypedRow row = 4;
+  repeated Mysqlx.Datatypes.Scalar args = 5; 
+};
+
+// Update documents/rows in a collection/table
+//
+// :param collection: collection to change
+// :param data_model: datamodel that the operations refer to
+// :param criteria: filter expression to match rows that the operations will apply on
+// :param args: values for parameters used in filter expression
+// :param limit: limits the number of rows to match
+// :param order: specifies order of matched rows
+// :param operation: list of operations to be applied. Valid operations will depend on the data_model.
+// :Returns: :protobuf:msg:`Mysqlx.Resultset::`
+message Update {
+  required Collection collection = 2;
+
+  optional DataModel data_model = 3;
+  optional Mysqlx.Expr.Expr criteria = 4;
+  repeated Mysqlx.Datatypes.Scalar args = 8;
+  optional Limit limit = 5;
+  repeated Order order = 6;
+
+  repeated UpdateOperation operation = 7;
+};
+
+// Delete documents/rows from a Collection/Table
+//
+// :param collection: collection to change
+// :param data_model: datamodel that the operations refer to
+// :param criteria: filter expression to match rows that the operations will apply on
+// :param args: values for parameters used in filter expression
+// :param limit: limits the number of rows to match
+// :param order: specifies order of matched rows
+// :Returns: :protobuf:msg:`Mysqlx.Resultset::`
+message Delete {
+  required Collection collection = 1;
+
+  optional DataModel data_model = 2;
+  optional Mysqlx.Expr.Expr criteria = 3;
+  repeated Mysqlx.Datatypes.Scalar args = 6;
+  optional Limit limit = 4;
+  repeated Order order = 5;
+};
+
+
+// ViewAlgorithm defines how MySQL Server processes the view
+enum ViewAlgorithm {
+  UNDEFINED =1;   // MySQL chooses which algorithm to use
+  MERGE = 2;      // the text of a statement that refers to the view and the view definition are merged
+  TEMPTABLE = 3;  // the view are retrieved into a temporary table
+}
+
+// ViewSqlSecurity defines the security context in which the view is going to be
+// executed, this means that VIEW can be executed with current user permissions or
+// with permissions of the uses who defined the VIEW
+enum ViewSqlSecurity {
+  INVOKER = 1;
+  DEFINER = 2;
+}
+
+
+// ViewCheckOption limits the write operations done on a `VIEW`
+// (`INSERT`, `UPDATE`, `DELETE`) to rows in which the `WHERE` clause is `TRUE`
+enum ViewCheckOption {
+  LOCAL = 1;     // the view WHERE clause is checked, but no underlying views are checked
+  CASCADED = 2;  // the view WHERE clause is checked, then checking recurses to underlying views
+}
+
+
+// CreateView create view based on indicated Mysqlx.Crud.Find message
+//
+// param collection: name of the VIEW object, which should be created
+// param definer: user name of the definer, if the value isn't set then the definer is current user
+// param algorithm: defines how MySQL Server processes the view
+// param security: defines the security context in which the view is going be executed
+// param check: limits the write operations done on a VIEW
+// param column: defines the list of aliases for column names specified in `stmt`
+// param stmt: Mysqlx.Crud.Find message from which the SELECT statement is going to be build
+// param replace_existing: if true then suppress error when created view already exists; just replace it
+
+message CreateView {
+  required Collection collection = 1;
+
+  optional string definer = 2;
+  optional ViewAlgorithm algorithm = 3 [default = UNDEFINED];
+  optional ViewSqlSecurity security = 4 [default = DEFINER];
+  optional ViewCheckOption check = 5;
+
+  repeated string column = 6;
+  required Find stmt = 7;
+  optional bool replace_existing = 8 [default = false];
+}
+
+
+// ModifyView modify existing view based on indicated Mysqlx.Crud.Find message
+//
+// param collection: name of the VIEW object, which should be modified
+// param definer: user name of the definer, if the value isn't set then the definer is current user
+// param algorithm: defined how MySQL Server processes the view
+// param security: defines the security context in which the view is going be executed
+// param check: limits the write operations done on a VIEW
+// param column: defines the list of aliases for column names specified in `stmt`
+// param stmt: Mysqlx.Crud.Find message from which the SELECT statement is going to be build
+
+message ModifyView {
+  required Collection collection = 1;
+
+  optional string definer = 2;
+  optional ViewAlgorithm algorithm = 3;
+  optional ViewSqlSecurity security = 4;
+  optional ViewCheckOption check = 5;
+
+  repeated string column = 6;
+  optional Find stmt = 7;
+}
+
+
+// DropView removing existing view
+//
+// param collection: name of the VIEW object, which should be deleted
+// param if_exists: if true then suppress error when deleted view does not exists
+
+message DropView {
+  required Collection collection = 1;
+  optional bool if_exists = 2 [ default = false ];
+}

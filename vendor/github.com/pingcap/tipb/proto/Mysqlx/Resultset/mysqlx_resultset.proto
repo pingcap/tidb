@@ -1,0 +1,508 @@
+/*
+ * Copyright (c) 2015, 2016 Oracle and/or its affiliates. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; version 2 of the
+ * License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301  USA
+ */
+syntax = "proto2";
+
+// ifdef PROTOBUF_LITE: option optimize_for = LITE_RUNTIME;
+
+// Resultsets
+// ``````````
+//
+// Executing a statement against the server may result in zero or more
+// Resultsets followed by zero or one Resultset of the ``OUT`` parameters.
+//
+// A Resultset consists of:
+//
+// * one or more :protobuf:msg:`Mysqlx.Resultset::ColumnMetaData`
+// * zero or more :protobuf:msg:`Mysqlx.Resultset::Row`
+//
+// It is followed by:
+//
+// * a :protobuf:msg:`Mysqlx.Resultset::FetchDoneMoreResultsets` if more
+//   resultsets are following
+// * a :protobuf:msg:`Mysqlx.Resultset::FetchDoneMoreOutParams` if more
+//   Resultset of ``OUT`` parameters is following
+// * a :protobuf:msg:`Mysqlx.Resultset::FetchDone` if the last resultset
+//   was sent
+//
+// .. uml::
+//
+//   ...
+//   loop has more resultsets
+//     group resultset
+//       loop has more columns
+//         server --> client: ColumnMetaData
+//       end
+//       loop has more rows
+//         server --> client: Row
+//       end
+//     end
+//     alt has more resultsets
+//       server --> client: FetchDoneMoreResultsets
+//     end
+//   end
+//   loop has more OUT-paramsets
+//     server --> client: FetchDoneMoreOutParams
+//     group resultset
+//       loop has more columns
+//         server --> client: ColumnMetaData
+//       end
+//       loop has more rows
+//         server --> client: Row
+//       end
+//     end
+//   end
+//   server --> client: FetchDone
+//   ...
+//
+// Examples
+// ````````
+//
+// .. rubric:: No Resultset
+//
+// A ``INSERT`` statement usually doesn't send any resultset which results in only
+// a ``FetchDone``.
+//
+// .. uml::
+//
+//   server --> client: FetchDone
+//
+// .. rubric:: Empty Resultset
+//
+// ``SELECT 1 LIMIT 0`` results in a empty resultset:
+//
+// .. uml::
+//
+//   server --> client: ColumnMetaData(.name = "1", .type = INT)
+//   server --> client: FetchDone
+//
+// .. rubric:: Multi Resultset
+//
+// ``CALL`` may result in multiple resultsets.
+//
+// .. uml::
+//
+//   server --> client: ColumnMetaData(.name = "1", .type = INT)
+//   server --> client: Row
+//   server --> client: FetchDoneMoreResultsets
+//   server --> client: ColumnMetaData(.name = "1", .type = INT)
+//   server --> client: Row
+//   server --> client: FetchDone
+//
+// .. rubric:: OUT params
+//
+// ``CALL`` may result OUT parameters only
+//
+// .. uml::
+//
+//   server --> client: FetchDoneMoreOutParams
+//   server --> client: ColumnMetaData(.name = "1", .type = INT)
+//   server --> client: Row
+//   server --> client: FetchDone
+
+
+
+package Mysqlx.Resultset;
+option java_package = "com.mysql.cj.mysqlx.protobuf";
+
+// resultsets are finished, OUT paramset is next
+message FetchDoneMoreOutParams {
+}
+
+// resultset and out-params are finished, but more resultsets available
+message FetchDoneMoreResultsets {
+}
+
+// all resultsets are finished
+message FetchDone {
+}
+
+// meta data of a Column
+//
+// .. note:: the encoding used for the different ``bytes`` fields in the meta data is externally
+//   controlled.
+//   .. seealso:: https://dev.mysql.com/doc/refman/5.0/en/charset-connection.html
+//
+// .. note::
+//   The server may not set the ``original_{table|name}`` fields if they are equal to the plain
+//   ``{table|name}`` field.
+//
+//   A client has to reconstruct it like::
+//
+//     if .original_name is empty and .name is not empty:
+//       .original_name = .name
+//
+//     if .original_table is empty and .table is not empty:
+//       .original_table = .table
+//
+// .. note::
+//   ``compact metadata format`` can be requested by the client. In that case only ``.type`` is set and
+//   all other fields are empty.
+//
+//
+// :param type:
+//   .. table:: Expected Datatype of Mysqlx.Resultset.Row per SQL Type for non NULL values
+//
+//     ================= ============ ======= ========== ====== ========
+//     SQL Type          .type        .length .frac_dig  .flags .charset
+//     ================= ============ ======= ========== ====== ========
+//     TINY              SINT         x
+//     TINY UNSIGNED     UINT         x                  x
+//     SHORT             SINT         x
+//     SHORT UNSIGNED    UINT         x                  x
+//     INT24             SINT         x
+//     INT24 UNSIGNED    UINT         x                  x
+//     INT               SINT         x
+//     INT UNSIGNED      UINT         x                  x
+//     LONGLONG          SINT         x
+//     LONGLONG UNSIGNED UINT         x                  x
+//     DOUBLE            DOUBLE       x       x          x
+//     FLOAT             FLOAT        x       x          x
+//     DECIMAL           DECIMAL      x       x          x
+//     VARCHAR,CHAR,...  BYTES        x                  x      x
+//     GEOMETRY          BYTES
+//     TIME              TIME         x
+//     DATE              DATETIME     x
+//     DATETIME          DATETIME     x
+//     YEAR              UINT         x                  x
+//     TIMESTAMP         DATETIME     x
+//     SET               SET                                    x
+//     ENUM              ENUM                                   x
+//     NULL              BYTES
+//     BIT               BIT          x
+//     ================= ============ ======= ========== ====== ========
+//
+//   .. note:: the SQL "NULL" value is sent as an empty field value in :protobuf:msg:`Mysqlx.Resultset::Row`
+//   .. seealso:: protobuf encoding of primitive datatypes are decribed in https://developers.google.com/protocol-buffers/docs/encoding
+//
+//   SINT
+//
+//     ``.length``
+//       maximum number of displayable decimal digits (including minus sign) of the type
+//
+//       .. note::
+//         valid range is 0-255, but usually you'll see 1-20
+//
+//       =============== ==
+//       SQL Type        max digits per type
+//       =============== ==
+//       TINY SIGNED      4
+//       SHORT SIGNED     6
+//       INT24 SIGNED     8
+//       INT SIGNED      11
+//       LONGLONG SIGNED 20
+//       =============== ==
+//
+//       .. seealso:: definition of ``M`` in https://dev.mysql.com/doc/refman/5.5/en/numeric-type-overview.html
+//
+//     ``value``
+//       variable length encoded signed 64 integer
+//
+//   UINT
+//
+//     ``.flags & 1`` (zerofill)
+//       the client has to left pad with 0's up to .length
+//
+//     ``.length``
+//       maximum number of displayable decimal digits of the type
+//
+//       .. note::
+//         valid range is 0-255, but usually you'll see 1-20
+//
+//       ================= ==
+//       SQL Type          max digits per type
+//       ================= ==
+//       TINY UNSIGNED      3
+//       SHORT UNSIGNED     5
+//       INT24 UNSIGNED     8
+//       INT UNSIGNED      10
+//       LONGLONG UNSIGNED 20
+//       ================= ==
+//
+//       .. seealso:: definition of ``M`` in https://dev.mysql.com/doc/refman/5.5/en/numeric-type-overview.html
+//
+//     ``value``
+//       variable length encoded unsigned 64 integer
+//
+//   BIT
+//
+//     ``.length``
+//       maximum number of displayable binary digits
+//
+//       .. note:: valid range for M of the ``BIT`` type is 1 - 64
+//       .. seealso:: https://dev.mysql.com/doc/refman/5.5/en/numeric-type-overview.html
+//
+//     ``value``
+//       variable length encoded unsigned 64 integer
+//
+//   DOUBLE
+//
+//     ``.length``
+//       maximum number of displayable decimal digits (including the decimal point and ``.fractional_digits``)
+//
+//     ``.fractional_digits``
+//       maximum number of displayable decimal digits following the decimal point
+//
+//     ``value``
+//       encoded as Protobuf's 'double'
+//
+//   FLOAT
+//
+//     ``.length``
+//       maximum number of displayable decimal digits (including the decimal point and ``.fractional_digits``)
+//
+//     ``.fractional_digits``
+//       maximum number of displayable decimal digits following the decimal point
+//
+//     ``value``
+//       encoded as Protobuf's 'float'
+//
+//   BYTES, ENUM
+//     BYTES is used for all opaque byte strings that may have a charset
+//
+//       * TINYBLOB, BLOB, MEDIUMBLOB, LONGBLOB
+//       * TINYTEXT, TEXT, MEDIUMTEXT, LONGTEXT
+//       * VARCHAR, VARBINARY
+//       * CHAR, BINARY
+//       * ENUM
+//
+//     ``.length``
+//       the maximum length of characters of the underlying type
+//
+//     ``.flags & 1`` (rightpad)
+//       if the length of the field is less than ``.length``, the receiver is
+//       supposed to add padding characters to the right end of the string.
+//       If the ``.charset`` is "binary", the padding character is ``0x00``,
+//       otherwise it is a space character as defined by that character set.
+//
+//       ============= ======= ======== =======
+//       SQL Type      .length .charset .flags
+//       ============= ======= ======== =======
+//       TINYBLOB      256     binary
+//       BLOB          65535   binary
+//       VARCHAR(32)   32      utf8
+//       VARBINARY(32) 32      utf8_bin
+//       BINARY(32)    32      binary   rightpad
+//       CHAR(32)      32      utf8     rightpad
+//       ============= ======= ======== =======
+//
+//     ``value``
+//       sequence of bytes with added one extra '\0' byte at the end. To obtain the
+//       original string, the extra '\0' should be removed.
+//       .. note:: the length of the string can be acquired with protobuf's field length() method
+//         length of sequence-of-bytes = length-of-field - 1
+//       .. note:: the extra byte allows to distinguish between a NULL and empty byte sequence
+//
+//   TIME
+//     A time value.
+//
+//     ``value``
+//       the following bytes sequence:
+//
+//         ``| negate [ | hour | [ | minutes | [ | seconds | [ | useconds | ]]]]``
+//
+//       * negate - one byte, should be one of: 0x00 for "+", 0x01 for "-"
+//       * hour - optional variable length encoded unsigned64 value for the hour
+//       * minutes - optional variable length encoded unsigned64 value for the minutes
+//       * seconds - optional variable length encoded unsigned64 value for the seconds
+//       * useconds - optional variable length encoded unsigned64 value for the microseconds
+//
+//       .. seealso:: protobuf encoding in https://developers.google.com/protocol-buffers/docs/encoding
+//       .. note:: hour, minutes, seconds, useconds are optional if all the values to the right are 0
+//
+//       Example: 0x00 -> +00:00:00.000000
+//
+//   DATETIME
+//     A date or date and time value.
+//
+//     ``value``
+//       a sequence of variants, arranged as follows:
+//
+//         ``| year | month | day | [ | hour | [ | minutes | [ | seconds | [ | useconds | ]]]]``
+//
+//       * year - variable length encoded unsigned64 value for the year
+//       * month - variable length encoded unsigned64 value for the month
+//       * day - variable length encoded unsigned64 value for the day
+//       * hour - optional variable length encoded unsigned64 value for the hour
+//       * minutes - optional variable length encoded unsigned64 value for the minutes
+//       * seconds - optional variable length encoded unsigned64 value for the seconds
+//       * useconds - optional variable length encoded unsigned64 value for the microseconds
+//
+//       .. note:: hour, minutes, seconds, useconds are optional if all the values to the right are 0
+//
+//     ``.flags & 1`` (timestamp)
+//
+//       ============= =======
+//       SQL Type      .flags
+//       ============= =======
+//       DATETIME
+//       TIMESTAMP     1
+//
+//   DECIMAL
+//     An arbitrary length number. The number is encoded as a single byte
+//     indicating the position of the decimal point followed by the Packed BCD
+//     encoded number. Packed BCD is used to simplify conversion to and
+//     from strings and other native arbitrary precision math datatypes.
+//     .. seealso:: packed BCD in https://en.wikipedia.org/wiki/Binary-coded_decimal
+//
+//     ``.length``
+//       maximum number of displayable decimal digits (*excluding* the decimal point and sign, but including ``.fractional_digits``)
+//
+//       .. note:: should be in the range of 1 - 65
+//
+//     ``.fractional_digits``
+//       is the decimal digits to display out of length
+//
+//       .. note:: should be in the range of 0 - 30
+//
+//     ``value``
+//       the following bytes sequence:
+//
+//         ``| scale | BCD | sign | [0x0] |``
+//
+//       * scale - 8bit scale value (number of decimal digit after the '.')
+//       * BCD - BCD encoded digits (4 bits for each digit)
+//       * sign - sign encoded on 4 bits (0xc = "+", 0xd = "-")
+//       * 0x0 - last 4bits if length(digits) % 2 == 0
+//
+//       Example: x04 0x12 0x34 0x01 0xd0 -> -12.3401
+//
+//   SET
+//     A list of strings representing a SET of values.
+//
+//     ``value``
+//       A sequence of 0 or more of protobuf's bytes (length prepended octets) or one of
+//       the special sequences with a predefined meaning listed below.
+//
+//       Example (length of the bytes array shown in brackets):
+//         * ``[0]`` - the NULL value
+//         * ``[1] 0x00`` - a set containing a blank string ''
+//         * ``[1] 0x01`` - this would be an invalid value, but is to be treated as the empty set
+//         * ``[2] 0x01 0x00`` - a set with a single item, which is the '\0' character
+//         * ``[8] 0x03 F O O 0x03 B A R`` - a set with 2 items: FOO,BAR
+//
+//
+// :param name: name of the column
+// :param original_name: name of the column before an alias was applied
+// :param table: name of the table the column orginates from
+// :param original_table: name of the table the column orginates from before an alias was applied
+// :param schema: schema the column originates from
+// :param catalog:
+//   catalog the schema originates from
+//
+//   .. note::
+//     as there is current no support for catalogs in MySQL, don't expect this field to be set.
+//     In the MySQL C/S protocol the field had the value ``def`` all the time.
+//
+// :param fractional_digits: displayed factional decimal digits for floating point and fixed point numbers
+// :param length: maximum count of displayable characters of .type
+// :param flags:
+//   ``.type`` specific flags
+//
+//   ======= ====== ===========
+//   type    value  description
+//   ======= ====== ===========
+//   UINT    0x0001 zerofill
+//   DOUBLE  0x0001 unsigned
+//   FLOAT   0x0001 unsigned
+//   DECIMAL 0x0001 unsigned
+//   BYTES   0x0001 rightpad
+//   ======= ====== ===========
+//
+//   ====== ================
+//   value  description
+//   ====== ================
+//   0x0010 NOT_NULL
+//   0x0020 PRIMARY_KEY
+//   0x0040 UNIQUE_KEY
+//   0x0080 MULTIPLE_KEY
+//   0x0100 AUTO_INCREMENT
+//   ====== ================
+//
+//   default: 0
+// :param content_type:
+//   a hint about the higher-level encoding of a BYTES field
+//
+//   ====== ====== ===========
+//   type   value  description
+//   ====== ====== ===========
+//   BYTES  0x0001 GEOMETRY (WKB encoding)
+//   BYTES  0x0002 JSON (text encoding)
+//   BYTES  0x0003 XML (text encoding)
+//   ====== ====== ===========
+//
+//   .. note::
+//     this list isn't comprehensive. As guideline: the field's value is expected
+//     to pass a validator check on client and server if this field is set.
+//     If the server adds more internal datatypes that rely on BLOB storage
+//     like image manipulation, seeking into complex types in BLOBs, ... more
+//     types will be added.
+//
+message ColumnMetaData {
+  enum FieldType {
+    SINT     = 1;
+    UINT     = 2;
+
+    DOUBLE   = 5;
+    FLOAT    = 6;
+
+    BYTES    = 7;
+
+    TIME     = 10;
+    DATETIME = 12;
+    SET      = 15;
+    ENUM     = 16;
+    BIT      = 17;
+
+    DECIMAL  = 18;
+  }
+
+  // datatype of the field in a row
+  required FieldType type = 1;
+  optional bytes name = 2;
+  optional bytes original_name = 3;
+
+  optional bytes table = 4;
+  optional bytes original_table = 5;
+
+  optional bytes schema = 6;
+  optional bytes catalog = 7;
+
+  optional uint64 collation = 8;
+
+  optional uint32 fractional_digits = 9;
+
+  optional uint32 length = 10;
+
+  optional uint32 flags = 11;
+
+  optional uint32 content_type = 12;
+}
+
+//   Row in a Resultset
+//
+//   a row is represented as a list of fields encoded as byte blobs.
+//   Blob of size 0 represents the NULL value. Otherwise, if it contains at least
+//   one byte, it encodes a non-null value of the field using encoding appropriate for the
+//   type of the value given by ``ColumnMetadata``, as specified
+//   in the :protobuf:msg:`Mysqlx.Resultset::ColumnMetaData` description.
+//
+message Row {
+  repeated bytes field = 1;
+}
+

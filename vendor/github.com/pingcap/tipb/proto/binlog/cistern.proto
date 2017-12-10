@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package binlog;
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+
+// Interfaces exported by CisternServer.
+service Cistern {
+    // DumpBinlog dumps continuous binlog items in a stream from a given position
+    rpc DumpBinlog(DumpBinlogReq) returns (stream DumpBinlogResp) {}
+
+    // DumpDDLJobs dumps all history DDL jobs before a specified commitTS
+    rpc DumpDDLJobs(DumpDDLJobsReq) returns (DumpDDLJobsResp) {}
+
+    // Notify notifies all living cisterns that a new pump is coming
+    // the living cisterns can be queried from pd
+    rpc Notify(NotifyReq) returns (NotifyResp) {} 
+}
+
+message DumpBinlogReq {
+    // beginCommitTS speicifies the position from which begin to dump binlogs.
+    // note that actually the result of dump starts from the one next to beginCommitTS
+    // it should be zero in case of the first request.
+    int64 beginCommitTS = 1;
+}
+
+message DumpBinlogResp {
+    // CommitTS specifies the commitTS of binlog
+    int64 commitTS = 1;
+
+    // payloads is bytecodes encoded from binlog item
+    bytes payload = 2;
+
+    // ddljob is json bytes marshaled from corresponding ddljob struct if payload is a DDL type of binlog
+    bytes ddljob = 3;
+}
+
+message DumpDDLJobsReq {
+    // beginCommitTS is the start point of drainer processing binlog, DumpDDLJobs() returns
+    // all history DDL jobs before this position, then drainer will apply these DDL jobs
+    // in order of job ID to restore the whole schema info at that moment.
+    int64 beginCommitTS = 1;
+}
+
+message DumpDDLJobsResp {
+    // ddljobs is an array of JSON encoded history DDL jobs
+    repeated bytes ddljobs = 1;
+}
+
+message NotifyReq {
+}
+
+message NotifyResp {
+}
