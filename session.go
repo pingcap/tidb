@@ -71,7 +71,7 @@ type Session interface {
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
-	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (ast.RecordSet, error)
+	ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, param ...interface{}) (ast.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
@@ -80,8 +80,6 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
-	// Cancel the execution of current transaction.
-	Cancel()
 	ShowProcess() util.ProcessInfo
 	// PrePareTxnCtx is exported for test.
 	PrepareTxnCtx(goctx.Context)
@@ -123,9 +121,6 @@ type session struct {
 	mu struct {
 		sync.RWMutex
 		values map[fmt.Stringer]interface{}
-
-		// cancelFunc is used for cancelling the execution of current transaction.
-		cancelFunc goctx.CancelFunc
 	}
 
 	store kv.Storage
@@ -138,15 +133,6 @@ type session struct {
 	sessionManager util.SessionManager
 
 	statsCollector *statistics.SessionStatsCollector
-}
-
-// Cancel cancels the execution of current transaction.
-func (s *session) Cancel() {
-	// TODO: How to wait for the resource to release and make sure
-	// it's not leak?
-	s.mu.RLock()
-	s.mu.cancelFunc()
-	s.mu.RUnlock()
 }
 
 func (s *session) cleanRetryInfo() {
@@ -699,14 +685,12 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 }
 
 func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.RecordSet, err error) {
-	span, goCtx1 := opentracing.StartSpanFromContext(goCtx, "session.Execute")
-	defer span.Finish()
+	if span := opentracing.SpanFromContext(goCtx); span != nil {
+		span, goCtx = opentracing.StartSpanFromContext(goCtx, "session.Execute")
+		defer span.Finish()
+	}
 
-	goCtx2, cancelFunc := goctx.WithCancel(goCtx1)
-	s.mu.Lock()
-	s.mu.cancelFunc = cancelFunc
-	s.mu.Unlock()
-	s.PrepareTxnCtx(goCtx2)
+	s.PrepareTxnCtx(goCtx)
 	var (
 		cacheKey      kvcache.Key
 		cacheValue    kvcache.Value
@@ -733,9 +717,9 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			Ctx:        s,
 		}
 
-		s.PrepareTxnCtx(goCtx2)
+		s.PrepareTxnCtx(goCtx)
 		executor.ResetStmtCtx(s, stmtNode)
-		if recordSets, err = s.executeStatement(goCtx2, connID, stmtNode, stmt, recordSets); err != nil {
+		if recordSets, err = s.executeStatement(goCtx, connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
@@ -743,7 +727,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 
 		// Step1: Compile query string to abstract syntax trees(ASTs).
 		startTS := time.Now()
-		stmtNodes, err := s.ParseSQL(goCtx2, sql, charset, collation)
+		stmtNodes, err := s.ParseSQL(goCtx, sql, charset, collation)
 		if err != nil {
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
@@ -752,16 +736,16 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 
 		compiler := executor.Compiler{Ctx: s}
 		for _, stmtNode := range stmtNodes {
-			s.PrepareTxnCtx(goCtx2)
+			s.PrepareTxnCtx(goCtx)
 
 			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 			startTS = time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
 			executor.ResetStmtCtx(s, stmtNode)
-			stmt, err := compiler.Compile(goCtx2, stmtNode)
+			stmt, err := compiler.Compile(goCtx, stmtNode)
 			if err != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
-				terror.Log(errors.Trace(s.RollbackTxn(goCtx2)))
+				terror.Log(errors.Trace(s.RollbackTxn(goCtx)))
 				return nil, errors.Trace(err)
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -772,7 +756,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			}
 
 			// Step4: Execute the physical plan.
-			if recordSets, err = s.executeStatement(goCtx2, connID, stmtNode, stmt, recordSets); err != nil {
+			if recordSets, err = s.executeStatement(goCtx, connID, stmtNode, stmt, recordSets); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -843,15 +827,11 @@ func checkArgs(args ...interface{}) error {
 }
 
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
+func (s *session) ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
 	err := checkArgs(args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	goCtx, cancelFunc := goctx.WithCancel(goctx.TODO())
-	s.mu.Lock()
-	s.mu.cancelFunc = cancelFunc
-	s.mu.Unlock()
 	s.PrepareTxnCtx(goCtx)
 	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	if err != nil {
