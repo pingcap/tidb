@@ -155,17 +155,15 @@ benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
 update:
-	which glide >/dev/null || curl https://glide.sh/get | sh
-	which glide-vc || go get -v -u github.com/sgotti/glide-vc
+	which dep >/dev/null || curl -L -s https://github.com/golang/dep/releases/download/v0.3.1/dep-linux-amd64 -o $GOPATH/bin/dep
+	chmod +x $GOPATH/bin/dep
 ifdef PKG
-	glide get -s -v --skip-test ${PKG}
+	dep ensure -add ${PKG}
 else
-	glide update -s -v -u --skip-test
+	dep ensure -update
 endif
 	@echo "removing test files"
-	glide vc --only-code --no-tests
-	mkdir -p vendor
-	mv vendor vendor/src
+	dep prune
 
 checklist:
 	cat checklist.md
