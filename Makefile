@@ -8,13 +8,13 @@ ifeq "$(GOPATH)" ""
 endif
 
 CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/vendor:$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
-GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test -p 3
-OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
+GOBUILD   := GOPATH=$(CURDIR)/vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOTEST    := GOPATH=$(CURDIR)/vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test -p 3
+OVERALLS  := GOPATH=$(CURDIR)/vendor:$(GOPATH) CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
@@ -90,7 +90,7 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	@ GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@ GOPATH=$(CURDIR)/vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
@@ -110,7 +110,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@export log_level=error; \
 	go get github.com/go-playground/overalls
 	go get github.com/mattn/goveralls
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,_vendor'
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor'
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
 else
 	@echo "Running in native mode."
@@ -135,7 +135,7 @@ tikv_integration_test: parserlib
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
-	GOBUILD   = GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
+	GOBUILD   = GOPATH=$(CURDIR)/vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
 server: parserlib
@@ -157,8 +157,6 @@ benchdb:
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
 	which glide-vc || go get -v -u github.com/sgotti/glide-vc
-	rm -r vendor && mv _vendor/src vendor || true
-	rm -rf _vendor
 ifdef PKG
 	glide get -s -v --skip-test ${PKG}
 else
@@ -166,8 +164,8 @@ else
 endif
 	@echo "removing test files"
 	glide vc --only-code --no-tests
-	mkdir -p _vendor
-	mv vendor _vendor/src
+	mkdir -p vendor
+	mv vendor vendor/src
 
 checklist:
 	cat checklist.md
