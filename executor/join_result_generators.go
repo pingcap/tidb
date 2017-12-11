@@ -54,16 +54,26 @@ type joinResultGenerator interface {
 	emitUnMatchedOutersToChunk(outers []chunk.Row, chk *chunk.Chunk)
 }
 
-func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType, outerIsRight bool, defaultInner Row, filter []expression.Expression, colTypes []*types.FieldType) joinResultGenerator {
+func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType,
+	outerIsRight bool, defaultInner Row, filter []expression.Expression,
+	lhsColTypes, rhsColTypes []*types.FieldType) joinResultGenerator {
 	base := baseJoinResultGenerator{
 		ctx:          ctx,
 		filter:       filter,
 		defaultInner: defaultInner,
 		outerIsRight: outerIsRight,
 	}
-	if colTypes != nil {
-		base.chk = chunk.NewChunk(colTypes)
-		base.selected = make([]bool, 0, chunk.InitialCapacity)
+	colTypes := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
+	colTypes = append(colTypes, lhsColTypes...)
+	colTypes = append(colTypes, rhsColTypes...)
+	base.chk = chunk.NewChunk(colTypes)
+	base.selected = make([]bool, 0, chunk.InitialCapacity)
+	if joinType == plan.LeftOuterJoin || joinType == plan.RightOuterJoin {
+		innerColTypes := lhsColTypes
+		if !outerIsRight {
+			innerColTypes = rhsColTypes
+		}
+		base.initDefaultChunkInner(innerColTypes)
 	}
 	switch joinType {
 	case plan.SemiJoin:
@@ -590,10 +600,19 @@ func (outputer *leftOuterJoinResultGenerator) emitMatchedInnersToChunk(outer chu
 		return nil
 	}
 	outputer.chk.Reset()
-	for _, inner := range inners {
-		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
+	chkForJoin := outputer.chk
+	if outputer.filter == nil {
+		chkForJoin = chk
 	}
-	matched, err := outputer.filterChunk(outputer.chk, chk)
+	for _, inner := range inners {
+		outputer.makeJoinRowToChunk(chkForJoin, outer, inner)
+	}
+	if outputer.filter == nil {
+		return nil
+	}
+
+	// reach here, chkForJoin is outputer.chk
+	matched, err := outputer.filterChunk(chkForJoin, chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -670,10 +689,19 @@ func (outputer *rightOuterJoinResultGenerator) emitMatchedInnersToChunk(outer ch
 		return nil
 	}
 	outputer.chk.Reset()
-	for _, inner := range inners {
-		outputer.makeJoinRowToChunk(outputer.chk, inner, outer)
+	chkForJoin := outputer.chk
+	if outputer.filter == nil {
+		chkForJoin = chk
 	}
-	matched, err := outputer.filterChunk(outputer.chk, chk)
+	for _, inner := range inners {
+		outputer.makeJoinRowToChunk(chkForJoin, inner, outer)
+	}
+	if outputer.filterChunk == nil {
+		return nil
+	}
+
+	// reach here, chkForJoin is outputer.chk
+	matched, err := outputer.filterChunk(chkForJoin, chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -753,25 +781,30 @@ func (outputer *innerJoinResultGenerator) emitMatchedInners(outer Row, inners []
 // emitMatchedInnersToChunk implements joinResultGenerator interface.
 func (outputer *innerJoinResultGenerator) emitMatchedInnersToChunk(outer chunk.Row, inners []chunk.Row, chk *chunk.Chunk) error {
 	if len(inners) == 0 {
-		outputer.emitUnMatchedOuterToChunk(outer, chk)
 		return nil
 	}
 	outputer.chk.Reset()
+	chkForJoin := outputer.chk
+	if outputer.filter == nil {
+		chkForJoin = chk
+	}
 	if outputer.outerIsRight {
 		for _, inner := range inners {
-			outputer.makeJoinRowToChunk(outputer.chk, inner, outer)
+			outputer.makeJoinRowToChunk(chkForJoin, inner, outer)
 		}
 	} else {
 		for _, inner := range inners {
-			outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
+			outputer.makeJoinRowToChunk(chkForJoin, outer, inner)
 		}
 	}
-	matched, err := outputer.filterChunk(outputer.chk, chk)
+	if outputer.filter == nil {
+		return nil
+	}
+
+	// reach here, chkForJoin is outputer.chk
+	_, err := outputer.filterChunk(chkForJoin, chk)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if !matched {
-		outputer.emitUnMatchedOuterToChunk(outer, chk)
 	}
 	return nil
 }
