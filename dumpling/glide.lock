@@ -1,5 +1,5 @@
-hash: fd41f4cdbce457fae92cca9c4ceeaccc9de4e6437a200dbdc539745b2bf93b17
-updated: 2017-12-07T14:42:24.016476632+08:00
+hash: 24599da91eb6bfeb29a28854074f82209d3440429498d9563de55cc4e8b0750d
+updated: 2017-12-11T16:54:43.335485723+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -112,10 +112,6 @@ imports:
   subpackages:
   - ext
   - log
-- name: github.com/petar/GoLLRB
-  version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
-  subpackages:
-  - llrb
 - name: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - name: github.com/pingcap/check
@@ -136,7 +132,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: e33073e1475021e04c795c3de5e1f4e28baa708a
+  version: d21ce07c35b9ea66436dc632210a01d927361ed4
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -153,7 +149,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: a497eca3b8920e192aae1a5af81e573f90e59a6b
+  version: 09504ba4ca0101698da9d5db59e2411547427dcf
   subpackages:
   - go-binlog
   - go-mysqlx
