@@ -696,7 +696,7 @@ func (outputer *rightOuterJoinResultGenerator) emitMatchedInnersToChunk(outer ch
 	for _, inner := range inners {
 		outputer.makeJoinRowToChunk(chkForJoin, inner, outer)
 	}
-	if outputer.filterChunk == nil {
+	if outputer.filter == nil {
 		return nil
 	}
 
