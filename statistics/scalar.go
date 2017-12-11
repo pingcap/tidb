@@ -16,6 +16,7 @@ package statistics
 import (
 	"encoding/binary"
 	"math"
+	gotime "time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -86,10 +87,12 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 				Fsp:  types.DefaultFsp,
 			}
 		case mysql.TypeTimestamp:
+			loc, _ := gotime.LoadLocation("UTC")
 			minTime = types.Time{
-				Time: types.MinTimestamp,
-				Type: mysql.TypeTimestamp,
-				Fsp:  types.DefaultFsp,
+				Time:     types.MinTimestamp,
+				Type:     mysql.TypeTimestamp,
+				Fsp:      types.DefaultFsp,
+				TimeZone: loc,
 			}
 		}
 		return float64(valueTime.Sub(&minTime).Duration)
