@@ -660,6 +660,16 @@ func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	tk.MustExec("update update_modified set col_1 = 3, col_2 = 'a'")
 	r = tk.MustQuery("SELECT * FROM update_modified")
 	r.Check(testkit.Rows("3 a"))
+
+	// Test update a field with different column type.
+	tk.MustExec(`CREATE TABLE update_with_diff_type (a int, b JSON)`)
+	tk.MustExec(`INSERT INTO update_with_diff_type VALUES(3, '{"a": "测试"}')`)
+	tk.MustExec(`UPDATE update_with_diff_type SET a = '300'`)
+	r = tk.MustQuery("SELECT a FROM update_with_diff_type")
+	r.Check(testkit.Rows("300"))
+	tk.MustExec(`UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}'`)
+	r = tk.MustQuery("SELECT b FROM update_with_diff_type")
+	r.Check(testkit.Rows(`{"a":"测试"}`))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
