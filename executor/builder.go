@@ -893,13 +893,15 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &DeleteExec{
+	deleteExec := &DeleteExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		SelectExec:   selExec,
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 		tblID2Table:  tblID2table,
 	}
+	deleteExec.supportChk = true
+	return deleteExec
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
