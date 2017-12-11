@@ -110,12 +110,12 @@ func (t *testStatisticsSuite) TestCalcFraction(c *C) {
 			value:    types.NewDurationDatum(getDuration("1:00:00")),
 			fraction: 0.25,
 		},
-		// {
-		// 	lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeTimestamp)),
-		// 	upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeTimestamp)),
-		// 	value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeTimestamp)),
-		// 	fraction: 0.34444444444444444,
-		// },
+		{
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeTimestamp)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeTimestamp)),
+			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeTimestamp)),
+			fraction: 0.34444444444444444,
+		},
 		{
 			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
 			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDatetime)),
