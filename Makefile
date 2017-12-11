@@ -1,5 +1,3 @@
-### Makefile for tidb
-
 GOPATH ?= $(shell go env GOPATH)
 
 # Ensure GOPATH is set before running build process.
@@ -175,9 +173,9 @@ checklist:
 	cat checklist.md
 
 gofail-enable:
-	# Converting gofail failpoints...
+# Converting gofail failpoints...
 	@$(GOFAIL_ENABLE)
 
 gofail-disable:
-	# Restoring gofail failpoints...
+# Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)
