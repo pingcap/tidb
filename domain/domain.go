@@ -561,10 +561,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
-	err := statsHandle.Update(do.InfoSchema())
-	if err != nil {
-		return errors.Trace(err)
-	}
 	lease := do.statsLease
 	if lease <= 0 {
 		return nil
@@ -585,6 +581,13 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
 	defer deltaUpdateTicker.Stop()
 	statsHandle := do.StatsHandle()
+	t := time.Now()
+	err := statsHandle.InitStats(do.InfoSchema())
+	if err != nil {
+		log.Error("[stats] init stats info failed: ", errors.ErrorStack(err))
+	} else {
+		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
+	}
 	for {
 		select {
 		case <-loadTicker.C:
