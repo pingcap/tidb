@@ -581,6 +581,13 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
 	defer deltaUpdateTicker.Stop()
 	statsHandle := do.StatsHandle()
+	t := time.Now()
+	err := statsHandle.InitStats(do.InfoSchema())
+	if err != nil {
+		log.Error("[stats] init stats info failed: ", errors.ErrorStack(err))
+	} else {
+		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
+	}
 	for {
 		select {
 		case <-loadTicker.C:
