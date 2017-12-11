@@ -154,7 +154,7 @@ func (e *baseExecutor) supportChunk() bool {
 	return true
 }
 
-func (e *baseExecutor) NextChunk(chk *chunk.Chunk) error {
+func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -175,7 +175,7 @@ type Executor interface {
 	Schema() *expression.Schema
 	supportChunk() bool
 	newChunk() *chunk.Chunk
-	NextChunk(chk *chunk.Chunk) error
+	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -381,13 +381,13 @@ func (e *LimitExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
+func (e *LimitExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= e.end {
 		return nil
 	}
 	for !e.meetFirstBatch {
-		err := e.children[0].NextChunk(e.childrenResults[0])
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -408,7 +408,7 @@ func (e *LimitExec) NextChunk(chk *chunk.Chunk) error {
 		}
 		e.cursor += batchSize
 	}
-	err := e.children[0].NextChunk(chk)
+	err := e.children[0].NextChunk(goCtx, chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -512,9 +512,9 @@ func (e *ProjectionExec) Next(goCtx goctx.Context) (retRow Row, err error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ProjectionExec) NextChunk(chk *chunk.Chunk) error {
+func (e *ProjectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if err := e.children[0].NextChunk(e.childrenResults[0]); err != nil {
+	if err := e.children[0].NextChunk(goCtx, e.childrenResults[0]); err != nil {
 		return errors.Trace(err)
 	}
 	if e.vectorizable {
@@ -599,11 +599,11 @@ func (e *SelectionExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
+func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
 	if !e.batched {
-		return errors.Trace(e.unBatchedNextChunk(chk))
+		return errors.Trace(e.unBatchedNextChunk(goCtx, chk))
 	}
 
 	for {
@@ -616,7 +616,7 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 			}
 			chk.AppendRow(0, e.inputRow)
 		}
-		err := e.children[0].NextChunk(e.childrenResults[0])
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -635,7 +635,7 @@ func (e *SelectionExec) NextChunk(chk *chunk.Chunk) error {
 // unBatchedNextChunk filters input rows one by one and returns once an input row is selected.
 // For sql with "SETVAR" in filter and "GETVAR" in projection, for example: "SELECT @a FROM t WHERE (@a := 2) > 0",
 // we have to set batch size to 1 to do the evaluation of filter and projection.
-func (e *SelectionExec) unBatchedNextChunk(chk *chunk.Chunk) error {
+func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
 			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
@@ -648,7 +648,7 @@ func (e *SelectionExec) unBatchedNextChunk(chk *chunk.Chunk) error {
 				return nil
 			}
 		}
-		err := e.children[0].NextChunk(e.childrenResults[0])
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -854,13 +854,13 @@ func (e *MaxOneRowExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *MaxOneRowExec) NextChunk(chk *chunk.Chunk) error {
+func (e *MaxOneRowExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.evaluated {
 		return nil
 	}
 	e.evaluated = true
-	err := e.children[0].NextChunk(e.childrenResults[0])
+	err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -873,7 +873,7 @@ func (e *MaxOneRowExec) NextChunk(chk *chunk.Chunk) error {
 		}
 	} else {
 		chk2 := e.children[0].newChunk()
-		err2 := e.children[0].NextChunk(chk2)
+		err2 := e.children[0].NextChunk(goCtx, chk2)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -997,7 +997,7 @@ func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 			e.resourcePools[i] = make(chan *chunk.Chunk, 1)
 			e.resourcePools[i] <- e.childrenResults[i]
 			e.wg.Add(1)
-			go e.resultPuller(i)
+			go e.resultPuller(goCtx, i)
 		}
 	} else {
 		e.resultCh = make(chan *execResult, len(e.children))
@@ -1010,7 +1010,7 @@ func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 	go e.waitAllFinished(forChunk)
 }
 
-func (e *UnionExec) resultPuller(childID int) {
+func (e *UnionExec) resultPuller(goCtx goctx.Context, childID int) {
 	defer e.wg.Done()
 	result := &unionWorkerResult{
 		err: nil,
@@ -1026,7 +1026,7 @@ func (e *UnionExec) resultPuller(childID int) {
 			return
 		case result.chk = <-e.resourcePools[childID]:
 		}
-		result.err = errors.Trace(e.children[childID].NextChunk(result.chk))
+		result.err = errors.Trace(e.children[childID].NextChunk(goCtx, result.chk))
 		if result.err == nil && result.chk.NumRows() == 0 {
 			return
 		}
@@ -1064,7 +1064,7 @@ func (e *UnionExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *UnionExec) NextChunk(chk *chunk.Chunk) error {
+func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.initialized {
 		e.initialize(nil, true)
