@@ -161,8 +161,7 @@ benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
 update:
-	which dep 2>/dev/null || curl -L -s https://github.com/golang/dep/releases/download/v0.3.2/dep-linux-amd64 -o $(GOPATH)/bin/dep
-	which dep 2>/dev/null || chmod +x $(GOPATH)/bin/dep
+	which dep 2>/dev/null || go get -u github.com/golang/dep/cmd/dep
 ifdef PKG
 	dep ensure -add ${PKG}
 else
