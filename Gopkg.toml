@@ -87,3 +87,8 @@
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
   version = "2.0.0"
+
+[prune]
+  non-go = true
+  go-tests = true
+  unused-packages = true
