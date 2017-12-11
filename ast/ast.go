@@ -141,7 +141,7 @@ type RecordSet interface {
 	Next(goCtx goctx.Context) (row types.Row, err error)
 
 	// NextChunk reads records into chunk.
-	NextChunk(chk *chunk.Chunk) error
+	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk

@@ -170,10 +170,10 @@ func indexRangesToKVRanges(tid, idxID int64, ranges []*ranger.IndexRange) ([]kv.
 	return krs, nil
 }
 
-func (w *indexWorker) extractTaskHandles(chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
+func (w *indexWorker) extractTaskHandles(goCtx goctx.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
-		e0 := idxResult.NextChunk(chk)
+		e0 := idxResult.NextChunk(goCtx, chk)
 		if e0 != nil {
 			err = errors.Trace(e0)
 			return
@@ -355,8 +355,8 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *TableReaderExecutor) NextChunk(chk *chunk.Chunk) error {
-	return e.result.NextChunk(chk)
+func (e *TableReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return e.result.NextChunk(goCtx, chk)
 }
 
 // Open implements the Executor Open interface.
@@ -459,8 +459,8 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *IndexReaderExecutor) NextChunk(chk *chunk.Chunk) error {
-	return e.result.NextChunk(chk)
+func (e *IndexReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return e.result.NextChunk(goCtx, chk)
 }
 
 // Open implements the Executor Open interface.
@@ -578,7 +578,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 func (w *indexWorker) fetchHandles(goCtx goctx.Context, result distsql.SelectResult) {
 	chk := chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	for {
-		handles, err := w.extractTaskHandles(chk, result)
+		handles, err := w.extractTaskHandles(goCtx, chk, result)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- errors.Trace(err)
@@ -709,7 +709,7 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 	task.rows = make([]chunk.Row, 0, len(task.handles))
 	for {
 		chk := tableReader.newChunk()
-		err = tableReader.NextChunk(chk)
+		err = tableReader.NextChunk(goCtx, chk)
 		if err != nil {
 			log.Error(err)
 			return
@@ -783,7 +783,7 @@ func (e *IndexLookUpExecutor) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements Exec NextChunk interface.
-func (e *IndexLookUpExecutor) NextChunk(chk *chunk.Chunk) error {
+func (e *IndexLookUpExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()

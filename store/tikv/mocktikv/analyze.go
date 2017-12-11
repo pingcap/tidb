@@ -199,7 +199,7 @@ func (e *analyzeColumnsExec) Next(goCtx goctx.Context) (row types.Row, err error
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) NextChunk(chk *chunk.Chunk) error {
+func (e *analyzeColumnsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
