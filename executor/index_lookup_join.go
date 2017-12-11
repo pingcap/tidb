@@ -179,7 +179,10 @@ func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			} else if !matched {
-				e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outerRow, e.resultBuffer)
+				e.resultBuffer, err = e.resultGenerator.emit(outerRow, nil, e.resultBuffer)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			} else {
 				e.outerOrderedRows.rows = append(e.outerOrderedRows.rows, outerRow)
 			}
@@ -319,13 +322,18 @@ func (e *IndexLookUpJoin) doMergeJoin() (err error) {
 			innerCursor = e.innerOrderedRows.nextBatch(innerCursor)
 		case compareResult < 0:
 			outerNextCursor := e.outerOrderedRows.nextBatch(outerCursor)
-			e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerOrderedRows.rows[outerCursor:outerNextCursor], e.resultBuffer)
+			for _, unMatchedOuter := range e.outerOrderedRows.rows[outerCursor:outerNextCursor] {
+				e.resultBuffer, err = e.resultGenerator.emit(unMatchedOuter, nil, e.resultBuffer)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
 			outerCursor = outerNextCursor
 		case compareResult == 0:
 			outerNextCursor := e.outerOrderedRows.nextBatch(outerCursor)
 			innerNextCursor := e.innerOrderedRows.nextBatch(innerCursor)
 			for _, outerRow := range e.outerOrderedRows.rows[outerCursor:outerNextCursor] {
-				e.resultBuffer, err = e.resultGenerator.emitMatchedInners(outerRow, e.innerOrderedRows.rows[innerCursor:innerNextCursor], e.resultBuffer)
+				e.resultBuffer, err = e.resultGenerator.emit(outerRow, e.innerOrderedRows.rows[innerCursor:innerNextCursor], e.resultBuffer)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -333,6 +341,11 @@ func (e *IndexLookUpJoin) doMergeJoin() (err error) {
 			outerCursor, innerCursor = outerNextCursor, innerNextCursor
 		}
 	}
-	e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerOrderedRows.rows[outerCursor:], e.resultBuffer)
+	for _, unMatchedOuter := range e.outerOrderedRows.rows[outerCursor:] {
+		e.resultBuffer, err = e.resultGenerator.emit(unMatchedOuter, nil, e.resultBuffer)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }

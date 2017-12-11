@@ -180,12 +180,15 @@ func (e *MergeJoinExec) doJoin() (err error) {
 				return errors.Trace(err1)
 			}
 			if !matched {
-				e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)
+				e.resultBuffer, err1 = e.resultGenerator.emit(outer, nil, e.resultBuffer)
+				if err1 != nil {
+					return errors.Trace(err1)
+				}
 				continue
 			}
 		}
 
-		e.resultBuffer, err = e.resultGenerator.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
+		e.resultBuffer, err = e.resultGenerator.emit(outer, e.innerRows, e.resultBuffer)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -221,7 +224,12 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 
 		initLen := len(e.resultBuffer)
 		if compareResult < 0 {
-			e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerRows, e.resultBuffer)
+			for _, unMatchedOuter := range e.outerRows {
+				e.resultBuffer, err = e.resultGenerator.emit(unMatchedOuter, nil, e.resultBuffer)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+			}
 		} else {
 			err = e.doJoin()
 			if err != nil {
