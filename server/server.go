@@ -256,16 +256,9 @@ func (s *Server) Run() error {
 		if s.shouldStopListener() {
 			err = conn.Close()
 			terror.Log(errors.Trace(err))
-			break
+			return errors.Trace(err)
 		}
 		go s.onConn(conn)
-	}
-	err := s.listener.Close()
-	terror.Log(errors.Trace(err))
-	s.listener = nil
-	for {
-		log.Errorf("listener stopped, waiting for manual kill.")
-		time.Sleep(time.Minute)
 	}
 }
 
@@ -348,6 +341,26 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 
 	if !query {
 		conn.killed = true
+	}
+}
+
+// GracefulDown waits all clients to close.
+func (s *Server) GracefulDown() {
+	log.Info("graceful shut down.")
+	s.rwlock.RLock()
+	for _, conn := range s.clients {
+		conn.killed = true
+		atomic.StoreInt64(&conn.keepAlive, 42)
+	}
+	s.rwlock.RUnlock()
+
+	for s.ConnectionCount() > 0 {
+		time.Sleep(time.Second)
+		for _, conn := range s.clients {
+			if atomic.LoadInt64(&conn.keepAlive) == 42 {
+				conn.Close()
+			}
+		}
 	}
 }
 

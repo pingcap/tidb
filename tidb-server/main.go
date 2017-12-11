@@ -438,6 +438,7 @@ func runServer() {
 }
 
 func cleanup() {
+	svr.GracefulDown()
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
