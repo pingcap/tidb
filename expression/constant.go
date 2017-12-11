@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/juju/errors"
