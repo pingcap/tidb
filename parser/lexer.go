@@ -45,7 +45,7 @@ type Scanner struct {
 
 	sqlMode mysql.SQLMode
 
-	// If the lexcer should reconginze keywords for window function.
+	// If the lexer should reconginze keywords for window function.
 	// It may break the compatibility when support those keywords,
 	// because some application may already use them as identifiers.
 	supportWindowFunc bool
