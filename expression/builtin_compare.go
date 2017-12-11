@@ -1019,6 +1019,12 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
+	if tp == types.ETJson {
+		// In compare, if we cast string to JSON, we shouldn't parse it.
+		for i := range args {
+			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		}
+	}
 	bf.tp.Flen = 1
 	switch tp {
 	case types.ETInt:
