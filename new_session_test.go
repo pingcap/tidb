@@ -693,11 +693,12 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("create table t(id TEXT)")
 	tk.MustExec(`INSERT INTO t VALUES ("id");`)
 	id, ps, _, err := tk.Se.PrepareStmt("select id+? from t")
+	goCtx := goctx.Background()
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)
-	_, err = tk.Se.ExecutePreparedStmt(id, "1")
+	_, err = tk.Se.ExecutePreparedStmt(goCtx, id, "1")
 	c.Assert(err, IsNil)
 	err = tk.Se.DropPreparedStmt(id)
 	c.Assert(err, IsNil)
@@ -718,10 +719,10 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
 	c.Assert(err, IsNil)
-	rs, err := tk.Se.ExecutePreparedStmt(id, 1)
+	rs, err := tk.Se.ExecutePreparedStmt(goCtx, id, 1)
 	c.Assert(err, IsNil)
 	rs.Close()
-	rs, err = tk.Se.ExecutePreparedStmt(id, 2)
+	rs, err = tk.Se.ExecutePreparedStmt(goCtx, id, 2)
 	rs.Close()
 	c.Assert(err, IsNil)
 }
@@ -1553,7 +1554,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	var count int
 	var numChunks int
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1589,7 +1590,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk := rs.NewChunk()
 	var count int
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1609,7 +1610,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk = rs.NewChunk()
 	count = 0
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {

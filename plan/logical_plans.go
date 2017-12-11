@@ -80,8 +80,10 @@ func (tp JoinType) String() string {
 }
 
 const (
-	preferLeftAsOuter = 1 << iota
-	preferRightAsOuter
+	preferLeftAsIndexOuter = 1 << iota
+	preferRightAsIndexOuter
+	preferHashJoin
+	preferMergeJoin
 )
 
 // LogicalJoin is the logical join plan.
@@ -89,11 +91,10 @@ type LogicalJoin struct {
 	*basePlan
 	baseLogicalPlan
 
-	JoinType        JoinType
-	reordered       bool
-	cartesianJoin   bool
-	preferINLJ      int
-	preferMergeJoin bool
+	JoinType       JoinType
+	reordered      bool
+	cartesianJoin  bool
+	preferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
