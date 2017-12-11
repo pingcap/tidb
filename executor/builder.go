@@ -384,9 +384,11 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
-	return &ReplaceExec{
+	replaceExec := &ReplaceExec{
 		InsertValues: vals,
 	}
+	replaceExec.supportChk = true
+	return replaceExec
 }
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {

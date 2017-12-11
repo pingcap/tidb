@@ -1210,8 +1210,7 @@ func (e *ReplaceExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *ReplaceExec) exec(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -1287,6 +1286,18 @@ func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
 	}
 	e.finished = true
 	return nil, nil
+}
+
+// Next implements the Executor Next interface.
+func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
+	return e.exec(goCtx)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *ReplaceExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	_, err := e.exec(goCtx)
+	return errors.Trace(err)
 }
 
 // UpdateExec represents a new update executor.
