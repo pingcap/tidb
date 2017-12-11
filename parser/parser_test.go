@@ -36,6 +36,7 @@ func TestT(t *testing.T) {
 var _ = Suite(&testParserSuite{})
 
 type testParserSuite struct {
+	enableWindowFunc bool
 }
 
 func (s *testParserSuite) TestSimple(c *C) {
@@ -245,6 +246,9 @@ type testErrMsgCase struct {
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	parser := New()
+	if s.enableWindowFunc {
+		parser.EnableWindowFunc()
+	}
 	for _, t := range table {
 		_, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
@@ -2122,5 +2126,15 @@ func (s *testParserSuite) TestWindowFunctions(c *C) {
 		{`SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (), w3 AS (w1);`, true},
 		{`SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (w3), w3 AS (w1);`, true},
 	}
+	s.enableWindowFunc = true
 	s.RunTest(c, table)
+	s.enableWindowFunc = false
+
+	// Disable window function in parse, the following statement will be invalid.
+	table = []testCase{
+		{`SELECT CUME_DIST() OVER w FROM t;`, false},
+		{`SELECT DENSE_RANK() OVER w FROM t;`, false},
+	}
+	s.RunTest(c, table)
+
 }

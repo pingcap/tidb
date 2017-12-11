@@ -177,3 +177,7 @@ log-spans = false
 
 #  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
 local-agent-host-port = ""
+
+[parser]
+# Enable parsing syntax for window function. 
+enable-window-func = false

@@ -27,6 +27,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -124,9 +125,13 @@ func SetCommitRetryLimit(limit int) {
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
+	c := config.GetGlobalConfig()
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
+	if c.Parser.EnableWindowFunc {
+		p.EnableWindowFunc()
+	}
 	stmts, err := p.Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
