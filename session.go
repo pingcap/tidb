@@ -575,6 +575,25 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	return value, nil
 }
 
+// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
+func (s *session) GetAllSysVars() (map[string]string, error) {
+	if s.Value(context.Initing) != nil {
+		return nil, nil
+	}
+	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
+	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
+	rows, _, err := s.ExecRestrictedSQL(s, sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret := make(map[string]string)
+	for _, r := range rows {
+		k, v := r.Data[0].GetString(), r.Data[1].GetString()
+		ret[k] = v
+	}
+	return ret, nil
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
 	if s.Value(context.Initing) != nil {
@@ -586,9 +605,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
-			sv, ok := variable.SysVars[name]
-			isUninitializedGlobalVariable := ok && sv.Scope|variable.ScopeGlobal > 0
-			if isUninitializedGlobalVariable {
+			if sv, ok := variable.SysVars[name]; ok {
 				return sv.Value, nil
 			}
 			return "", variable.UnknownSystemVar.GenByArgs(name)
