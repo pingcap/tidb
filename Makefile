@@ -46,6 +46,9 @@ all: dev server benchkv
 dev: checklist parserlib test check
 
 build:
+	go get -u github.com/golang/dep/cmd/dep
+	dep ensure
+	dep prune
 	$(GOBUILD)
 
 goyacc:
