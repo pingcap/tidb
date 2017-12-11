@@ -670,31 +670,20 @@ func parseQuery(query string, m url.Values) error {
 		}
 		if i := strings.Index(key, "="); i >= 0 {
 			value := ""
-			var err1 error
 			key, value = key[:i], key[i+1:]
-			key, err1 = url.QueryUnescape(key)
-			if err1 != nil {
-				if err == nil {
-					err = err1
-				}
-				continue
+			key, err = url.QueryUnescape(key)
+			if err != nil {
+				return errors.Trace(err)
 			}
-			value, err1 = url.QueryUnescape(value)
-			if err1 != nil {
-				if err == nil {
-					err = err1
-				}
-				continue
+			value, err = url.QueryUnescape(value)
+			if err != nil {
+				return errors.Trace(err)
 			}
 			m[key] = append(m[key], value)
 		} else {
-			var err1 error
-			key, err1 = url.QueryUnescape(key)
-			if err1 != nil {
-				if err == nil {
-					err = err1
-				}
-				continue
+			key, err = url.QueryUnescape(key)
+			if err != nil {
+				return errors.Trace(err)
 			}
 			if _, ok := m[key]; !ok {
 				m[key] = nil
