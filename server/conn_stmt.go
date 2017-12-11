@@ -106,6 +106,7 @@ func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err e
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
+
 	pos := 0
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
@@ -163,7 +164,7 @@ func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err e
 			return errors.Trace(err)
 		}
 	}
-	rs, err := stmt.Execute(goCtx, args...)
+	rs, err := stmt.Execute(args...)
 	if err != nil {
 		return errors.Trace(err)
 	}
