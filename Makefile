@@ -8,13 +8,13 @@ ifeq "$(GOPATH)" ""
 endif
 
 CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/vendor:$(GOPATH)))
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GOPATH=$(CURDIR)/vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
-GOTEST    := GOPATH=$(CURDIR)/vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test -p 3
-OVERALLS  := GOPATH=$(CURDIR)/vendor:$(GOPATH) CGO_ENABLED=1 overalls
+GOBUILD   := GOPATH=$(GOPATH) CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOTEST    := GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) test -p 3
+OVERALLS  := GOPATH=$(GOPATH) CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
@@ -41,7 +41,7 @@ default: server buildsucc
 buildsucc:
 	@echo Build TiDB Server successfully!
 
-all: dev update server benchkv
+all: dev server benchkv
 
 dev: checklist parserlib test check
 
@@ -90,7 +90,7 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	@ GOPATH=$(CURDIR)/vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@ GOPATH=$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
@@ -135,7 +135,7 @@ tikv_integration_test: parserlib
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
-	GOBUILD   = GOPATH=$(CURDIR)/vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
+	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
 server: parserlib
@@ -155,16 +155,16 @@ benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
 update:
-	which dep >/dev/null || curl -L -s https://github.com/golang/dep/releases/download/v0.3.1/dep-linux-amd64 -o $GOPATH/bin/dep
-	chmod +x $GOPATH/bin/dep
+	which dep 2>/dev/null || curl -L -s https://github.com/golang/dep/releases/download/v0.3.2/dep-linux-amd64 -o $(GOPATH)/bin/dep
+	which dep 2>/dev/null || chmod +x $(GOPATH)/bin/dep
 ifdef PKG
 	dep ensure -add ${PKG}
 else
 	dep ensure -update
 endif
 	@echo "removing test files"
-	dep ensure
 	dep prune
+	bash ./hack/clean_vendor.sh
 
 checklist:
 	cat checklist.md
