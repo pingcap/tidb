@@ -314,14 +314,29 @@ type FuncCallExpr struct {
 
 // Format the ExprNode into a Writer.
 func (n *FuncCallExpr) Format(w io.Writer) {
-	fmt.Fprintf(w, "%s(", n.FnName.String())
-	for i, arg := range n.Args {
-		arg.Format(w)
-		if i != len(n.Args)-1 {
-			fmt.Fprintf(w, ", ")
+	fmt.Fprintf(w, "%s(", n.FnName.L)
+	if !n.specialFormatArgs(w) {
+		for i, arg := range n.Args {
+			arg.Format(w)
+			if i != len(n.Args)-1 {
+				fmt.Fprintf(w, ", ")
+			}
 		}
 	}
 	fmt.Fprintf(w, ")")
+}
+
+// specialFormatArgs formats argument list for some special functions.
+func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
+	switch n.FnName.L {
+	case "date_add":
+		n.Args[0].Format(w)
+		fmt.Fprintf(w, ", INTERVAL ")
+		n.Args[1].Format(w)
+		fmt.Fprintf(w, " %s", n.Args[2].GetDatum().GetString())
+		return true
+	}
+	return false
 }
 
 // Accept implements Node interface.

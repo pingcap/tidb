@@ -26,7 +26,7 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		// Literals.
 		{`350`, `350`},
 		{`345.678`, `345.678`},
-		{`1e-12`, `1e-12`},
+		{`1e-12`, `0.000000000001`},
 		{`null`, `NULL`},
 		{`"Hello, world"`, `"Hello, world"`},
 		{`'Hello, world'`, `"Hello, world"`},
@@ -56,6 +56,7 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{` length ( a )`, "length(`a`)"},
 		{`a -> '$.a'`, "json_extract(`a`, \"$.a\")"},
 		{`a.b ->> '$.a'`, "json_unquote(json_extract(`a`.`b`, \"$.a\"))"},
+		{`DATE_ADD('1970-01-01', interval 3 second)`, `date_add("1970-01-01", INTERVAL 3 SECOND)`},
 		// Cast, Convert and Binary.
 		// There should not be spaces between 'cast' and '(' unless 'IGNORE_SPACE' mode is set.
 		// see: https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html
