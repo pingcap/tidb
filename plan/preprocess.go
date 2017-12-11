@@ -139,12 +139,13 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 	for _, c := range constraints {
 		// If the constraint as follows: primary key(c1, c2)
 		// we only support c1 column can be auto_increment.
-		if colDef.Name.Name.L == c.Keys[0].Column.Name.L {
-			switch c.Tp {
-			case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
-				ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-				return true
-			}
+		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
+			continue
+		}
+		switch c.Tp {
+		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
+			ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
+			return true
 		}
 	}
 
@@ -300,12 +301,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
-		if len(spec.NewColumns) > 0 {
-			for _, colDef := range spec.NewColumns {
-				if err := checkColumn(colDef); err != nil {
-					p.err = err
-					return
-				}
+		for _, colDef := range spec.NewColumns {
+			if p.err = checkColumn(colDef); p.err != nil {
+				return
 			}
 		}
 		switch spec.Tp {

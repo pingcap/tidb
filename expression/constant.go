@@ -71,8 +71,7 @@ func (c *Constant) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (c *Constant) MarshalJSON() ([]byte, error) {
-	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", c))
-	return buffer.Bytes(), nil
+	return []byte(fmt.Sprintf("\"%s\"", c)), nil
 }
 
 // Clone implements Expression interface.
