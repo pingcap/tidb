@@ -88,7 +88,6 @@ func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
 	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
-	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig, nil
@@ -121,7 +120,6 @@ func (c *jsonExtractFunctionClass) getFunction(ctx context.Context, args []Expre
 		argTps = append(argTps, types.ETString)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
-	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONExtractSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
 	return sig, nil
@@ -166,6 +164,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx context.Context, args []Expre
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	args[0].GetType().Flag &= ^mysql.ParseToJSONFlag
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig, nil
@@ -202,7 +201,9 @@ func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
-	args[0].GetType().Flag |= mysql.ParseToJSONFlag
+	for i := 2; i < len(args); i += 2 {
+		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
 	return sig, nil
@@ -235,7 +236,9 @@ func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expres
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
-	args[0].GetType().Flag |= mysql.ParseToJSONFlag
+	for i := 2; i < len(args); i += 2 {
+		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
 	return sig, nil
@@ -268,7 +271,9 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expre
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
-	args[0].GetType().Flag |= mysql.ParseToJSONFlag
+	for i := 2; i < len(args); i += 2 {
+		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
 	return sig, nil
@@ -298,7 +303,6 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx context.Context, args []Expres
 		argTps = append(argTps, types.ETString)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
-	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONRemoveSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
 	return sig, nil
@@ -348,9 +352,6 @@ func (c *jsonMergeFunctionClass) getFunction(ctx context.Context, args []Express
 		argTps = append(argTps, types.ETJson)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
-	for i := range args {
-		args[i].GetType().Flag |= mysql.ParseToJSONFlag
-	}
 	sig := &builtinJSONMergeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)
 	return sig, nil
@@ -391,6 +392,9 @@ func (c *jsonObjectFunctionClass) getFunction(ctx context.Context, args []Expres
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
+	for i := 1; i < len(args); i += 2 {
+		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
 	return sig, nil
@@ -446,6 +450,9 @@ func (c *jsonArrayFunctionClass) getFunction(ctx context.Context, args []Express
 		argTps = append(argTps, types.ETJson)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
+	for i := range args {
+		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
 	return sig, nil

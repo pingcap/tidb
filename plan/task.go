@@ -464,10 +464,7 @@ func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalH
 		return
 	}
 	partialAgg = p.Copy().(*PhysicalHashAgg)
-	// TODO: It's toooooo ugly here. Refactor in the future !!
-	gkType := types.NewFieldType(mysql.TypeBlob)
-	gkType.Charset = charset.CharsetBin
-	gkType.Collate = charset.CollationBin
+	// TODO: Refactor the way of constructing aggregation functions.
 	partialSchema := expression.NewSchema()
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
