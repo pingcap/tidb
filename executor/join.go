@@ -396,14 +396,10 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 		innerRows = append(innerRows, innerRow)
 	}
 
-	matched := false
-	resultBuffer.rows, matched, err = e.resultGenerator.emitMatchedInners(outerRow, innerRows, resultBuffer.rows)
+	resultBuffer.rows, err = e.resultGenerator.emitMatchedInners(outerRow, innerRows, resultBuffer.rows)
 	if err != nil {
 		resultBuffer.err = errors.Trace(err)
 		return false
-	}
-	if !matched {
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuter(outerRow, resultBuffer.rows)
 	}
 	return true
 }

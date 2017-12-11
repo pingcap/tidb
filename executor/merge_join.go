@@ -185,13 +185,9 @@ func (e *MergeJoinExec) doJoin() (err error) {
 			}
 		}
 
-		matched := false
-		e.resultBuffer, matched, err = e.resultGenerator.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
+		e.resultBuffer, err = e.resultGenerator.emitMatchedInners(outer, e.innerRows, e.resultBuffer)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if !matched {
-			e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outer, e.resultBuffer)
 		}
 	}
 

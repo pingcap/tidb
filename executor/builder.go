@@ -531,9 +531,13 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		joinKeys: rightKeys,
 	}
 
-	mergeJoinExec := &MergeJoinExec{
+	lhsColTypes := leftExec.Schema().GetTypes()
+	rhsColTypes := rightExec.Schema().GetTypes()
+	allColTypes := append(lhsColTypes, rhsColTypes...)
+
+	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, v.DefaultValues, v.OtherConditions),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, v.DefaultValues, v.OtherConditions, allColTypes),
 		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
 		// left is the outer side by default.
 		outerKeys: leftKeys,
@@ -541,17 +545,23 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		outerIter: leftRowBlock,
 		innerIter: rightRowBlock,
 	}
+
+	innerColTypes := rhsColTypes
 	if v.JoinType == plan.RightOuterJoin {
-		mergeJoinExec.outerKeys, mergeJoinExec.innerKeys = mergeJoinExec.innerKeys, mergeJoinExec.outerKeys
-		mergeJoinExec.outerIter, mergeJoinExec.innerIter = mergeJoinExec.innerIter, mergeJoinExec.outerIter
+		e.outerKeys, e.innerKeys = e.innerKeys, e.outerKeys
+		e.outerIter, e.innerIter = e.innerIter, e.outerIter
+		innerColTypes = lhsColTypes
 	}
 
 	if v.JoinType != plan.InnerJoin {
-		mergeJoinExec.outerFilter = mergeJoinExec.outerIter.filter
-		mergeJoinExec.outerIter.filter = nil
+		e.outerFilter = e.outerIter.filter
+		e.outerIter.filter = nil
+		if v.JoinType == plan.LeftOuterJoin || v.JoinType == plan.RightOuterJoin {
+			e.resultGenerator.initDefaultChunkInner(innerColTypes)
+		}
 	}
 
-	return mergeJoinExec
+	return e
 }
 
 func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
@@ -570,7 +580,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	// for hash join, inner table is always the smaller one.
 	e := &HashJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, v.DefaultValues, v.OtherConditions),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, v.DefaultValues, v.OtherConditions, nil),
 		concurrency:     v.Concurrency,
 		defaultInners:   v.DefaultValues,
 		joinType:        v.JoinType,
@@ -1029,7 +1039,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerFilter:      v.RightConditions,
 		outerOrderedRows: newKeyRowBlock(batchSize, true),
 		innerOrderedRows: newKeyRowBlock(batchSize, false),
-		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, v.DefaultValues, v.OtherConditions),
+		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, v.DefaultValues, v.OtherConditions, nil),
 		maxBatchSize:     batchSize,
 	}
 }
