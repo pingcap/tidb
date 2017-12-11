@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -271,6 +272,30 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 	}
+
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	return ver, nil
+}
+
+func (d *ddl) onAlterTableOption(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	options := []*ast.TableOption{}
+	if err := job.DecodeArgs(&options); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	handleTableOptions(options, tblInfo)
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {

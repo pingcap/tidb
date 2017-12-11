@@ -911,7 +911,8 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 // AlterTableOption will alter table options.
 func (d *ddl) AlterTableOption(ctx context.Context, ti ast.Ident, options []*ast.TableOption) error {
 	is := d.infoHandle.Get()
-	if _, ok := is.SchemaByName(ti.Schema); !ok {
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -922,6 +923,19 @@ func (d *ddl) AlterTableOption(ctx context.Context, ti ast.Ident, options []*ast
 	// alter table can not support the case of auto_increment now.
 	// This validation has been done in plan preprocess checkAlterTableGrammar function.
 	handleTableOptions(options, t.Meta())
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAlterTableOption,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{options},
+	}
+
+	if err = d.doDDLJob(ctx, job); err != nil {
+		err = d.callHookOnChanged(err)
+		return errors.Trace(err)
+	}
 	return nil
 }
 

@@ -42,6 +42,7 @@ const (
 	ActionModifyColumn
 	ActionRenameTable
 	ActionSetDefaultValue
+	ActionAlterTableOption
 )
 
 func (action ActionType) String() string {
@@ -74,6 +75,8 @@ func (action ActionType) String() string {
 		return "rename table"
 	case ActionSetDefaultValue:
 		return "set default value"
+	case ActionAlterTableOption:
+		return "alter table option"
 	default:
 		return "none"
 	}
