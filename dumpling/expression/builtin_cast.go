@@ -421,6 +421,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
 	case types.ETString:
 		sig = &builtinCastStringAsJSONSig{bf}
+		sig.getRetTp().Flag |= mysql.ParseToJSONFlag
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsJson)
 	default:
 		panic("unsupported types.EvalType in castAsJSONFunctionClass")
@@ -1461,9 +1462,6 @@ func WrapWithCastAsDuration(ctx context.Context, expr Expression) Expression {
 // of expr is not type json,
 // otherwise, returns `expr` directly.
 func WrapWithCastAsJSON(ctx context.Context, expr Expression) Expression {
-	if expr.GetType().Tp == mysql.TypeJSON {
-		return expr
-	}
 	tp := &types.FieldType{
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912, // FIXME: Here the Flen is not trusted.
