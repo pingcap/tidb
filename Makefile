@@ -110,6 +110,9 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@export log_level=error; \
 	go get github.com/go-playground/overalls
 	go get github.com/mattn/goveralls
+	go get -u github.com/golang/dep/cmd/dep
+	dep ensure
+	dep prune
 	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor'
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
 else
