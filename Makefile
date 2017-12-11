@@ -12,9 +12,9 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GOPATH=$(GOPATH) CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
-GOTEST    := GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) test -p 3
-OVERALLS  := GOPATH=$(GOPATH) CGO_ENABLED=1 overalls
+GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
+OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
@@ -79,9 +79,9 @@ check: errcheck
 	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@ go tool vet -all -shadow *.go 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
-	@ golint ./... 2>&1 | grep -vE 'context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ golint ./... 2>&1 | grep -vE 'vendor|context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 goword:
 	go get github.com/chzchzchz/goword
