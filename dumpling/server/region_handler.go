@@ -522,10 +522,6 @@ func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
 // NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,
 // returns err when key is illegal.
 func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
-	_, key, err = codec.DecodeBytes(key)
-	if err != nil {
-		return
-	}
 	frame = &FrameItem{}
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
 	if err == nil || bytes.HasPrefix(key, tablecodec.TablePrefix()) {

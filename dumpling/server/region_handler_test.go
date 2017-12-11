@@ -45,8 +45,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sIndex := int64(11)
 	eTableID := int64(9)
 
-	startKey := codec.EncodeBytes(nil, tablecodec.EncodeTableIndexPrefix(sTableID, sIndex))
-	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
+	startKey := tablecodec.EncodeTableIndexPrefix(sTableID, sIndex)
+	endKey := tablecodec.GenTableRecordPrefix(eTableID)
+
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
@@ -70,8 +71,8 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	sTableID := int64(15)
 	eTableID := int64(math.MaxInt64)
-	startKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(sTableID))
-	endKey := codec.EncodeBytes(nil, []byte("z_aaaaafdfd"))
+	startKey := tablecodec.GenTableRecordPrefix(sTableID)
+	endKey := []byte("z_aaaaafdfd")
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
@@ -95,8 +96,8 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C)
 	sTableID := int64(math.MinInt64)
 	sIndexID := int64(math.MinInt64)
 	eTableID := int64(9)
-	startKey := codec.EncodeBytes(nil, []byte("m_aaaaafdfd"))
-	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
+	startKey := []byte("m_aaaaafdfd")
+	endKey := tablecodec.GenTableRecordPrefix(eTableID)
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
