@@ -339,7 +339,13 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	conn.ctx.Cancel()
+	conn.mu.RLock()
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
+
 	if !query {
 		conn.killed = true
 	}
