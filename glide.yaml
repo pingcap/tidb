@@ -138,7 +138,7 @@ import:
   subpackages:
   - pd-client
 - package: github.com/pingcap/tipb
-  version: a497eca3b8920e192aae1a5af81e573f90e59a6b
+  version: 09504ba4ca0101698da9d5db59e2411547427dcf
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -154,7 +154,7 @@ import:
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: e33073e1475021e04c795c3de5e1f4e28baa708a
+  version: d21ce07c35b9ea66436dc632210a01d927361ed4
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
