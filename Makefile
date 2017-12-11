@@ -46,9 +46,6 @@ all: dev server benchkv
 dev: checklist parserlib test check
 
 build:
-	go get -u github.com/golang/dep/cmd/dep
-	dep ensure
-	dep prune
 	$(GOBUILD)
 
 goyacc:
@@ -145,6 +142,9 @@ ifeq ("$(WITH_RACE)", "1")
 endif
 
 server: parserlib
+	go get -u github.com/golang/dep/cmd/dep
+	dep ensure
+	dep prune
 ifeq ($(TARGET), "")
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
