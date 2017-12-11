@@ -1307,8 +1307,7 @@ type UpdateExec struct {
 	cursor      int
 }
 
-// Next implements the Executor Next interface.
-func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *UpdateExec) exec(goCtx goctx.Context) (Row, error) {
 	if !e.fetched {
 		err := e.fetchRows(goCtx)
 		if err != nil {
@@ -1364,6 +1363,18 @@ func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
 	}
 	e.cursor++
 	return Row{}, nil
+}
+
+// Next implements the Executor Next interface.
+func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
+	return e.exec(goCtx)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *UpdateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	_, err := e.exec(goCtx)
+	return errors.Trace(err)
 }
 
 func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
