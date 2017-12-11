@@ -36,14 +36,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	tjson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
 )
@@ -237,7 +236,7 @@ func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, er
 	for i, regionID := range regionIDs {
 		meta, leader, err := t.regionCache.PDClient().GetRegionByID(goctx.TODO(), regionID)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		regions[i] = RegionMeta{
 			ID:          regionID,
@@ -702,7 +701,7 @@ func parseQuery(query string, m url.Values) error {
 			}
 		}
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // ServeHTTP handles request of list a table's regions.
@@ -744,12 +743,12 @@ func (rh mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url
 	handleStr := params[pHandle]
 	schema, err := rh.schema()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	// get table's schema.
 	t, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	var idxCols []*model.ColumnInfo
 	var idx table.Index
@@ -771,12 +770,12 @@ func (rh mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url
 func (rh mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
 	handle, err := strconv.ParseInt(params[pHandle], 0, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	tableID, err := rh.getTableID(params[pDBName], params[pTableName])
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return rh.getMvccByHandle(tableID, handle)
 }
@@ -784,7 +783,7 @@ func (rh mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface
 func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
 	startTS, err := strconv.ParseInt(params[pStartTS], 0, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	startKey := []byte("")
@@ -793,7 +792,7 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 	if len(dbName) > 0 {
 		tableID, err := rh.getTableID(params[pDBName], params[pTableName])
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
@@ -804,7 +803,7 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 func (t *regionHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	keyLocation, err := t.regionCache.LocateKey(t.bo, encodedKey)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	tikvReq := &tikvrpc.Request{
@@ -817,7 +816,7 @@ func (t *regionHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.Mvc
 	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
 
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return kvResp.MvccGetByKey, nil
 }
@@ -846,7 +845,7 @@ func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []
 		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
 			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
@@ -877,15 +876,15 @@ func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []
 func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	idxRow, err := t.formValue2DatumRow(values, idxCols)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	handle, err := strconv.ParseInt(handleStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	encodedKey, _, err := idx.GenIndexKey(idxRow, handle)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return t.getMvccByEncodedKey(encodedKey)
 }
@@ -893,6 +892,8 @@ func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values
 // formValue2DatumRow converts URL query string to a Datum Row.
 func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
 	data := make([]types.Datum, len(idxCols))
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.UTC
 	for i, col := range idxCols {
 		colName := col.Name.String()
 		vals, ok := values[colName]
@@ -904,87 +905,12 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 		case 0:
 			data[i].SetNull()
 		case 1:
-			val := vals[0]
-			switch col.Tp {
-			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-				if mysql.HasUnsignedFlag(col.Flag) {
-					elem, err := strconv.ParseUint(val, 10, 64)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					data[i].SetUint64(elem)
-				} else {
-					elem, err := strconv.ParseInt(val, 10, 64)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					data[i].SetInt64(elem)
-				}
-			case mysql.TypeFloat:
-				elem, err := strconv.ParseFloat(val, 32)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				data[i].SetFloat32(float32(elem))
-			case mysql.TypeDouble:
-				elem, err := strconv.ParseFloat(val, 64)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				data[i].SetFloat64(elem)
-			case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
-				mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-				data[i].SetBytes([]byte(val))
-			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-				elem, err := types.ParseTime(nil, val, col.Tp, col.Decimal)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				data[i].SetMysqlTime(elem)
-			case mysql.TypeDuration:
-				elem, err := types.ParseDuration(val, col.Decimal)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				data[i].SetMysqlDuration(elem)
-			case mysql.TypeNewDecimal:
-				var elem types.MyDecimal
-				err := elem.FromString([]byte(val))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				data[i].SetMysqlDecimal(&elem)
-			case mysql.TypeEnum:
-				num, err := strconv.ParseUint(val, 10, 64)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				elem, err := types.ParseEnumValue(col.Elems, num)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				data[i].SetMysqlEnum(elem)
-			case mysql.TypeSet:
-				num, err := strconv.ParseUint(val, 10, 64)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				elem, err := types.ParseSetValue(col.Elems, num)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				data[i].SetMysqlSet(elem)
-			case mysql.TypeBit:
-				data[i].SetMysqlBit([]byte(val))
-			case mysql.TypeJSON:
-				elem, err := tjson.ParseFromString(val)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				data[i].SetMysqlJSON(elem)
-			default:
-				return nil, errors.NotSupportedf("Not supported datum type %d.", col.Tp)
+			bDatum := types.NewStringDatum(vals[0])
+			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
+			data[i] = cDatum
 		default:
 			return nil, errors.BadRequestf("Invalid query form for column '%s', it's values are %v."+
 				" Column value should be unique for one index record.", colName, vals)
@@ -996,11 +922,11 @@ func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*mod
 func (t *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) {
 	schema, err := t.schema()
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	table, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	return table.Meta().ID, nil
 }
@@ -1008,8 +934,7 @@ func (t *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) 
 func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {
 	session, err := tidb.CreateSession(t.store.(kv.Storage))
 	if err != nil {
-		err = errors.Trace(err)
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return domain.GetDomain(session.(context.Context)).InfoSchema(), nil
 }
@@ -1017,7 +942,7 @@ func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {
 func (t *regionHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
 	encodedKey, err := hex.DecodeString(params[pHexKey])
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return t.getMvccByEncodedKey(encodedKey)
 }
