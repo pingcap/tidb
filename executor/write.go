@@ -182,8 +182,7 @@ type DeleteExec struct {
 	finished bool
 }
 
-// Next implements the Executor Next interface.
-func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *DeleteExec) exec(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -195,6 +194,18 @@ func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
 		return nil, e.deleteMultiTables(goCtx)
 	}
 	return nil, e.deleteSingleTable(goCtx)
+}
+
+// Next implements the Executor Next interface.
+func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
+	return e.exec(goCtx)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *DeleteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	_, err := e.exec(goCtx)
+	return errors.Trace(err)
 }
 
 type tblColPosInfo struct {
