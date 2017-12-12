@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 const (
@@ -133,9 +132,10 @@ func (p LogicalProjection) init(ctx context.Context) *LogicalProjection {
 	return &p
 }
 
-func (p PhysicalProjection) init(ctx context.Context) *PhysicalProjection {
+func (p PhysicalProjection) init(ctx context.Context, props ...*requiredProp) *PhysicalProjection {
 	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return &p
 }
 
@@ -157,9 +157,17 @@ func (p LogicalSort) init(ctx context.Context) *LogicalSort {
 	return &p
 }
 
-func (p PhysicalSort) init(ctx context.Context) *PhysicalSort {
+func (p PhysicalSort) init(ctx context.Context, props ...*requiredProp) *PhysicalSort {
 	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
+	return &p
+}
+
+func (p NominalSort) init(ctx context.Context, props ...*requiredProp) *NominalSort {
+	p.basePlan = newBasePlan(TypeSort, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return &p
 }
 
@@ -169,9 +177,10 @@ func (p LogicalTopN) init(ctx context.Context) *LogicalTopN {
 	return &p
 }
 
-func (p PhysicalTopN) init(ctx context.Context) *PhysicalTopN {
+func (p PhysicalTopN) init(ctx context.Context, props ...*requiredProp) *PhysicalTopN {
 	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return &p
 }
 
@@ -181,9 +190,10 @@ func (p LogicalLimit) init(ctx context.Context) *LogicalLimit {
 	return &p
 }
 
-func (p PhysicalLimit) init(ctx context.Context) *PhysicalLimit {
+func (p PhysicalLimit) init(ctx context.Context, props ...*requiredProp) *PhysicalLimit {
 	p.basePlan = newBasePlan(TypeLimit, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return &p
 }
 
@@ -205,9 +215,10 @@ func (p LogicalExists) init(ctx context.Context) *LogicalExists {
 	return &p
 }
 
-func (p PhysicalExists) init(ctx context.Context) *PhysicalExists {
+func (p PhysicalExists) init(ctx context.Context, props ...*requiredProp) *PhysicalExists {
 	p.basePlan = newBasePlan(TypeExists, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return &p
 }
 
@@ -217,9 +228,10 @@ func (p LogicalMaxOneRow) init(ctx context.Context) *LogicalMaxOneRow {
 	return &p
 }
 
-func (p PhysicalMaxOneRow) init(ctx context.Context) *PhysicalMaxOneRow {
+func (p PhysicalMaxOneRow) init(ctx context.Context, props ...*requiredProp) *PhysicalMaxOneRow {
 	p.basePlan = newBasePlan(TypeMaxOneRow, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return &p
 }
 
@@ -295,21 +307,21 @@ func (p PhysicalMergeJoin) init(ctx context.Context) *PhysicalMergeJoin {
 	return &p
 }
 
-func (base basePhysicalAgg) initForHash(ctx context.Context) *PhysicalHashAgg {
+func (base basePhysicalAgg) initForHash(ctx context.Context, props ...*requiredProp) *PhysicalHashAgg {
 	p := &PhysicalHashAgg{base}
 	p.basePlan = newBasePlan(TypeHashAgg, ctx, p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return p
 }
 
-func (base basePhysicalAgg) initForStream(ctx context.Context, keys []*expression.Column, inputCnt float64) *PhysicalStreamAgg {
+func (base basePhysicalAgg) initForStream(ctx context.Context, props ...*requiredProp) *PhysicalStreamAgg {
 	p := &PhysicalStreamAgg{
 		basePhysicalAgg: base,
-		propKeys:        keys,
-		inputCount:      inputCnt,
 	}
 	p.basePlan = newBasePlan(TypeStreamAgg, ctx, p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return p
 }
 
@@ -319,9 +331,10 @@ func (p PhysicalApply) init(ctx context.Context) *PhysicalApply {
 	return &p
 }
 
-func (p PhysicalUnionScan) init(ctx context.Context) *PhysicalUnionScan {
+func (p PhysicalUnionScan) init(ctx context.Context, props ...*requiredProp) *PhysicalUnionScan {
 	p.basePlan = newBasePlan(TypeUnionScan, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.reqProps = props
 	return &p
 }
 
@@ -356,10 +369,9 @@ func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
 	return &p
 }
 
-func (p PhysicalIndexJoin) init(ctx context.Context, children ...Plan) *PhysicalIndexJoin {
+func (p PhysicalIndexJoin) init(ctx context.Context) *PhysicalIndexJoin {
 	p.basePlan = newBasePlan(TypeIndexJoin, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.children = children
 	return &p
 }
 
