@@ -464,6 +464,7 @@ func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalH
 	}
 	partialAgg = p
 	originalSchema := p.schema
+	// TODO: Refactor the way of constructing aggregation functions.
 	partialSchema := expression.NewSchema()
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
