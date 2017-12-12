@@ -25,7 +25,7 @@ run-ddl = true
 lease = "10s"
 
 # When create table, split a separated region for it.
-# split-table = false
+split-table = true
 
 # The limit of concurrent executed sessions.
 # token-limit = 1000
