@@ -281,12 +281,13 @@ func (s *Server) shouldStopListener() bool {
 // Close closes the server.
 func (s *Server) Close() {
 	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+
 	if s.listener != nil {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
-	s.rwlock.Unlock()
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
