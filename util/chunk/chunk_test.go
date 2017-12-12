@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -388,6 +389,21 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 		c.Assert(cmpFunc(rowBig, i, rowSmall, i), check.Equals, 1)
 		c.Assert(cmpFunc(rowBig, i, rowBig, i), check.Equals, 0)
 	}
+}
+
+func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
+	datum := types.NewDatum(1.01)
+	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decType.Flen = 4
+	decType.Decimal = 2
+	sc := new(stmtctx.StatementContext)
+	decDatum, err := datum.ConvertTo(sc, decType)
+	c.Assert(err, check.IsNil)
+	chk := NewChunk([]*types.FieldType{decType})
+	chk.AppendMyDecimal(0, decDatum.GetMysqlDecimal())
+	decFromChk := chk.GetRow(0).GetDatum(0, decType)
+	c.Assert(decDatum.Length(), check.Equals, decFromChk.Length())
+	c.Assert(decDatum.Frac(), check.Equals, decFromChk.Frac())
 }
 
 func BenchmarkAppendInt(b *testing.B) {
