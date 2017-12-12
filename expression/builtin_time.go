@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tipb/go-tipb"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -675,8 +677,8 @@ func (c *dateFormatFunctionClass) getFunction(ctx context.Context, args []Expres
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
 	bf.tp.Flen = (args[1].GetType().Flen + 1) / 2 * 11
 	sig := &builtinDateFormatSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_DateFormatSig)
 	return sig, nil
-
 }
 
 type builtinDateFormatSig struct {
