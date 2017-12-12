@@ -44,6 +44,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -77,7 +78,13 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	killed       bool
+
+	// cancelFunc is used for cancelling the execution of current transaction.
+	mu struct {
+		sync.RWMutex
+		cancelFunc goctx.CancelFunc
+	}
+	killed bool
 }
 
 func (cc *clientConn) String() string {
@@ -502,6 +509,12 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 func (cc *clientConn) dispatch(data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
 	goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
+
+	goCtx1, cancelFunc := goctx.WithCancel(goCtx)
+	cc.mu.Lock()
+	cc.mu.cancelFunc = cancelFunc
+	cc.mu.Unlock()
+
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
@@ -527,11 +540,11 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		return cc.handleQuery(goCtx, hack.String(data))
+		return cc.handleQuery(goCtx1, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(goCtx, hack.String(data)); err != nil {
+		if err := cc.useDB(goCtx1, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
@@ -540,7 +553,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
-		return cc.handleStmtExecute(goCtx, data)
+		return cc.handleStmtExecute(goCtx1, data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -796,7 +809,7 @@ func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary b
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = cc.writeChunks(rs, binary, more)
+		err = cc.writeChunks(goCtx, rs, binary, more)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -867,11 +880,11 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	return nil
 }
 
-func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
+func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	for {
-		err := rs.NextChunk(chk)
+		err := rs.NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

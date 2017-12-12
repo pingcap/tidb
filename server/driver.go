@@ -84,9 +84,6 @@ type QueryCtx interface {
 	ShowProcess() util.ProcessInfo
 
 	SetSessionManager(util.SessionManager)
-
-	// Cancel the execution of current transaction.
-	Cancel()
 }
 
 // PreparedStatement is the interface to use a prepared statement.
@@ -95,7 +92,7 @@ type PreparedStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(args ...interface{}) (ResultSet, error)
+	Execute(goctx.Context, ...interface{}) (ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -125,6 +122,6 @@ type ResultSet interface {
 	Next(goctx.Context) (types.Row, error)
 	SupportChunk() bool
 	NewChunk() *chunk.Chunk
-	NextChunk(chk *chunk.Chunk) error
+	NextChunk(goctx.Context, *chunk.Chunk) error
 	Close() error
 }
