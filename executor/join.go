@@ -41,7 +41,7 @@ type HashJoinExec struct {
 	baseExecutor
 
 	outerExec   Executor
-	innerlExec  Executor
+	innerExec   Executor
 	outerFilter expression.CNFExprs
 	innerFilter expression.CNFExprs
 	outerKeys   []*expression.Column
@@ -55,7 +55,6 @@ type HashJoinExec struct {
 	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
 	finished        atomic.Value
 	closeCh         chan struct{} // closeCh add a lock for closing executor.
-	defaultInners   []types.Datum
 	joinType        plan.JoinType
 
 	resultGenerator joinResultGenerator
@@ -133,12 +132,12 @@ func (e *HashJoinExec) encodeRow(b []byte, row Row) ([]byte, error) {
 }
 
 func (e *HashJoinExec) decodeRow(data []byte) (Row, error) {
-	values := make([]types.Datum, e.innerlExec.Schema().Len())
+	values := make([]types.Datum, e.innerExec.Schema().Len())
 	err := codec.SetRawValues(data, values)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = decodeRawValues(values, e.innerlExec.Schema(), e.ctx.GetSessionVars().GetTimeZone())
+	err = decodeRawValues(values, e.innerExec.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -216,7 +215,7 @@ func (e *HashJoinExec) prepare(goCtx goctx.Context) error {
 	e.hashTable = mvmap.NewMVMap()
 	var buffer []byte
 	for {
-		innerRow, err := e.innerlExec.Next(goCtx)
+		innerRow, err := e.innerExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
