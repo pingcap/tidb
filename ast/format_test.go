@@ -35,6 +35,7 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{`'Hello, "world"'`, `"Hello, \"world\""`},
 		{`_utf8'你好'`, `"你好"`},
 		{`x'bcde'`, "x'bcde'"},
+		{`x''`, "x''"},
 		{`x'0035'`, "x'0035'"}, // Shouldn't trim leading zero.
 		{`b'00111111'`, `b'111111'`},
 		{`time'10:10:10.123'`, `timeliteral("10:10:10.123")`},

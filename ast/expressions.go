@@ -88,7 +88,7 @@ func (n *ValueExpr) Format(w io.Writer) {
 		s = n.GetMysqlDecimal().String()
 	case types.KindBinaryLiteral:
 		if n.Type.Flag&mysql.UnsignedFlag != 0 {
-			s = n.GetBinaryLiteral().ToHexLiteralString()
+			s = fmt.Sprintf("x'%x'", n.GetBytes())
 		} else {
 			s = n.GetBinaryLiteral().ToBitLiteralString(true)
 		}
