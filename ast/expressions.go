@@ -14,6 +14,7 @@
 package ast
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"regexp"
@@ -87,7 +88,22 @@ func (n *ValueExpr) Format(w io.Writer) {
 	case types.KindMysqlDecimal:
 		s = n.GetMysqlDecimal().String()
 	case types.KindBinaryLiteral:
-		s = n.GetBinaryLiteral().ToString()
+		var sb *bytes.Buffer
+		// Hex literal has unsigned flag but bit literal not.
+		// See `types.DefaultTypeForValue`
+		if n.Type.Flag&mysql.UnsignedFlag != 0 {
+			sb = bytes.NewBufferString("x'")
+			for _, b := range n.GetBinaryLiteral() {
+				fmt.Fprintf(sb, "%s", strconv.FormatInt(int64(b), 16))
+			}
+		} else {
+			sb = bytes.NewBufferString("b'")
+			for _, b := range n.GetBinaryLiteral() {
+				fmt.Fprintf(sb, "%s", strconv.FormatInt(int64(b), 2))
+			}
+		}
+		fmt.Fprint(sb, "'")
+		s = sb.String()
 	default:
 		panic("Can't format to string")
 	}
