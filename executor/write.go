@@ -1308,14 +1308,6 @@ type UpdateExec struct {
 }
 
 func (e *UpdateExec) exec(goCtx goctx.Context) (Row, error) {
-	if !e.fetched {
-		err := e.fetchRows(goCtx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.fetched = true
-	}
-
 	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema().Len())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1367,12 +1359,28 @@ func (e *UpdateExec) exec(goCtx goctx.Context) (Row, error) {
 
 // Next implements the Executor Next interface.
 func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
+	if !e.fetched {
+		err := e.fetchRows(goCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.fetched = true
+	}
+
 	return e.exec(goCtx)
 }
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *UpdateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	if !e.fetched {
+		err := e.fetchChunkRows(goCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.fetched = true
+	}
+
 	_, err := e.exec(goCtx)
 	return errors.Trace(err)
 }
@@ -1386,6 +1394,45 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 	return assignFlag, nil
 }
 
+func (e *UpdateExec) fetchChunkRows(goCtx goctx.Context) error {
+	fields := e.schema.GetTypes()
+	for {
+		chk := chunk.NewChunk(fields)
+		err := e.children[0].NextChunk(goCtx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			chunkRow := chk.GetRow(rowIdx)
+			datumRow := chunkRow.GetDatumRow(fields)
+			newRow, err1 := e.composeNewRow(datumRow)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			e.rows = append(e.rows, datumRow)
+			e.newRowsData = append(e.newRowsData, newRow)
+		}
+	}
+	return nil
+}
+
+func (e *UpdateExec) composeNewRow(oldRow Row) (Row, error) {
+	newRowData := oldRow.Copy()
+	for _, assign := range e.OrderedList {
+		val, err := assign.Expr.Eval(newRowData)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newRowData[assign.Col.Index] = val
+	}
+	return newRowData, nil
+}
+
 func (e *UpdateExec) fetchRows(goCtx goctx.Context) error {
 	for {
 		row, err := e.SelectExec.Next(goCtx)
@@ -1395,13 +1442,9 @@ func (e *UpdateExec) fetchRows(goCtx goctx.Context) error {
 		if row == nil {
 			return nil
 		}
-		newRowData := row.Copy()
-		for _, assign := range e.OrderedList {
-			val, err := assign.Expr.Eval(newRowData)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			newRowData[assign.Col.Index] = val
+		newRowData, err := e.composeNewRow(row)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		e.rows = append(e.rows, row)
 		e.newRowsData = append(e.newRowsData, newRowData)

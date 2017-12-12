@@ -845,7 +845,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		return nil
 	}
 	updateExec := &UpdateExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(nil, b.ctx, selExec),
 		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
