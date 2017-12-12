@@ -45,7 +45,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -79,7 +78,6 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	keepAlive    int64
 
 	// cancelFunc is used for cancelling the execution of current transaction.
 	mu struct {
@@ -417,7 +415,6 @@ func (cc *clientConn) Run() {
 			return
 		}
 
-		atomic.AddInt64(&cc.keepAlive, 1)
 		startTime := time.Now()
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {

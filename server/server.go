@@ -256,9 +256,16 @@ func (s *Server) Run() error {
 		if s.shouldStopListener() {
 			err = conn.Close()
 			terror.Log(errors.Trace(err))
-			return errors.Trace(err)
+			break
 		}
 		go s.onConn(conn)
+	}
+	err := s.listener.Close()
+	terror.Log(errors.Trace(err))
+	s.listener = nil
+	for {
+		log.Errorf("listener stopped, waiting for manual kill.")
+		time.Sleep(time.Minute)
 	}
 }
 
@@ -274,13 +281,12 @@ func (s *Server) shouldStopListener() bool {
 // Close closes the server.
 func (s *Server) Close() {
 	s.rwlock.Lock()
-	defer s.rwlock.Unlock()
-
 	if s.listener != nil {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
+	s.rwlock.Unlock()
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
@@ -346,20 +352,15 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 
 // GracefulDown waits all clients to close.
 func (s *Server) GracefulDown() {
-	log.Info("graceful shut down.")
-	s.rwlock.RLock()
-	for _, conn := range s.clients {
-		conn.killed = true
-		atomic.StoreInt64(&conn.keepAlive, 42)
-	}
-	s.rwlock.RUnlock()
+	log.Info("graceful shutdown.")
 
-	for s.ConnectionCount() > 0 {
+	count := s.ConnectionCount()
+	for i := 0; count > 0; i++ {
 		time.Sleep(time.Second)
-		for _, conn := range s.clients {
-			if atomic.LoadInt64(&conn.keepAlive) == 42 {
-				conn.Close()
-			}
+		count = s.ConnectionCount()
+		// Print information for every 30s.
+		if i%30 == 0 {
+			log.Infof("graceful shutdown...connection count %d\n", count)
 		}
 	}
 }
