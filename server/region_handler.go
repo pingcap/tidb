@@ -529,8 +529,16 @@ func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
 func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	frame = &FrameItem{}
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
-	if err == nil || bytes.HasPrefix(key, tablecodec.TablePrefix()) {
+	if err == nil {
 		return
+	}
+	if bytes.HasPrefix(key, tablecodec.TablePrefix()) {
+		// If SplitTable is enabled, the key may be `t{id}`.
+		if len(key) == tablecodec.TableSplitKeyLen {
+			frame.TableID = tablecodec.DecodeTableID(key)
+			return frame, nil
+		}
+		return nil, errors.Trace(err)
 	}
 
 	// key start with tablePrefix must be either record key or index key
