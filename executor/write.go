@@ -1395,7 +1395,7 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 }
 
 func (e *UpdateExec) fetchChunkRows(goCtx goctx.Context) error {
-	fields := e.schema.GetTypes()
+	fields := e.children[0].Schema().GetTypes()
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(goCtx, chk)
