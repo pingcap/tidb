@@ -154,6 +154,12 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.LeftJoinKeys = append(p.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
 		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
+	// After predicate push down, the size of schema may change, so we should also change the len of default value.
+	if p.JoinType == LeftOuterJoin {
+		p.DefaultValues = make([]types.Datum, p.children[1].Schema().Len())
+	} else if p.JoinType == RightOuterJoin {
+		p.DefaultValues = make([]types.Datum, p.children[0].Schema().Len())
+	}
 	p.mergeSchema()
 	p.buildKeyInfo()
 	return
