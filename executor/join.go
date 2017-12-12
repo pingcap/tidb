@@ -343,7 +343,16 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 			break
 		}
 		// process unmatched outer rows.
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuters(outerBuffer.rows[numMatchedOuters:], resultBuffer.rows)
+		for _, unMatchedOuter := range outerBuffer.rows[numMatchedOuters:] {
+			resultBuffer.rows, resultBuffer.err = e.resultGenerator.emit(unMatchedOuter, nil, resultBuffer.rows)
+			if resultBuffer.err != nil {
+				resultBuffer.err = errors.Trace(resultBuffer.err)
+				break
+			}
+		}
+		if resultBuffer.err != nil {
+			break
+		}
 		// process matched outer rows.
 		for _, outerRow := range outerBuffer.rows[:numMatchedOuters] {
 			if len(resultBuffer.rows) >= bufferCapacity {
@@ -375,13 +384,15 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 	}
 
 	if hasNull {
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuter(outerRow, resultBuffer.rows)
+		resultBuffer.rows, resultBuffer.err = e.resultGenerator.emit(outerRow, nil, resultBuffer.rows)
+		resultBuffer.err = errors.Trace(resultBuffer.err)
 		return true
 	}
 
 	values := e.hashTable.Get(joinKey)
 	if len(values) == 0 {
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuter(outerRow, resultBuffer.rows)
+		resultBuffer.rows, resultBuffer.err = e.resultGenerator.emit(outerRow, nil, resultBuffer.rows)
+		resultBuffer.err = errors.Trace(resultBuffer.err)
 		return true
 	}
 
@@ -396,14 +407,10 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 		innerRows = append(innerRows, innerRow)
 	}
 
-	matched := false
-	resultBuffer.rows, matched, err = e.resultGenerator.emitMatchedInners(outerRow, innerRows, resultBuffer.rows)
-	if err != nil {
-		resultBuffer.err = errors.Trace(err)
+	resultBuffer.rows, resultBuffer.err = e.resultGenerator.emit(outerRow, innerRows, resultBuffer.rows)
+	if resultBuffer.err != nil {
+		resultBuffer.err = errors.Trace(resultBuffer.err)
 		return false
-	}
-	if !matched {
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuter(outerRow, resultBuffer.rows)
 	}
 	return true
 }
