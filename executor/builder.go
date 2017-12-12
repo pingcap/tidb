@@ -343,6 +343,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		Priority:     v.Priority,
 		IgnoreErr:    v.IgnoreErr,
 	}
+	insert.supportChk = true
 	return insert
 }
 
