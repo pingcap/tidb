@@ -329,11 +329,17 @@ func (n *FuncCallExpr) Format(w io.Writer) {
 // specialFormatArgs formats argument list for some special functions.
 func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 	switch n.FnName.L {
-	case "date_add":
+	case DateAdd, DateSub, AddDate, SubDate:
 		n.Args[0].Format(w)
 		fmt.Fprintf(w, ", INTERVAL ")
 		n.Args[1].Format(w)
 		fmt.Fprintf(w, " %s", n.Args[2].GetDatum().GetString())
+		return true
+	case TimestampAdd, TimestampDiff:
+		fmt.Fprintf(w, "%s, ", n.Args[0].GetDatum().GetString())
+		n.Args[1].Format(w)
+		fmt.Fprintf(w, ", ")
+		n.Args[2].Format(w)
 		return true
 	}
 	return false

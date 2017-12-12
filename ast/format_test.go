@@ -67,6 +67,7 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{`a -> '$.a'`, "json_extract(`a`, \"$.a\")"},
 		{`a.b ->> '$.a'`, "json_unquote(json_extract(`a`.`b`, \"$.a\"))"},
 		{`DATE_ADD('1970-01-01', interval 3 second)`, `date_add("1970-01-01", INTERVAL 3 SECOND)`},
+		{`TIMESTAMPDIFF(month, '2001-01-01', '2001-02-02 12:03:05.123')`, `timestampdiff(MONTH, "2001-01-01", "2001-02-02 12:03:05.123")`},
 		// Cast, Convert and Binary.
 		// There should not be spaces between 'cast' and '(' unless 'IGNORE_SPACE' mode is set.
 		// see: https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html
