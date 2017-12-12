@@ -234,8 +234,12 @@ func (pr *partialResult) Next(goCtx goctx.Context) (data []types.Datum, err erro
 	if chunk == nil {
 		return nil, nil
 	}
-	data = make([]types.Datum, pr.rowLen)
-	for i := 0; i < pr.rowLen; i++ {
+	return readRowFromChunk(chunk, pr.rowLen)
+}
+
+func readRowFromChunk(chunk *tipb.Chunk, rowLen int) (data []types.Datum, err error) {
+	data = make([]types.Datum, rowLen)
+	for i := 0; i < rowLen; i++ {
 		var l []byte
 		l, chunk.RowsData, err = codec.CutOne(chunk.RowsData)
 		if err != nil {
@@ -282,7 +286,17 @@ func SelectDAG(goCtx goctx.Context, ctx context.Context, kvReq *kv.Request, fiel
 		err = errors.New("client returns nil response")
 		return nil, errors.Trace(err)
 	}
-	result := &selectResult{
+
+	if kvReq.Streaming {
+		return &streamResult{
+			resp:       resp,
+			rowLen:     len(fieldTypes),
+			fieldTypes: fieldTypes,
+			ctx:        ctx,
+		}, nil
+	}
+
+	return &selectResult{
 		label:      "dag",
 		resp:       resp,
 		results:    make(chan newResultWithErr, kvReq.Concurrency),
@@ -290,8 +304,7 @@ func SelectDAG(goCtx goctx.Context, ctx context.Context, kvReq *kv.Request, fiel
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
 		ctx:        ctx,
-	}
-	return result, nil
+	}, nil
 }
 
 // Analyze do a analyze request.
