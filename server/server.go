@@ -358,10 +358,30 @@ func (s *Server) GracefulDown() {
 	count := s.ConnectionCount()
 	for i := 0; count > 0; i++ {
 		time.Sleep(time.Second)
+		s.kickIdleConnection()
+
 		count = s.ConnectionCount()
 		// Print information for every 30s.
 		if i%30 == 0 {
 			log.Infof("graceful shutdown...connection count %d\n", count)
+		}
+	}
+}
+
+func (s *Server) kickIdleConnection() {
+	var conns []*clientConn
+	s.rwlock.RLock()
+	for _, cc := range s.clients {
+		if !cc.Active() {
+			conns = append(conns, cc)
+		}
+	}
+	s.rwlock.RUnlock()
+
+	for _, cc := range conns {
+		err := cc.Close()
+		if err != nil {
+			log.Error("close connection error:", err)
 		}
 	}
 }

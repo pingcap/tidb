@@ -78,6 +78,7 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
+	active       bool
 
 	// cancelFunc is used for cancelling the execution of current transaction.
 	mu struct {
@@ -402,12 +403,16 @@ func (cc *clientConn) Run() {
 	}()
 
 	for !cc.killed {
+		cc.active = false
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
 		if err != nil || cc.killed {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Errorf("[%d] read packet error, close this connection %s",
-					cc.connectionID, errors.ErrorStack(err))
+				errStack := errors.ErrorStack(err)
+				if !strings.Contains(errStack, "use of closed network connection") {
+					log.Errorf("[%d] read packet error, close this connection %s",
+						cc.connectionID, errStack)
+				}
 			}
 			if cc.killed {
 				log.Warnf("[%d] session is killed.", cc.connectionID)
@@ -415,6 +420,7 @@ func (cc *clientConn) Run() {
 			return
 		}
 
+		cc.active = true
 		startTime := time.Now()
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
@@ -442,6 +448,11 @@ func (cc *clientConn) Run() {
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
 	}
+}
+
+func (cc *clientConn) Active() bool {
+	inTransaction := (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0
+	return cc.active || inTransaction
 }
 
 func queryStrForLog(query string) string {
