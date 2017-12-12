@@ -597,6 +597,13 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("INSERT INTO t1 values(1)")
 	result = tk.MustQuery("SELECT 1 FROM test.t1, test.t2 WHERE 1 = (SELECT test.t2.d FROM test.t2 WHERE test.t1.a >= 1) and test.t2.d = 1;")
 	result.Check(testkit.Rows())
+
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1(a int, b int default 0)")
+	tk.MustExec("create index k1 on t1(a)")
+	tk.MustExec("INSERT INTO t1 (a) values(1), (2), (3), (4), (5)")
+	result = tk.MustQuery("select (select /*+ TIDB_INLJ(x1) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
+	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {

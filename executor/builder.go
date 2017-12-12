@@ -1053,8 +1053,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerKeys:        v.InnerJoinKeys,
 		outerFilter:      v.LeftConditions,
 		innerFilter:      v.RightConditions,
-		outerOrderedRows: newKeyRowBlock(batchSize, true),
-		innerOrderedRows: newKeyRowBlock(batchSize, false),
 		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, nil, nil),
 		maxBatchSize:     batchSize,
 	}
