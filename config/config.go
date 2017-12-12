@@ -202,6 +202,7 @@ var defaultConf = Config{
 	Store:       "mocktikv",
 	Path:        "/tmp/tidb",
 	RunDDL:      true,
+	SplitTable:  true,
 	Lease:       "10s",
 	TokenLimit:  1000,
 	EnableChunk: true,

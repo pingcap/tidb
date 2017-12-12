@@ -24,8 +24,9 @@ run-ddl = true
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "10s"
 
-# When create table, split a separated region for it.
-# split-table = false
+# When create table, split a separated region for it. It is recommended to
+# turn off this option if there will be a large number of tables created.
+split-table = true
 
 # The limit of concurrent executed sessions.
 # token-limit = 1000

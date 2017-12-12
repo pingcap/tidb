@@ -64,8 +64,8 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) {
-	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ts.id, args...)
+func (ts *TiDBStatement) Execute(goCtx goctx.Context, args ...interface{}) (rs ResultSet, err error) {
+	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(goCtx, ts.id, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -280,11 +280,6 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
-// Cancel implements QueryCtx Cancel method.
-func (tc *TiDBContext) Cancel() {
-	tc.session.Cancel()
-}
-
 type tidbResultSet struct {
 	recordSet ast.RecordSet
 	columns   []*ColumnInfo
@@ -298,8 +293,8 @@ func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
 
-func (trs *tidbResultSet) NextChunk(chk *chunk.Chunk) error {
-	return trs.recordSet.NextChunk(chk)
+func (trs *tidbResultSet) NextChunk(ctx goctx.Context, chk *chunk.Chunk) error {
+	return trs.recordSet.NextChunk(ctx, chk)
 }
 
 func (trs *tidbResultSet) SupportChunk() bool {

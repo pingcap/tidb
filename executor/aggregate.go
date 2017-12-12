@@ -155,15 +155,14 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 type StreamAggExec struct {
 	baseExecutor
 
-	executed           bool
-	hasData            bool
-	StmtCtx            *stmtctx.StatementContext
-	AggFuncs           []aggregation.Aggregation
-	aggCtxs            []*aggregation.AggEvaluateContext
-	GroupByItems       []expression.Expression
-	curGroupEncodedKey []byte
-	curGroupKey        []types.Datum
-	tmpGroupKey        []types.Datum
+	executed     bool
+	hasData      bool
+	StmtCtx      *stmtctx.StatementContext
+	AggFuncs     []aggregation.Aggregation
+	aggCtxs      []*aggregation.AggEvaluateContext
+	GroupByItems []expression.Expression
+	curGroupKey  []types.Datum
+	tmpGroupKey  []types.Datum
 }
 
 // Open implements the Executor Open interface.
@@ -255,10 +254,5 @@ func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
 		return false, nil
 	}
 	e.curGroupKey = e.tmpGroupKey
-	var err error
-	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.curGroupKey...)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
 	return !firstGroup, nil
 }

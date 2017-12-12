@@ -1,5 +1,5 @@
-hash: 947ae351a4de2ce0eff92de0f70a84103568cd08e7736ba797d938c5a1882fa2
-updated: 2017-12-08T14:24:36.676737+08:00
+hash: 5b79c9125e64bc0c01622784b0d3450baa4bb183c913566f33779971ccf1ab59
+updated: 2017-12-12T17:44:58.371614+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -132,7 +132,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: e33073e1475021e04c795c3de5e1f4e28baa708a
+  version: d21ce07c35b9ea66436dc632210a01d927361ed4
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -149,7 +149,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: a497eca3b8920e192aae1a5af81e573f90e59a6b
+  version: 09504ba4ca0101698da9d5db59e2411547427dcf
   subpackages:
   - go-binlog
   - go-mysqlx
