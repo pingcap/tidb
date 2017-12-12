@@ -90,10 +90,6 @@ func (n *ValueExpr) Format(w io.Writer) {
 		s = n.GetMysqlDuration().String()
 	case types.KindMysqlDecimal:
 		s = n.GetMysqlDecimal().String()
-	case types.KindMysqlEnum:
-		s = n.GetMysqlEnum().String()
-	case types.KindMysqlSet:
-		s = n.GetMysqlSet().String()
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		s = n.GetBinaryLiteral().ToString()
 	case types.KindMysqlJSON:

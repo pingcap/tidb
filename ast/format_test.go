@@ -24,6 +24,8 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		output string
 	}{
 		// Literals.
+		{`null`, `NULL`},
+		{`true`, `TRUE`},
 		{`350`, `350`},
 		{`345.678`, `345.678`},
 		{`1e-12`, `0.000000000001`},
@@ -31,6 +33,10 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{`"Hello, world"`, `"Hello, world"`},
 		{`'Hello, world'`, `"Hello, world"`},
 		{`'Hello, "world"'`, `"Hello, \"world\""`},
+		{`x'bcde'`, "\xbc\xde"},
+		{`b'111111'`, `?`},
+		{`time'10:10:10.123'`, `timeliteral("10:10:10.123")`},
+		{`timestamp'1999-01-01 10:0:0.123'`, `timestampliteral("1999-01-01 10:0:0.123")`},
 
 		// Expressions.
 		{`f between 30 and 50`, "`f` BETWEEN 30 AND 50"},
