@@ -92,8 +92,6 @@ func (n *ValueExpr) Format(w io.Writer) {
 		s = n.GetMysqlDecimal().String()
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		s = n.GetBinaryLiteral().ToString()
-	case types.KindMysqlJSON:
-		s = n.GetMysqlJSON().String()
 	default:
 		panic("Can't format to string")
 	}
