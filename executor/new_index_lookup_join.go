@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"sort"
 	"sync"
 	"unsafe"
@@ -32,7 +31,7 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-var _ = fmt.Sprint(nil)
+var _ Executor = &NewIndexLookUpJoin{}
 
 // NewIndexLookUpJoin employs one outer worker and N innerWorkers to execute concurrently.
 // It preserves the order of the outer table and support batch lookup.
@@ -210,7 +209,7 @@ func (e *NewIndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
 	e.joinResult.Reset()
 	e.joinResultCursor = 0
 	for {
-		task, err := e.prepareTask(goCtx)
+		task, err := e.getFinishedTask(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -232,7 +231,7 @@ func (e *NewIndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
 	}
 }
 
-func (e *NewIndexLookUpJoin) prepareTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
+func (e *NewIndexLookUpJoin) getFinishedTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
 	task := e.task
 	if task != nil && task.cursor < task.outerResult.NumRows() {
 		return task, nil
@@ -271,7 +270,6 @@ func (e *NewIndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx in
 
 func (ow *outerWorker) run(goCtx goctx.Context, wg *sync.WaitGroup) {
 	defer func() {
-		terror.Log(ow.executor.Close())
 		close(ow.resultCh)
 		close(ow.innerCh)
 		wg.Done()
@@ -301,9 +299,10 @@ func (ow *outerWorker) run(goCtx goctx.Context, wg *sync.WaitGroup) {
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
+	ow.executor.newChunk()
 	task := new(lookUpJoinTask)
 	task.doneCh = make(chan error, 1)
-	task.outerResult = chunk.NewChunk(ow.outerCtx.rowTypes)
+	task.outerResult = ow.executor.newChunk()
 	task.encodedLookUpKeys = chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)})
 	task.lookupMap = mvmap.NewMVMap()
 	ow.increaseBatchSize()
@@ -323,13 +322,11 @@ func (ow *outerWorker) buildTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
 	}
 
 	if ow.filter != nil {
-		task.outerMatch = make([]bool, 0, task.outerResult.NumRows())
-		for row := task.outerResult.Begin(); row != task.outerResult.End(); row = row.Next() {
-			matched, err := expression.EvalBool(ow.filter, row, ow.ctx)
-			if err != nil {
-				return task, errors.Trace(err)
-			}
-			task.outerMatch = append(task.outerMatch, matched)
+		outerMatch := make([]bool, 0, task.outerResult.NumRows())
+		var err error
+		task.outerMatch, err = expression.VectorizedFilter(ow.ctx, ow.filter, task.outerResult, outerMatch)
+		if err != nil {
+			return task, errors.Trace(err)
 		}
 	}
 	return task, nil
@@ -353,7 +350,7 @@ func (iw *innerWorker) run(goCtx goctx.Context, wg *sync.WaitGroup) {
 				return
 			}
 			err := iw.handleTask(goCtx, task)
-			task.doneCh <- err
+			task.doneCh <- errors.Trace(err)
 			if err != nil {
 				return
 			}
@@ -530,5 +527,5 @@ func (e *NewIndexLookUpJoin) Close() error {
 		e.cancelFunc()
 	}
 	e.workerWg.Wait()
-	return nil
+	return e.children[0].Close()
 }

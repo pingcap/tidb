@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -1072,6 +1071,10 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 		outerTypes, innerTypes = rightTypes, leftTypes
 	}
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, len(innerTypes))
+	}
 	innerPlan := v.Children()[1-v.OuterIndex]
 	e := &NewIndexLookUpJoin{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, outerExec),
@@ -1086,7 +1089,7 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 			filter:        innerFilter,
 		},
 		workerWg:        new(sync.WaitGroup),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, v.DefaultValues, v.OtherConditions, leftTypes, rightTypes),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 	}
 	e.supportChk = true
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
@@ -1099,7 +1102,7 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
 	e.innerCtx.keyCols = innerKeyCols
-	e.joinResult = chunk.NewChunk(e.schema.GetTypes())
+	e.joinResult = e.newChunk()
 	return e
 }
 
