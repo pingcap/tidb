@@ -538,6 +538,8 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {
 			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
+			d.SetLength(tp.Flen)
+			d.SetFrac(tp.Decimal)
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {
