@@ -33,10 +33,12 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{`"Hello, world"`, `"Hello, world"`},
 		{`'Hello, world'`, `"Hello, world"`},
 		{`'Hello, "world"'`, `"Hello, \"world\""`},
+		{`_utf8'你好'`, `"你好"`},
 		{`x'bcde'`, "\xbc\xde"},
 		{`b'111111'`, `?`},
 		{`time'10:10:10.123'`, `timeliteral("10:10:10.123")`},
 		{`timestamp'1999-01-01 10:0:0.123'`, `timestampliteral("1999-01-01 10:0:0.123")`},
+		{`date '1700-01-01'`, `dateliteral("1700-01-01")`},
 
 		// Expressions.
 		{`f between 30 and 50`, "`f` BETWEEN 30 AND 50"},

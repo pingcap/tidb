@@ -84,13 +84,9 @@ func (n *ValueExpr) Format(w io.Writer) {
 		s = strconv.FormatFloat(n.GetFloat64(), 'f', -1, 64)
 	case types.KindString, types.KindBytes:
 		s = strconv.Quote(n.GetString())
-	case types.KindMysqlTime:
-		s = n.GetMysqlTime().String()
-	case types.KindMysqlDuration:
-		s = n.GetMysqlDuration().String()
 	case types.KindMysqlDecimal:
 		s = n.GetMysqlDecimal().String()
-	case types.KindBinaryLiteral, types.KindMysqlBit:
+	case types.KindBinaryLiteral:
 		s = n.GetBinaryLiteral().ToString()
 	default:
 		panic("Can't format to string")
