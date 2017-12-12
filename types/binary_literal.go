@@ -99,6 +99,7 @@ func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
 	return fmt.Sprintf("b'%s'", string(ret))
 }
 
+// ToHexLiteralString returns the hex literal representation fo the literal.
 func (b BinaryLiteral) ToHexLiteralString() string {
 	if len(b) == 0 {
 		return "x''"
