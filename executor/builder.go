@@ -581,6 +581,10 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 
 	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
+	}
+	e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues, v.OtherConditions, nil, nil)
 	if v.SmallChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
@@ -588,11 +592,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		e.outerFilter = v.RightConditions
 		e.innerKeys = leftHashKey
 		e.outerKeys = rightHashKey
-		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
-		}
-		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
-			v.OtherConditions, nil, nil)
 	} else {
 		e.innerExec = rightExec
 		e.outerExec = leftExec
@@ -600,11 +599,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		e.outerFilter = v.LeftConditions
 		e.innerKeys = rightHashKey
 		e.outerKeys = leftHashKey
-		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
-		}
-		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
-			v.OtherConditions, nil, nil)
 	}
 
 	return e

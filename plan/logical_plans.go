@@ -106,9 +106,10 @@ type LogicalJoin struct {
 	leftProperties  [][]*expression.Column
 	rightProperties [][]*expression.Column
 
-	// DefaultValues is only used for outer join, which is values the inner table's  should be when the outer table
-	// doesn't match any inner table'row.
+	// DefaultValues is only used for left/right outer join, which is values the inner row's should be when the outer table
+	// doesn't match any inner table's row.
 	// That it's nil just means the default values is a slice of NULL.
+	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
 	// redundantSchema contains columns which are eliminated in join.
