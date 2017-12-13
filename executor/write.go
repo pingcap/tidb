@@ -1307,8 +1307,8 @@ type UpdateExec struct {
 	cursor      int
 }
 
-func (e *UpdateExec) exec(goCtx goctx.Context) (Row, error) {
-	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema().Len())
+func (e *UpdateExec) exec(goCtx goctx.Context, schema *expression.Schema) (Row, error) {
+	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1320,13 +1320,13 @@ func (e *UpdateExec) exec(goCtx goctx.Context) (Row, error) {
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
-	for id, cols := range e.SelectExec.Schema().TblID2Handle {
+	for id, cols := range schema.TblID2Handle {
 		tbl := e.tblID2table[id]
 		if e.updatedRowKeys[id] == nil {
 			e.updatedRowKeys[id] = make(map[int64]struct{})
 		}
 		for _, col := range cols {
-			offset := getTableOffset(e.SelectExec.Schema(), col)
+			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
 			handle := row[col.Index].GetInt64()
 			oldData := row[offset:end]
@@ -1367,7 +1367,7 @@ func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
 		e.fetched = true
 	}
 
-	return e.exec(goCtx)
+	return e.exec(goCtx, e.SelectExec.Schema())
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -1381,7 +1381,7 @@ func (e *UpdateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		e.fetched = true
 	}
 
-	_, err := e.exec(goCtx)
+	_, err := e.exec(goCtx, e.children[0].Schema())
 	return errors.Trace(err)
 }
 
