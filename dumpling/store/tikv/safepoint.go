@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"crypto/tls"
 	"strconv"
 	"sync"
 	"time"
@@ -75,8 +76,8 @@ type EtcdSafePointKV struct {
 }
 
 // NewEtcdSafePointKV creates an instance of EtcdSafePointKV
-func NewEtcdSafePointKV(addrs []string) (*EtcdSafePointKV, error) {
-	etcdCli, err := createEtcdKV(addrs)
+func NewEtcdSafePointKV(addrs []string, tlsConfig *tls.Config) (*EtcdSafePointKV, error) {
+	etcdCli, err := createEtcdKV(addrs, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
