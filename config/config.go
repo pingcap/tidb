@@ -14,6 +14,9 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"io/ioutil"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -70,6 +73,44 @@ type Security struct {
 	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
 	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
 	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+}
+
+// ToTLSConfig generates tls's config based on security section of the config.
+func (s *Security) ToTLSConfig() (*tls.Config, error) {
+	var tlsConfig *tls.Config
+	if len(s.ClusterSSLCA) != 0 {
+		certificates := []tls.Certificate{}
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
+			// Load the client certificates from disk
+			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
+			if err != nil {
+				return nil, errors.Errorf("could not load client key pair: %s", err)
+			}
+			certificates = append(certificates, certificate)
+		}
+
+		// Create a certificate pool from the certificate authority
+		certPool := x509.NewCertPool()
+		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
+		if err != nil {
+			return nil, errors.Errorf("could not read ca certificate: %s", err)
+		}
+
+		// Append the certificates from the CA
+		if !certPool.AppendCertsFromPEM(ca) {
+			return nil, errors.New("failed to append ca certs")
+		}
+
+		tlsConfig = &tls.Config{
+			Certificates: certificates,
+			RootCAs:      certPool,
+		}
+	}
+
+	return tlsConfig, nil
 }
 
 // Status is the status section of the config.
@@ -161,6 +202,7 @@ var defaultConf = Config{
 	Store:       "mocktikv",
 	Path:        "/tmp/tidb",
 	RunDDL:      true,
+	SplitTable:  true,
 	Lease:       "10s",
 	TokenLimit:  1000,
 	EnableChunk: true,
