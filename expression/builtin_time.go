@@ -25,8 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tipb/go-tipb"
-
 	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -35,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 const ( // GET_FORMAT first argument.
