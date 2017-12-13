@@ -269,11 +269,14 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 			chk := chunk.NewChunk(nil)
 			err = e.NextChunk(goCtx, chk)
 			if err != nil {
+				if terror.ErrorEqual(err, ErrMoreRows) {
+					continue
+				}
+
 				return nil, errors.Trace(err)
 			}
-			if chk.NumRows() == 0 {
-				return nil, nil
-			}
+
+			return nil, nil
 		} else {
 			var row Row
 			row, err = e.Next(goCtx)

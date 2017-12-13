@@ -1381,7 +1381,12 @@ func (e *UpdateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		e.fetched = true
 	}
 
-	_, err := e.exec(goCtx, e.children[0].Schema())
+	row, err := e.exec(goCtx, e.children[0].Schema())
+	if row != nil && err == nil {
+		// there is more rows to exec.
+		// TODO: exactly it is not a error, but there is no graceful way to indicate there is more rows.
+		return ErrMoreRows
+	}
 	return errors.Trace(err)
 }
 
