@@ -134,11 +134,11 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: 96db717124a5bd980e8a244af2db8952e04159d6
+  version: 5d2c405e548f93aba033278018fcda6bd69fad7e
   subpackages:
   - pd-client
 - package: github.com/pingcap/tipb
-  version: 09504ba4ca0101698da9d5db59e2411547427dcf
+  version: 4fed9b6c0357ea4a08c8eef32f1ba78e77310c6d
   subpackages:
   - go-binlog
   - go-mysqlx

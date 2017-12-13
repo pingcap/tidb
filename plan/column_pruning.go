@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/types"
 )
 
 type columnPruner struct {
@@ -245,12 +244,6 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) {
 	rChild := p.children[1].(LogicalPlan)
 	lChild.PruneColumns(leftCols)
 	rChild.PruneColumns(rightCols)
-	// After column pruning, the size of schema may change, so we should also change the len of default value.
-	if p.JoinType == LeftOuterJoin {
-		p.DefaultValues = make([]types.Datum, p.children[1].Schema().Len())
-	} else if p.JoinType == RightOuterJoin {
-		p.DefaultValues = make([]types.Datum, p.children[0].Schema().Len())
-	}
 	p.mergeSchema()
 }
 
