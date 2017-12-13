@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -692,10 +693,16 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
-	return &TableDualExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		rowCount:     v.RowCount,
+	dualSchema := v.Schema()
+	if dualSchema.Len() == 0 {
+		dualSchema = expression.NewSchema(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)})
 	}
+	e := &TableDualExec{
+		baseExecutor: newBaseExecutor(dualSchema, b.ctx),
+		numDualRows:  v.RowCount,
+	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
