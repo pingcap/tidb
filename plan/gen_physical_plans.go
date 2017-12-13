@@ -88,6 +88,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*require
 	lProp := &requiredProp{taskTp: rootTaskType, cols: p.leftKeys, expectedCnt: math.MaxFloat64}
 	rProp := &requiredProp{taskTp: rootTaskType, cols: p.rightKeys, expectedCnt: math.MaxFloat64}
 	if !prop.isEmpty() {
+		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
 		if prop.desc {
 			return nil, false
 		}
