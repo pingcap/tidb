@@ -84,6 +84,10 @@ type QueryCtx interface {
 	ShowProcess() util.ProcessInfo
 
 	SetSessionManager(util.SessionManager)
+
+	// EnableChunk enable QueryCtx to use chunk.
+	// TODO: remove this when finish replacing chunk.
+	EnableChunk()
 }
 
 // PreparedStatement is the interface to use a prepared statement.

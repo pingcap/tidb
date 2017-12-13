@@ -234,6 +234,10 @@ type SessionVars struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// EnableChunk is a switch to enable chunk.
+	// TODO: remove this when finish replacing chunk.
+	EnableChunk bool
 }
 
 // NewSessionVars creates a session vars object.
