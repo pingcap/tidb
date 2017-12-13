@@ -127,6 +127,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	if e.ctx.Txn().Valid() {
+		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
 		return e.ctx.Txn().Rollback()
 	}
 	return nil
