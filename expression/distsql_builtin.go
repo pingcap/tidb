@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -84,6 +84,9 @@ var distFuncs = map[tipb.ExprType]string{
 	tipb.ExprType_JsonRemove:  ast.JSONRemove,
 	tipb.ExprType_JsonArray:   ast.JSONArray,
 	tipb.ExprType_JsonObject:  ast.JSONObject,
+
+	// date functions.
+	tipb.ExprType_DateFormat: ast.DateFormat,
 }
 
 func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
@@ -485,6 +488,24 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base}
 
+	case tipb.ScalarFuncSig_InInt:
+		f = &builtinInIntSig{base}
+	case tipb.ScalarFuncSig_InReal:
+		f = &builtinInRealSig{base}
+	case tipb.ScalarFuncSig_InDecimal:
+		f = &builtinInDecimalSig{base}
+	case tipb.ScalarFuncSig_InString:
+		f = &builtinInStringSig{base}
+	case tipb.ScalarFuncSig_InTime:
+		f = &builtinInTimeSig{base}
+	case tipb.ScalarFuncSig_InDuration:
+		f = &builtinInDurationSig{base}
+	case tipb.ScalarFuncSig_InJson:
+		f = &builtinInJSONSig{base}
+
+	case tipb.ScalarFuncSig_DateFormatSig:
+		f = &builtinDateFormatSig{base}
+
 	default:
 		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)
 		return nil, errors.Trace(e)
@@ -492,7 +513,7 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 	return f, nil
 }
 
-func newDistSQLFunctionBySig(sc *variable.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
+func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
 	f, err := getSignatureByPB(ctx, sigCode, tp, args)
@@ -506,8 +527,8 @@ func newDistSQLFunctionBySig(sc *variable.StatementContext, sigCode tipb.ScalarF
 	}, nil
 }
 
-// newDistSQLFunction only creates function for mock-tikv.
-func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, args []Expression) (Expression, error) {
+// newDistSQLFunction only creates function for mocktikv.
+func newDistSQLFunction(sc *stmtctx.StatementContext, exprType tipb.ExprType, args []Expression) (Expression, error) {
 	name, ok := distFuncs[exprType]
 	if !ok {
 		return nil, errFunctionNotExists.GenByArgs("FUNCTION", exprType)
@@ -519,7 +540,7 @@ func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, a
 }
 
 // PBToExpr converts pb structure to expression.
-func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementContext) (Expression, error) {
+func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementContext) (Expression, error) {
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)

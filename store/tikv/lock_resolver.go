@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
@@ -30,16 +31,16 @@ const resolvedCacheSize = 512
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
-	store *tikvStore
+	store Storage
 	mu    struct {
 		sync.RWMutex
-		// Cache resolved txns (FIFO, txn id -> txnStatus).
+		// resolved caches resolved txns (FIFO, txn id -> txnStatus).
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}
 }
 
-func newLockResolver(store *tikvStore) *LockResolver {
+func newLockResolver(store Storage) *LockResolver {
 	r := &LockResolver{
 		store: store,
 	}
@@ -51,19 +52,28 @@ func newLockResolver(store *tikvStore) *LockResolver {
 // NewLockResolver creates a LockResolver.
 // It is exported for other services to use. For instance, binlog service needs
 // to determine a transaction's commit state.
-func NewLockResolver(etcdAddrs []string) (*LockResolver, error) {
-	pdCli, err := pd.NewClient(etcdAddrs)
+func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolver, error) {
+	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
+		CAPath:   security.ClusterSSLCA,
+		CertPath: security.ClusterSSLCert,
+		KeyPath:  security.ClusterSSLKey,
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
 
-	spkv, err := NewEtcdSafePointKV(etcdAddrs)
+	tlsConfig, err := security.ToTLSConfig()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(), false)
+	spkv, err := NewEtcdSafePointKV(etcdAddrs, tlsConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -98,7 +108,8 @@ type Lock struct {
 	TTL     uint64
 }
 
-func newLock(l *kvrpcpb.LockInfo) *Lock {
+// NewLock creates a new *Lock.
+func NewLock(l *kvrpcpb.LockInfo) *Lock {
 	ttl := l.GetLockTtl()
 	if ttl == 0 {
 		ttl = defaultLockTTL
@@ -153,7 +164,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 
 	var expiredLocks []*Lock
 	for _, l := range locks {
-		if lr.store.oracle.IsExpired(l.TxnID, l.TTL) {
+		if lr.store.GetOracle().IsExpired(l.TxnID, l.TTL) {
 			lockResolverCounter.WithLabelValues("expired").Inc()
 			expiredLocks = append(expiredLocks, l)
 		} else {
@@ -213,7 +224,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		},
 	}
 	for {
-		loc, err := lr.store.regionCache.LocateKey(bo, primary)
+		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
@@ -226,7 +237,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return status, errors.Trace(err)
 			}
@@ -234,7 +245,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		}
 		cmdResp := resp.Cleanup
 		if cmdResp == nil {
-			return status, errors.Trace(errBodyMissing)
+			return status, errors.Trace(ErrBodyMissing)
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
@@ -255,7 +266,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
 	lockResolverCounter.WithLabelValues("query_resolve_locks").Inc()
 	for {
-		loc, err := lr.store.regionCache.LocateKey(bo, l.Key)
+		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -280,7 +291,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -288,7 +299,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		cmdResp := resp.ResolveLock
 		if cmdResp == nil {
-			return errors.Trace(errBodyMissing)
+			return errors.Trace(ErrBodyMissing)
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)

@@ -22,15 +22,19 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
 
 type testPlanSuite struct {
 	*parser.Parser
+
+	is infoschema.InfoSchema
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})
 	s.Parser = parser.New()
 }
 
@@ -42,18 +46,14 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-
+	_, err = se.Execute(goctx.Background(), "use test")
+	c.Assert(err, IsNil)
 	tests := []struct {
 		sql  string
 		best string
 	}{
-		// Test unready index hint.
-		{
-			sql:  "select * from t t1 use index(e)",
-			best: "TableReader(Table(t))",
-		},
 		// Test index hint.
 		{
 			sql:  "select * from t t1 use index(c_d_e)",
@@ -179,10 +179,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
-
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-		p, err := plan.Optimize(se, stmt, is)
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -196,7 +193,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -213,11 +212,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+			best: "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.b = t3.a",
-			best: "LeftHashJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.b,t3.a)",
+			best: "LeftHashJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.b,t3.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
@@ -226,6 +225,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
 			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t2.a)->Limit",
+		},
+		// Test hash join's hint.
+		{
+			sql:  "select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t2.a)->TopN([t1.a],0,1)",
+		},
+		{
+			sql:  "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
+			best: "IndexJoin{TableReader(Table(t)->Limit)->TableReader(Table(t))}(t1.b,t2.a)->Limit",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
@@ -237,11 +245,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a order by t1.a",
-			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
 		{
 			sql:  "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+			best: "MergeRightOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
@@ -249,11 +257,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)(test.t.c,s.b)",
+			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
 		},
 		{
 			sql:  "select t.c in (select b from t s where s.a = t.a) from t",
-			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)(test.t.c,s.b)->Projection",
+			best: "MergeLeftOuterSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)->Projection",
 		},
 		// Test Single Merge Join.
 		// Merge Join will no longer enforce a sort. If a hint doesn't take effect, we will choose other types of join.
@@ -264,36 +272,36 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Single Merge Join + Sort.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
-			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
 		// Test Single Merge Join + Sort + desc.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
-			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
 		},
 		// Test Multi Merge Join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
+			best: "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
 		},
 		// Test Multi Merge Join with multi keys.
 		// TODO: More tests should be added.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d",
-			best: "MergeJoin{MergeJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
+			best: "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
 		},
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d order by t1.c",
-			best: "MergeJoin{MergeJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
+			best: "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
 		},
 		// Test Multi Merge Join + Outer Join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->TableReader(Table(t))}(t2.a,t3.a)",
+			best: "LeftHashJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
 		},
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t1.a = t3.a",
-			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+			best: "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
 		// Test Index Join + TableScan.
 		{
@@ -340,15 +348,23 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 right outer join t t2 on t1.a = t2.b",
 			best: "RightHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.b)",
 		},
+		// Test Semi Join hint success.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 where t1.a in (select a from t t2)",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
+		// Test Semi Join hint fail.
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
+			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-		p, err := plan.Optimize(se, stmt, is)
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -362,7 +378,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -372,11 +390,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test join key with cast.
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			best: "SemiJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
-			best: "SemiJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection->Sort",
 		},
 		// FIXME: Report error by resolver.
 		//{
@@ -385,30 +403,30 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		//},
 		{
 			sql:  "select * from t where a in (select s.a from t s) order by t.a",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
+			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
 		},
 		// Test Nested sub query.
 		{
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			best: "SemiJoin{TableReader(Table(t))->Projection->SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(s.d,k.d)(s.c,k.c)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(s.d,k.d)(s.c,k.c)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		// Test Semi Join + Order by.
 		{
 			sql:  "select * from t where a in (select a from t) order by b",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort",
+			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort",
 		},
 		// Test Apply.
 		{
 			sql:  "select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "Apply{TableReader(Table(t))->MergeJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "Apply{TableReader(Table(t))->MergeJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
-			best: "Apply{TableReader(Table(t))->MergeJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -416,9 +434,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-		p, err := plan.Optimize(se, stmt, is)
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -432,7 +448,9 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -473,9 +491,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-		p, err := plan.Optimize(se, stmt, is)
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -489,10 +505,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 
-	_, err = se.Execute("use test")
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -508,33 +524,33 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// Test complex update.
 		{
 			sql:  "update t set a = 5 where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Update",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Update",
 		},
 		// Test simple update.
 		{
 			sql:  "update t set a = 5",
-			best: "TableReader(Table(t))->*plan.Update",
+			best: "TableReader(Table(t))->Update",
 		},
 		// TODO: Test delete/update with join.
 		// Test complex delete.
 		{
 			sql:  "delete from t where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Delete",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete",
 		},
 		// Test simple delete.
 		{
 			sql:  "delete from t",
-			best: "TableReader(Table(t))->*plan.Delete",
+			best: "TableReader(Table(t))->Delete",
 		},
 		// Test complex insert.
 		{
 			sql:  "insert into t select * from t where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->*plan.Insert",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Insert",
 		},
 		// Test simple insert.
 		{
 			sql:  "insert into t values(0,0,0,0,0,0,0)",
-			best: "*plan.Insert",
+			best: "Insert",
 		},
 		// Test dual.
 		{
@@ -548,7 +564,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// Test show.
 		{
 			sql:  "show tables",
-			best: "*plan.Show",
+			best: "Show",
 		},
 	}
 	for _, tt := range tests {
@@ -556,12 +572,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is := infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})
-		err = plan.Preprocess(se.(context.Context), stmt, is, false)
-		c.Assert(err, IsNil)
-		_, err = plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-		p, err := plan.Optimize(se, stmt, is)
+		plan.Preprocess(se, stmt, s.is, false)
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -575,7 +587,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -585,22 +599,22 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test simple union.
 		{
 			sql:  "select * from t union all select * from t",
-			best: "UnionAll{TableReader(Table(t))->TableReader(Table(t))}",
+			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}",
 		},
 		// Test Order by + Union.
 		{
 			sql:  "select * from t union all (select * from t) order by a ",
-			best: "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Sort",
+			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->Sort",
 		},
 		// Test Limit + Union.
 		{
 			sql:  "select * from t union all (select * from t) limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->TableReader(Table(t)->Limit)}->Limit",
+			best: "UnionAll{TableReader(Table(t)->Limit)->Projection->TableReader(Table(t)->Limit)->Projection}->Limit",
 		},
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)}->TopN([t.a],0,1)",
+			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->TopN([t.a],0,1)",
 		},
 	}
 	for _, tt := range tests {
@@ -608,9 +622,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-		p, err := plan.Optimize(se, stmt, is)
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -624,7 +636,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -662,7 +676,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		},
 		{
 			sql:  "select c from t where c = 1",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]])->UnionScan([eq(test.t.c, 1)])",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->UnionScan([eq(test.t.c, 1)])->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -670,14 +684,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
 		// Make txn not read only.
 		se.Txn().Set(nil, nil)
-		p, err := plan.Optimize(se, stmt, is)
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -691,7 +702,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -798,7 +811,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test merge join + stream agg
 		{
 			sql:  "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g group by a.g",
-			best: "MergeJoin{IndexReader(Index(t.g)[[<nil>,+inf]])->IndexReader(Index(t.g)[[<nil>,+inf]])}(a.g,b.g)->StreamAgg",
+			best: "MergeInnerJoin{IndexReader(Index(t.g)[[<nil>,+inf]])->IndexReader(Index(t.g)[[<nil>,+inf]])}(a.g,b.g)->StreamAgg",
 		},
 		// Test index join + stream agg
 		{
@@ -815,9 +828,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-		p, err := plan.Optimize(se, stmt, is)
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -831,7 +842,9 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -918,23 +931,21 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  "select a from t where c in (1) and d > 3",
 			best: "IndexReader(Index(t.c_d_e)[(1 3,1 +inf]])->Projection",
 		},
-		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
-		//{
-		//	sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
-		//	best: "Index(t.c_d_e)[(1 3 +inf,1 4 <nil>) (1 5 +inf,1 6 <nil>) (2 3 +inf,2 4 <nil>) (2 5 +inf,2 6 <nil>) (3 3 +inf,3 4 <nil>) (3 5 +inf,3 6 <nil>)]->Projection",
-		//},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+			best: "IndexReader(Index(t.c_d_e)[(1 3,1 4) (1 5,1 6) (2 3,2 4) (2 5,2 6) (3 3,3 4) (3 5,3 6)])->Projection",
+		},
 		{
 			sql:  "select a from t where c in (1, 2, 3)",
 			best: "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection",
 		},
-		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
-		//{
-		//	sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
-		//	best: "Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]]->Projection",
-		//},
+		{
+			sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+			best: "IndexReader(Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]])->Projection",
+		},
 		{
 			sql:  "select a from t where d in (1, 2, 3)",
-			best: "TableReader(Table(t)->Sel([or(or(eq(test.t.d, 1), eq(test.t.d, 2)), eq(test.t.d, 3))]))->Projection",
+			best: "TableReader(Table(t)->Sel([in(test.t.d, 1, 2, 3)]))->Projection",
 		},
 		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
 		//{
@@ -1013,10 +1024,6 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
 		},
 		//{
-		//	sql:  `select a from t where c = 1.1 and d > 3`,
-		//	best: "Index(t.c_d_e)[]->Projection",
-		//},
-		//{
 		//	sql:  `select a from t where c = 1.9 and d > 3`,
 		//	best: "Index(t.c_d_e)[]->Projection",
 		//},
@@ -1049,10 +1056,9 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-
-		is, err := plan.MockResolve(stmt)
-		c.Assert(err, IsNil)
-		p, err := plan.Optimize(se, stmt, is)
+		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc.IgnoreTruncate = false
+		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}

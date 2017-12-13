@@ -65,7 +65,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	}, nil
 }
 
-// Implement transaction interface.
+// Get implements transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	txnCmdCounter.WithLabelValues("get").Inc()
 	start := time.Now()
@@ -140,7 +140,7 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 	}
 }
 
-func (txn *tikvTxn) Commit() error {
+func (txn *tikvTxn) Commit(ctx goctx.Context) error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
@@ -162,7 +162,7 @@ func (txn *tikvTxn) Commit() error {
 	if committer == nil {
 		return nil
 	}
-	err = committer.execute()
+	err = committer.execute(ctx)
 	if err != nil {
 		committer.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
 		return errors.Trace(err)
@@ -181,7 +181,12 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	log.Infof("[kv] Rollback txn %d", txn.StartTS())
+	logMsg := fmt.Sprintf("[kv] Rollback txn %d", txn.StartTS())
+	if txn.store.mock {
+		log.Debug(logMsg)
+	} else {
+		log.Info(logMsg)
+	}
 	txnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil
@@ -213,4 +218,8 @@ func (txn *tikvTxn) Len() int {
 
 func (txn *tikvTxn) Size() int {
 	return txn.us.Size()
+}
+
+func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+	return txn.us.GetMemBuffer()
 }

@@ -24,9 +24,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 	"github.com/twinj/uuid"
 )
 
@@ -121,9 +121,8 @@ func (b *builtinSleepSig) evalInt(row types.Row) (int64, bool, error) {
 	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
 	select {
 	case <-time.After(dur):
-	case <-b.ctx.GoCtx().Done(): // TODO: the channel returned by ctx.Done() is not closed when Ctrl-C is pressed in `mysql` client.
+		// TODO: Handle Ctrl-C is pressed in `mysql` client.
 		// return 1 when SLEEP() is KILLed
-		return 1, false, nil
 	}
 	return 0, false, nil
 }

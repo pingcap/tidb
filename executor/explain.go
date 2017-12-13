@@ -13,9 +13,7 @@
 
 package executor
 
-import (
-	"github.com/pingcap/tidb/expression"
-)
+import goctx "golang.org/x/net/context"
 
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
@@ -25,13 +23,8 @@ type ExplainExec struct {
 	cursor int
 }
 
-// Schema implements the Executor Schema interface.
-func (e *ExplainExec) Schema() *expression.Schema {
-	return e.schema
-}
-
 // Next implements Execution Next interface.
-func (e *ExplainExec) Next() (Row, error) {
+func (e *ExplainExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.cursor >= len(e.rows) {
 		return nil, nil
 	}

@@ -106,7 +106,7 @@ func (c *Context) NewTxn() error {
 		return errors.New("store is not set")
 	}
 	if c.txn != nil && c.txn.Valid() {
-		err := c.txn.Commit()
+		err := c.txn.Commit(c.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -120,7 +120,7 @@ func (c *Context) NewTxn() error {
 }
 
 // RefreshTxnCtx implements the context.Context interface.
-func (c *Context) RefreshTxnCtx() error {
+func (c *Context) RefreshTxnCtx(goCtx goctx.Context) error {
 	return errors.Trace(c.NewTxn())
 }
 
@@ -181,11 +181,13 @@ func (c *Context) GoCtx() goctx.Context {
 
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
-	ctx, cancel := goctx.WithCancel(goctx.Background())
-	return &Context{
+	goCtx, cancel := goctx.WithCancel(goctx.Background())
+	ctx := &Context{
 		values:      make(map[fmt.Stringer]interface{}),
 		sessionVars: variable.NewSessionVars(),
-		ctx:         ctx,
+		ctx:         goCtx,
 		cancel:      cancel,
 	}
+	ctx.sessionVars.MaxChunkSize = 2
+	return ctx
 }

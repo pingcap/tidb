@@ -15,7 +15,6 @@ package plan_test
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -25,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -39,7 +37,7 @@ type testAnalyzeSuite struct {
 // CBOWithoutAnalyze tests the plan with stats that only have count info.
 func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrapWithStatsLease(10 * time.Millisecond)
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
@@ -49,21 +47,25 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (a int)")
 	testKit.MustExec("create table t2 (a int)")
+	h := dom.StatsHandle()
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	time.Sleep(1 * time.Second)
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"TableScan_9   cop table:t1, range:(-inf,+inf), keep order:false 6",
-		"TableReader_10 HashLeftJoin_7  root data:TableScan_9 6",
-		"TableScan_11   cop table:t2, range:(-inf,+inf), keep order:false 6",
-		"TableReader_12 HashLeftJoin_7  root data:TableScan_11 6",
-		"HashLeftJoin_7  TableReader_10,TableReader_12 root inner join, small:TableReader_12, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
+		"TableScan_10   cop table:t1, range:(-inf,+inf), keep order:false 6",
+		"TableReader_11 HashLeftJoin_8  root data:TableScan_10 6",
+		"TableScan_12   cop table:t2, range:(-inf,+inf), keep order:false 6",
+		"TableReader_13 HashLeftJoin_8  root data:TableScan_12 6",
+		"HashLeftJoin_8  TableReader_11,TableReader_13 root inner join, small:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
 	))
 }
 
 func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrapWithStatsLease(10 * time.Millisecond)
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
@@ -75,17 +77,19 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
-	time.Sleep(1 * time.Second)
+	h := dom.StatsHandle()
+	h.DumpStatsDeltaToKV()
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
-	time.Sleep(1 * time.Second)
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"TableScan_5 HashAgg_4  cop table:t, range:(-inf,+inf), keep order:false 8",
-		"HashAgg_4  TableScan_5 cop type:complete, group by:test.t.a, funcs:count(1) 2",
-		"TableReader_7 HashAgg_6  root data:HashAgg_4 2",
-		"HashAgg_6  TableReader_7 root type:final, group by:, funcs:count(col_0) 2",
+		"TableScan_6 HashAgg_5  cop table:t, range:(-inf,+inf), keep order:false 8",
+		"HashAgg_5  TableScan_6 cop group by:test.t.a, funcs:count(1) 2",
+		"TableReader_8 HashAgg_7  root data:HashAgg_5 2",
+		"HashAgg_7  TableReader_8 root group by:, funcs:count(col_0) 2",
 	))
 }
 
@@ -139,7 +143,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[<nil> <nil>,+inf +inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
+			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
@@ -207,8 +211,8 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmt, is, ctx)
+		is := domain.GetDomain(ctx).InfoSchema()
+		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -240,7 +244,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
@@ -257,8 +261,8 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmt, is, ctx)
+		is := domain.GetDomain(ctx).InfoSchema()
+		err = plan.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -302,7 +306,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(true, t3.a),Table(true, t3.b)}",
+			best: "Analyze{Index(t3.a),Table(t3.b)}",
 		},
 		// Test analyze full table.
 		{
@@ -343,10 +347,8 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := sessionctx.GetDomain(ctx).InfoSchema()
+		is := domain.GetDomain(ctx).InfoSchema()
 		err = plan.Preprocess(ctx, stmt, is, false)
-		c.Assert(err, IsNil)
-		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -383,8 +385,8 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		stmt := stmts[0]
 
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		err = plan.ResolveName(stmt, is, ctx)
+		is := domain.GetDomain(ctx).InfoSchema()
+		err = plan.Preprocess(ctx, stmt, is, true)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -402,18 +404,6 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	}
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
-	dom, err := tidb.BootstrapSession(store)
-	return store, dom, errors.Trace(err)
-}
-
-func newStoreWithBootstrapWithStatsLease(lease time.Duration) (kv.Storage, *domain.Domain, error) {
-	store, err := tikv.NewMockTikvStore()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(lease)
-	domain.RunAutoAnalyze = false
 	dom, err := tidb.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }

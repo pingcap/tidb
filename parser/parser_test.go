@@ -96,7 +96,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
 		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version", "replication", "slave", "client",
-		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections",
+		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -194,6 +194,39 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// src = "select 0b'';"
 	// _, err = parser.ParseOneStmt(src, "", "")
 	// c.Assert(err, NotNil)
+
+	// for #4909, support numericType `signed` filedOpt.
+	src = "CREATE TABLE t(_sms smallint signed, _smu smallint unsigned);"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = `CREATE TABLE t(a tinyint signed,
+		b smallint signed,
+		c mediumint signed,
+		d int signed,
+		e int1 signed,
+		f int2 signed,
+		g int3 signed,
+		h int4 signed,
+		i int8 signed,
+		j integer signed,
+		k bigint signed,
+		l bool signed,
+		m boolean signed
+		);`
+
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	ct, ok := st.(*ast.CreateTableStmt)
+	c.Assert(ok, IsTrue)
+	for _, col := range ct.Cols {
+		c.Assert(col.Tp.Flag&mysql.UnsignedFlag, Equals, uint(0))
+	}
+
+	// for issue #4006
+	src = `insert into tb(v) (select v from tb);`
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 }
 
 type testCase struct {
@@ -795,7 +828,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for date, day, weekday
 		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE()", true},
-		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE(1)", true},
+		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE(1)", false},
 		{"SELECT DATEDIFF('2003-12-31', '2003-12-30');", true},
 		{"SELECT DATE('2003-12-31 01:02:03');", true},
 		{"SELECT DATE();", true},
@@ -1110,6 +1143,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select avg(distinct all c1) from t;`, true},
 		{`select avg(distinctrow all c1) from t;`, true},
 		{`select avg(c2) from t;`, true},
+		{`select bit_and(c1) from t;`, true},
+		{`select bit_and(), bit_and(distinct c1) from t;`, false},
+		{`select bit_and(), bit_and(distinctrow c1) from t;`, false},
+		{`select bit_and(), bit_and(all c1) from t;`, false},
+		{`select bit_or(c1) from t;`, true},
+		{`select bit_or(), bit_or(distinct c1) from t;`, false},
+		{`select bit_or(), bit_or(distinctrow c1) from t;`, false},
+		{`select bit_or(), bit_or(all c1) from t;`, false},
 		{`select bit_xor(c1) from t;`, true},
 		{`select bit_xor(), bit_xor(distinct c1) from t;`, false},
 		{`select bit_xor(), bit_xor(distinctrow c1) from t;`, false},
@@ -1429,10 +1470,14 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (a timestamp default now())", true},
 		{"create table t (a timestamp default now() on update now)", false},
 		{"create table t (a timestamp default now() on update now())", true},
+		{"CREATE TABLE t (c TEXT) default CHARACTER SET utf8, default COLLATE utf8_general_ci;", true},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
 
 		// for alter table
+		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED)", true},
+		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED, b varchar(255))", true},
+		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED FIRST)", false},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
@@ -1467,6 +1512,16 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ENGINE ''", true},
+		{"ALTER TABLE t ENGINE = ''", true},
+		{"ALTER TABLE t ENGINE = 'innodb'", true},
+		{"ALTER TABLE t ENGINE = innodb", true},
+		{"ALTER TABLE `db`.`t` ENGINE = ``", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, ADD COLUMN a SMALLINT", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT, ENGINE = '', default COLLATE = utf8_general_ci", true},
+		{"ALTER TABLE t ENGINE = '', COMMENT='', default COLLATE = utf8_general_ci", true},
+		{"ALTER TABLE t ENGINE = '', ADD COLUMN a SMALLINT", true},
+		{"ALTER TABLE t default COLLATE = utf8_general_ci, ENGINE = '', ADD COLUMN a SMALLINT", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -1532,6 +1587,21 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[0].Tables[1].L, Equals, "t2")
 
 	c.Assert(hints[1].HintName.L, Equals, "tidb_inlj")
+	c.Assert(hints[1].Tables[0].L, Equals, "t3")
+	c.Assert(hints[1].Tables[1].L, Equals, "t4")
+
+	stmt, err = parser.Parse("select /*+ TIDB_HJ(t1, T2) tidb_hj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	c.Assert(len(hints), Equals, 2)
+	c.Assert(hints[0].HintName.L, Equals, "tidb_hj")
+	c.Assert(len(hints[0].Tables), Equals, 2)
+	c.Assert(hints[0].Tables[0].L, Equals, "t1")
+	c.Assert(hints[0].Tables[1].L, Equals, "t2")
+
+	c.Assert(hints[1].HintName.L, Equals, "tidb_hj")
 	c.Assert(hints[1].Tables[0].L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].L, Equals, "t4")
 }
@@ -1624,6 +1694,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
 		{"GRANT SELECT ON test.* to 'test'", true},                                                                                                            // For issue 2654.
 		{"grant PROCESS,usage, REPLICATION SLAVE, REPLICATION CLIENT on *.* to 'xxxxxxxxxx'@'%' identified by password 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx'", true}, // For issue 4865
+		{"/* rds internal mark */ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, RELOAD, PROCESS, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES,      EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT,      TRIGGER on *.* to 'root2'@'%' identified by password '*sdsadsdsadssadsadsadsadsada' with grant option", true},
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},
@@ -1834,6 +1905,26 @@ func (s *testParserSuite) TestExplain(c *C) {
 	s.RunTest(c, table)
 }
 
+func (s *testParserSuite) TestView(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"create view v as select * from t", true},
+		{"create or replace view v as select * from t", true},
+		{"create or replace algorithm = undefined view v as select * from t", true},
+		{"create or replace algorithm = merge view v as select * from t", true},
+		{"create or replace algorithm = temptable view v as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' view v as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' sql security definer view v as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true},
+		// fixme: should be true
+		{"create or replace algorithm = merge definer = current_user view v as select * from t", false},
+	}
+	s.RunTest(c, table)
+}
+
 func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	// Test case for timestampdiff unit.
 	// TimeUnit should be unified to upper case.
@@ -1882,6 +1973,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb connection 23123", true},
 		{"kill tidb query 23123", true},
 		{"show processlist", true},
+		{"show full processlist", true},
 	}
 	s.RunTest(c, table)
 }

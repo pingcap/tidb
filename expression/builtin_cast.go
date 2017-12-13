@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -421,6 +421,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
 	case types.ETString:
 		sig = &builtinCastStringAsJSONSig{bf}
+		sig.getRetTp().Flag |= mysql.ParseToJSONFlag
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsJson)
 	default:
 		panic("unsupported types.EvalType in castAsJSONFunctionClass")
@@ -843,6 +844,13 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row types.Row) (res types
 		return res, false, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(string(val.ToString()), b.tp.Decimal)
+	if types.ErrTruncatedWrongVal.Equal(err) {
+		err = sc.HandleTruncate(err)
+		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
+		if res == types.ZeroDuration {
+			return res, true, errors.Trace(err)
+		}
+	}
 	return res, false, errors.Trace(err)
 }
 
@@ -1002,6 +1010,10 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row types.Row) (res types.
 	res, err = types.ParseDuration(val, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
+		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
+		if res == types.ZeroDuration {
+			return res, true, errors.Trace(err)
+		}
 	}
 	return res, false, errors.Trace(err)
 }
@@ -1450,9 +1462,6 @@ func WrapWithCastAsDuration(ctx context.Context, expr Expression) Expression {
 // of expr is not type json,
 // otherwise, returns `expr` directly.
 func WrapWithCastAsJSON(ctx context.Context, expr Expression) Expression {
-	if expr.GetType().Tp == mysql.TypeJSON {
-		return expr
-	}
 	tp := &types.FieldType{
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912, // FIXME: Here the Flen is not trusted.

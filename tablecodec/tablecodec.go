@@ -15,6 +15,7 @@ package tablecodec
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math"
 	"time"
 
@@ -22,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -43,6 +44,9 @@ const (
 	prefixLen       = 1 + idLen /*tableID*/ + 2
 	recordRowKeyLen = prefixLen + idLen /*handle*/
 )
+
+// TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
+const TableSplitKeyLen = 1 + idLen
 
 // TablePrefix returns table's prefix 't'.
 func TablePrefix() []byte {
@@ -336,46 +340,6 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 	return row, nil
 }
 
-// CutRow cuts encoded row into byte slices and return interested columns' byte slice.
-// Row layout: colID1, value1, colID2, value2, .....
-func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, error) {
-	if data == nil {
-		return nil, nil
-	}
-	if len(data) == 1 && data[0] == codec.NilFlag {
-		return nil, nil
-	}
-	row := make(map[int64][]byte, len(cols))
-	cnt := 0
-	var (
-		b   []byte
-		err error
-	)
-	for len(data) > 0 && cnt < len(cols) {
-		// Get col id.
-		b, data, err = codec.CutOne(data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		_, cid, err := codec.DecodeOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		// Get col value.
-		b, data, err = codec.CutOne(data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		id := cid.GetInt64()
-		_, ok := cols[id]
-		if ok {
-			row[id] = b
-			cnt++
-		}
-	}
-	return row, nil
-}
-
 // unflatten converts a raw datum to a column datum.
 func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	if datum.IsNull() {
@@ -443,12 +407,6 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 	return key
 }
 
-// DecodeIndexKey decodes datums from an index key.
-func DecodeIndexKey(key kv.Key) ([]types.Datum, error) {
-	b := key[prefixLen+idLen:]
-	return codec.Decode(b, 1)
-}
-
 // CutIndexKey cuts encoded index key into colIDs to bytes slices map.
 // The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
 // if it is non-unique index.
@@ -512,6 +470,17 @@ func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
 	buf = append(buf, indexPrefixSep...)
+	return buf
+}
+
+// ReplaceRecordKeyTableID replace the tableID in the recordKey buf.
+func ReplaceRecordKeyTableID(buf []byte, tableID int64) []byte {
+	if len(buf) < len(tablePrefix)+8 {
+		return buf
+	}
+
+	u := codec.EncodeIntToCmpUint(tableID)
+	binary.BigEndian.PutUint64(buf[len(tablePrefix):], u)
 	return buf
 }
 

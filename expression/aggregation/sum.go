@@ -15,11 +15,13 @@ package aggregation
 
 import (
 	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 )
 
 type sumFunction struct {
@@ -36,12 +38,19 @@ func (sf *sumFunction) Clone() Aggregation {
 }
 
 // Update implements Aggregation interface.
-func (sf *sumFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (sf *sumFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	return sf.updateSum(ctx, sc, row)
 }
 
 // GetResult implements Aggregation interface.
 func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
+	if ctx.Value.Kind() == types.KindFloat64 {
+		dec := new(types.MyDecimal)
+		err := dec.FromFloat64(ctx.Value.GetFloat64())
+		terror.Log(errors.Trace(err))
+		d.SetMysqlDecimal(dec)
+		return
+	}
 	return ctx.Value
 }
 
@@ -53,12 +62,9 @@ func (sf *sumFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
 // CalculateDefaultValue implements Aggregation interface.
 func (sf *sumFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := sf.Args[0]
-	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if err != nil {
-		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", sf, err.Error())
-		return d, false
-	}
+	result := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if con, ok := result.(*expression.Constant); ok {
+		var err error
 		d, err = calculateSum(ctx.GetSessionVars().StmtCtx, d, con.Value)
 		if err != nil {
 			log.Warnf("CalculateSum failed in function %s, err msg is %s", sf, err.Error())

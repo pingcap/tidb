@@ -20,12 +20,12 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // VirtualDataSource is used to extract data from the struct in memory.
 type VirtualDataSource interface {
-	// GetRows, do the actual job
+	// GetRows do the actual job
 	GetRows(ctx context.Context) (fullRows [][]types.Datum, err error)
 	// Meta return the meta of table
 	Meta() *model.TableInfo
@@ -124,7 +124,7 @@ func (vt *VirtualTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table Type interface.
-func (vt *VirtualTable) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
+func (vt *VirtualTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
@@ -139,17 +139,17 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, h int64, oldData, newD
 }
 
 // AllocAutoID implements table.Table Type interface.
-func (vt *VirtualTable) AllocAutoID() (int64, error) {
+func (vt *VirtualTable) AllocAutoID(ctx context.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
 // Allocator implements table.Table Type interface.
-func (vt *VirtualTable) Allocator() autoid.Allocator {
+func (vt *VirtualTable) Allocator(ctx context.Context) autoid.Allocator {
 	return nil
 }
 
 // RebaseAutoID implements table.Table Type interface.
-func (vt *VirtualTable) RebaseAutoID(newBase int64, isSetStep bool) error {
+func (vt *VirtualTable) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 

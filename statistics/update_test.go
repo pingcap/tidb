@@ -18,9 +18,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testStatsUpdateSuite{})
@@ -132,6 +132,29 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("40", "70"))
+}
+
+func (s *testStatsUpdateSuite) TestRollback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int)")
+	testKit.MustExec("begin")
+	testKit.MustExec("insert into t values (1,2)")
+	testKit.MustExec("rollback")
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := s.do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	h.DumpStatsDeltaToKV()
+	h.Update(is)
+
+	stats := h.GetTableStats(tableInfo.ID)
+	c.Assert(stats.Count, Equals, int64(0))
+	c.Assert(stats.ModifyCount, Equals, int64(0))
 }
 
 func (s *testStatsUpdateSuite) TestMultiSession(c *C) {

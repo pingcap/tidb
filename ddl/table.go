@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -64,7 +65,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tbInfo)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+		d.asyncNotifyEvent(&util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
 		return ver, ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
@@ -115,7 +116,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTable(job.SchemaID, job.TableID, true); err != nil {
+		if err = t.DropTable(job.SchemaID, tableID, true); err != nil {
 			break
 		}
 		// Finish this job.
@@ -123,7 +124,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		job.Args = append(job.Args, startKey)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
+		d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -143,21 +144,11 @@ func (d *ddl) splitTableRegion(tableID int64) error {
 	if err := store.SplitRegion(tableStartKey); err != nil {
 		return errors.Trace(err)
 	}
-	nextTableStartKey := tablecodec.GenTablePrefix(tableID + 1)
-	if err := store.SplitRegion(nextTableStartKey); err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 
-// Maximum number of keys to delete for each reorg table job run.
-var reorgTableDeleteLimit = 65536
-
 func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	if tblInfo.OldSchemaID != 0 {
-		schemaID = tblInfo.OldSchemaID
-	}
-	alloc := autoid.NewAllocator(d.store, schemaID)
+	alloc := autoid.NewAllocator(d.store, tblInfo.GetDBID(schemaID))
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }
@@ -206,7 +197,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTable(schemaID, tableID, true)
+	err = t.DropTable(schemaID, tblInfo.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -242,18 +233,26 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	var baseID int64
+	shouldDelAutoID := false
 	newSchemaID := job.SchemaID
 	if newSchemaID != oldSchemaID {
+		shouldDelAutoID = true
 		err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if tblInfo.OldSchemaID == 0 {
-			tblInfo.OldSchemaID = oldSchemaID
+		baseID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
 		}
+		// It's compatible with old version.
+		// TODO: Remove it.
+		tblInfo.OldSchemaID = 0
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID, false)
+	err = t.DropTable(oldSchemaID, tblInfo.ID, shouldDelAutoID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -263,6 +262,14 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	// Update the table's auto-increment ID.
+	if newSchemaID != oldSchemaID {
+		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, baseID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)

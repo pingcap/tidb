@@ -18,7 +18,8 @@ import (
 )
 
 func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
-	indices, includeTS := availableIndices(p.indexHints, p.tableInfo)
+	indices := p.availableIndices.indices
+	includeTS := p.availableIndices.includeTableScan
 	if includeTS {
 		col := p.getPKIsHandleCol()
 		if col != nil {
@@ -34,7 +35,7 @@ func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column)
 	return
 }
 
-func (p *Selection) preparePossibleProperties() (result [][]*expression.Column) {
+func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.Column) {
 	return p.children[0].(LogicalPlan).preparePossibleProperties()
 }
 
@@ -51,6 +52,11 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 	// TODO: We should consider properties propagation.
 	p.leftProperties = leftProperties
 	p.rightProperties = rightProperties
+	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin {
+		rightProperties = nil
+	} else if p.JoinType == RightOuterJoin {
+		leftProperties = nil
+	}
 	resultProperties := make([][]*expression.Column, len(leftProperties), len(leftProperties)+len(rightProperties))
 	copy(resultProperties, leftProperties)
 	resultProperties = append(resultProperties, rightProperties...)

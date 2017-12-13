@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testutil"
+	goctx "golang.org/x/net/context"
 )
 
 // TestKit is a utility to run sql test.
@@ -43,6 +44,25 @@ type Result struct {
 // Check asserts the result equals the expected results.
 func (res *Result) Check(expected [][]interface{}) {
 	got := fmt.Sprintf("%s", res.rows)
+	need := fmt.Sprintf("%s", expected)
+	res.c.Assert(got, check.Equals, need, res.comment)
+}
+
+// CheckAt asserts the result of selected columns equals the expected results.
+func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
+	for _, e := range expected {
+		res.c.Assert(len(cols), check.Equals, len(e))
+	}
+
+	rows := make([][]string, 0, len(expected))
+	for i := range res.rows {
+		row := make([]string, 0, len(cols))
+		for _, r := range cols {
+			row = append(row, res.rows[i][r])
+		}
+		rows = append(rows, row)
+	}
+	got := fmt.Sprintf("%s", rows)
 	need := fmt.Sprintf("%s", expected)
 	res.c.Assert(got, check.Equals, need, res.comment)
 }
@@ -68,6 +88,8 @@ func (res *Result) Sort() *Result {
 		for i := range a {
 			if a[i] < b[i] {
 				return true
+			} else if a[i] > b[i] {
+				return false
 			}
 		}
 		return false
@@ -97,14 +119,15 @@ var connectionID uint64
 func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
-		tk.Se, err = tidb.CreateSession(tk.store)
+		tk.Se, err = tidb.CreateSession4Test(tk.store)
 		tk.c.Assert(err, check.IsNil)
 		id := atomic.AddUint64(&connectionID, 1)
 		tk.Se.SetConnectionID(id)
 	}
+	goCtx := goctx.Background()
 	if len(args) == 0 {
 		var rss []ast.RecordSet
-		rss, err = tk.Se.Execute(sql)
+		rss, err = tk.Se.Execute(goCtx, sql)
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}
@@ -114,7 +137,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rs, err := tk.Se.ExecutePreparedStmt(stmtID, args...)
+	rs, err := tk.Se.ExecutePreparedStmt(goCtx, stmtID, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -133,8 +156,11 @@ func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
-	_, err := tk.Exec(sql, args...)
+	res, err := tk.Exec(sql, args...)
 	tk.c.Assert(err, check.IsNil, check.Commentf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err)))
+	if res != nil {
+		tk.c.Assert(res.Close(), check.IsNil)
+	}
 }
 
 // MustQuery query the statements and returns result rows.
@@ -144,19 +170,20 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
-	rows, err := tidb.GetRows(rs)
+	rows, err := tidb.GetRows4Test(goctx.Background(), rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	err = rs.Close()
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]
-		iRow := make([]string, len(row))
-		for j := range row {
-			if row[j].IsNull() {
+		iRow := make([]string, row.Len())
+		for j := 0; j < row.Len(); j++ {
+			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {
-				iRow[j], err = row[j].ToString()
+				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				iRow[j], err = d.ToString()
 				tk.c.Assert(err, check.IsNil)
 			}
 		}

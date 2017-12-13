@@ -16,6 +16,8 @@ package sqlexec
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/types"
+	goctx "golang.org/x/net/context"
 )
 
 // RestrictedSQLExecutor is an interface provides executing restricted sql statement.
@@ -32,7 +34,7 @@ import (
 // This is implemented in session.go.
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
-	ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error)
+	ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Row, []*ast.ResultField, error)
 }
 
 // SQLExecutor is an interface provides executing normal sql statement.
@@ -40,7 +42,7 @@ type RestrictedSQLExecutor interface {
 // For example, privilege/privileges package need execute SQL, if it use
 // tidb.Session.Execute, then privilege/privileges and tidb would become a circle.
 type SQLExecutor interface {
-	Execute(sql string) ([]ast.RecordSet, error)
+	Execute(goCtx goctx.Context, sql string) ([]ast.RecordSet, error)
 }
 
 // SQLParser is an interface provides parsing sql statement.

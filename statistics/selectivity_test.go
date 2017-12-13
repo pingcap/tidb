@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const eps = 1e-9
@@ -155,7 +155,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity: 0.00123287439,
+			selectivity: 0.00352249826,
 		},
 	}
 	for _, tt := range tests {
@@ -165,21 +165,12 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
-		err = plan.ResolveName(stmts[0], is, ctx)
-
+		err = plan.Preprocess(ctx, stmts[0], is, false)
+		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
-		var sel *plan.Selection
-		for _, child := range p.Children() {
-			p, ok := child.(*plan.Selection)
-			if ok {
-				sel = p
-				break
-			}
-		}
-		c.Assert(sel, NotNil, comment)
-		ratio, err := statsTbl.Selectivity(ctx, sel.Conditions)
+		ratio, err := statsTbl.Selectivity(ctx, p.Children()[0].(*plan.LogicalSelection).Conditions)
 		c.Assert(err, IsNil, comment)
-		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, comment)
+		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 	}
 }

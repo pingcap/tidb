@@ -29,8 +29,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -1426,7 +1426,7 @@ type truncateFunctionClass struct {
 }
 
 // getDecimal returns the `Decimal` value of return type for function `TRUNCATE`.
-func (c *truncateFunctionClass) getDecimal(sc *variable.StatementContext, arg Expression) int {
+func (c *truncateFunctionClass) getDecimal(sc *stmtctx.StatementContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		decimal, isNull, err := constant.EvalInt(nil, sc)
 		if isNull || err != nil {

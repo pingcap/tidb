@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"math/bits"
 	"sort"
 
 	log "github.com/Sirupsen/logrus"
@@ -27,9 +28,8 @@ func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
 	// Ignore reorder if:
 	// 1. already reordered
 	// 2. not inner join
-	// 3. forced merge join
-	// 4. forced index nested loop join
-	if j.reordered || !j.cartesianJoin || j.preferMergeJoin || j.preferINLJ > 0 {
+	// 3. forced to choose join type
+	if j.reordered || !j.cartesianJoin || bits.OnesCount(j.preferJoinType) > 0 {
 		return nil, false
 	}
 	lChild := j.children[0].(LogicalPlan)
@@ -57,7 +57,6 @@ type joinReOrderSolver struct {
 	visited    []bool
 	resultJoin LogicalPlan
 	groupRank  []*rankInfo
-	allocator  *idAllocator
 	ctx        context.Context
 }
 
@@ -189,7 +188,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.init(e.allocator, e.ctx)
+	}.init(e.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	setParentAndChildren(join, lChild, rChild)
 	return join

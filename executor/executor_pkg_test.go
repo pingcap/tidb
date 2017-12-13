@@ -21,9 +21,10 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -115,14 +116,15 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		Tp:           ast.ShowProcessList,
 	}
 
+	goCtx := goctx.Background()
 	// Run test and check results.
 	for _, p := range ps {
-		r, err := e.Next()
+		r, err := e.Next(goCtx)
 		c.Assert(err, IsNil)
 		c.Assert(r, NotNil)
 		c.Assert(r[0].GetUint64(), Equals, p.ID)
 	}
-	r, err := e.Next()
+	r, err := e.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsNil)
 }

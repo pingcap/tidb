@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -136,7 +136,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	testCheckJobDone(c, d, tJob1, true)
 	tbl1 := testGetTable(c, d, dbInfo.ID, tblInfo1.ID)
 	for i := 1; i <= 100; i++ {
-		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i))
+		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
 	// create table t1 with defaultBatchCnt+10 records.
@@ -146,7 +146,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	testCheckJobDone(c, d, tJob2, true)
 	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
 	for i := 1; i <= defaultBatchCnt+10; i++ {
-		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i))
+		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
 	job, v := testDropSchema(c, ctx, d, dbInfo)

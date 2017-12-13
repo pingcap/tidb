@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -29,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const maxPrefixLength = 3072
@@ -275,7 +276,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, errors.Trace(err)
 		}
 
-		err = d.runReorgJob(job, func() error {
+		err = d.runReorgJob(t, job, func() error {
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
 		if err != nil {
@@ -288,11 +289,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			cleanNotify(d.notifyCancelReorgJob)
+			cleanNotify(d.reorgCtx.notifyCancelReorgJob)
 			return ver, errors.Trace(err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		cleanNotify(d.notifyCancelReorgJob)
+		cleanNotify(d.reorgCtx.notifyCancelReorgJob)
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
@@ -394,7 +395,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.State = model.JobStateRollbackDone
 		} else {
 			job.State = model.JobStateDone
-			d.asyncNotifyEvent(&Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
+			d.asyncNotifyEvent(&ddlutil.Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		job.Args = append(job.Args, indexInfo.ID)
@@ -460,6 +461,8 @@ func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType
 		idxColumnVal := w.rowMap[col.ID]
 		if _, ok := w.rowMap[col.ID]; ok {
 			idxVal[j] = idxColumnVal
+			// Make sure there is no dirty data.
+			delete(w.rowMap, col.ID)
 			continue
 		}
 		idxColumnVal, err = tables.GetColDefaultValue(w.ctx, col, w.defaultVals)
@@ -473,9 +476,9 @@ func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType
 }
 
 const (
-	defaultBatchCnt      = 1024
-	defaultSmallBatchCnt = 128
+	minTaskHandledCnt    = 32 // minTaskHandledCnt is the minimum number of handles per batch.
 	defaultTaskHandleCnt = 128
+	maxTaskHandleCnt     = 1 << 20 // maxTaskHandleCnt is the maximum number of handles per batch.
 	defaultWorkers       = 16
 )
 
@@ -502,6 +505,7 @@ type worker struct {
 	idxRecords  []*indexRecord // It's used to reduce the number of new slice.
 	taskRange   handleInfo     // Every task's handle range.
 	taskRet     *taskResult
+	batchSize   int
 	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
 }
 
@@ -509,6 +513,7 @@ func newWorker(ctx context.Context, id, batch, colsLen, indexColsLen int) *worke
 	return &worker{
 		id:          id,
 		ctx:         ctx,
+		batchSize:   batch,
 		idxRecords:  make([]*indexRecord, 0, batch),
 		defaultVals: make([]types.Datum, colsLen),
 		rowMap:      make(map[int64]types.Datum, indexColsLen),
@@ -524,6 +529,13 @@ func (w *worker) setTaskNewRange(startHandle, endHandle int64) {
 type handleInfo struct {
 	startHandle int64
 	endHandle   int64
+}
+
+func getEndHandle(baseHandle, batch int64) int64 {
+	if baseHandle >= math.MaxInt64-batch {
+		return math.MaxInt64
+	}
+	return baseHandle + batch
 }
 
 // addTableIndex adds index into table.
@@ -552,26 +564,27 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		colMap[col.ID] = &col.FieldType
 	}
 	workerCnt := defaultWorkers
-	taskBatch := int64(defaultTaskHandleCnt)
 	addedCount := job.GetRowCount()
-	baseHandle := reorgInfo.Handle
+	baseHandle, logStartHandle := reorgInfo.Handle, reorgInfo.Handle
 
 	workers := make([]*worker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
 		ctx := d.newContext()
-		workers[i] = newWorker(ctx, i, int(taskBatch), len(cols), len(colMap))
+		workers[i] = newWorker(ctx, i, defaultTaskHandleCnt, len(cols), len(colMap))
 		// Make sure every worker has its own index buffer.
 		workers[i].index = tables.NewIndexWithBuffer(t.Meta(), indexInfo)
 	}
 	for {
 		startTime := time.Now()
 		wg := sync.WaitGroup{}
+		currentBatchSize := int64(workers[0].batchSize)
 		for i := 0; i < workerCnt; i++ {
 			wg.Add(1)
-			workers[i].setTaskNewRange(baseHandle, baseHandle+taskBatch)
+			endHandle := getEndHandle(baseHandle, currentBatchSize)
+			workers[i].setTaskNewRange(baseHandle, endHandle)
 			// TODO: Consider one worker to one goroutine.
 			go workers[i].doBackfillIndexTask(t, colMap, &wg)
-			baseHandle += taskBatch
+			baseHandle = endHandle
 		}
 		wg.Wait()
 
@@ -586,19 +599,19 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 				return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 			})
-			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v, update handle err %v",
-				addedCount, taskAddedCount, sub, err1)
+			log.Warnf("[ddl] total added index for %d rows, this task [%d,%d) add index for %d failed %v, batch %d, take time %v, update handle err %v",
+				addedCount, logStartHandle, nextHandle, taskAddedCount, err, currentBatchSize, sub, err1)
 			return errors.Trace(err)
 		}
-		d.setReorgRowCount(addedCount)
+		d.reorgCtx.setRowCountAndHandle(addedCount, nextHandle)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
-		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
-			addedCount, taskAddedCount, sub)
+		log.Infof("[ddl] total added index for %d rows, this task [%d,%d) added index for %d rows, batch %d, take time %v",
+			addedCount, logStartHandle, nextHandle, taskAddedCount, currentBatchSize, sub)
 
 		if isEnd {
 			return nil
 		}
-		baseHandle = nextHandle
+		baseHandle, logStartHandle = nextHandle, nextHandle
 	}
 }
 
@@ -606,6 +619,8 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 	taskAddedCount, nextHandle := int64(0), workers[0].taskRange.startHandle
 	var err error
 	var isEnd bool
+	starvingWorkers := 0
+	largerDefaultWorkers := 0
 	for _, worker := range workers {
 		ret := worker.taskRet
 		if ret.err != nil {
@@ -613,8 +628,28 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 			break
 		}
 		taskAddedCount += int64(ret.count)
+		if ret.count < minTaskHandledCnt {
+			starvingWorkers++
+		} else if ret.count > defaultTaskHandleCnt {
+			largerDefaultWorkers++
+		}
 		nextHandle = ret.outOfRangeHandle
 		isEnd = ret.isAllDone
+	}
+
+	// Adjust the worker's batch size.
+	halfWorkers := len(workers) / 2
+	if starvingWorkers >= halfWorkers && workers[0].batchSize < maxTaskHandleCnt {
+		// If the index data is discrete, we need to increase the batch size to speed up.
+		for _, worker := range workers {
+			worker.batchSize *= 2
+		}
+	} else if largerDefaultWorkers >= halfWorkers && workers[0].batchSize > defaultTaskHandleCnt {
+		// If the batch size exceeds the limit after we increase it,
+		// we need to decrease the batch size to reduce write conflict.
+		for _, worker := range workers {
+			worker.batchSize /= 2
+		}
 	}
 	return taskAddedCount, nextHandle, isEnd, errors.Trace(err)
 }

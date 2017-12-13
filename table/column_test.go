@@ -19,10 +19,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -194,7 +194,7 @@ func (s *testTableSuite) TestGetZeroValue(c *C) {
 			types.NewDatum(types.Enum{}),
 		},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 		zv := GetZeroValue(colInfo)

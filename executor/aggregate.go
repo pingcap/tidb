@@ -17,11 +17,11 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -33,9 +33,7 @@ type HashAggExec struct {
 	baseExecutor
 
 	executed      bool
-	hasGby        bool
-	aggType       plan.AggregationType
-	sc            *variable.StatementContext
+	sc            *stmtctx.StatementContext
 	AggFuncs      []aggregation.Aggregation
 	aggCtxsMap    aggCtxsMapper
 	groupMap      *mvmap.MVMap
@@ -52,20 +50,20 @@ func (e *HashAggExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *HashAggExec) Open() error {
+func (e *HashAggExec) Open(goCtx goctx.Context) error {
 	e.executed = false
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
 	e.aggCtxsMap = make(aggCtxsMapper, 0)
-	return errors.Trace(e.children[0].Open())
+	return errors.Trace(e.children[0].Open(goCtx))
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next() (Row, error) {
+func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		for {
-			hasMore, err := e.innerNext()
+			hasMore, err := e.innerNext(goCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -73,7 +71,7 @@ func (e *HashAggExec) Next() (Row, error) {
 				break
 			}
 		}
-		if (e.groupMap.Len() == 0) && !e.hasGby {
+		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
@@ -95,16 +93,6 @@ func (e *HashAggExec) Next() (Row, error) {
 }
 
 func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
-	if e.aggType == plan.FinalAgg && !plan.UseDAGPlanBuilder(e.ctx) {
-		val, err := e.GroupByItems[0].Eval(row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return val.GetBytes(), nil
-	}
-	if !e.hasGby {
-		return []byte{}, nil
-	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
@@ -122,8 +110,8 @@ func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
 
 // innerNext fetches a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
-func (e *HashAggExec) innerNext() (ret bool, err error) {
-	srcRow, err := e.children[0].Next()
+func (e *HashAggExec) innerNext(goCtx goctx.Context) (ret bool, err error) {
+	srcRow, err := e.children[0].Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -167,27 +155,26 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 type StreamAggExec struct {
 	baseExecutor
 
-	executed           bool
-	hasData            bool
-	StmtCtx            *variable.StatementContext
-	AggFuncs           []aggregation.Aggregation
-	aggCtxs            []*aggregation.AggEvaluateContext
-	GroupByItems       []expression.Expression
-	curGroupEncodedKey []byte
-	curGroupKey        []types.Datum
-	tmpGroupKey        []types.Datum
+	executed     bool
+	hasData      bool
+	StmtCtx      *stmtctx.StatementContext
+	AggFuncs     []aggregation.Aggregation
+	aggCtxs      []*aggregation.AggEvaluateContext
+	GroupByItems []expression.Expression
+	curGroupKey  []types.Datum
+	tmpGroupKey  []types.Datum
 }
 
 // Open implements the Executor Open interface.
-func (e *StreamAggExec) Open() error {
+func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 	e.executed = false
 	e.hasData = false
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
-	return errors.Trace(e.children[0].Open())
+	return errors.Trace(e.children[0].Open(goCtx))
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next() (Row, error) {
+func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.executed {
 		return nil, nil
 	}
@@ -198,7 +185,7 @@ func (e *StreamAggExec) Next() (Row, error) {
 	}
 	retRow := make([]types.Datum, 0, len(e.AggFuncs))
 	for {
-		row, err := e.children[0].Next()
+		row, err := e.children[0].Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -267,10 +254,5 @@ func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
 		return false, nil
 	}
 	e.curGroupKey = e.tmpGroupKey
-	var err error
-	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.curGroupKey...)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
 	return !firstGroup, nil
 }

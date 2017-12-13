@@ -21,12 +21,15 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/kvcache"
 )
 
 // ShowDDL is for showing DDL information.
@@ -53,21 +56,20 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
-// SelectLock represents a select lock plan.
-type SelectLock struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	Lock ast.SelectLockType
-}
-
 // Prepare represents prepare plan.
 type Prepare struct {
 	basePlan
 
 	Name    string
 	SQLText string
+}
+
+// Prepared represents a prepared statement.
+type Prepared struct {
+	Stmt          ast.StmtNode
+	Params        []*ast.ParamMarkerExpr
+	SchemaVersion int64
+	UseCache      bool
 }
 
 // Execute represents prepare plan.
@@ -77,6 +79,72 @@ type Execute struct {
 	Name      string
 	UsingVars []expression.Expression
 	ExecID    uint32
+	Stmt      ast.StmtNode
+	Plan      Plan
+}
+
+func (e *Execute) optimizePreparedPlan(ctx context.Context, is infoschema.InfoSchema) error {
+	vars := ctx.GetSessionVars()
+	if e.Name != "" {
+		e.ExecID = vars.PreparedStmtNameToID[e.Name]
+	}
+	v := vars.PreparedStmts[e.ExecID]
+	if v == nil {
+		return errors.Trace(ErrStmtNotFound)
+	}
+	prepared := v.(*Prepared)
+
+	if len(prepared.Params) != len(e.UsingVars) {
+		return errors.Trace(ErrWrongParamCount)
+	}
+
+	if cap(vars.PreparedParams) < len(e.UsingVars) {
+		vars.PreparedParams = make([]interface{}, len(e.UsingVars))
+	}
+	for i, usingVar := range e.UsingVars {
+		val, err := usingVar.Eval(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		prepared.Params[i].SetDatum(val)
+		vars.PreparedParams[i] = val
+	}
+	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+		// If the schema version has changed we need to preprocess it again,
+		// if this time it failed, the real reason for the error is schema changed.
+		err := Preprocess(ctx, prepared.Stmt, is, true)
+		if err != nil {
+			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
+		}
+		prepared.SchemaVersion = is.SchemaMetaVersion()
+	}
+	p, err := e.getPhysicalPlan(ctx, is, prepared)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.Stmt = prepared.Stmt
+	e.Plan = p
+	return nil
+}
+
+func (e *Execute) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema, prepared *Prepared) (Plan, error) {
+	var cacheKey kvcache.Key
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.StmtCtx.UseCache = prepared.UseCache
+	if prepared.UseCache {
+		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
+		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
+			return cacheValue.(*PSTMTPlanCacheValue).Plan, nil
+		}
+	}
+	p, err := Optimize(ctx, prepared.Stmt, is)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if prepared.UseCache {
+		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+	}
+	return p, err
 }
 
 // Deallocate represents deallocate plan.
@@ -88,9 +156,7 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
+	basePlan
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -99,6 +165,8 @@ type Show struct {
 	Flag   int             // Some flag parsed from sql, such as FULL.
 	Full   bool
 	User   *auth.UserIdentity // Used for show grants.
+
+	Conditions []expression.Expression
 
 	// Used by show variables
 	GlobalScope bool
@@ -128,9 +196,7 @@ type InsertGeneratedColumns struct {
 
 // Insert represents an insert plan.
 type Insert struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
+	basePlan
 
 	Table       table.Table
 	tableSchema *expression.Schema
@@ -147,6 +213,28 @@ type Insert struct {
 	NeedFillDefaultValue bool
 
 	GenCols InsertGeneratedColumns
+
+	SelectPlan PhysicalPlan
+}
+
+// Update represents Update plan.
+type Update struct {
+	basePlan
+
+	OrderedList []*expression.Assignment
+	IgnoreErr   bool
+
+	SelectPlan PhysicalPlan
+}
+
+// Delete represents a delete plan.
+type Delete struct {
+	basePlan
+
+	Tables       []*ast.TableName
+	IsMultiTable bool
+
+	SelectPlan PhysicalPlan
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -154,14 +242,12 @@ type AnalyzeColumnsTask struct {
 	TableInfo *model.TableInfo
 	PKInfo    *model.ColumnInfo
 	ColsInfo  []*model.ColumnInfo
-	PushDown  bool
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	TableInfo *model.TableInfo
 	IndexInfo *model.IndexInfo
-	PushDown  bool
 }
 
 // Analyze represents an analyze plan

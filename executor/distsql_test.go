@@ -22,12 +22,13 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
+	goctx "golang.org/x/net/context"
 )
 
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
@@ -51,13 +52,11 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	}
 	tk.MustExec("insert dist values " + strings.Join(values, ","))
 
-	rss, err := tk.Se.Execute("select * from dist where c_idx between 0 and 100")
+	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	rs := rss[0]
-	_, err = rs.Next()
+	_, err = rs.Next(goctx.Background())
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
-	c.Check(checkGoroutineExists(keyword), IsTrue)
 	rs.Close()
 	time.Sleep(time.Millisecond * 50)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
@@ -90,7 +89,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	tk.MustExec("insert copclient values " + strings.Join(values, ","))
 
 	// Get table ID for split.
-	dom := sessionctx.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
 	c.Assert(err, IsNil)
@@ -99,14 +98,14 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
+	goCtx := goctx.Background()
 	// Send coprocessor request when the table split.
-	rss, err := tk.Se.Execute("select sum(id) from copclient")
+	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	rs := rss[0]
 	defer rs.Close()
-	row, err := rs.Next()
+	row, err := rs.Next(goCtx)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
@@ -115,19 +114,17 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	s.cluster.Split(region.GetId(), s.cluster.AllocID(), key, []uint64{peerID}, peerID)
 
 	// Check again.
-	rss, err = tk.Se.Execute("select sum(id) from copclient")
+	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	rs = rss[0]
-	row, err = rs.Next()
+	row, err = rs.Next(goCtx)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.
-	rss, err = tk.Se.Execute("select * from copclient order by id")
+	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	rs = rss[0]
-	_, err = rs.Next()
+	_, err = rs.Next(goCtx)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"

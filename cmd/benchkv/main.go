@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/prometheus/client_golang/prometheus"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -38,6 +39,9 @@ var (
 	workerCnt = flag.Int("C", 400, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
 	valueSize = flag.Int("V", 5, "value size in byte")
+	sslCA     = flag.String("cacert", "", "path of file that contains list of trusted SSL CAs.")
+	sslCert   = flag.String("cert", "", "path of file that contains X509 certificate in PEM format.")
+	sslKey    = flag.String("key", "", "path of file that contains X509 key in PEM format.")
 
 	txnCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -102,7 +106,7 @@ func batchRW(value []byte) {
 				key := fmt.Sprintf("key_%d", k)
 				err = txn.Set([]byte(key), value)
 				terror.Log(errors.Trace(err))
-				err = txn.Commit()
+				err = txn.Commit(goctx.Background())
 				if err != nil {
 					txnRolledbackCounter.WithLabelValues("txn").Inc()
 					terror.Call(txn.Rollback)

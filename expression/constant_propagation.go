@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
@@ -214,7 +214,7 @@ func (s *propagateConstantSolver) tryToUpdateEQList(col *Column, con *Constant) 
 }
 
 func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
-	var cols []*Column
+	cols := make([]*Column, 0, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
 		cols = append(cols, ExtractColumns(cond)...)

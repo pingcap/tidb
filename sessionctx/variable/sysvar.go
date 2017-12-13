@@ -137,7 +137,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "skip_name_resolve", "OFF"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
-	{ScopeGlobal | ScopeSession, SQLModeVar, "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"},
+	{ScopeGlobal | ScopeSession, SQLModeVar, mysql.DefaultSQLMode},
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},
@@ -617,6 +617,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
 	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
+	{ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
@@ -639,6 +640,8 @@ const (
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
 type GlobalVarAccessor interface {
+	// GetAllSysVars gets all the global system variable values.
+	GetAllSysVars() (map[string]string, error)
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.

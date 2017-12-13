@@ -15,17 +15,14 @@ package distsql
 
 import (
 	"errors"
-	"runtime"
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -60,6 +57,16 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 	for _, v := range pcs {
 		c.Assert(v.GetFlag(), Equals, int32(10))
 	}
+
+	// Make sure we only convert to supported collate.
+	tp = types.NewFieldType(mysql.TypeVarchar)
+	tp.Flag = 10
+	tp.Collate = "latin1_swedish_ci"
+	col = &model.ColumnInfo{
+		FieldType: *tp,
+	}
+	pc = columnToProto(col)
+	c.Assert(pc.Collation, Equals, int32(mysql.DefaultCollationID))
 }
 
 func (s *testDistsqlSuite) TestIndexToProto(c *C) {
@@ -122,42 +129,6 @@ func (s *testDistsqlSuite) TestIndexToProto(c *C) {
 	c.Assert(pIdx.TableId, Equals, int64(1))
 	c.Assert(pIdx.IndexId, Equals, int64(1))
 	c.Assert(pIdx.Unique, Equals, true)
-}
-
-// For issue 1791
-func (s *testDistsqlSuite) TestGoroutineLeak(c *C) {
-	var sr SelectResult
-	countBefore := runtime.NumGoroutine()
-
-	sr = &selectResult{
-		resp:    &mockResponse{},
-		results: make(chan resultWithErr, 5),
-		closed:  make(chan struct{}),
-	}
-	go sr.Fetch(goctx.TODO())
-	for {
-		// mock test will generate some partial result then return error
-		_, err := sr.Next()
-		if err != nil {
-			// close selectResult on error, partialResult's fetch goroutine may leak
-			sr.Close()
-			break
-		}
-	}
-
-	tick := 10 * time.Millisecond
-	totalSleep := time.Duration(0)
-	for totalSleep < 3*time.Second {
-		time.Sleep(tick)
-		totalSleep += tick
-		countAfter := runtime.NumGoroutine()
-
-		if countAfter-countBefore < 5 {
-			return
-		}
-	}
-
-	c.Error("distsql goroutine leak!")
 }
 
 type mockResponse struct {

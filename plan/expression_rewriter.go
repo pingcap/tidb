@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -27,8 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -41,7 +41,6 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	}
 	b := &planBuilder{
 		ctx:       ctx,
-		allocator: new(idAllocator),
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
 	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
@@ -220,6 +219,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		if !ok {
 			er.err = errors.New("Can't appear aggrFunctions")
+			if er.b.curClause == groupByClause {
+				er.err = ErrInvalidGroupFuncUse
+			}
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
@@ -263,7 +265,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = errors.Trace(err)
 			return inNode, false
 		}
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, col.RetType, er.ctx))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(col.Index, col.RetType, er.ctx))
 		return inNode, true
 	default:
 		er.asScalar = true
@@ -359,7 +361,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	aggFunc := aggregation.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{aggFunc},
-	}.init(er.b.allocator, er.ctx)
+	}.init(er.ctx)
 	setParentAndChildren(agg, np)
 	aggCol0 := &expression.Column{
 		ColName:  model.NewCIStr("agg_Col_0"),
@@ -418,9 +420,9 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 	outerSchemaLen := er.p.Schema().Len()
 	er.p = er.b.buildApplyWithJoinType(er.p, agg, InnerJoin)
 	joinSchema := er.p.Schema()
-	proj := Projection{
+	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
-	}.init(er.b.allocator, er.ctx)
+	}.init(er.ctx)
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
@@ -442,7 +444,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	countFunc := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
-	}.init(er.b.allocator, er.ctx)
+	}.init(er.ctx)
 	setParentAndChildren(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -470,7 +472,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	countFunc := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
-	}.init(er.b.allocator, er.ctx)
+	}.init(er.ctx)
 	setParentAndChildren(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -509,7 +511,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
+		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
@@ -552,7 +554,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
 	// We will improve our CBO framework in future.
 	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
-		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
+		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
@@ -635,7 +637,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		}
 		return v, true
 	}
-	physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
+	physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
@@ -883,7 +885,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 	if v.N > 0 && v.N <= er.schema.Len() {
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[v.N-1])
 	} else {
-		er.err = errors.Errorf("Position %d is out of range", v.N)
+		er.err = ErrUnknownColumn.GenByArgs(strconv.Itoa(v.N), clauseMsg[er.b.curClause])
 	}
 }
 
@@ -914,35 +916,48 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			return
 		}
 	}
-	// a in (b, c, d)
-	leftArg := er.ctxStack[stkLen-lLen-1]
-	// function ==> a = b
-	function, err := er.constructBinaryOpFunction(leftArg, er.ctxStack[stkLen-lLen], ast.EQ)
-	if err != nil {
-		er.err = err
+	args := er.ctxStack[stkLen-lLen-1:]
+	leftEt, leftIsNull := args[0].GetType().EvalType(), args[0].GetType().Tp == mysql.TypeNull
+	if leftIsNull {
+		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
+		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
 		return
 	}
-	// function ==> (a = b) or (a = c) or (a = d)
-	for i := stkLen - lLen + 1; i < stkLen; i++ {
-		var expr expression.Expression
-		expr, err = er.constructBinaryOpFunction(leftArg, er.ctxStack[i], ast.EQ)
-		if err != nil {
-			er.err = err
-			return
-		}
-		fieldTp := &types.FieldType{Tp: mysql.TypeLonglong, Flen: 1, Decimal: 0, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag}
-		function, err = expression.NewFunction(er.ctx, ast.LogicOr, fieldTp, function, expr)
-		if err != nil {
-			er.err = err
-			return
+	if leftEt == types.ETInt {
+		for i := 1; i < len(args); i++ {
+			if c, ok := args[i].(*expression.Constant); ok {
+				args[i] = expression.RefineConstantArg(er.ctx, c, opcode.EQ)
+			}
 		}
 	}
-	if not {
-		tp := *function.GetType()
-		function, err = expression.NewFunction(er.ctx, ast.UnaryNot, &tp, function)
-		if err != nil {
-			er.err = err
-			return
+	allSameType := true
+	for _, arg := range args[1:] {
+		if arg.GetType().Tp != mysql.TypeNull && expression.GetAccurateCmpType(args[0], arg) != leftEt {
+			allSameType = false
+			break
+		}
+	}
+	var function expression.Expression
+	if allSameType && l == 1 {
+		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
+	} else {
+		eqFunctions := make([]expression.Expression, 0, lLen)
+		for i := stkLen - lLen; i < stkLen; i++ {
+			expr, err := er.constructBinaryOpFunction(args[0], er.ctxStack[i], ast.EQ)
+			if err != nil {
+				er.err = err
+				return
+			}
+			eqFunctions = append(eqFunctions, expr)
+		}
+		function = expression.ComposeDNFCondition(er.ctx, eqFunctions...)
+		if not {
+			var err error
+			function, err = expression.NewFunction(er.ctx, ast.UnaryNot, tp, function)
+			if err != nil {
+				er.err = err
+				return
+			}
 		}
 	}
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
@@ -1172,5 +1187,5 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	er.err = ErrUnknownColumn.GenByArgs(v.String(), "field list")
+	er.err = ErrUnknownColumn.GenByArgs(v.String(), clauseMsg[er.b.curClause])
 }
