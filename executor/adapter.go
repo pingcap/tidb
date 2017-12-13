@@ -264,10 +264,9 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 		}
 		a.logSlowQuery(txnTS, err == nil)
 	}()
-
-	if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
-		chk := chunk.NewChunk(nil)
-		for {
+	for {
+		if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
+			chk := chunk.NewChunk(nil)
 			err = e.NextChunk(goCtx, chk)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -275,9 +274,7 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 			if chk.NumRows() == 0 {
 				return nil, nil
 			}
-		}
-	} else {
-		for {
+		} else {
 			var row Row
 			row, err = e.Next(goCtx)
 			if err != nil {
