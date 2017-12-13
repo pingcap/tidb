@@ -205,3 +205,7 @@ local-agent-host-port = ""
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 16
+
+[parser]
+# Enable parsing syntax for window function. 
+enable-window-func = false

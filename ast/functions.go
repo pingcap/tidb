@@ -516,6 +516,11 @@ type WindowFuncExpr struct {
 	Window *WindowingClause
 }
 
+// Format the ExprNode into a Writer.
+func (n *WindowFuncExpr) Format(w io.Writer) {
+	panic("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *WindowFuncExpr) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)

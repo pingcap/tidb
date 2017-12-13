@@ -49,6 +49,7 @@ type Config struct {
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Parser            Parser            `toml:"parser" json:"parser"`
 }
 
 // Log is the log section of config.
@@ -196,6 +197,11 @@ type TiKVClient struct {
 	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
 }
 
+// Parser is the configuration for sql parser.
+type Parser struct {
+	EnableWindowFunc bool `toml:"enable-window-func" json:"enable-window-func"`
+}
+
 var defaultConf = Config{
 	Host:        "0.0.0.0",
 	Port:        4000,
@@ -255,6 +261,9 @@ var defaultConf = Config{
 	},
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount: 16,
+	},
+	Parser: Parser{
+		EnableWindowFunc: false,
 	},
 }
 

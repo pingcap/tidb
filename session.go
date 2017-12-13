@@ -31,6 +31,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -1074,6 +1075,10 @@ func createSession(store kv.Storage) (*session, error) {
 	if plan.PreparedPlanCacheEnabled {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
 	}
+	c := config.GetGlobalConfig()
+	if c.Parser.EnableWindowFunc {
+		s.parser.EnableWindowFunc()
+	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
@@ -1094,6 +1099,10 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	if plan.PreparedPlanCacheEnabled {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
+	}
+	c := config.GetGlobalConfig()
+	if c.Parser.EnableWindowFunc {
+		s.parser.EnableWindowFunc()
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
