@@ -45,6 +45,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -78,7 +79,10 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	active       bool
+	// 0: conn is blocked reading a packet
+	// 1: conn is dispatching the query
+	// 2: server want to graceful shutdown
+	active int32
 
 	// cancelFunc is used for cancelling the execution of current transaction.
 	mu struct {
@@ -403,7 +407,7 @@ func (cc *clientConn) Run() {
 	}()
 
 	for !cc.killed {
-		cc.active = false
+		atomic.StoreInt32(&cc.active, 0)
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
 		if err != nil || cc.killed {
@@ -420,7 +424,9 @@ func (cc *clientConn) Run() {
 			return
 		}
 
-		cc.active = true
+		if succ := atomic.CompareAndSwapInt32(&cc.active, 0, 1); !succ {
+			return // graceful shutdown
+		}
 		startTime := time.Now()
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
@@ -450,9 +456,14 @@ func (cc *clientConn) Run() {
 	}
 }
 
-func (cc *clientConn) Active() bool {
-	inTransaction := (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0
-	return cc.active || inTransaction
+func (cc *clientConn) SetInActive() bool {
+	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
+		return false
+	}
+	// active 0 -> 1 means go to dispatch query.
+	// active 0 -> 2 means go to graceful shutdown.
+	// Just one of them would happen.
+	return atomic.CompareAndSwapInt32(&cc.active, 0, 2)
 }
 
 func queryStrForLog(query string) string {

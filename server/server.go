@@ -372,7 +372,7 @@ func (s *Server) kickIdleConnection() {
 	var conns []*clientConn
 	s.rwlock.RLock()
 	for _, cc := range s.clients {
-		if !cc.Active() {
+		if cc.SetInActive() {
 			conns = append(conns, cc)
 		}
 	}
