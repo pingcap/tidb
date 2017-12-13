@@ -275,8 +275,7 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 
 				return nil, errors.Trace(err)
 			}
-
-			return nil, nil
+			break
 		} else {
 			var row Row
 			row, err = e.Next(goCtx)
@@ -292,6 +291,8 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 			}
 		}
 	}
+
+	return nil, nil
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
