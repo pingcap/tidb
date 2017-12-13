@@ -1,5 +1,5 @@
-hash: 5b79c9125e64bc0c01622784b0d3450baa4bb183c913566f33779971ccf1ab59
-updated: 2017-12-12T17:44:58.371614+08:00
+hash: 62962aac3636936230e934366fcb05c8c9ee7ced90d5d1c9e951f158758b8018
+updated: 2017-12-13T10:40:06.030000194+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -149,7 +149,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 09504ba4ca0101698da9d5db59e2411547427dcf
+  version: 4fed9b6c0357ea4a08c8eef32f1ba78e77310c6d
   subpackages:
   - go-binlog
   - go-mysqlx
