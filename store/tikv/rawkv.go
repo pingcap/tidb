@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
@@ -40,8 +41,12 @@ type RawKVClient struct {
 }
 
 // NewRawKVClient creates a client with PD cluster addrs.
-func NewRawKVClient(pdAddrs []string) (*RawKVClient, error) {
-	pdCli, err := pd.NewClient(pdAddrs)
+func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, error) {
+	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
+		CAPath:   security.ClusterSSLCA,
+		CertPath: security.ClusterSSLCert,
+		KeyPath:  security.ClusterSSLKey,
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -49,7 +54,7 @@ func NewRawKVClient(pdAddrs []string) (*RawKVClient, error) {
 		clusterID:   pdCli.GetClusterID(goctx.TODO()),
 		regionCache: NewRegionCache(pdCli),
 		pdClient:    pdCli,
-		rpcClient:   newRPCClient(),
+		rpcClient:   newRPCClient(security),
 	}, nil
 }
 
