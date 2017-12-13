@@ -266,10 +266,6 @@ func (outputer *semiJoinResultGenerator) emitToChunk(outer chunk.Row, inners []c
 	return nil
 }
 
-// emitUnMatchedOutersToChunk implements joinResultGenerator interface.
-func (outputer *semiJoinResultGenerator) emitUnMatchedOutersToChunk(outers []chunk.Row, chk *chunk.Chunk) {
-}
-
 type antiSemiJoinResultGenerator struct {
 	baseJoinResultGenerator
 }
@@ -336,13 +332,6 @@ func (outputer *antiSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners
 	return nil
 }
 
-// emitUnMatchedOutersToChunk implements joinResultGenerator interface.
-func (outputer *antiSemiJoinResultGenerator) emitUnMatchedOutersToChunk(outers []chunk.Row, chk *chunk.Chunk) {
-	for i := range outers {
-		chk.AppendRow(0, outers[i])
-	}
-}
-
 type leftOuterSemiJoinResultGenerator struct {
 	baseJoinResultGenerator
 }
@@ -405,33 +394,6 @@ func (outputer *leftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, i
 	chk.AppendRow(0, outer)
 	chk.AppendInt64(outer.Len(), 0)
 	return nil
-}
-
-// emitMatchedInnersToChunk implements joinResultGenerator interface.
-func (outputer *leftOuterSemiJoinResultGenerator) emitMatchedInnersToChunk(outer chunk.Row, inners []chunk.Row, chk *chunk.Chunk) (bool, error) {
-	if len(inners) == 0 {
-		return false, nil
-	}
-	if outputer.filter == nil {
-		chk.AppendRow(0, outer)
-		chk.AppendInt64(outer.Len(), 1)
-		return true, nil
-	}
-
-	for _, inner := range inners {
-		outputer.chk.Reset()
-		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
-		matched, err := expression.EvalBool(outputer.filter, outputer.chk.Begin(), outputer.ctx)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if matched {
-			chk.AppendRow(0, outer)
-			chk.AppendInt64(outer.Len(), 1)
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -511,33 +473,6 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Ro
 	return nil
 }
 
-// emitMatchedInnersToChunk implements joinResultGenerator interface.
-func (outputer *antiLeftOuterSemiJoinResultGenerator) emitMatchedInnersToChunk(outer chunk.Row, inners []chunk.Row, chk *chunk.Chunk) (bool, error) {
-	if len(inners) == 0 {
-		return false, nil
-	}
-	if outputer.filter == nil {
-		chk.AppendRow(0, outer)
-		chk.AppendInt64(outer.Len(), 0)
-		return true, nil
-	}
-
-	for _, inner := range inners {
-		outputer.chk.Reset()
-		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
-		matched, err := expression.EvalBool(outputer.filter, outputer.chk.Begin(), outputer.ctx)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if matched {
-			chk.AppendRow(0, outer)
-			chk.AppendInt64(outer.Len(), 0)
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // emitUnMatchedOuter implements joinResultGenerator interface.
 func (outputer *antiLeftOuterSemiJoinResultGenerator) emitUnMatchedOuter(outer Row, resultBuffer []Row) []Row {
 	buffer := make(Row, 0, len(outer)+1)
@@ -608,13 +543,6 @@ func (outputer *leftOuterJoinResultGenerator) emitToChunk(outer chunk.Row, inner
 	return nil
 }
 
-// emitUnMatchedOutersToChunk implements joinResultGenerator interface.
-func (outputer *leftOuterJoinResultGenerator) emitUnMatchedOutersToChunk(outers []chunk.Row, chk *chunk.Chunk) {
-	for i := range outers {
-		outputer.makeJoinRowToChunk(chk, outers[i], outputer.defaultChunkInner)
-	}
-}
-
 type rightOuterJoinResultGenerator struct {
 	baseJoinResultGenerator
 }
@@ -678,13 +606,6 @@ func (outputer *rightOuterJoinResultGenerator) emitToChunk(outer chunk.Row, inne
 	return nil
 }
 
-// emitUnMatchedOutersToChunk implements joinResultGenerator interface.
-func (outputer *rightOuterJoinResultGenerator) emitUnMatchedOutersToChunk(outers []chunk.Row, chk *chunk.Chunk) {
-	for i := range outers {
-		outputer.makeJoinRowToChunk(chk, outputer.defaultChunkInner, outers[i])
-	}
-}
-
 type innerJoinResultGenerator struct {
 	baseJoinResultGenerator
 }
@@ -743,8 +664,4 @@ func (outputer *innerJoinResultGenerator) emitToChunk(outer chunk.Row, inners []
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// emitUnMatchedOutersToChunk implements joinResultGenerator interface.
-func (outputer *innerJoinResultGenerator) emitUnMatchedOutersToChunk(outers []chunk.Row, chk *chunk.Chunk) {
 }
