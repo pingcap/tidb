@@ -113,6 +113,8 @@ func (e *IndexLookUpJoin) Open(goCtx goctx.Context) error {
 		return errors.Trace(err)
 	}
 
+	e.outerOrderedRows = newKeyRowBlock(e.maxBatchSize, true)
+	e.innerOrderedRows = newKeyRowBlock(e.maxBatchSize, false)
 	e.resultCursor = 0
 	e.curBatchSize = 32
 	e.resultBuffer = make([]Row, 0, e.maxBatchSize)
@@ -129,15 +131,8 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 
 	// release all resource references.
-	e.outerExec = nil
-	e.innerExecBuilder = nil
-	e.outerKeys = nil
-	e.innerKeys = nil
-	e.outerFilter = nil
-	e.innerFilter = nil
 	e.outerOrderedRows = nil
 	e.innerOrderedRows = nil
-	e.resultGenerator = nil
 	e.resultBuffer = nil
 	e.buffer4JoinKeys = nil
 	e.buffer4JoinKey = nil

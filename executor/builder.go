@@ -532,11 +532,15 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		joinKeys: rightKeys,
 	}
 
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, rightExec.Schema().Len())
+	}
 	lhsColTypes := leftExec.Schema().GetTypes()
 	rhsColTypes := rightExec.Schema().GetTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, v.DefaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
 		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
 		// left is the outer side by default.
 		outerIdx:  0,
@@ -576,27 +580,36 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 
 	// for hash join, inner table is always the smaller one.
 	e := &HashJoinExec{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, v.DefaultValues, v.OtherConditions, nil, nil),
-		concurrency:     v.Concurrency,
-		defaultInners:   v.DefaultValues,
-		joinType:        v.JoinType,
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
+		concurrency:  v.Concurrency,
+		joinType:     v.JoinType,
 	}
 
+	defaultValues := v.DefaultValues
 	if v.SmallChildIdx == 0 {
-		e.innerlExec = leftExec
+		e.innerExec = leftExec
 		e.outerExec = rightExec
 		e.innerFilter = v.LeftConditions
 		e.outerFilter = v.RightConditions
 		e.innerKeys = leftHashKey
 		e.outerKeys = rightHashKey
+		if defaultValues == nil {
+			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
+		}
+		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
+			v.OtherConditions, nil, nil)
 	} else {
-		e.innerlExec = rightExec
+		e.innerExec = rightExec
 		e.outerExec = leftExec
 		e.innerFilter = v.RightConditions
 		e.outerFilter = v.LeftConditions
 		e.innerKeys = rightHashKey
 		e.outerKeys = leftHashKey
+		if defaultValues == nil {
+			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
+		}
+		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
+			defaultValues, v.OtherConditions, nil, nil)
 	}
 
 	return e
@@ -755,7 +768,11 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		cond.GetArgs()[0].(*expression.Column).ResolveIndices(v.Schema())
 		cond.GetArgs()[1].(*expression.Column).ResolveIndices(v.Schema())
 	}
+	defaultValues := v.DefaultValues
 	if v.SmallChildIdx == 1 {
+		if defaultValues == nil {
+			defaultValues = make([]types.Datum, v.Children()[1].Schema().Len())
+		}
 		return &NestedLoopJoinExec{
 			baseExecutor:  newBaseExecutor(v.Schema(), b.ctx),
 			SmallExec:     b.build(v.Children()[1]),
@@ -764,8 +781,11 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 			SmallFilter:   v.RightConditions,
 			OtherFilter:   append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...),
 			outer:         v.JoinType != plan.InnerJoin,
-			defaultValues: v.DefaultValues,
+			defaultValues: defaultValues,
 		}
+	}
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, v.Children()[0].Schema().Len())
 	}
 	return &NestedLoopJoinExec{
 		baseExecutor:  newBaseExecutor(v.Schema(), b.ctx),
@@ -776,7 +796,7 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		SmallFilter:   v.LeftConditions,
 		OtherFilter:   append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...),
 		outer:         v.JoinType != plan.InnerJoin,
-		defaultValues: v.DefaultValues,
+		defaultValues: defaultValues,
 	}
 }
 
@@ -1026,6 +1046,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		return nil
 	}
 	innerExecBuilder := &dataReaderBuilder{v.Children()[1-v.OuterIndex], b}
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, innerExecBuilder.Schema().Len())
+	}
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
@@ -1034,9 +1058,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerKeys:        v.InnerJoinKeys,
 		outerFilter:      v.LeftConditions,
 		innerFilter:      v.RightConditions,
-		outerOrderedRows: newKeyRowBlock(batchSize, true),
-		innerOrderedRows: newKeyRowBlock(batchSize, false),
-		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, v.DefaultValues, v.OtherConditions, nil, nil),
+		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, nil, nil),
 		maxBatchSize:     batchSize,
 	}
 }
