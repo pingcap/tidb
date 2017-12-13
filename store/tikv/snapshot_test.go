@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	goctx "golang.org/x/net/context"

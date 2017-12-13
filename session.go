@@ -27,7 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"

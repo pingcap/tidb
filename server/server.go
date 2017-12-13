@@ -41,7 +41,7 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	proxyprotocol "github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
