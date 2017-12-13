@@ -135,7 +135,7 @@ func (p LogicalProjection) init(ctx context.Context) *LogicalProjection {
 func (p PhysicalProjection) init(ctx context.Context, props ...*requiredProp) *PhysicalProjection {
 	p.basePlan = newBasePlan(TypeProj, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -160,14 +160,14 @@ func (p LogicalSort) init(ctx context.Context) *LogicalSort {
 func (p PhysicalSort) init(ctx context.Context, props ...*requiredProp) *PhysicalSort {
 	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return &p
 }
 
 func (p NominalSort) init(ctx context.Context, props ...*requiredProp) *NominalSort {
 	p.basePlan = newBasePlan(TypeSort, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -180,7 +180,7 @@ func (p LogicalTopN) init(ctx context.Context) *LogicalTopN {
 func (p PhysicalTopN) init(ctx context.Context, props ...*requiredProp) *PhysicalTopN {
 	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -193,7 +193,7 @@ func (p LogicalLimit) init(ctx context.Context) *LogicalLimit {
 func (p PhysicalLimit) init(ctx context.Context, props ...*requiredProp) *PhysicalLimit {
 	p.basePlan = newBasePlan(TypeLimit, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -218,7 +218,7 @@ func (p LogicalExists) init(ctx context.Context) *LogicalExists {
 func (p PhysicalExists) init(ctx context.Context, props ...*requiredProp) *PhysicalExists {
 	p.basePlan = newBasePlan(TypeExists, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -231,7 +231,7 @@ func (p LogicalMaxOneRow) init(ctx context.Context) *LogicalMaxOneRow {
 func (p PhysicalMaxOneRow) init(ctx context.Context, props ...*requiredProp) *PhysicalMaxOneRow {
 	p.basePlan = newBasePlan(TypeMaxOneRow, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -311,7 +311,7 @@ func (base basePhysicalAgg) initForHash(ctx context.Context, props ...*requiredP
 	p := &PhysicalHashAgg{base}
 	p.basePlan = newBasePlan(TypeHashAgg, ctx, p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return p
 }
 
@@ -321,7 +321,7 @@ func (base basePhysicalAgg) initForStream(ctx context.Context, props ...*require
 	}
 	p.basePlan = newBasePlan(TypeStreamAgg, ctx, p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return p
 }
 
@@ -334,7 +334,7 @@ func (p PhysicalApply) init(ctx context.Context) *PhysicalApply {
 func (p PhysicalUnionScan) init(ctx context.Context, props ...*requiredProp) *PhysicalUnionScan {
 	p.basePlan = newBasePlan(TypeUnionScan, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.reqProps = props
+	p.childrenReqProps = props
 	return &p
 }
 

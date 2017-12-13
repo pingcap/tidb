@@ -133,7 +133,7 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 		mergeJoin.profile = p.profile
 		mergeJoin.EqualConditions, mergeJoin.OtherConditions = p.getEqAndOtherCondsByOffsets(offsets)
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
-			mergeJoin.reqProps = reqProps
+			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
 		}
 	}
@@ -185,9 +185,9 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan
 	}.init(p.ctx)
 	hashJoin.SetSchema(p.schema)
 	hashJoin.profile = p.profile
-	hashJoin.reqProps = make([]*requiredProp, 2)
-	hashJoin.reqProps[innerIdx] = &requiredProp{expectedCnt: math.MaxFloat64}
-	hashJoin.reqProps[1-innerIdx] = &requiredProp{expectedCnt: prop.expectedCnt}
+	hashJoin.childrenReqProps = make([]*requiredProp, 2)
+	hashJoin.childrenReqProps[innerIdx] = &requiredProp{expectedCnt: math.MaxFloat64}
+	hashJoin.childrenReqProps[1-innerIdx] = &requiredProp{expectedCnt: prop.expectedCnt}
 	return hashJoin
 }
 
@@ -242,9 +242,9 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		join.KeepOrder = true
 	}
 	join.expectedCnt = prop.expectedCnt
-	join.reqProps = make([]*requiredProp, 2)
-	join.reqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
-	join.reqProps[1-outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}
+	join.childrenReqProps = make([]*requiredProp, 2)
+	join.childrenReqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
+	join.childrenReqProps[1-outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}
 	return []PhysicalPlan{join}
 }
 
@@ -486,7 +486,7 @@ func (p *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 	}.init(p.ctx)
 	apply.SetSchema(p.schema)
 	apply.profile = p.profile
-	apply.reqProps = []*requiredProp{{expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc}, {expectedCnt: math.MaxFloat64}}
+	apply.childrenReqProps = []*requiredProp{{expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc}, {expectedCnt: math.MaxFloat64}}
 	return []PhysicalPlan{apply}
 }
 
@@ -568,7 +568,7 @@ func (p *LogicalSelection) genPhysPlansByReqProp(prop *requiredProp) []PhysicalP
 	}.init(p.ctx)
 	sel.profile = p.profile
 	sel.SetSchema(p.Schema())
-	sel.reqProps = append(sel.reqProps, prop)
+	sel.childrenReqProps = append(sel.childrenReqProps, prop)
 	sel.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{sel}
 }
@@ -598,7 +598,7 @@ func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	}.init(p.ctx)
 	lock.profile = p.profile
 	lock.SetSchema(p.schema)
-	lock.reqProps = append(lock.reqProps, prop)
+	lock.childrenReqProps = append(lock.childrenReqProps, prop)
 	lock.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{lock}
 }
@@ -608,9 +608,9 @@ func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPl
 	ua.profile = p.profile
 	ua.SetSchema(p.schema)
 	ua.expectedCnt = prop.expectedCnt
-	ua.reqProps = make([]*requiredProp, 0, len(p.children))
+	ua.childrenReqProps = make([]*requiredProp, 0, len(p.children))
 	for range p.children {
-		ua.reqProps = append(ua.reqProps, prop)
+		ua.childrenReqProps = append(ua.childrenReqProps, prop)
 	}
 	return []PhysicalPlan{ua}
 }

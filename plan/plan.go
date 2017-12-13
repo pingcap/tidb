@@ -212,11 +212,11 @@ type baseLogicalPlan struct {
 type basePhysicalPlan struct {
 	basePlan *basePlan
 
-	reqProps []*requiredProp
+	childrenReqProps []*requiredProp
 }
 
 func (bp *basePhysicalPlan) getChildReqProps(idx int) *requiredProp {
-	return bp.reqProps[idx]
+	return bp.childrenReqProps[idx]
 }
 
 // ExplainInfo implements PhysicalPlan interface.
