@@ -152,14 +152,13 @@ const (
 	ExprType_JsonUnquote      ExprType = 3612
 	ExprType_JsonContainsPath ExprType = 3613
 	// Other expressions.
-	ExprType_In      ExprType = 4001
-	ExprType_IsTruth ExprType = 4002
-	ExprType_IsNull  ExprType = 4003
-	ExprType_ExprRow ExprType = 4004
-	ExprType_Like    ExprType = 4005
-	ExprType_RLike   ExprType = 4006
-	ExprType_Case    ExprType = 4007
-	// Date Function
+	ExprType_In         ExprType = 4001
+	ExprType_IsTruth    ExprType = 4002
+	ExprType_IsNull     ExprType = 4003
+	ExprType_ExprRow    ExprType = 4004
+	ExprType_Like       ExprType = 4005
+	ExprType_RLike      ExprType = 4006
+	ExprType_Case       ExprType = 4007
 	ExprType_DateFormat ExprType = 6001
 	// Scalar Function
 	ExprType_ScalarFunc ExprType = 10000
