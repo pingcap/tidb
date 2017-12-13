@@ -27,8 +27,9 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{`null`, `NULL`},
 		{`true`, `TRUE`},
 		{`350`, `350`},
+		{`001e-12`, `1e-12`}, // Float.
 		{`345.678`, `345.678`},
-		{`1e-12`, `0.000000000001`},
+		{`00.0001000`, `0.0001000`}, // Decimal.
 		{`null`, `NULL`},
 		{`"Hello, world"`, `"Hello, world"`},
 		{`'Hello, world'`, `"Hello, world"`},

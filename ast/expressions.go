@@ -79,9 +79,9 @@ func (n *ValueExpr) Format(w io.Writer) {
 	case types.KindUint64:
 		s = strconv.FormatUint(n.GetUint64(), 10)
 	case types.KindFloat32:
-		s = strconv.FormatFloat(n.GetFloat64(), 'f', -1, 32)
+		s = strconv.FormatFloat(n.GetFloat64(), 'e', -1, 32)
 	case types.KindFloat64:
-		s = strconv.FormatFloat(n.GetFloat64(), 'f', -1, 64)
+		s = strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64)
 	case types.KindString, types.KindBytes:
 		s = strconv.Quote(n.GetString())
 	case types.KindMysqlDecimal:
