@@ -553,12 +553,12 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	if v.JoinType == plan.RightOuterJoin {
 		e.outerKeys, e.innerKeys = e.innerKeys, e.outerKeys
 		e.outerIter, e.innerIter = e.innerIter, e.outerIter
+		e.outerIdx = 1
 	}
 
 	if v.JoinType != plan.InnerJoin {
 		e.outerFilter = e.outerIter.filter
 		e.outerIter.filter = nil
-		e.outerIdx = 1
 	}
 
 	e.supportChk = true
