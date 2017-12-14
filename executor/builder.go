@@ -312,10 +312,12 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
-	return &SetExecutor{
+	e := &SetExecutor{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		vars:         v.VarAssigns,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
