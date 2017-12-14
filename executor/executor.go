@@ -842,8 +842,11 @@ type ExistsExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ExistsExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.evaluated = false
-	return errors.Trace(e.children[0].Open(goCtx))
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -858,6 +861,24 @@ func (e *ExistsExec) Next(goCtx goctx.Context) (Row, error) {
 		return Row{types.NewDatum(srcRow != nil)}, nil
 	}
 	return nil, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *ExistsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.evaluated {
+		e.evaluated = true
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if e.childrenResults[0].NumRows() > 0 {
+			chk.AppendInt64(0, 1)
+		} else {
+			chk.AppendInt64(0, 0)
+		}
+	}
+	return nil
 }
 
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
