@@ -795,8 +795,11 @@ type ExistsExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ExistsExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.evaluated = false
-	return errors.Trace(e.children[0].Open(goCtx))
+	return nil
 }
 
 // Next implements the Executor Next interface.
