@@ -47,7 +47,6 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/context"
@@ -58,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 

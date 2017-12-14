@@ -18,12 +18,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 )
 
 type statsCache map[int64]*Table

@@ -19,11 +19,11 @@ import (
 	"strconv"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/owner"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 

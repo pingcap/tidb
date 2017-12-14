@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
 	goctx "golang.org/x/net/context"
 )
