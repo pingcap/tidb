@@ -174,6 +174,9 @@ func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
 }
 
 func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan {
+	chReqProps := make([]*requiredProp, 2)
+	chReqProps[innerIdx] = &requiredProp{expectedCnt: math.MaxFloat64}
+	chReqProps[1-innerIdx] = &requiredProp{expectedCnt: prop.expectedCnt}
 	hashJoin := PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -183,12 +186,9 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan
 		Concurrency:     JoinConcurrency,
 		DefaultValues:   p.DefaultValues,
 		SmallChildIdx:   innerIdx,
-	}.init(p.ctx)
+	}.init(p.ctx, chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	hashJoin.profile = p.profile
-	hashJoin.childrenReqProps = make([]*requiredProp, 2)
-	hashJoin.childrenReqProps[innerIdx] = &requiredProp{expectedCnt: math.MaxFloat64}
-	hashJoin.childrenReqProps[1-innerIdx] = &requiredProp{expectedCnt: prop.expectedCnt}
 	return hashJoin
 }
 
@@ -226,6 +226,8 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 	if !prop.allColsFromSchema(outerSchema) {
 		return nil
 	}
+	chReqProps := make([]*requiredProp, 2)
+	chReqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
 	join := PhysicalIndexJoin{
 		OuterIndex:      outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -236,16 +238,13 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
-	}.init(p.ctx)
+	}.init(p.ctx, chReqProps...)
 	join.SetSchema(p.schema)
 	join.profile = p.profile
 	if !prop.isEmpty() {
 		join.KeepOrder = true
 	}
 	join.expectedCnt = prop.expectedCnt
-	join.childrenReqProps = make([]*requiredProp, 2)
-	join.childrenReqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
-	join.childrenReqProps[1-outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}
 	return []PhysicalPlan{join}
 }
 
@@ -484,15 +483,14 @@ func (p *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 		PhysicalJoin:  join,
 		OuterSchema:   p.corCols,
 		rightChOffset: p.children[0].Schema().Len(),
-	}.init(p.ctx)
+	}.init(p.ctx, &requiredProp{expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc}, &requiredProp{expectedCnt: math.MaxFloat64})
 	apply.SetSchema(p.schema)
 	apply.profile = p.profile
-	apply.childrenReqProps = []*requiredProp{{expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc}, {expectedCnt: math.MaxFloat64}}
 	return []PhysicalPlan{apply}
 }
 
-// genPhysPlansByReqProp is only for implementing interface. DataSource generate task in `convert2NewPhysicalPlan` directly.
-func (p *DataSource) genPhysPlansByReqProp(_ *requiredProp) []PhysicalPlan {
+// genPhysPlansByReqProp is only for implementing interface. DataSource and Dual generate task in `convert2NewPhysicalPlan` directly.
+func (p *baseLogicalPlan) genPhysPlansByReqProp(_ *requiredProp) []PhysicalPlan {
 	panic("This function should not be called")
 }
 
@@ -566,10 +564,9 @@ func (p *LogicalAggregation) genPhysPlansByReqProp(prop *requiredProp) []Physica
 func (p *LogicalSelection) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
-	}.init(p.ctx)
+	}.init(p.ctx, prop)
 	sel.profile = p.profile
 	sel.SetSchema(p.Schema())
-	sel.childrenReqProps = append(sel.childrenReqProps, prop)
 	sel.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{sel}
 }
@@ -596,23 +593,22 @@ func (p *LogicalLimit) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	lock := PhysicalLock{
 		Lock: p.Lock,
-	}.init(p.ctx)
+	}.init(p.ctx, prop)
 	lock.profile = p.profile
 	lock.SetSchema(p.schema)
-	lock.childrenReqProps = append(lock.childrenReqProps, prop)
 	lock.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{lock}
 }
 
 func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	ua := PhysicalUnionAll{childNum: len(p.children)}.init(p.ctx)
+	chReqProps := make([]*requiredProp, 0, len(p.children))
+	for range p.children {
+		chReqProps = append(chReqProps, prop)
+	}
+	ua := PhysicalUnionAll{childNum: len(p.children)}.init(p.ctx, chReqProps...)
 	ua.profile = p.profile
 	ua.SetSchema(p.schema)
 	ua.expectedCnt = prop.expectedCnt
-	ua.childrenReqProps = make([]*requiredProp, 0, len(p.children))
-	for range p.children {
-		ua.childrenReqProps = append(ua.childrenReqProps, prop)
-	}
 	return []PhysicalPlan{ua}
 }
 
@@ -665,11 +661,4 @@ func (p *LogicalMaxOneRow) genPhysPlansByReqProp(prop *requiredProp) []PhysicalP
 	mor.profile = p.profile
 	mor.SetSchema(p.schema)
 	return []PhysicalPlan{mor}
-}
-
-func (p *LogicalTableDual) genPhysPlansByReqProp(_ *requiredProp) []PhysicalPlan {
-	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
-	dual.profile = p.profile
-	dual.SetSchema(p.schema)
-	return []PhysicalPlan{dual}
 }

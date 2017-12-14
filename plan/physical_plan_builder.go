@@ -68,6 +68,16 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
+func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+	if !prop.isEmpty() {
+		return invalidTask, nil
+	}
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
+	dual.profile = p.profile
+	dual.SetSchema(p.schema)
+	return &rootTask{p: dual}, nil
+}
+
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
 	// look up the task map
@@ -81,17 +91,6 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 		p.storeTask(prop, t)
 		return t, nil
 	}
-	// Now we only consider rootTask.
-	if len(p.basePlan.children) == 0 {
-		if !prop.isEmpty() {
-			return t, nil
-		}
-		// When the children length is 0, we process it specially.
-		t = &rootTask{p: p.basePlan.self.(LogicalPlan).genPhysPlansByReqProp(nil)[0]}
-		p.storeTask(prop, t)
-		return t, nil
-	}
-	// Else we suppose it only has one child.
 	for _, pp := range p.basePlan.self.(LogicalPlan).genPhysPlansByReqProp(prop) {
 		t, err = p.getBestTask(t, pp)
 		if err != nil {

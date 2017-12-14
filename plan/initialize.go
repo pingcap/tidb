@@ -114,9 +114,10 @@ func (p LogicalSelection) init(ctx context.Context) *LogicalSelection {
 	return &p
 }
 
-func (p PhysicalSelection) init(ctx context.Context) *PhysicalSelection {
+func (p PhysicalSelection) init(ctx context.Context, props ...*requiredProp) *PhysicalSelection {
 	p.basePlan = newBasePlan(TypeSel, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -145,9 +146,10 @@ func (p LogicalUnionAll) init(ctx context.Context) *LogicalUnionAll {
 	return &p
 }
 
-func (p PhysicalUnionAll) init(ctx context.Context) *PhysicalUnionAll {
+func (p PhysicalUnionAll) init(ctx context.Context, props ...*requiredProp) *PhysicalUnionAll {
 	p.basePlan = newBasePlan(TypeUnion, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -261,9 +263,10 @@ func (p LogicalLock) init(ctx context.Context) *LogicalLock {
 	return &p
 }
 
-func (p PhysicalLock) init(ctx context.Context) *PhysicalLock {
+func (p PhysicalLock) init(ctx context.Context, props ...*requiredProp) *PhysicalLock {
 	p.basePlan = newBasePlan(TypeLock, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -285,13 +288,14 @@ func (p PhysicalMemTable) init(ctx context.Context) *PhysicalMemTable {
 	return &p
 }
 
-func (p PhysicalHashJoin) init(ctx context.Context) *PhysicalHashJoin {
+func (p PhysicalHashJoin) init(ctx context.Context, props ...*requiredProp) *PhysicalHashJoin {
 	tp := TypeHashRightJoin
 	if p.SmallChildIdx == 1 {
 		tp = TypeHashLeftJoin
 	}
 	p.basePlan = newBasePlan(tp, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -325,9 +329,10 @@ func (base basePhysicalAgg) initForStream(ctx context.Context, props ...*require
 	return p
 }
 
-func (p PhysicalApply) init(ctx context.Context) *PhysicalApply {
+func (p PhysicalApply) init(ctx context.Context, props ...*requiredProp) *PhysicalApply {
 	p.basePlan = newBasePlan(TypeApply, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.childrenReqProps = props
 	return &p
 }
 
@@ -369,9 +374,10 @@ func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
 	return &p
 }
 
-func (p PhysicalIndexJoin) init(ctx context.Context) *PhysicalIndexJoin {
+func (p PhysicalIndexJoin) init(ctx context.Context, props ...*requiredProp) *PhysicalIndexJoin {
 	p.basePlan = newBasePlan(TypeIndexJoin, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.childrenReqProps = props
 	return &p
 }
 
