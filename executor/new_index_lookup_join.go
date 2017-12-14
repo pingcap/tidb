@@ -40,7 +40,7 @@ var _ Executor = &NewIndexLookUpJoin{}
 // 1. outerWorker read N outer rows, build a task and send it to result channel and inner worker channel.
 // 2. The innerWorker receives the task, builds key ranges from outer rows and fetch inner rows, builds inner row hash map.
 // 3. main thread receives the task, waits for inner worker finish handling the task.
-// 4，main thread join each outer row by look up the inner rows hash map in the task.
+// 4. main thread join each outer row by look up the inner rows hash map in the task.
 type NewIndexLookUpJoin struct {
 	baseExecutor
 
@@ -59,7 +59,6 @@ type NewIndexLookUpJoin struct {
 }
 
 type outerCtx struct {
-	schema   *expression.Schema
 	rowTypes []*types.FieldType
 	keyCols  []int
 	filter   expression.CNFExprs
@@ -143,7 +142,7 @@ func (e *NewIndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTa
 		resultCh:     resultCh,
 		innerCh:      innerCh,
 		batchSize:    32,
-		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+		maxBatchSize: e.ctx.GetSessionVars().IndexJoinBatchSize,
 	}
 	return ow
 }

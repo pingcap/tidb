@@ -1079,7 +1079,6 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 	e := &NewIndexLookUpJoin{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerCtx: outerCtx{
-			schema:   outerExec.Schema(),
 			rowTypes: outerTypes,
 			filter:   outerFilter,
 		},
