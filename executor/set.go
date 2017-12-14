@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
@@ -53,6 +54,17 @@ func (e *SetExecutor) Next(goCtx goctx.Context) (Row, error) {
 	}
 	e.done = true
 	return nil, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *SetExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.done {
+		e.done = true
+		err := e.executeSet()
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (e *SetExecutor) executeSet() error {

@@ -221,6 +221,10 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 
 func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
 	src := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	if !b.ctx.GetSessionVars().InTxn() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
@@ -229,9 +233,10 @@ func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
 		return src
 	}
 	e := &SelectLockExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		Lock:         v.Lock,
 	}
+	e.supportChk = true
 	return e
 }
 
@@ -312,10 +317,12 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
-	return &SetExecutor{
+	e := &SetExecutor{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		vars:         v.VarAssigns,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
@@ -866,13 +873,15 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &UpdateExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+	updateExec := &UpdateExec{
+		baseExecutor: newBaseExecutor(nil, b.ctx, selExec),
 		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
 		IgnoreErr:    v.IgnoreErr,
 	}
+	updateExec.supportChk = true
+	return updateExec
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
