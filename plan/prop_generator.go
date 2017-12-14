@@ -212,16 +212,26 @@ func (p *PhysicalHashAgg) getChildrenPossibleProps(prop *requiredProp) [][]*requ
 
 func (p *PhysicalStreamAgg) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
-	reqProp := &requiredProp{
-		taskTp:      rootTaskType,
-		cols:        p.propKeys,
-		expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count,
-		desc:        prop.desc,
+	props := make([][]*requiredProp, 0, len(wholeTaskTypes))
+	for _, tp := range wholeTaskTypes {
+		if tp == copDoubleReadTaskType {
+			continue
+		}
+		reqProp := &requiredProp{
+			taskTp:      tp,
+			cols:        p.propKeys,
+			expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count,
+			desc:        prop.desc,
+		}
+		if !prop.isEmpty() && !prop.isPrefix(reqProp) {
+			continue
+		}
+		props = append(props, []*requiredProp{reqProp})
 	}
-	if !prop.isEmpty() && !prop.isPrefix(reqProp) {
+	if len(props) == 0 {
 		return nil
 	}
-	return [][]*requiredProp{{reqProp}}
+	return props
 }
 
 func (p *PhysicalSort) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {

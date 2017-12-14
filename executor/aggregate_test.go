@@ -259,6 +259,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustExec("insert into t values(1, 2, 3), (1, 2, 4)")
+	tk.MustExec("insert t values(1,1,1),(1,1,2),(1,1,3),(2,1,4),(3,2,5),(3,3,6);")
 	result = tk.MustQuery("select count(distinct c), count(distinct a,b) from t")
 	result.Check(testkit.Rows("2 1"))
 
@@ -269,6 +270,17 @@ func (s *testSuite) TestAggregation(c *C) {
 	// test without any aggregate function
 	tk.MustQuery("select 10 from idx_agg group by b").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
+}
+
+func (s *testSuite) TestStreamAgg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("alter table t add index idx(a, b, c)")
+	// tk.MustExec("insert t values(1,1,1),(1,1,2),(1,1,3),(2,1,4),(3,2,5),(3,3,6);")
+	tk.MustExec("insert t values(1,1,1),(1,1,2),(1,1,3),(2,1,4),(3,2,5),(3,3,6);")
+	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))
 }
 
 func (s *testSuite) TestAggPrune(c *C) {
