@@ -1379,18 +1379,18 @@ func (e *UpdateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		e.fetched = true
-	}
 
-	for {
-		row, err := e.exec(goCtx, e.children[0].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
+		for {
+			row, err := e.exec(goCtx, e.children[0].Schema())
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-		// if row != nil, means there is more data to update,
-		// so continue this loop.
-		if row == nil {
-			break
+			// once "row == nil" there is no more data waiting to be updated,
+			// the execution of UpdateExec is finished.
+			if row == nil {
+				break
+			}
 		}
 	}
 

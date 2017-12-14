@@ -180,7 +180,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
 }
 
-// TestRowLock See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
+// See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
 func (s *testSessionSuite) TestRowLock(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -216,7 +216,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	tk1.MustExec("commit")
 }
 
-// TestAutocommit See https://dev.mysql.com/doc/internals/en/status-flags.html
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestAutocommit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -395,7 +395,7 @@ func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	c.Assert(len(r), Equals, 1)
 }
 
-// TestInTrans See https://dev.mysql.com/doc/internals/en/status-flags.html
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestInTrans(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
@@ -1305,7 +1305,7 @@ func (s *testSessionSuite) TestCaseInsensitive(c *C) {
 	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
 }
 
-// TestDeletePanic for delete panic
+// for delete panic
 func (s *testSessionSuite) TestDeletePanic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")

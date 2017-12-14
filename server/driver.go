@@ -85,8 +85,8 @@ type QueryCtx interface {
 
 	SetSessionManager(util.SessionManager)
 
-	// EnableChunk enable QueryCtx to use chunk.
-	// TODO: remove this when finish replacing chunk.
+	// EnableChunk indicates whether the chunk execution model is enabled.
+	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk()
 }
 
