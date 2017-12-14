@@ -415,10 +415,11 @@ func (cc *clientConn) Run() {
 		}
 	}()
 
-	cc.status = connStatusDispatching
 	for {
 		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
-			closedOutside = true
+			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
+				closedOutside = true
+			}
 			return
 		}
 
@@ -436,7 +437,9 @@ func (cc *clientConn) Run() {
 		}
 
 		if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) == false {
-			closedOutside = true
+			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
+				closedOutside = true
+			}
 			return
 		}
 

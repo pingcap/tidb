@@ -115,6 +115,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
+		status:       connStatusDispatching,
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
