@@ -872,13 +872,15 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &UpdateExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+	updateExec := &UpdateExec{
+		baseExecutor: newBaseExecutor(nil, b.ctx, selExec),
 		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
 		IgnoreErr:    v.IgnoreErr,
 	}
+	updateExec.supportChk = true
+	return updateExec
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
