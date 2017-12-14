@@ -17,10 +17,10 @@ import (
 	"io"
 	"net"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	log "github.com/sirupsen/logrus"
 )
 
 // clientConn represents a connection between server and client,

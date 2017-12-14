@@ -18,12 +18,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 )
 
 // Test needs to change it, so it's a variable.
