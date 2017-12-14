@@ -108,7 +108,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*require
 
 func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
-	// The leftProperties caches all the possible properties that be provided by its children.
+	// The leftProperties caches all the possible properties that are provided by its children.
 	for _, leftCols := range p.leftProperties {
 		offsets, leftKeys := getPermutation(leftCols, p.LeftJoinKeys)
 		if len(offsets) == 0 {
