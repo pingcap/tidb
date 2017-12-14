@@ -488,11 +488,24 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
-	if len(as.IndexNames) == 0 {
-		return b.buildAnalyzeTable(as)
+func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
+	p := &Analyze{}
+	tblInfo := as.TableNames[0].TableInfo
+	for _, idx := range tblInfo.Indices {
+		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
 	}
-	return b.buildAnalyzeIndex(as)
+	p.SetSchema(&expression.Schema{})
+	return p
+}
+
+func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
+	if as.IndexFlag {
+		if len(as.IndexNames) == 0 {
+			return b.buildAnalyzeAllIndex(as)
+		}
+		return b.buildAnalyzeIndex(as)
+	}
+	return b.buildAnalyzeTable(as)
 }
 
 func buildShowDDLFields() *expression.Schema {
