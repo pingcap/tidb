@@ -195,7 +195,7 @@ import:
 - package: github.com/spaolacci/murmur3
   version: v1.0
 - package: github.com/pingcap/mysqlx-driver
-  version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
+  version: c4df4e6e9be29ffb2f81f953d46665b8b37341bd
 - package: github.com/apache/thrift
   version: ">=0.9.3, <0.11.0"
   subpackages:

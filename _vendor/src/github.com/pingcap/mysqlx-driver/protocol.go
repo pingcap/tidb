@@ -14,7 +14,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tipb/go-mysqlx"
