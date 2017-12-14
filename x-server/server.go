@@ -20,13 +20,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
+	log "github.com/sirupsen/logrus"
 	// For MySQL X Protocol
 	_ "github.com/pingcap/tipb/go-mysqlx"
 	_ "github.com/pingcap/tipb/go-mysqlx/Connection"

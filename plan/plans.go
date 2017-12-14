@@ -15,8 +15,8 @@ package plan
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/kvcache"
 )
@@ -284,28 +283,8 @@ type Explain struct {
 	basePlan
 
 	StmtPlan       Plan
-	Rows           [][]types.Datum
+	Rows           [][]string
 	explainedPlans map[int]bool
-}
-
-func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
-	for _, child := range p.Children() {
-		err := e.prepareExplainInfo(child, p)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	explain, err := json.MarshalIndent(p, "", "    ")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	parentStr := ""
-	if parent != nil {
-		parentStr = parent.ExplainID()
-	}
-	row := types.MakeDatums(p.ExplainID(), string(explain), parentStr)
-	e.Rows = append(e.Rows, row)
-	return nil
 }
 
 // prepareExplainInfo4DAGTask generates the following information for every plan:
@@ -323,8 +302,8 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	parentInfo := strings.Join(parentIDs, ",")
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
-	count := p.statsProfile().count
-	row := types.MakeDatums(p.ExplainID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
+	count := string(strconv.AppendFloat([]byte{}, p.statsProfile().count, 'f', -1, 64))
+	row := []string{p.ExplainID(), parentInfo, childrenInfo, taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }
 
@@ -363,8 +342,7 @@ func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	e.prepareTaskDot(p, "root", buffer)
 	buffer.WriteString(fmt.Sprintln("}"))
 
-	row := types.MakeDatums(buffer.String())
-	e.Rows = append(e.Rows, row)
+	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
 func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
