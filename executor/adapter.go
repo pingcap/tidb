@@ -264,20 +264,31 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 		}
 		a.logSlowQuery(txnTS, err == nil)
 	}()
-	for {
-		var row Row
-		row, err = e.Next(goCtx)
+
+	if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
+		chk := chunk.NewChunk(nil)
+		err = e.NextChunk(goCtx, chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Even though there isn't any result set, the row is still used to indicate if there is
-		// more work to do.
-		// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
-		// There is no more rows to update.
-		if row == nil {
-			return nil, nil
+	} else {
+		for {
+			var row Row
+			row, err = e.Next(goCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// Even though there isn't any result set, the row is still used to indicate if there is
+			// more work to do.
+			// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
+			// There is no more rows to update.
+			if row == nil {
+				return nil, nil
+			}
 		}
 	}
+
+	return nil, nil
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
