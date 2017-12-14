@@ -911,7 +911,7 @@ type UnionExec struct {
 	cursor        int
 	wg            sync.WaitGroup
 
-	// finished is for chunk execution.
+	// finished and all the following variables are used for chunk execution.
 	finished      chan struct{}
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
