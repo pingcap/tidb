@@ -262,9 +262,17 @@ type CheckTableExec struct {
 	baseExecutor
 
 	tables []*ast.TableName
-	ctx    context.Context
 	done   bool
 	is     infoschema.InfoSchema
+}
+
+// Open implements the Executor Open interface.
+func (e *CheckTableExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
+	e.done = false
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -272,29 +280,36 @@ func (e *CheckTableExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
+	err := e.run(goCtx)
+	e.done = true
+	return nil, errors.Trace(err)
+}
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *CheckTableExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	err := e.run(goCtx)
+	e.done = true
+	return errors.Trace(err)
+}
+
+func (e *CheckTableExec) run(goCtx goctx.Context) error {
 	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
-
 	for _, t := range e.tables {
 		tb, err := e.is.TableByName(dbName, t.Name)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
 			err = admin.CompareIndexData(txn, tb, idx)
 			if err != nil {
-				return nil, errors.Errorf("%v err:%v", t.Name, err)
+				return errors.Errorf("%v err:%v", t.Name, err)
 			}
 		}
 	}
-	e.done = true
-
-	return nil, nil
-}
-
-// Close implements plan.Plan Close interface.
-func (e *CheckTableExec) Close() error {
 	return nil
 }
 
@@ -827,8 +842,11 @@ type ExistsExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ExistsExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.evaluated = false
-	return errors.Trace(e.children[0].Open(goCtx))
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -843,6 +861,24 @@ func (e *ExistsExec) Next(goCtx goctx.Context) (Row, error) {
 		return Row{types.NewDatum(srcRow != nil)}, nil
 	}
 	return nil, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *ExistsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.evaluated {
+		e.evaluated = true
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if e.childrenResults[0].NumRows() > 0 {
+			chk.AppendInt64(0, 1)
+		} else {
+			chk.AppendInt64(0, 0)
+		}
+	}
+	return nil
 }
 
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
