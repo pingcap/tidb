@@ -24,44 +24,44 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-// streamResult implements the SelectResult interface's NextChunk method.
+// streamResult implements the SelectResult interface.
 type streamResult struct {
 	resp       kv.Response
 	rowLen     int
 	fieldTypes []*types.FieldType
 	ctx        context.Context
 
+	// NOTE: chunk == nil means finish, while len(chunk.RowsData) == 0 doesn't.
 	chunk *tipb.Chunk
 }
 
 func (r *streamResult) Fetch(goctx.Context) {}
 
 func (r *streamResult) Next(goctx.Context) (PartialResult, error) {
-	data, err := r.resp.Next()
+	var ret tipbChunk
+	ret.rowLen = r.rowLen
+	finish, err := readChunkFromResponse(r.resp, &ret.Chunk)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	var ret tipbChunk
-	if err := ret.Chunk.Unmarshal(data); err != nil {
-		return nil, errors.Trace(err)
+	if finish {
+		return nil, nil
 	}
-	ret.rowLen = r.rowLen
 	return &ret, nil
 }
 
 func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
-		if err := r.takeData(); err != nil {
+		err := r.takeData()
+		if err != nil {
 			return errors.Trace(err)
 		}
 		if r.chunk == nil {
-			// No more data.
 			return nil
 		}
 
-		err := r.readRowsData(chk)
+		err = r.readRowsData(chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -69,24 +69,50 @@ func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// takeData returns current chunk if it's not consumed, try to get the next chunk otherwise.
-func (r *streamResult) takeData() error {
-	if r.chunk != nil {
-		return nil
+// readDefaultFromResponse read the data to chunk. Returns true means the resp is finished.
+func readChunkFromResponse(resp kv.Response, chunk *tipb.Chunk) (bool, error) {
+	data, err := resp.Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if data == nil {
+		return true, nil
 	}
 
-	data, err := r.resp.Next()
+	var stream tipb.StreamResponse
+	err = stream.Unmarshal(data)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	if len(data) == 0 {
+	// TODO: check stream.Error?
+
+	switch stream.GetEncodeType() {
+	case tipb.EncodeType_TypeDefault:
+	case tipb.EncodeType_TypeArrow:
+		return false, errors.New("not implement yet")
+	}
+
+	err = chunk.Unmarshal(data)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return false, nil
+}
+
+// takeData ensure there're data is in current chunk. if no more data, return false.
+func (r *streamResult) takeData() error {
+	if r.chunk != nil && len(r.chunk.RowsData) > 0 {
 		return nil
 	}
 
 	tmp := new(tipb.Chunk)
-	err = tmp.Unmarshal(data)
+	finish, err := readChunkFromResponse(r.resp, tmp)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if finish {
+		r.chunk = nil
+		return nil
 	}
 	r.chunk = tmp
 	return nil
@@ -106,7 +132,7 @@ func (r *streamResult) readRowsData(chk *chunk.Chunk) (err error) {
 	}
 	r.chunk.RowsData = rowsData
 	if len(rowsData) == 0 {
-		r.chunk = nil
+		r.chunk = nil // Current chunk is finished.
 	}
 	return nil
 }

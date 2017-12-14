@@ -448,6 +448,8 @@ func (it *copIterator) sendToRespCh(goCtx goctx.Context, resp copResponse, respC
 }
 
 // Next returns next coprocessor result.
+// NOTE: Use nil to indicate finish, so if the returned values is a slice with
+// size 0, reader should continue to call Next().
 func (it *copIterator) Next() ([]byte, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
