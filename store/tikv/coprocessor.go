@@ -88,6 +88,9 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge,
 		tipb.ExprType_JsonSet, tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove:
 		return true
+	// date functions.
+	case tipb.ExprType_DateFormat:
+		return true
 	case kv.ReqSubTypeDesc:
 		return true
 	case kv.ReqSubTypeSignature:

@@ -17,10 +17,12 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/types"
 )
@@ -60,7 +62,40 @@ type ValueExpr struct {
 
 // Format the ExprNode into a Writer.
 func (n *ValueExpr) Format(w io.Writer) {
-	fmt.Fprint(w, n.Text())
+	var s string
+	switch n.Kind() {
+	case types.KindNull:
+		s = "NULL"
+	case types.KindInt64:
+		if n.Type.Flag&mysql.IsBooleanFlag != 0 {
+			if n.GetInt64() > 0 {
+				s = "TRUE"
+			} else {
+				s = "FALSE"
+			}
+		} else {
+			s = strconv.FormatInt(n.GetInt64(), 10)
+		}
+	case types.KindUint64:
+		s = strconv.FormatUint(n.GetUint64(), 10)
+	case types.KindFloat32:
+		s = strconv.FormatFloat(n.GetFloat64(), 'e', -1, 32)
+	case types.KindFloat64:
+		s = strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64)
+	case types.KindString, types.KindBytes:
+		s = strconv.Quote(n.GetString())
+	case types.KindMysqlDecimal:
+		s = n.GetMysqlDecimal().String()
+	case types.KindBinaryLiteral:
+		if n.Type.Flag&mysql.UnsignedFlag != 0 {
+			s = fmt.Sprintf("x'%x'", n.GetBytes())
+		} else {
+			s = n.GetBinaryLiteral().ToBitLiteralString(true)
+		}
+	default:
+		panic("Can't format to string")
+	}
+	fmt.Fprint(w, s)
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
