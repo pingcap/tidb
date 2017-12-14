@@ -1381,13 +1381,20 @@ func (e *UpdateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		e.fetched = true
 	}
 
-	row, err := e.exec(goCtx, e.children[0].Schema())
-	if row != nil && err == nil {
-		// there is more rows to exec.
-		// TODO: exactly it is not a error, but there is no graceful way to indicate there is more rows.
-		return ErrMoreRows
+	for {
+		row, err := e.exec(goCtx, e.children[0].Schema())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// if row != nil, means there is more data to update,
+		// so continue this loop.
+		if row == nil {
+			break
+		}
 	}
-	return errors.Trace(err)
+
+	return nil
 }
 
 func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
