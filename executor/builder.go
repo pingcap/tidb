@@ -834,9 +834,11 @@ func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &ExistsExec{
+	e := &ExistsExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plan.PhysicalMaxOneRow) Executor {
