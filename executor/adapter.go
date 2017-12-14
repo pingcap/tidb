@@ -264,18 +264,15 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 		}
 		a.logSlowQuery(txnTS, err == nil)
 	}()
-	for {
-		if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
-			chk := chunk.NewChunk(nil)
-			err = e.NextChunk(goCtx, chk)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
 
-			if chk.NumRows() == 0 {
-				return nil, nil
-			}
-		} else {
+	if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
+		chk := chunk.NewChunk(nil)
+		err = e.NextChunk(goCtx, chk)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		for {
 			var row Row
 			row, err = e.Next(goCtx)
 			if err != nil {
@@ -290,6 +287,8 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 			}
 		}
 	}
+
+	return nil, nil
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
