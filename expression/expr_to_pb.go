@@ -16,7 +16,6 @@ package expression
 import (
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 )
 
 // ExpressionsToPB converts expression to tipb.Expr.
@@ -44,7 +44,8 @@ func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv
 			// Merge multiple converted pb expression into a CNF.
 			pbExpr = &tipb.Expr{
 				Tp:       tipb.ExprType_And,
-				Children: []*tipb.Expr{pbExpr, v}}
+				Children: []*tipb.Expr{pbExpr, v},
+			}
 		}
 	}
 	return
@@ -215,6 +216,8 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONContains:
 		return pc.jsonFuncToPBExpr(expr)
+	case ast.DateFormat:
+		return pc.dateFuncToPBExpr(expr)
 	default:
 		return nil
 	}
@@ -303,6 +306,15 @@ func (pc PbConverter) bitwiseFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 
 func (pc PbConverter) jsonFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	var tp = jsonFunctionNameToPB[expr.FuncName.L]
+	return pc.convertToPBExpr(expr, tp)
+}
+
+func (pc PbConverter) dateFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
+	var tp tipb.ExprType
+	switch expr.FuncName.L {
+	case ast.DateFormat:
+		tp = tipb.ExprType_DateFormat
+	}
 	return pc.convertToPBExpr(expr, tp)
 }
 
