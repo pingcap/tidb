@@ -277,10 +277,6 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	c.Assert(s.cache.storeMu.stores, HasLen, 1)
 	s.checkCache(c, 2)
 	s.cache.OnRequestFail(ctx, errors.New("test error"))
-	// Both region2 and store should be dropped from cache.
-	c.Assert(s.cache.storeMu.stores, HasLen, 0)
-	c.Assert(s.cache.searchCachedRegion([]byte("x")), IsNil)
-	s.checkCache(c, 1)
 }
 
 func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
