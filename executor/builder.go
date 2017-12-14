@@ -693,6 +693,10 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
+	if v.RowCount != 0 && v.RowCount != 1 {
+		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
+		return nil
+	}
 	dualSchema := v.Schema()
 	if dualSchema.Len() == 0 {
 		dualSchema = expression.NewSchema(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)})

@@ -18,7 +18,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -528,6 +527,7 @@ func (e *ProjectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 type TableDualExec struct {
 	baseExecutor
 
+	// numDualRows can only be 0 or 1.
 	numDualRows int
 	numReturned int
 }
@@ -543,7 +543,7 @@ func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.numReturned >= e.numDualRows {
 		return nil, nil
 	}
-	e.numReturned++
+	e.numReturned = e.numDualRows
 	return Row{}, nil
 }
 
@@ -553,13 +553,10 @@ func (e *TableDualExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	if e.numReturned >= e.numDualRows {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, e.numDualRows-e.numReturned)
-	e.numReturned += numCurBatch
-	for i := 0; i < numCurBatch; i++ {
-		// Here we only append NULL to the first column, It's a little tricky
-		// because chk.NumRows() takes its first column's length as result.
-		chk.AppendNull(0)
-	}
+	// Here we only append NULL to the first column, It's a little tricky because
+	// "chk.NumRows()" takes its first column's length as result.
+	chk.AppendNull(0)
+	e.numReturned = e.numDualRows
 	return nil
 }
 
