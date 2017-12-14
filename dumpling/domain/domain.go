@@ -20,7 +20,6 @@ import (
 	"time"
 	"unsafe"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )

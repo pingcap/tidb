@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"math"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/expression"
+	log "github.com/sirupsen/logrus"
 )
 
 // statsProfile stores the basic information of statistics for the a plan's output. It is used for cost estimation.

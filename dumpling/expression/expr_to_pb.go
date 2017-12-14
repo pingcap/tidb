@@ -16,7 +16,6 @@ package expression
 import (
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 )
 
 // ExpressionsToPB converts expression to tipb.Expr.
