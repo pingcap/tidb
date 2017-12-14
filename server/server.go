@@ -320,7 +320,7 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
-		if client.killed {
+		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
 		rs = append(rs, client.ctx.ShowProcess())
@@ -347,7 +347,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	}
 
 	if !query {
-		conn.killed = true
+		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
 }
 
@@ -372,7 +372,8 @@ func (s *Server) kickIdleConnection() {
 	var conns []*clientConn
 	s.rwlock.RLock()
 	for _, cc := range s.clients {
-		if cc.SetInActive() {
+		if cc.ShutdownOrNotify() {
+			// Shutdowned conn will be closed by us, and notified conn will exist themselves.
 			conns = append(conns, cc)
 		}
 	}

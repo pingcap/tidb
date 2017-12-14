@@ -79,18 +79,21 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	// 0: conn is blocked reading a packet
-	// 1: conn is dispatching the query
-	// 2: server want to graceful shutdown
-	active int32
+	status       int32             // dispatching/reading/shutdown/waitshutdown
 
 	// cancelFunc is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
 		cancelFunc goctx.CancelFunc
 	}
-	killed bool
 }
+
+const (
+	connStatusDispatching int32 = iota
+	connStatusReading
+	connStatusShutdown     // Closed by server.
+	connStatusWaitShutdown // Notified by server to close.
+)
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
@@ -394,6 +397,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run() {
 	const size = 4096
+	closedOutside := false
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -402,15 +406,22 @@ func (cc *clientConn) Run() {
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
-		err := cc.Close()
-		terror.Log(errors.Trace(err))
+		if !closedOutside {
+			err := cc.Close()
+			terror.Log(errors.Trace(err))
+		}
 	}()
 
-	for !cc.killed {
-		atomic.StoreInt32(&cc.active, 0)
+	cc.status = connStatusDispatching
+	for {
+		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
+			closedOutside = true
+			return
+		}
+
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
-		if err != nil || cc.killed {
+		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				errStack := errors.ErrorStack(err)
 				if !strings.Contains(errStack, "use of closed network connection") {
@@ -418,15 +429,14 @@ func (cc *clientConn) Run() {
 						cc.connectionID, errStack)
 				}
 			}
-			if cc.killed {
-				log.Warnf("[%d] session is killed.", cc.connectionID)
-			}
 			return
 		}
 
-		if succ := atomic.CompareAndSwapInt32(&cc.active, 0, 1); !succ {
-			return // graceful shutdown
+		if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) == false {
+			closedOutside = true
+			return
 		}
+
 		startTime := time.Now()
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
@@ -456,14 +466,16 @@ func (cc *clientConn) Run() {
 	}
 }
 
-func (cc *clientConn) SetInActive() bool {
+// ShutdownOrNotify will Shutdown this client connection, or do its best to notify.
+func (cc *clientConn) ShutdownOrNotify() bool {
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
 		return false
 	}
-	// active 0 -> 1 means go to dispatch query.
-	// active 0 -> 2 means go to graceful shutdown.
-	// Just one of them would happen.
-	return atomic.CompareAndSwapInt32(&cc.active, 0, 2)
+	if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusShutdown) {
+		return true
+	}
+	atomic.StoreInt32(&cc.status, connStatusWaitShutdown)
+	return false
 }
 
 func queryStrForLog(query string) string {
