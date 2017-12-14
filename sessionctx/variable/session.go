@@ -239,6 +239,10 @@ type SessionVars struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// EnableChunk indicates whether the chunk execution model is enabled.
+	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
+	EnableChunk bool
 }
 
 // NewSessionVars creates a session vars object.
