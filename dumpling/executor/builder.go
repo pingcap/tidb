@@ -424,14 +424,15 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 }
 
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
-	exec := &ExplainExec{
+	e := &ExplainExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 	}
-	exec.rows = make([]Row, 0, len(v.Rows))
+	e.rows = make([][]string, 0, len(v.Rows))
 	for _, row := range v.Rows {
-		exec.rows = append(exec.rows, row)
+		e.rows = append(e.rows, row)
 	}
-	return exec
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
