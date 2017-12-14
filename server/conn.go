@@ -47,7 +47,6 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/context"
@@ -58,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -79,7 +79,7 @@ type clientConn struct {
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 
-	// cancelFunc is used for cancelling the execution of current transaction.
+	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
 		cancelFunc goctx.CancelFunc
@@ -224,7 +224,7 @@ func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (par
 	return offset, nil
 }
 
-// Parse the HandshakeResponse (except the common header part).
+// parseHandshakeResponseBody parse the HandshakeResponse (except the common header part).
 func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset int) (err error) {
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
@@ -381,6 +381,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		}
 	}
 	cc.ctx.SetSessionManager(cc.server)
+	if cc.server.cfg.EnableChunk {
+		cc.ctx.EnableChunk()
+	}
 	return nil
 }
 

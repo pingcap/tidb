@@ -19,13 +19,13 @@ import (
 	"net/http"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 )
 
 var once sync.Once
