@@ -1067,14 +1067,22 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, innerExecBuilder.Schema().Len())
 	}
+	var outerConditions, innerConditions []expression.Expression
+	if v.OuterIndex == 0 {
+		outerConditions = v.LeftConditions
+		innerConditions = v.RightConditions
+	} else {
+		outerConditions = v.RightConditions
+		innerConditions = v.LeftConditions
+	}
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
 		innerExecBuilder: innerExecBuilder,
 		outerKeys:        v.OuterJoinKeys,
 		innerKeys:        v.InnerJoinKeys,
-		outerFilter:      v.LeftConditions,
-		innerFilter:      v.RightConditions,
+		outerFilter:      outerConditions,
+		innerFilter:      innerConditions,
 		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, nil, nil),
 		maxBatchSize:     batchSize,
 		indexRanges:      v.Ranges,

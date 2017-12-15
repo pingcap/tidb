@@ -41,7 +41,6 @@ func getPermutation(cols1, cols2 []*expression.Column) ([]int, []*expression.Col
 		if offset == -1 {
 			return permutation, cols1[:i]
 		}
-
 		permutation = append(permutation, offset)
 	}
 	return permutation, cols1
@@ -261,7 +260,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
 // because we will swap the children of join when the right child is outer child.
 // First of all, we will extract the join keys for p's equal conditions. Then check whether all of them is a part of index
-// or just the primary key. If we we will construct the index join.
+// or just the primary key. If so we will construct the index join.
 // We may support that not all of the equal key need to match one index or pk, just part of them match is enough in the future.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) []PhysicalPlan {
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
