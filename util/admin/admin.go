@@ -18,7 +18,6 @@ import (
 	"reflect"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	log "github.com/sirupsen/logrus"
 )
 
 // DDLInfo is for DDL information.

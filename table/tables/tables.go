@@ -21,7 +21,6 @@ import (
 	"math"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-binlog"
+	log "github.com/sirupsen/logrus"
 )
 
 // Table implements table.Table interface.
