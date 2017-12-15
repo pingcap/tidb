@@ -26,6 +26,7 @@ import (
 type concatFunction struct {
 	aggFunction
 	separator string
+	sepInited bool
 }
 
 // Clone implements Aggregation interface.
@@ -67,11 +68,12 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.
 // Update implements Aggregation interface.
 func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
-	if cf.separator == "" {
+	if !cf.sepInited {
 		err := cf.initSeparator(sc, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		cf.sepInited = true
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
