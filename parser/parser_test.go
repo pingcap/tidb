@@ -2033,6 +2033,7 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 	table := []testCase{
 		{"analyze table t1", true},
 		{"analyze table t,t1", true},
+		{"analyze table t1 index", true},
 		{"analyze table t1 index a", true},
 		{"analyze table t1 index a,b", true},
 	}
