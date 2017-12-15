@@ -95,7 +95,6 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 	if ctx.Buffer == nil {
 		ctx.Buffer = &bytes.Buffer{}
 	} else {
-		// now use separator
 		ctx.Buffer.WriteString(cf.separator)
 	}
 	for _, val := range datumBuf {

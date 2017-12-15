@@ -3455,7 +3455,7 @@ OptGConcatSeparator:
         }
 | "SEPARATOR" stringLit
 	{ 
-		$$ = ast.NewValueExpr($2); 
+		$$ = ast.NewValueExpr($2)
 	}
         
 
