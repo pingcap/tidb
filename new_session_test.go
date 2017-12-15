@@ -1588,13 +1588,18 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		row, err1 := rs.Next(goctx.TODO())
-		c.Assert(err1, IsNil)
-		if row == nil {
+		chk := rs.NewChunk()
+		err = rs.NextChunk(goctx.TODO(), chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
 			break
 		}
-		c.Assert(row.GetInt64(0), Equals, int64(idx+100))
-		idx++
+
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			row := chk.GetRow(rowIdx)
+			c.Assert(row.GetInt64(0), Equals, int64(idx+100))
+			idx++
+		}
 	}
 
 	c.Assert(idx, Equals, 100)
