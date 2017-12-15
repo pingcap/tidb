@@ -246,7 +246,7 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 	return true
 }
 
-func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
+func (p *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []expression.Expression) PhysicalPlan {
 	is := PhysicalIndexScan{
 		Table:            p.tableInfo,
 		TableAsName:      p.TableAsName,
@@ -257,7 +257,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		Ranges:           ranger.FullIndexRange(),
 		OutOfOrder:       true,
 	}.init(p.ctx)
-	is.filterCondition = p.pushedDownConds
+	is.filterCondition = remainedConds
 	is.profile = p.profile
 	cop := &copTask{
 		indexPlan: is,

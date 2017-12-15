@@ -14,10 +14,15 @@
 package plan
 
 import (
+	"sort"
+
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 func (p *LogicalUnionScan) generatePhysicalPlans() []PhysicalPlan {
@@ -158,33 +163,34 @@ func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
 
 // joinKeysMatchIndex checks if all keys match columns in index.
 func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
-	if len(index.Columns) < len(keys) {
+	if len(keys) > len(index.Columns) {
 		return nil
 	}
-	matchOffsets := make([]int, len(keys))
-	for i, idxCol := range index.Columns {
-		if idxCol.Length != types.UnspecifiedLength {
-			return nil
-		}
+	offsetsMap := make([]int, len(index.Columns))
+	for i := range offsetsMap {
+		offsetsMap[i] = -1
+	}
+	for i, key := range keys {
 		found := false
-		for j, key := range keys {
+		for j, idxCol := range index.Columns {
+			if idxCol.Length != types.UnspecifiedLength {
+				continue
+			}
 			if idxCol.Name.L == key.ColName.L {
-				matchOffsets[i] = j
+				offsetsMap[j] = i
 				found = true
-				break
 			}
 		}
 		if !found {
 			return nil
 		}
-		if i+1 == len(keys) {
-			break
-		}
 	}
-	return matchOffsets
+	return offsetsMap
 }
 
-func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
+// When inner plan is TableReader, the last two parameter will be nil
+func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int,
+	innerPlan PhysicalPlan, ranges []*ranger.IndexRange, offsetsMap []int) []PhysicalPlan {
 	joinType := p.JoinType
 	join := PhysicalIndexJoin{
 		OuterIndex:      outerIdx,
@@ -197,6 +203,8 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		DefaultValues:   p.DefaultValues,
 		outerSchema:     p.children[outerIdx].Schema(),
 		innerPlan:       innerPlan,
+		offsetsMap:      offsetsMap,
+		ranges:          ranges,
 	}.init(p.ctx, p.children...)
 	join.SetSchema(p.schema)
 	join.profile = p.profile
@@ -207,12 +215,12 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
 // because we will swap the children of join when the right child is outer child.
-// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or PK
-// column of inner child, we can apply the index join.
+// First of all, we will extract the join keys for p's equal conditions. Then check whether all of them is a part of index
+// or just the primary key. If we we will construct the index join.
+// We may support that not all of the equal key need to match one index or pk, just part of them match is enough in the future.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
 	var (
-		usedIndexInfo *model.IndexInfo
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
 	)
@@ -233,28 +241,75 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
 			innerPlan := x.forceToTableScan()
-			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
 		}
 	}
+	var (
+		bestIndexInfo  *model.IndexInfo
+		rangesOfBest   []*ranger.IndexRange
+		maxRangeLen    int
+		remainedOfBest []expression.Expression
+	)
+	orderedInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
+	orderedOuterKeys := make([]*expression.Column, 0, len(innerJoinKeys))
+	idxInIndex := make([]int, 0, len(innerJoinKeys))
 	for _, indexInfo := range indices {
-		matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
-		if matchedOffsets == nil {
+		idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, indexInfo)
+		offsetsMap := joinKeysMatchIndex(innerJoinKeys, indexInfo)
+		if offsetsMap == nil {
 			continue
 		}
-		usedIndexInfo = indexInfo
-		newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
-		newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
-		for i, offset := range matchedOffsets {
-			newOuterJoinKeys[i] = outerJoinKeys[offset]
-			newInnerJoinKeys[i] = innerJoinKeys[offset]
+		maxIndexColIdx := 0
+		for i := len(indexInfo.Columns) - 1; i >= 0; i-- {
+			if offsetsMap[i] != -1 {
+				maxIndexColIdx = i
+				break
+			}
 		}
-		outerJoinKeys = newOuterJoinKeys
-		innerJoinKeys = newInnerJoinKeys
-		break
+		// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down so cannot
+		// to calculate range either.
+		// TODO: There may be a selection that block the index join.
+		conds := make([]expression.Expression, 0, len(offsetsMap)+len(x.pushedDownConds))
+		// Construct a fake equal expression for calculate the range.
+		for _, key := range innerJoinKeys {
+			eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, expression.One)
+			conds = append(conds, eqFunc)
+		}
+		conds = append(conds, x.pushedDownConds...)
+		// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occurs in the same time.
+		// So we can guarantee that once count of the columns in the ranges is no lower than the max idx
+		// that the inner keys matched in the index, then the equal conditions of join are all used.
+		accesses, remained := ranger.DetachIndexConditions(conds, idxCols, colLengths)
+		ranges, _ := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
+		idxRanges := ranger.Ranges2IndexRanges(ranges)
+		// We'd better guarantee that all the index column in the join's equal condition is used.
+		if len(idxRanges) == 0 || len(idxRanges[0].LowVal) < maxIndexColIdx {
+			continue
+		}
+		// This compare way is a little easy, we can use the average unit size of one index in the future to determine which index to choose.
+		if len(idxRanges[0].LowVal) > maxRangeLen {
+			bestIndexInfo = indexInfo
+			maxRangeLen = len(idxRanges[0].LowVal)
+			rangesOfBest = idxRanges
+			remainedOfBest = remained
+
+			idxInIndex = idxInIndex[:0]
+			for key := range offsetsMap {
+				idxInIndex = append(idxInIndex, key)
+			}
+			sort.Ints(idxInIndex)
+			orderedInnerKeys = orderedInnerKeys[:0]
+			orderedOuterKeys = orderedOuterKeys[:0]
+			for i, idx := range idxInIndex {
+				pos := offsetsMap[idx]
+				orderedOuterKeys[i] = outerJoinKeys[pos]
+				orderedInnerKeys[i] = innerJoinKeys[pos]
+			}
+		}
 	}
-	if usedIndexInfo != nil {
-		innerPlan := x.forceToIndexScan(usedIndexInfo)
-		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+	if bestIndexInfo != nil {
+		innerPlan := x.forceToIndexScan(bestIndexInfo, remainedOfBest)
+		return p.constructIndexJoin(orderedInnerKeys, orderedOuterKeys, outerIdx, innerPlan, rangesOfBest, idxInIndex)
 	}
 	return nil
 }
