@@ -104,9 +104,6 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 	if len(p.cols) > len(prop.cols) || p.desc != prop.desc {
 		return false
 	}
-	if p.taskTp != prop.taskTp {
-		return false
-	}
 	for i := range p.cols {
 		if !p.cols[i].Equal(prop.cols[i], nil) {
 			return false
