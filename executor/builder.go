@@ -147,13 +147,14 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
 	e := &CancelDDLJobsExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		JobIDs:       v.JobIDs,
+		jobIDs:       v.JobIDs,
 	}
-	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.JobIDs)
+	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.jobIDs)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
-
+	e.supportChk = true
 	return e
 }
 
