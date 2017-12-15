@@ -14,14 +14,16 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 )
 
-func (p *LogicalUnionScan) generatePhysicalPlans() []PhysicalPlan {
-	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx)
+func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, prop)
 	us.SetSchema(p.schema)
 	return []PhysicalPlan{us}
 }
@@ -80,8 +82,33 @@ func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.
 	return eqConds, otherConds
 }
 
-func (p *LogicalJoin) getMergeJoin() []PhysicalPlan {
+// Only if the input required prop is the prefix fo join keys, we can pass through this property.
+func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*requiredProp, bool) {
+	p.expectedCnt = prop.expectedCnt
+	lProp := &requiredProp{taskTp: rootTaskType, cols: p.leftKeys, expectedCnt: math.MaxFloat64}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: p.rightKeys, expectedCnt: math.MaxFloat64}
+	if !prop.isEmpty() {
+		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
+		if prop.desc {
+			return nil, false
+		}
+		if !prop.isPrefix(lProp) && !prop.isPrefix(rProp) {
+			return nil, false
+		}
+		if prop.isPrefix(rProp) && p.JoinType == LeftOuterJoin {
+			return nil, false
+		}
+		if prop.isPrefix(lProp) && p.JoinType == RightOuterJoin {
+			return nil, false
+		}
+	}
+
+	return []*requiredProp{lProp, rProp}, true
+}
+
+func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
+	// The leftProperties caches all the possible properties that are provided by its children.
 	for _, leftCols := range p.leftProperties {
 		offsets, leftKeys := getPermutation(leftCols, p.LeftJoinKeys)
 		if len(offsets) == 0 {
@@ -106,7 +133,10 @@ func (p *LogicalJoin) getMergeJoin() []PhysicalPlan {
 		mergeJoin.SetSchema(p.schema)
 		mergeJoin.profile = p.profile
 		mergeJoin.EqualConditions, mergeJoin.OtherConditions = p.getEqAndOtherCondsByOffsets(offsets)
-		joins = append(joins, mergeJoin)
+		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
+			mergeJoin.childrenReqProps = reqProps
+			joins = append(joins, mergeJoin)
+		}
 	}
 	return joins
 }
@@ -126,21 +156,27 @@ func (p *LogicalJoin) getHashSemiJoin() PhysicalPlan {
 	return semiJoin
 }
 
-func (p *LogicalJoin) getHashJoins() []PhysicalPlan {
+func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
+	if !prop.isEmpty() { // hash join doesn't promise any orders
+		return nil
+	}
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		joins = append(joins, p.getHashJoin(1))
+		joins = append(joins, p.getHashJoin(prop, 1))
 	case RightOuterJoin:
-		joins = append(joins, p.getHashJoin(0))
+		joins = append(joins, p.getHashJoin(prop, 0))
 	case InnerJoin:
-		joins = append(joins, p.getHashJoin(1))
-		joins = append(joins, p.getHashJoin(0))
+		joins = append(joins, p.getHashJoin(prop, 1))
+		joins = append(joins, p.getHashJoin(prop, 0))
 	}
 	return joins
 }
 
-func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
+func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan {
+	chReqProps := make([]*requiredProp, 2)
+	chReqProps[innerIdx] = &requiredProp{expectedCnt: math.MaxFloat64}
+	chReqProps[1-innerIdx] = &requiredProp{expectedCnt: prop.expectedCnt}
 	hashJoin := PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -149,8 +185,8 @@ func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
 		JoinType:        p.JoinType,
 		Concurrency:     JoinConcurrency,
 		DefaultValues:   p.DefaultValues,
-		SmallChildIdx:   smallTable,
-	}.init(p.ctx)
+		SmallChildIdx:   innerIdx,
+	}.init(p.ctx, chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	hashJoin.profile = p.profile
 	return hashJoin
@@ -184,8 +220,15 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 	return matchOffsets
 }
 
-func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
+func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
 	joinType := p.JoinType
+	outerSchema := p.children[outerIdx].Schema()
+	// If the order by columns are not all from outer child, index join cannot promise the order.
+	if !prop.allColsFromSchema(outerSchema) {
+		return nil
+	}
+	chReqProps := make([]*requiredProp, 2)
+	chReqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
 	join := PhysicalIndexJoin{
 		OuterIndex:      outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -195,21 +238,22 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		OuterJoinKeys:   outerJoinKeys,
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
-		outerSchema:     p.children[outerIdx].Schema(),
 		innerPlan:       innerPlan,
-	}.init(p.ctx, p.children...)
+	}.init(p.ctx, chReqProps...)
 	join.SetSchema(p.schema)
 	join.profile = p.profile
-	orderJoin := join.Copy().(*PhysicalIndexJoin)
-	orderJoin.KeepOrder = true
-	return []PhysicalPlan{join, orderJoin}
+	if !prop.isEmpty() {
+		join.KeepOrder = true
+	}
+	join.expectedCnt = prop.expectedCnt
+	return []PhysicalPlan{join}
 }
 
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
 // because we will swap the children of join when the right child is outer child.
 // First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or PK
 // column of inner child, we can apply the index join.
-func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
+func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) []PhysicalPlan {
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
 	var (
 		usedIndexInfo *model.IndexInfo
@@ -233,7 +277,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
 			innerPlan := x.forceToTableScan()
-			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
 		}
 	}
 	for _, indexInfo := range indices {
@@ -254,14 +298,14 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 	}
 	if usedIndexInfo != nil {
 		innerPlan := x.forceToIndexScan(usedIndexInfo)
-		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
 	}
 	return nil
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
-func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
+func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, bool) {
 	if len(p.EqualConditions) == 0 {
 		return nil, false
 	}
@@ -270,7 +314,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	rightOuter := (p.preferJoinType & preferRightAsIndexOuter) > 0
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
-		join := p.getIndexJoinByOuterIdx(0)
+		join := p.getIndexJoinByOuterIdx(prop, 0)
 		if join != nil {
 			// If the plan is not nil and matches the hint, return it directly.
 			if leftOuter {
@@ -279,7 +323,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 			plans = append(plans, join...)
 		}
 	case RightOuterJoin:
-		join := p.getIndexJoinByOuterIdx(1)
+		join := p.getIndexJoinByOuterIdx(prop, 1)
 		if join != nil {
 			// If the plan is not nil and matches the hint, return it directly.
 			if rightOuter {
@@ -288,7 +332,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 			plans = append(plans, join...)
 		}
 	case InnerJoin:
-		join := p.getIndexJoinByOuterIdx(0)
+		join := p.getIndexJoinByOuterIdx(prop, 0)
 		if join != nil {
 			// If the plan is not nil and matches the hint, return it directly.
 			if leftOuter {
@@ -296,7 +340,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 			}
 			plans = append(plans, join...)
 		}
-		join = p.getIndexJoinByOuterIdx(1)
+		join = p.getIndexJoinByOuterIdx(prop, 1)
 		if join != nil {
 			// If the plan is not nil and matches the hint, return it directly.
 			if rightOuter {
@@ -308,21 +352,25 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	return plans, false
 }
 
-func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
-	mergeJoins := p.getMergeJoin()
+// LogicalJoin can generates hash join, index join and sort merge join.
+// Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
+// If the hint is not matched, it will get other candidates.
+// If the hint is not figured, we will pick all candidates.
+func (p *LogicalJoin) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	mergeJoins := p.getMergeJoin(prop)
 	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
 		return mergeJoins
 	}
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
 
-	indexJoins, forced := p.tryToGetIndexJoin()
+	indexJoins, forced := p.tryToGetIndexJoin(prop)
 	if forced {
 		return indexJoins
 	}
 	joins = append(joins, indexJoins...)
 
-	hashJoins := p.getHashJoins()
+	hashJoins := p.getHashJoins(prop)
 	if (p.preferJoinType & preferHashJoin) > 0 {
 		return hashJoins
 	}
@@ -330,62 +378,114 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	return joins
 }
 
-func (p *LogicalProjection) generatePhysicalPlans() []PhysicalPlan {
+// tryToGetChildProp will check if this sort property can be pushed or not.
+// When a sort column will be replaced by scalar function, we refuse it.
+// When a sort column will be replaced by a constant, we just remove it.
+func (p *LogicalProjection) tryToGetChildProp(prop *requiredProp) (*requiredProp, bool) {
+	p.expectedCnt = prop.expectedCnt
+	newProp := &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt}
+	newCols := make([]*expression.Column, 0, len(prop.cols))
+	for _, col := range prop.cols {
+		idx := p.schema.ColumnIndex(col)
+		if idx == -1 {
+			return nil, false
+		}
+		switch expr := p.Exprs[idx].(type) {
+		case *expression.Column:
+			newCols = append(newCols, expr)
+		case *expression.ScalarFunction:
+			return nil, false
+		}
+	}
+	newProp.cols = newCols
+	newProp.desc = prop.desc
+	return newProp, true
+}
+
+func (p *LogicalProjection) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	newProp, ok := p.tryToGetChildProp(prop)
+	if !ok {
+		return nil
+	}
 	proj := PhysicalProjection{
 		Exprs: p.Exprs,
-	}.init(p.ctx)
+	}.init(p.ctx, newProp)
 	proj.profile = p.profile
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
 }
 
-func (p *LogicalTopN) generatePhysicalPlans() []PhysicalPlan {
-	topN := PhysicalTopN{
-		ByItems: p.ByItems,
-		Count:   p.Count,
-		Offset:  p.Offset,
-		partial: p.partial,
-	}.init(p.ctx)
-	topN.profile = p.profile
-	topN.SetSchema(p.schema)
-	plans := []PhysicalPlan{topN}
-	if prop, canPass := getPropByOrderByItems(p.ByItems); canPass {
-		limit := PhysicalLimit{
-			Count:        p.Count,
-			Offset:       p.Offset,
-			partial:      p.partial,
-			expectedProp: prop,
-		}.init(p.ctx)
-		limit.SetSchema(p.schema)
-		limit.profile = p.profile
-		plans = append(plans, limit)
+func (p *LogicalTopN) getPhysTopN() []PhysicalPlan {
+	ret := make([]PhysicalPlan, 0, 3)
+	for _, tp := range wholeTaskTypes {
+		resultProp := &requiredProp{taskTp: tp, expectedCnt: math.MaxFloat64}
+		topN := PhysicalTopN{
+			ByItems: p.ByItems,
+			Count:   p.Count,
+			Offset:  p.Offset,
+			partial: p.partial,
+		}.init(p.ctx, resultProp)
+		topN.profile = p.profile
+		topN.SetSchema(p.schema)
+		ret = append(ret, topN)
 	}
-	return plans
+	return ret
 }
-func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
+
+func (p *LogicalTopN) getPhysLimits() []PhysicalPlan {
+	prop, canPass := getPropByOrderByItems(p.ByItems)
+	if !canPass {
+		return nil
+	}
+	ret := make([]PhysicalPlan, 0, 3)
+	for _, tp := range wholeTaskTypes {
+		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(p.Count + p.Offset), cols: prop.cols, desc: prop.desc}
+		limit := PhysicalLimit{
+			Count:   p.Count,
+			Offset:  p.Offset,
+			partial: p.partial,
+		}.init(p.ctx, resultProp)
+		limit.profile = p.profile
+		limit.SetSchema(p.schema)
+		ret = append(ret, limit)
+	}
+	return ret
+}
+
+func (p *LogicalTopN) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if prop.matchItems(p.ByItems) {
+		return append(p.getPhysTopN(), p.getPhysLimits()...)
+	}
+	return nil
+}
+
+func (p *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if !prop.allColsFromSchema(p.children[0].Schema()) { // for convenient, we don't pass through any prop
+		return nil
+	}
 	var join PhysicalPlan
 	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin ||
 		p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		join = p.getHashSemiJoin()
 	} else {
-		join = p.getHashJoin(1)
+		join = p.getHashJoin(prop, 1)
 	}
 	apply := PhysicalApply{
 		PhysicalJoin:  join,
 		OuterSchema:   p.corCols,
 		rightChOffset: p.children[0].Schema().Len(),
-	}.init(p.ctx)
+	}.init(p.ctx, &requiredProp{expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc}, &requiredProp{expectedCnt: math.MaxFloat64})
 	apply.SetSchema(p.schema)
 	apply.profile = p.profile
 	return []PhysicalPlan{apply}
 }
 
-func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
-	np := p.basePlan.self.(PhysicalPlan).Copy()
-	return []PhysicalPlan{np}
+// genPhysPlansByReqProp is only for implementing interface. DataSource and Dual generate task in `convert2NewPhysicalPlan` directly.
+func (p *baseLogicalPlan) genPhysPlansByReqProp(_ *requiredProp) []PhysicalPlan {
+	panic("This function should not be called")
 }
 
-func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
+func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 	if len(p.possibleProperties) == 0 {
 		return nil
 	}
@@ -404,112 +504,152 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 		if len(keys) != len(p.groupByCols) {
 			continue
 		}
+		childProp := &requiredProp{
+			cols:        keys,
+			desc:        prop.desc,
+			expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count,
+		}
+		if !prop.isPrefix(childProp) {
+			continue
+		}
 		agg := basePhysicalAgg{
 			GroupByItems: p.GroupByItems,
 			AggFuncs:     p.AggFuncs,
-		}.initForStream(p.ctx, keys, p.inputCount)
+		}.initForStream(p.ctx, childProp)
 		agg.SetSchema(p.schema.Clone())
 		agg.profile = p.profile
+		agg.expectedCnt = prop.expectedCnt
 		streamAggs = append(streamAggs, agg)
 	}
 	return streamAggs
 }
 
-func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
-	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
-	agg := basePhysicalAgg{
-		GroupByItems: p.GroupByItems,
-		AggFuncs:     p.AggFuncs,
-	}.initForHash(p.ctx)
-	agg.SetSchema(p.schema.Clone())
-	agg.profile = p.profile
-	aggs = append(aggs, agg)
+func (p *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
+	if !prop.isEmpty() {
+		return nil
+	}
+	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	for _, taskTp := range wholeTaskTypes {
+		agg := basePhysicalAgg{
+			GroupByItems: p.GroupByItems,
+			AggFuncs:     p.AggFuncs,
+		}.initForHash(p.ctx, &requiredProp{expectedCnt: math.MaxFloat64, taskTp: taskTp})
+		agg.expectedCnt = prop.expectedCnt
+		agg.SetSchema(p.schema.Clone())
+		agg.profile = p.profile
+		hashAggs = append(hashAggs, agg)
+	}
+	return hashAggs
+}
 
-	streamAggs := p.getStreamAggs()
+func (p *LogicalAggregation) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
+	aggs = append(aggs, p.getHashAggs(prop)...)
+
+	streamAggs := p.getStreamAggs(prop)
 	aggs = append(aggs, streamAggs...)
 
 	return aggs
 }
 
-func (p *LogicalSelection) generatePhysicalPlans() []PhysicalPlan {
+func (p *LogicalSelection) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
-	}.init(p.ctx)
+	}.init(p.ctx, prop)
 	sel.profile = p.profile
 	sel.SetSchema(p.Schema())
+	sel.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{sel}
 }
 
-func (p *LogicalLimit) generatePhysicalPlans() []PhysicalPlan {
-	limit := PhysicalLimit{
-		Offset:  p.Offset,
-		Count:   p.Count,
-		partial: p.partial,
-	}.init(p.ctx)
-	limit.profile = p.profile
-	limit.SetSchema(p.Schema())
-	return []PhysicalPlan{limit}
-}
-
-func (p *LogicalLock) generatePhysicalPlans() []PhysicalPlan {
-	lock := PhysicalLock{
-		Lock: p.Lock,
-	}.init(p.ctx)
-	lock.profile = p.profile
-	lock.SetSchema(p.schema)
-	return []PhysicalPlan{lock}
-}
-
-func (p *LogicalUnionAll) generatePhysicalPlans() []PhysicalPlan {
-	ua := PhysicalUnionAll{childNum: len(p.children)}.init(p.ctx)
-	ua.profile = p.profile
-	ua.SetSchema(p.schema)
-	return []PhysicalPlan{ua}
-}
-
-func (p *LogicalSort) getPhysicalSort() *PhysicalSort {
-	ps := PhysicalSort{ByItems: p.ByItems}.init(p.ctx)
-	ps.profile = p.profile
-	ps.SetSchema(p.schema)
-	return ps
-}
-
-func (p *LogicalSort) getNominalSort() *NominalSort {
-	prop, canPass := getPropByOrderByItems(p.ByItems)
-	if !canPass {
+func (p *LogicalLimit) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if !prop.isEmpty() {
 		return nil
 	}
-	ps := &NominalSort{prop: prop}
-	return ps
-}
-
-func (p *LogicalSort) generatePhysicalPlans() []PhysicalPlan {
-	ret := make([]PhysicalPlan, 0, 2)
-	ret = append(ret, p.getPhysicalSort())
-	ps := p.getNominalSort()
-	if ps != nil {
-		ret = append(ret, ps)
+	ret := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	for _, tp := range wholeTaskTypes {
+		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(p.Count + p.Offset)}
+		limit := PhysicalLimit{
+			Offset:  p.Offset,
+			Count:   p.Count,
+			partial: p.partial,
+		}.init(p.ctx, resultProp)
+		limit.profile = p.profile
+		limit.SetSchema(p.Schema())
+		ret = append(ret, limit)
 	}
 	return ret
 }
 
-func (p *LogicalExists) generatePhysicalPlans() []PhysicalPlan {
-	exists := PhysicalExists{}.init(p.ctx)
+func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	lock := PhysicalLock{
+		Lock: p.Lock,
+	}.init(p.ctx, prop)
+	lock.profile = p.profile
+	lock.SetSchema(p.schema)
+	lock.expectedCnt = prop.expectedCnt
+	return []PhysicalPlan{lock}
+}
+
+func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	chReqProps := make([]*requiredProp, 0, len(p.children))
+	for range p.children {
+		chReqProps = append(chReqProps, prop)
+	}
+	ua := PhysicalUnionAll{childNum: len(p.children)}.init(p.ctx, chReqProps...)
+	ua.profile = p.profile
+	ua.SetSchema(p.schema)
+	ua.expectedCnt = prop.expectedCnt
+	return []PhysicalPlan{ua}
+}
+
+func (p *LogicalSort) getPhysicalSort(reqProp *requiredProp) *PhysicalSort {
+	ps := PhysicalSort{ByItems: p.ByItems}.init(p.ctx, &requiredProp{expectedCnt: math.MaxFloat64})
+	ps.profile = p.profile
+	ps.expectedCnt = reqProp.expectedCnt
+	ps.SetSchema(p.schema)
+	return ps
+}
+
+func (p *LogicalSort) getNominalSort(reqProp *requiredProp) *NominalSort {
+	prop, canPass := getPropByOrderByItems(p.ByItems)
+	if !canPass {
+		return nil
+	}
+	prop.expectedCnt = reqProp.expectedCnt
+	ps := NominalSort{}.init(p.ctx, prop)
+	return ps
+}
+
+func (p *LogicalSort) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if prop.matchItems(p.ByItems) {
+		ret := make([]PhysicalPlan, 0, 2)
+		ret = append(ret, p.getPhysicalSort(prop))
+		ns := p.getNominalSort(prop)
+		if ns != nil {
+			ret = append(ret, ns)
+		}
+		return ret
+	}
+	return nil
+}
+
+func (p *LogicalExists) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if !prop.isEmpty() {
+		return nil
+	}
+	exists := PhysicalExists{}.init(p.ctx, &requiredProp{expectedCnt: 1})
 	exists.profile = p.profile
 	exists.SetSchema(p.schema)
 	return []PhysicalPlan{exists}
 }
 
-func (p *LogicalMaxOneRow) generatePhysicalPlans() []PhysicalPlan {
-	mor := PhysicalMaxOneRow{}.init(p.ctx)
+func (p *LogicalMaxOneRow) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if !prop.isEmpty() {
+		return nil
+	}
+	mor := PhysicalMaxOneRow{}.init(p.ctx, &requiredProp{expectedCnt: 2})
 	mor.profile = p.profile
 	mor.SetSchema(p.schema)
 	return []PhysicalPlan{mor}
-}
-
-func (p *LogicalTableDual) generatePhysicalPlans() []PhysicalPlan {
-	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
-	dual.profile = p.profile
-	dual.SetSchema(p.schema)
-	return []PhysicalPlan{dual}
 }
