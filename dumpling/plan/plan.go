@@ -96,6 +96,10 @@ type requiredProp struct {
 	hashcode []byte
 }
 
+func (p *requiredProp) allColsFromSchema(schema *expression.Schema) bool {
+	return schema.ColumnsIndices(p.cols) != nil
+}
+
 func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 	if len(p.cols) > len(prop.cols) || p.desc != prop.desc {
 		return false
@@ -105,6 +109,17 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 	}
 	for i := range p.cols {
 		if !p.cols[i].Equal(prop.cols[i], nil) {
+			return false
+		}
+	}
+	return true
+}
+
+// Check if this prop's columns can match by items totally.
+func (p *requiredProp) matchItems(items []*ByItems) bool {
+	for i, col := range p.cols {
+		sortItem := items[i]
+		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(col, nil) {
 			return false
 		}
 	}
@@ -172,8 +187,8 @@ type LogicalPlan interface {
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
 	preparePossibleProperties() [][]*expression.Column
 
-	// generatePhysicalPlans generates all possible plans.
-	generatePhysicalPlans() []PhysicalPlan
+	// genPhysPlansByReqProp generates all possible plans that can match the required property.
+	genPhysPlansByReqProp(*requiredProp) []PhysicalPlan
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 }
@@ -181,9 +196,6 @@ type LogicalPlan interface {
 // PhysicalPlan is a tree of the physical operators.
 type PhysicalPlan interface {
 	Plan
-
-	// Copy copies the current plan.
-	Copy() PhysicalPlan
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -195,8 +207,8 @@ type PhysicalPlan interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
-	// getChildrenPossibleProps tries to push the required properties to its children and return all the possible properties.
-	getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp
+	// getChildReqProps gets the required property by child index.
+	getChildReqProps(idx int) *requiredProp
 
 	// statsProfile will return the stats for this plan.
 	statsProfile() *statsProfile
@@ -204,11 +216,18 @@ type PhysicalPlan interface {
 
 type baseLogicalPlan struct {
 	basePlan *basePlan
-	taskMap  map[string]task
+
+	taskMap map[string]task
 }
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
+
+	childrenReqProps []*requiredProp
+}
+
+func (bp *basePhysicalPlan) getChildReqProps(idx int) *requiredProp {
+	return bp.childrenReqProps[idx]
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -300,11 +319,6 @@ type basePlan struct {
 	profile *statsProfile
 	// expectedCnt means this operator may be closed after fetching expectedCnt records.
 	expectedCnt float64
-}
-
-func (p *basePlan) copy() *basePlan {
-	np := *p
-	return &np
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {

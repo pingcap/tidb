@@ -68,6 +68,16 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
+func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+	if !prop.isEmpty() {
+		return invalidTask, nil
+	}
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
+	dual.profile = p.profile
+	dual.SetSchema(p.schema)
+	return &rootTask{p: dual}, nil
+}
+
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
 	// look up the task map
@@ -81,17 +91,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 		p.storeTask(prop, t)
 		return t, nil
 	}
-	// Now we only consider rootTask.
-	if len(p.basePlan.children) == 0 {
-		// When the children length is 0, we process it specially.
-		t = &rootTask{p: p.basePlan.self.(LogicalPlan).generatePhysicalPlans()[0]}
-		t = prop.enforceProperty(t, p.basePlan.ctx)
-		p.storeTask(prop, t)
-		return t, nil
-	}
-	// Else we suppose it only has one child.
-	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
-		t, err = p.getBestTask(t, prop, pp)
+	for _, pp := range p.basePlan.self.(LogicalPlan).genPhysPlansByReqProp(prop) {
+		t, err = p.getBestTask(t, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -100,27 +101,27 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	return t, nil
 }
 
-func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan) (task, error) {
-	newProps := pp.getChildrenPossibleProps(prop)
-	for _, newProp := range newProps {
-		tasks := make([]task, 0, len(p.basePlan.children))
-		for i, child := range p.basePlan.children {
-			childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(newProp[i])
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			tasks = append(tasks, childTask)
+func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
+	tasks := make([]task, 0, len(p.basePlan.children))
+	for i, child := range p.basePlan.children {
+		childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(pp.getChildReqProps(i))
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		resultTask := pp.attach2Task(tasks...)
-		if resultTask.cost() < bestTask.cost() {
-			bestTask = resultTask
-		}
+		tasks = append(tasks, childTask)
+	}
+	resultTask := pp.attach2Task(tasks...)
+	if resultTask.cost() < bestTask.cost() {
+		bestTask = resultTask
 	}
 	return bestTask, nil
 }
 
 // tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
 func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) {
+	if !prop.isEmpty() {
+		return nil, nil
+	}
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
 	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
@@ -147,7 +148,6 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 		retPlan = sel
 	}
 	task = &rootTask{p: retPlan}
-	task = prop.enforceProperty(task, p.ctx)
 	return task, nil
 }
 
