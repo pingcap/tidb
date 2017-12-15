@@ -117,8 +117,8 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	t := finishCopTask(tasks[0].copy(), p.basePlan.ctx)
-	return attachPlan2Task(p.basePlan.self.(PhysicalPlan), t)
+	t := finishCopTask(tasks[0].copy(), p.ctx)
+	return attachPlan2Task(p.self, t)
 }
 
 func (p *PhysicalApply) attach2Task(tasks ...task) task {
