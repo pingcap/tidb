@@ -492,7 +492,9 @@ func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	tblInfo := as.TableNames[0].TableInfo
 	for _, idx := range tblInfo.Indices {
-		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+		if idx.State == model.StatePublic {
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+		}
 	}
 	p.SetSchema(&expression.Schema{})
 	return p
