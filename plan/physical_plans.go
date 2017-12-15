@@ -52,7 +52,6 @@ var (
 
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
-	*basePlan
 	basePhysicalPlan
 
 	// TablePlans flats the tablePlan to construct executor pb.
@@ -62,7 +61,6 @@ type PhysicalTableReader struct {
 
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
-	*basePlan
 	basePhysicalPlan
 
 	// IndexPlans flats the indexPlan to construct executor pb.
@@ -75,7 +73,6 @@ type PhysicalIndexReader struct {
 
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
-	*basePlan
 	basePhysicalPlan
 
 	// IndexPlans flats the indexPlan to construct executor pb.
@@ -88,7 +85,6 @@ type PhysicalIndexLookUpReader struct {
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	*basePlan
 	basePhysicalPlan
 
 	// AccessCondition is used to calculate range.
@@ -120,7 +116,6 @@ type PhysicalIndexScan struct {
 
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
-	*basePlan
 	basePhysicalPlan
 
 	DBName      model.CIStr
@@ -142,7 +137,6 @@ func needValue(af aggregation.Aggregation) bool {
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	*basePlan
 	basePhysicalPlan
 
 	// AccessCondition is used to calculate range.
@@ -164,7 +158,6 @@ type PhysicalTableScan struct {
 
 // PhysicalProjection is the physical operator of projection.
 type PhysicalProjection struct {
-	*basePlan
 	basePhysicalPlan
 
 	Exprs []expression.Expression
@@ -172,7 +165,6 @@ type PhysicalProjection struct {
 
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
-	*basePlan
 	basePhysicalPlan
 
 	ByItems []*ByItems
@@ -185,7 +177,6 @@ type PhysicalTopN struct {
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	*basePlan
 	basePhysicalPlan
 
 	PhysicalJoin PhysicalPlan
@@ -196,7 +187,6 @@ type PhysicalApply struct {
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
 type PhysicalHashJoin struct {
-	*basePlan
 	basePhysicalPlan
 
 	JoinType JoinType
@@ -213,7 +203,6 @@ type PhysicalHashJoin struct {
 
 // PhysicalIndexJoin represents the plan of index look up join.
 type PhysicalIndexJoin struct {
-	*basePlan
 	basePhysicalPlan
 
 	JoinType        JoinType
@@ -232,7 +221,6 @@ type PhysicalIndexJoin struct {
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
 type PhysicalMergeJoin struct {
-	*basePlan
 	basePhysicalPlan
 
 	JoinType JoinType
@@ -250,7 +238,6 @@ type PhysicalMergeJoin struct {
 
 // PhysicalHashSemiJoin represents hash join for semi join.
 type PhysicalHashSemiJoin struct {
-	*basePlan
 	basePhysicalPlan
 
 	WithAux bool
@@ -266,7 +253,6 @@ type PhysicalHashSemiJoin struct {
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
 type PhysicalLock struct {
-	*basePlan
 	basePhysicalPlan
 
 	Lock ast.SelectLockType
@@ -274,7 +260,6 @@ type PhysicalLock struct {
 
 // PhysicalLimit is the physical operator of Limit.
 type PhysicalLimit struct {
-	*basePlan
 	basePhysicalPlan
 
 	Offset uint64
@@ -286,7 +271,6 @@ type PhysicalLimit struct {
 
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
-	*basePlan
 	basePhysicalPlan
 
 	childNum int // childNum is the number of children
@@ -318,7 +302,6 @@ func (at AggregationType) String() string {
 }
 
 type basePhysicalAgg struct {
-	*basePlan
 	basePhysicalPlan
 
 	AggFuncs     []aggregation.Aggregation
@@ -337,7 +320,6 @@ type PhysicalStreamAgg struct {
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
 type PhysicalSort struct {
-	*basePlan
 	basePhysicalPlan
 
 	ByItems []*ByItems
@@ -346,13 +328,11 @@ type PhysicalSort struct {
 // NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree.
 type NominalSort struct {
-	*basePlan
 	basePhysicalPlan
 }
 
 // PhysicalUnionScan represents a union scan operator.
 type PhysicalUnionScan struct {
-	*basePlan
 	basePhysicalPlan
 
 	Conditions []expression.Expression
@@ -368,7 +348,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) 
 
 // PhysicalSelection represents a filter.
 type PhysicalSelection struct {
-	*basePlan
 	basePhysicalPlan
 
 	Conditions []expression.Expression
@@ -376,19 +355,16 @@ type PhysicalSelection struct {
 
 // PhysicalExists is the physical operator of Exists.
 type PhysicalExists struct {
-	*basePlan
 	basePhysicalPlan
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
-	*basePlan
 	basePhysicalPlan
 }
 
 // PhysicalTableDual is the physical operator of dual.
 type PhysicalTableDual struct {
-	*basePlan
 	basePhysicalPlan
 
 	RowCount int
