@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
@@ -1076,6 +1077,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerFilter:      v.RightConditions,
 		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, nil, nil),
 		maxBatchSize:     batchSize,
+		indexRanges:      v.Ranges,
+		offsetsMap:       v.OffsetsMap,
 	}
 }
 
@@ -1105,6 +1108,8 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 		},
 		workerWg:        new(sync.WaitGroup),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		indexRanges:     v.Ranges,
+		offsetsMap:      v.OffsetsMap,
 	}
 	e.supportChk = true
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
@@ -1288,6 +1293,19 @@ func (builder *dataReaderBuilder) buildExecutorForDatums(goCtx goctx.Context, da
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
+func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context, datums [][]types.Datum,
+	IndexRanges []*ranger.IndexRange, offsetsMap []int) (Executor, error) {
+	switch v := builder.Plan.(type) {
+	case *plan.PhysicalTableReader:
+		return builder.buildTableReaderForDatums(goCtx, v, datums)
+	case *plan.PhysicalIndexReader:
+		return builder.buildIndexReaderForIndexJoin(goCtx, v, datums, IndexRanges, offsetsMap)
+	case *plan.PhysicalIndexLookUpReader:
+		return builder.buildIndexLookUpReaderForIndexJoin(goCtx, v, datums, IndexRanges, offsetsMap)
+	}
+	return nil, errors.New("Wrong plan type for dataReaderbuilder")
+}
+
 func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
@@ -1353,6 +1371,54 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Co
 	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	err = e.open(goCtx, kvRanges)
+	return e, errors.Trace(err)
+}
+
+func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexReader,
+	values [][]types.Datum, indexRanges []*ranger.IndexRange, offsetsMap []int) (Executor, error) {
+	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(values))
+	for _, val := range values {
+		for _, ran := range indexRanges {
+			for i, pos := range offsetsMap {
+				ran.LowVal[pos] = val[i]
+				ran.HighVal[pos] = val[i]
+			}
+		}
+		tmpKvRanges, err1 := indexRangesToKVRanges(e.tableID, e.index.ID, indexRanges)
+		if err1 != nil {
+			return nil, errors.Trace(err)
+		}
+		kvRanges = append(kvRanges, tmpKvRanges...)
+	}
+	err = e.open(goCtx, kvRanges)
+	return e, errors.Trace(err)
+}
+
+func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader,
+	values [][]types.Datum, indexRanges []*ranger.IndexRange, offsetsMap []int) (Executor, error) {
+	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(values))
+	for _, val := range values {
+		for _, ran := range indexRanges {
+			for i, pos := range offsetsMap {
+				ran.LowVal[pos] = val[i]
+				ran.HighVal[pos] = val[i]
+			}
+		}
+		tmpKvRanges, err1 := indexRangesToKVRanges(e.tableID, e.index.ID, indexRanges)
+		if err1 != nil {
+			return nil, errors.Trace(err)
+		}
+		kvRanges = append(kvRanges, tmpKvRanges...)
 	}
 	err = e.open(goCtx, kvRanges)
 	return e, errors.Trace(err)

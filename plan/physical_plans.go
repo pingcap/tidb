@@ -230,9 +230,9 @@ type PhysicalIndexJoin struct {
 	DefaultValues []types.Datum
 
 	// ranges stores the IndexRanges when the inner plan is index scan.
-	ranges []*ranger.IndexRange
+	Ranges []*ranger.IndexRange
 	// idxInIdxOfCol stores the position of column in the index.
-	offsetsMap []int
+	OffsetsMap []int
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.

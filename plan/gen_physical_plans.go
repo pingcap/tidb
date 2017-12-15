@@ -39,6 +39,7 @@ func getPermutation(cols1, cols2 []*expression.Column) ([]int, []*expression.Col
 		if offset == -1 {
 			return permutation, cols1[:i]
 		}
+
 		permutation = append(permutation, offset)
 	}
 	return permutation, cols1
@@ -243,8 +244,8 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
-		offsetsMap:      offsetsMap,
-		ranges:          ranges,
+		OffsetsMap:      offsetsMap,
+		Ranges:          ranges,
 	}.init(p.ctx, chReqProps...)
 	join.SetSchema(p.schema)
 	join.profile = p.profile
@@ -292,11 +293,14 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		maxRangeLen    int
 		remainedOfBest []expression.Expression
 	)
-	orderedInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
-	orderedOuterKeys := make([]*expression.Column, 0, len(innerJoinKeys))
+	orderedInnerKeys := make([]*expression.Column, len(innerJoinKeys))
+	orderedOuterKeys := make([]*expression.Column, len(innerJoinKeys))
 	idxInIndex := make([]int, 0, len(innerJoinKeys))
 	for _, indexInfo := range indices {
-		idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, indexInfo)
+		idxCols, colLengths := expression.IndexInfo2Cols(p.children[1-outerIdx].Schema().Columns, indexInfo)
+		if len(idxCols) == 0 {
+			continue
+		}
 		offsetsMap := joinKeysMatchIndex(innerJoinKeys, indexInfo)
 		if offsetsMap == nil {
 			continue
@@ -325,7 +329,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		ranges, _ := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
 		idxRanges := ranger.Ranges2IndexRanges(ranges)
 		// We'd better guarantee that all the index column in the join's equal condition is used.
-		if len(idxRanges) == 0 || len(idxRanges[0].LowVal) < maxIndexColIdx {
+		if len(idxRanges) == 0 || len(idxRanges[0].LowVal) <= maxIndexColIdx {
 			continue
 		}
 		// This compare way is a little easy, we can use the average unit size of one index in the future to determine which index to choose.
