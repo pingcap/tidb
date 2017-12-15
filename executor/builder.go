@@ -206,11 +206,13 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 }
 
 func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
-	return &CheckTableExec{
-		tables: v.Tables,
-		ctx:    b.ctx,
-		is:     b.is,
+	e := &CheckTableExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		tables:       v.Tables,
+		is:           b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
@@ -257,12 +259,14 @@ func (b *executorBuilder) buildLimit(v *plan.PhysicalLimit) Executor {
 }
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
-	return &PrepareExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
-		IS:           b.is,
-		Name:         v.Name,
-		SQLText:      v.SQLText,
+	e := &PrepareExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		is:           b.is,
+		name:         v.Name,
+		sqlText:      v.SQLText,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
@@ -832,9 +836,11 @@ func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &ExistsExec{
+	e := &ExistsExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plan.PhysicalMaxOneRow) Executor {
