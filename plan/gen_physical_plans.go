@@ -16,6 +16,7 @@ package plan
 import (
 	"math"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
@@ -498,7 +499,7 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 	if len(p.groupByCols) != len(p.GroupByItems) {
 		return nil
 	}
-	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties)*2)
 	for _, cols := range p.possibleProperties {
 		_, keys := getPermutation(cols, p.groupByCols)
 		if len(keys) != len(p.groupByCols) {
@@ -508,6 +509,7 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			if tp == copDoubleReadTaskType {
 				continue
 			}
+			log.Infof("tp %s, prop %v, keys %v", tp, prop, keys)
 			childProp := &requiredProp{
 				taskTp:      tp,
 				cols:        keys,
@@ -518,6 +520,7 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			if !prop.isPrefix(childProp) {
 				continue
 			}
+			log.Infof("2222 tp %s, prop %v, keys %v", tp, prop, keys)
 			agg := basePhysicalAgg{
 				GroupByItems: p.GroupByItems,
 				AggFuncs:     p.AggFuncs,
@@ -525,6 +528,7 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			agg.SetSchema(p.schema.Clone())
 			agg.profile = p.profile
 			agg.expectedCnt = prop.expectedCnt
+			log.Infof("stream agg %v, tp %s", agg, tp)
 			streamAggs = append(streamAggs, agg)
 		}
 	}

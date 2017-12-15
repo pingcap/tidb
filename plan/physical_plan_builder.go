@@ -80,6 +80,7 @@ func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, er
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
+	log.Infof("convert to physical p %s", ToString(p.basePlan))
 	// look up the task map
 	t = p.getTask(prop)
 	if t != nil {
@@ -87,15 +88,18 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	}
 	t = invalidTask
 	if prop.taskTp != rootTaskType {
+		log.Infof("convert to physical %v", prop)
 		// Currently all plan cannot totally push down.
 		p.storeTask(prop, t)
 		return t, nil
 	}
 	for _, pp := range p.basePlan.self.(LogicalPlan).genPhysPlansByReqProp(prop) {
+		// log.Infof("convert to physical %s start", ToString(pp))
 		t, err = p.getBestTask(t, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		log.Infof("convert to physical %s end", ToString(pp))
 	}
 	p.storeTask(prop, t)
 	return t, nil
@@ -104,6 +108,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
 	tasks := make([]task, 0, len(p.basePlan.children))
 	for i, child := range p.basePlan.children {
+		log.Infof("get best task, p %s, child %s", ToString(p.basePlan), ToString(child))
 		childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(pp.getChildReqProps(i))
 		if err != nil {
 			return nil, errors.Trace(err)

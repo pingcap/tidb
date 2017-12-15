@@ -239,10 +239,13 @@ func finishCopTask(task task, ctx context.Context) task {
 	}
 	// FIXME: When it is a double reading. The cost should be more expensive. The right cost should add the
 	// `NetWorkStartCost` * (totalCount / perCountIndexRead)
+	log.Infof("000 task %v, cost %v", t, t.cost())
 	t.finishIndexPlan()
+	log.Infof("111 task %v, cost %v", t, t.cost())
 	if t.tablePlan != nil {
 		t.cst += t.count() * netWorkFactor
 	}
+	log.Infof("222 task %v, cost %v", t, t.cost())
 	newTask := &rootTask{
 		cst: t.cst,
 	}
@@ -414,11 +417,13 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	switch tp := t.(type) {
 	case *copTask:
+		log.Warnf("proj attach task %v", t)
 		// TODO: Support projection push down.
 		t = finishCopTask(t, p.ctx)
 		t = attachPlan2Task(p, t)
 		return t
 	case *rootTask:
+		log.Warnf("proj attach task %v", t)
 		return attachPlan2Task(p, tp)
 	}
 	return nil
@@ -518,11 +523,13 @@ func (p *PhysicalStreamAgg) newPartialAggregate() (partialAgg, finalAgg *Physica
 	for _, aggFunc := range p.AggFuncs {
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
+			log.Warnf("....")
 			return nil, p
 		}
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
+		log.Warnf("....11")
 		return nil, p
 	}
 	partialAgg = p
@@ -531,7 +538,7 @@ func (p *PhysicalStreamAgg) newPartialAggregate() (partialAgg, finalAgg *Physica
 	partialSchema := expression.NewSchema()
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
-	finalAggFuncs := make([]aggregation.Aggregation, len(finalAgg.AggFuncs))
+	finalAggFuncs := make([]aggregation.Aggregation, len(p.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
 		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
@@ -591,16 +598,16 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 				cop.indexPlan = partialAgg
 			}
 		}
-		log.Warnf("stream agg 00p %s, task count %v", ToString(p), task.count())
+		log.Warnf("stream agg cop, 0p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 		task = finishCopTask(cop, p.ctx)
-		log.Warnf("stream agg 01p %s, task count %v", ToString(p), task.count())
 		attachPlan2Task(finalAgg, task)
 		task.addCost(task.count() * cpuFactor)
+		log.Warnf("stream agg cop, 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	} else {
-		log.Warnf("stream agg 10p %s, task count %v", ToString(p), task.count())
+		log.Warnf("stream agg root 0p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 		attachPlan2Task(p, task)
-		log.Warnf("stream agg 11p %s, task count %v", ToString(p), task.count())
 		task.addCost(task.count() * cpuFactor)
+		log.Warnf("stream agg root 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	}
 	return task
 }
@@ -626,15 +633,15 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			}
 		}
 		task = finishCopTask(cop, p.ctx)
-		log.Warnf("00p %s, task count %v", ToString(p), task.count())
+		log.Warnf("cop, 0p %s, task count %v", ToString(p), task.count())
 		attachPlan2Task(finalAgg, task)
-		log.Warnf("01p %s, task count %v", ToString(p), task.count())
 		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
+		log.Warnf("cop, 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	} else {
-		log.Warnf("11p %s, p profile count %v, task count %v", ToString(p), p.profile.count, task.count())
+		log.Warnf("root 0p %s, p profile count %v, task count %v", ToString(p), p.profile.count, task.count())
 		attachPlan2Task(p, task)
-		log.Warnf("12p %s, task count %v", ToString(p), task.count())
 		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
+		log.Warnf("root 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	}
 	return task
 }
