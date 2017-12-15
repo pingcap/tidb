@@ -19,13 +19,13 @@ import (
 	"net/http"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 )
 
 var once sync.Once
@@ -66,7 +66,14 @@ func (s *Server) startHTTPServer() {
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
 	http.Handle("/", router)
-	err := http.ListenAndServe(addr, nil)
+
+	var err error
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		err = http.ListenAndServeTLS(addr, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey, nil)
+	} else {
+		err = http.ListenAndServe(addr, nil)
+	}
+
 	if err != nil {
 		log.Fatal(err)
 	}
