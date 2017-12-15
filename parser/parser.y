@@ -1127,7 +1127,7 @@ AnalyzeTableStmt:
 	 }
 |   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
     {
-        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr)}
+        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true}
     }
 
 /*******************************************************************************************/
