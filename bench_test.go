@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 

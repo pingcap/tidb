@@ -41,7 +41,7 @@ type HashJoinExec struct {
 	baseExecutor
 
 	outerExec   Executor
-	innerlExec  Executor
+	innerExec   Executor
 	outerFilter expression.CNFExprs
 	innerFilter expression.CNFExprs
 	outerKeys   []*expression.Column
@@ -55,7 +55,6 @@ type HashJoinExec struct {
 	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
 	finished        atomic.Value
 	closeCh         chan struct{} // closeCh add a lock for closing executor.
-	defaultInners   []types.Datum
 	joinType        plan.JoinType
 
 	resultGenerator joinResultGenerator
@@ -133,12 +132,12 @@ func (e *HashJoinExec) encodeRow(b []byte, row Row) ([]byte, error) {
 }
 
 func (e *HashJoinExec) decodeRow(data []byte) (Row, error) {
-	values := make([]types.Datum, e.innerlExec.Schema().Len())
+	values := make([]types.Datum, e.innerExec.Schema().Len())
 	err := codec.SetRawValues(data, values)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = decodeRawValues(values, e.innerlExec.Schema(), e.ctx.GetSessionVars().GetTimeZone())
+	err = decodeRawValues(values, e.innerExec.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -216,7 +215,7 @@ func (e *HashJoinExec) prepare(goCtx goctx.Context) error {
 	e.hashTable = mvmap.NewMVMap()
 	var buffer []byte
 	for {
-		innerRow, err := e.innerlExec.Next(goCtx)
+		innerRow, err := e.innerExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -343,7 +342,16 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 			break
 		}
 		// process unmatched outer rows.
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuters(outerBuffer.rows[numMatchedOuters:], resultBuffer.rows)
+		for _, unMatchedOuter := range outerBuffer.rows[numMatchedOuters:] {
+			resultBuffer.rows, resultBuffer.err = e.resultGenerator.emit(unMatchedOuter, nil, resultBuffer.rows)
+			if resultBuffer.err != nil {
+				resultBuffer.err = errors.Trace(resultBuffer.err)
+				break
+			}
+		}
+		if resultBuffer.err != nil {
+			break
+		}
 		// process matched outer rows.
 		for _, outerRow := range outerBuffer.rows[:numMatchedOuters] {
 			if len(resultBuffer.rows) >= bufferCapacity {
@@ -375,13 +383,15 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 	}
 
 	if hasNull {
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuter(outerRow, resultBuffer.rows)
+		resultBuffer.rows, resultBuffer.err = e.resultGenerator.emit(outerRow, nil, resultBuffer.rows)
+		resultBuffer.err = errors.Trace(resultBuffer.err)
 		return true
 	}
 
 	values := e.hashTable.Get(joinKey)
 	if len(values) == 0 {
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuter(outerRow, resultBuffer.rows)
+		resultBuffer.rows, resultBuffer.err = e.resultGenerator.emit(outerRow, nil, resultBuffer.rows)
+		resultBuffer.err = errors.Trace(resultBuffer.err)
 		return true
 	}
 
@@ -396,14 +406,10 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 		innerRows = append(innerRows, innerRow)
 	}
 
-	matched := false
-	resultBuffer.rows, matched, err = e.resultGenerator.emitMatchedInners(outerRow, innerRows, resultBuffer.rows)
-	if err != nil {
-		resultBuffer.err = errors.Trace(err)
+	resultBuffer.rows, resultBuffer.err = e.resultGenerator.emit(outerRow, innerRows, resultBuffer.rows)
+	if resultBuffer.err != nil {
+		resultBuffer.err = errors.Trace(resultBuffer.err)
 		return false
-	}
-	if !matched {
-		resultBuffer.rows = e.resultGenerator.emitUnMatchedOuter(outerRow, resultBuffer.rows)
 	}
 	return true
 }

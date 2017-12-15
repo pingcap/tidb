@@ -14,7 +14,6 @@
 package stringutil
 
 import (
-	"bytes"
 	"strings"
 	"unicode/utf8"
 
@@ -234,18 +233,4 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 		}
 	}
 	return sIdx == len(str)
-}
-
-// RemoveBlanks removes all blanks, returns a new string.
-func RemoveBlanks(s string) string {
-	var buf = new(bytes.Buffer)
-	var cbuf [6]byte
-	for _, c := range s {
-		if c == rune(' ') || c == rune('\t') || c == rune('\r') || c == rune('\n') {
-			continue
-		}
-		len := utf8.EncodeRune(cbuf[0:], c)
-		buf.Write(cbuf[0:len])
-	}
-	return buf.String()
 }

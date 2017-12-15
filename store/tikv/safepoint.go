@@ -14,13 +14,14 @@
 package tikv
 
 import (
+	"crypto/tls"
 	"strconv"
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -75,8 +76,8 @@ type EtcdSafePointKV struct {
 }
 
 // NewEtcdSafePointKV creates an instance of EtcdSafePointKV
-func NewEtcdSafePointKV(addrs []string) (*EtcdSafePointKV, error) {
-	etcdCli, err := createEtcdKV(addrs)
+func NewEtcdSafePointKV(addrs []string, tlsConfig *tls.Config) (*EtcdSafePointKV, error) {
+	etcdCli, err := createEtcdKV(addrs, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
