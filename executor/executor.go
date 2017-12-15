@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -183,23 +184,42 @@ type CancelDDLJobsExec struct {
 	baseExecutor
 
 	cursor int
-	JobIDs []int64
+	jobIDs []int64
 	errs   []error
 }
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next(goCtx goctx.Context) (Row, error) {
 	var row Row
-	if e.cursor < len(e.JobIDs) {
+	if e.cursor < len(e.jobIDs) {
 		ret := "successful"
 		if e.errs[e.cursor] != nil {
 			ret = fmt.Sprintf("error: %v", e.errs[e.cursor])
 		}
-		row = types.MakeDatums(e.JobIDs[e.cursor], ret)
+		row = types.MakeDatums(e.jobIDs[e.cursor], ret)
 		e.cursor++
 	}
 
 	return row, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *CancelDDLJobsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.cursor >= len(e.jobIDs) {
+		return nil
+	}
+	numCurBatch := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, len(e.jobIDs)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+		chk.AppendInt64(0, e.jobIDs[i])
+		if e.errs[i] != nil {
+			chk.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
+		} else {
+			chk.AppendString(1, "successful")
+		}
+	}
+	e.cursor += numCurBatch
+	return nil
 }
 
 // ShowDDLExec represents a show DDL executor.
