@@ -212,15 +212,17 @@ type PhysicalPlan interface {
 }
 
 type baseLogicalPlan struct {
-	basePlan *basePlan
+	basePlan
 
 	taskMap map[string]task
+	self    LogicalPlan
 }
 
 type basePhysicalPlan struct {
-	basePlan *basePlan
+	basePlan
 
 	childrenReqProps []*requiredProp
+	self             PhysicalPlan
 }
 
 func (bp *basePhysicalPlan) getChildReqProps(idx int) *requiredProp {
@@ -247,7 +249,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 		child.(LogicalPlan).buildKeyInfo()
 	}
 	if len(p.basePlan.children) == 1 {
-		switch p.basePlan.self.(type) {
+		switch p.self.(type) {
 		case *LogicalExists, *LogicalAggregation, *LogicalProjection:
 			p.basePlan.schema.Keys = nil
 		case *LogicalLock:
@@ -260,27 +262,28 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
-func newBasePlan(tp string, ctx context.Context, p Plan) *basePlan {
+func newBasePlan(tp string, ctx context.Context) basePlan {
 	ctx.GetSessionVars().PlanID++
 	id := ctx.GetSessionVars().PlanID
-	return &basePlan{
-		tp:   tp,
-		id:   id,
-		ctx:  ctx,
-		self: p,
+	return basePlan{
+		tp:  tp,
+		id:  id,
+		ctx: ctx,
 	}
 }
 
-func newBaseLogicalPlan(basePlan *basePlan) baseLogicalPlan {
+func newBaseLogicalPlan(tp string, ctx context.Context, self LogicalPlan) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:  make(map[string]task),
-		basePlan: basePlan,
+		basePlan: newBasePlan(tp, ctx),
+		self:     self,
 	}
 }
 
-func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
+func newBasePhysicalPlan(tp string, ctx context.Context, self PhysicalPlan) basePhysicalPlan {
 	return basePhysicalPlan{
-		basePlan: basePlan,
+		basePlan: newBasePlan(tp, ctx),
+		self:     self,
 	}
 }
 
@@ -294,10 +297,10 @@ func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn
 
 // PruneColumns implements LogicalPlan interface.
 func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
-	if len(p.basePlan.children) == 0 {
+	if len(p.children) == 0 {
 		return
 	}
-	child := p.basePlan.children[0].(LogicalPlan)
+	child := p.children[0].(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
 	p.basePlan.SetSchema(child.Schema())
 }
@@ -312,7 +315,6 @@ type basePlan struct {
 	tp      string
 	id      int
 	ctx     context.Context
-	self    Plan
 	profile *statsProfile
 	// expectedCnt means this operator may be closed after fetching expectedCnt records.
 	expectedCnt float64
