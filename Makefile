@@ -112,9 +112,6 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
 else
 	@echo "Running in native mode."
-	go get -u github.com/golang/dep/cmd/dep
-	dep ensure
-	dep prune
 	go get github.com/coreos/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=error; \
@@ -140,9 +137,6 @@ ifeq ("$(WITH_RACE)", "1")
 endif
 
 server: parserlib
-	go get -u github.com/golang/dep/cmd/dep
-	dep ensure
-	dep prune
 ifeq ($(TARGET), "")
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
