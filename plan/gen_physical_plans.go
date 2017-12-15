@@ -223,6 +223,7 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
+	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.allColsFromSchema(outerSchema) {
 		return nil
 	}
