@@ -451,18 +451,8 @@ func (p *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	return ret
 }
 
-func itemsMatchProp(items []*ByItems, prop *requiredProp) bool {
-	for i, col := range prop.cols {
-		sortItem := items[i]
-		if sortItem.Desc != prop.desc || !sortItem.Expr.Equal(col, nil) {
-			return false
-		}
-	}
-	return true
-}
-
 func (p *LogicalTopN) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	if itemsMatchProp(p.ByItems, prop) {
+	if prop.matchItems(p.ByItems) {
 		return append(p.getPhysTopN(), p.getPhysLimits()...)
 	}
 	return nil
@@ -575,7 +565,7 @@ func (p *LogicalLimit) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 	if !prop.isEmpty() {
 		return nil
 	}
-	ret := make([]PhysicalPlan, 0, 3)
+	ret := make([]PhysicalPlan, 0, len(wholeTaskTypes))
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(p.Count + p.Offset)}
 		limit := PhysicalLimit{
@@ -631,7 +621,7 @@ func (p *LogicalSort) getNominalSort(reqProp *requiredProp) *NominalSort {
 }
 
 func (p *LogicalSort) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	if itemsMatchProp(p.ByItems, prop) {
+	if prop.matchItems(p.ByItems) {
 		ret := make([]PhysicalPlan, 0, 2)
 		ret = append(ret, p.getPhysicalSort(prop))
 		ns := p.getNominalSort(prop)

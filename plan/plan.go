@@ -115,6 +115,17 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 	return true
 }
 
+// Check if this prop's columns can match by items totally.
+func (p *requiredProp) matchItems(items []*ByItems) bool {
+	for i, col := range p.cols {
+		sortItem := items[i]
+		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(col, nil) {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *requiredProp) isEmpty() bool {
 	return len(p.cols) == 0
 }
