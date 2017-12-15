@@ -182,10 +182,6 @@ type DeleteExec struct {
 	finished bool
 }
 
-func (e *DeleteExec) exec(goCtx goctx.Context) (Row, error) {
-
-}
-
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.finished {
