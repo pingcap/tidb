@@ -3437,7 +3437,7 @@ SumExpr:
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
 |	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')'
-	{	
+	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
 |	builtinMin '(' BuggyDefaultFalseDistinctOpt Expression ')'
