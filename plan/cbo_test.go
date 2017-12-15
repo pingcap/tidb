@@ -86,10 +86,10 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	h.DumpStatsDeltaToKV()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"TableScan_6 HashAgg_5  cop table:t, range:(-inf,+inf), keep order:false 8",
-		"HashAgg_5  TableScan_6 cop group by:test.t.a, funcs:count(1) 2",
-		"TableReader_8 HashAgg_7  root data:HashAgg_5 2",
-		"HashAgg_7  TableReader_8 root group by:, funcs:count(col_0) 2",
+		"TableScan_8 HashAgg_5  cop table:t, range:(-inf,+inf), keep order:false 8",
+		"HashAgg_5  TableScan_8 cop group by:test.t.a, funcs:count(1) 2",
+		"TableReader_10 HashAgg_9  root data:HashAgg_5 2",
+		"HashAgg_9  TableReader_10 root group by:, funcs:count(col_0) 2",
 	))
 }
 
