@@ -32,6 +32,17 @@ func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
 		c.Assert(bj.String(), Equals, str)
 		parsedBJ := mustParseBinaryFromString(c, str)
 		c.Assert(parsedBJ.String(), Equals, str)
+
+		// Test JSON marshaled string can be unmarshaled by BinaryJSON
+		marshaled, err := j.MarshalJSON()
+		c.Assert(err, IsNil)
+		err = bj.UnmarshalJSON(marshaled)
+		c.Assert(err, IsNil)
+		j2, err := bj.ToJSON()
+		c.Assert(err, IsNil)
+		cmp, err := CompareJSON(j, j2)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
 	}
 }
 
