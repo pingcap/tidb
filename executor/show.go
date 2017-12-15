@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -514,9 +515,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 		cols := make([]string, 0, len(idxInfo.Columns))
 		for _, c := range idxInfo.Columns {
-			cols = append(cols, c.Name.O)
+			colInfo := fmt.Sprintf("`%s`", c.Name.String())
+			if c.Length != types.UnspecifiedLength {
+				colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
+			}
+			cols = append(cols, colInfo)
 		}
-		buf.WriteString(fmt.Sprintf("(`%s`)", strings.Join(cols, "`,`")))
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, "`,`")))
 		if i != len(tb.Indices())-1 {
 			buf.WriteString(",\n")
 		}
