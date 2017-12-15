@@ -91,7 +91,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 		p.storeTask(prop, t)
 		return t, nil
 	}
-	for _, pp := range p.basePlan.self.(LogicalPlan).genPhysPlansByReqProp(prop) {
+	for _, pp := range p.self.genPhysPlansByReqProp(prop) {
 		t, err = p.getBestTask(t, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
