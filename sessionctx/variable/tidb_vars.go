@@ -96,8 +96,10 @@ const (
 	// split data into multiple batches and use a single txn for each batch. This will be helpful when deleting large data.
 	TiDBBatchDelete = "tidb_batch_delete"
 
-	// tidb_dml_batch_size is used to split the insret/delete data into small batches. It only takes effort when tidb_batch_insert/tidb_batch_delete is on.
-	// Its default value is 20000. When the row size is large. User could change it to a smaller one to avoid break the transaction size limitation.
+	// tidb_dml_batch_size is used to split the insert/delete data into small batches.
+	// It only takes effort when tidb_batch_insert/tidb_batch_delete is on.
+	// Its default value is 20000. When the row size is large, 20k rows could be larger than 100MB.
+	// User could change it to a smaller one to avoid breaking the transaction size limitation.
 	TiDBDMLBatchSize = "tidb_dml_batch_size"
 
 	// tidb_max_row_count_for_inlj is used when do index nested loop join.
