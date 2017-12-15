@@ -16,11 +16,13 @@ package plan
 import (
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -318,7 +320,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		conds := make([]expression.Expression, 0, len(offsetsMap)+len(x.pushedDownConds))
 		// Construct a fake equal expression for calculate the range.
 		for _, key := range innerJoinKeys {
-			eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, expression.One)
+			fakeConstant := expression.One.Clone().(*expression.Constant)
+			fakeConstant.RetType = types.NewFieldType(key.RetType.Tp)
+			eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
 			conds = append(conds, eqFunc)
 		}
 		conds = append(conds, x.pushedDownConds...)
@@ -326,7 +330,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		// So we can guarantee that once count of the columns in the ranges is no lower than the max idx
 		// that the inner keys matched in the index, then the equal conditions of join are all used.
 		accesses, remained := ranger.DetachIndexConditions(conds, idxCols, colLengths)
-		ranges, _ := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
+		ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
+		terror.Log(errors.Trace(err))
 		idxRanges := ranger.Ranges2IndexRanges(ranges)
 		// We'd better guarantee that all the index column in the join's equal condition is used.
 		if len(idxRanges) == 0 || len(idxRanges[0].LowVal) <= maxIndexColIdx {
