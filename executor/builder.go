@@ -1281,18 +1281,6 @@ type dataReaderBuilder struct {
 	*executorBuilder
 }
 
-func (builder *dataReaderBuilder) buildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
-	switch v := builder.Plan.(type) {
-	case *plan.PhysicalIndexReader:
-		return builder.buildIndexReaderForDatums(goCtx, v, datums)
-	case *plan.PhysicalTableReader:
-		return builder.buildTableReaderForDatums(goCtx, v, datums)
-	case *plan.PhysicalIndexLookUpReader:
-		return builder.buildIndexLookUpReaderForDatums(goCtx, v, datums)
-	}
-	return nil, errors.New("Wrong plan type for dataReaderBuilder")
-}
-
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context, datums [][]types.Datum,
 	IndexRanges []*ranger.IndexRange, offsetsMap []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
@@ -1337,43 +1325,6 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	}
 	e.result.Fetch(goCtx)
 	return e, nil
-}
-
-func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexReader, values [][]types.Datum) (Executor, error) {
-	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var b requestBuilder
-	kvReq, err := b.SetIndexValues(e.tableID, e.index.ID, values).
-		SetDAGRequest(e.dagPB).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		Build()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.result.Fetch(goCtx)
-	return e, nil
-}
-
-func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader, values [][]types.Datum) (Executor, error) {
-	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = e.open(goCtx, kvRanges)
-	return e, errors.Trace(err)
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexReader,
