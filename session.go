@@ -776,8 +776,8 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
 	}
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
-	prepareExec.DoPrepare()
-	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, prepareExec.Err
+	err = prepareExec.DoPrepare()
+	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, errors.Trace(err)
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.
