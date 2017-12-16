@@ -183,6 +183,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	}
 	e.ddlInfo = ddlInfo
 	e.selfID = ownerManager.ID()
+	e.supportChk = true
 	return e
 }
 
