@@ -293,6 +293,7 @@ func (p *LogicalApply) deriveStats() *statsInfo {
 	return p.stats
 }
 
+// Exists and MaxOneRow produce at most one row, so we set the count of stats one.
 func getSingletonStats(len int) *statsInfo {
 	ret := &statsInfo{
 		count:       1.0,
