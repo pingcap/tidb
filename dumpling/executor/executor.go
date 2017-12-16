@@ -254,6 +254,25 @@ func (e *ShowDDLExec) Next(goCtx goctx.Context) (Row, error) {
 	return row, nil
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *ShowDDLExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+
+	ddlJob := ""
+	if e.ddlInfo.Job != nil {
+		ddlJob = e.ddlInfo.Job.String()
+	}
+	chk.AppendInt64(0, e.ddlInfo.SchemaVer)
+	chk.AppendString(1, e.ddlOwnerID)
+	chk.AppendString(2, ddlJob)
+	chk.AppendString(3, e.selfID)
+	e.done = true
+	return nil
+}
+
 // ShowDDLJobsExec represent a show DDL jobs executor.
 type ShowDDLJobsExec struct {
 	baseExecutor
