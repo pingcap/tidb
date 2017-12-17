@@ -306,6 +306,8 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched []bool, 
 }
 
 // AddRecord implements table.Table AddRecord interface.
+// The first return value is recordID. In normal cases, it would be a implicit unique id for each row.
+// If the table has PkIsHandle flag, the value of primary key will be used as row id.
 func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
 	for _, col := range t.Cols() {
@@ -696,9 +698,27 @@ func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []ty
 	return colVal, nil
 }
 
+func randomScatter(id int64, scatter uint64) int64 {
+	f1 := id << (64 - scatter)
+	f2 := id >> scatter
+	return f1 + f2
+}
+
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *Table) AllocAutoID(ctx context.Context) (int64, error) {
-	return t.Allocator(ctx).Alloc(t.ID)
+	id, err := t.Allocator(ctx).Alloc(t.ID)
+	if err != nil {
+		return id, errors.Trace(err)
+	}
+	if t.meta.RandomScatter == 0 {
+		return id, nil
+	}
+	scatter := uint64(t.meta.RandomScatter)
+	if scatter > 64 {
+		scatter = 64
+	}
+	h := randomScatter(id, scatter)
+	return h, nil
 }
 
 // Allocator implements table.Table Allocator interface.
