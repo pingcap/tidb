@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"math"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/expression"
+	log "github.com/sirupsen/logrus"
 )
 
 // statsProfile stores the basic information of statistics for the a plan's output. It is used for cost estimation.
@@ -44,8 +44,8 @@ func (s *statsProfile) collapse(factor float64) *statsProfile {
 }
 
 func (p *basePhysicalPlan) statsProfile() *statsProfile {
-	profile := p.basePlan.profile
-	expectedCnt := p.basePlan.expectedCnt
+	profile := p.profile
+	expectedCnt := p.expectedCnt
 	if expectedCnt > 0 && expectedCnt < profile.count {
 		factor := expectedCnt / profile.count
 		result := &statsProfile{count: expectedCnt}
@@ -58,19 +58,19 @@ func (p *basePhysicalPlan) statsProfile() *statsProfile {
 }
 
 func (p *baseLogicalPlan) prepareStatsProfile() *statsProfile {
-	if len(p.basePlan.children) == 0 {
+	if len(p.children) == 0 {
 		profile := &statsProfile{
 			count:       float64(1),
-			cardinality: make([]float64, p.basePlan.schema.Len()),
+			cardinality: make([]float64, p.schema.Len()),
 		}
 		for i := range profile.cardinality {
 			profile.cardinality[i] = float64(1)
 		}
-		p.basePlan.profile = profile
+		p.profile = profile
 		return profile
 	}
-	p.basePlan.profile = p.basePlan.children[0].(LogicalPlan).prepareStatsProfile()
-	return p.basePlan.profile
+	p.profile = p.children[0].(LogicalPlan).prepareStatsProfile()
+	return p.profile
 }
 
 func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsProfile {
@@ -96,6 +96,10 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 }
 
 func (p *DataSource) prepareStatsProfile() *statsProfile {
+	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	for i, expr := range p.pushedDownConds {
+		p.pushedDownConds[i] = expression.PushDownNot(expr, false, nil)
+	}
 	p.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 	return p.profile
 }
@@ -106,7 +110,7 @@ func (p *LogicalSelection) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *Union) prepareStatsProfile() *statsProfile {
+func (p *LogicalUnionAll) prepareStatsProfile() *statsProfile {
 	p.profile = &statsProfile{
 		cardinality: make([]float64, p.schema.Len()),
 	}
@@ -120,7 +124,7 @@ func (p *Union) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *Limit) prepareStatsProfile() *statsProfile {
+func (p *LogicalLimit) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
@@ -138,7 +142,7 @@ func (p *Limit) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *TopN) prepareStatsProfile() *statsProfile {
+func (p *LogicalTopN) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
@@ -174,7 +178,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	return cardinality
 }
 
-func (p *Projection) prepareStatsProfile() *statsProfile {
+func (p *LogicalProjection) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       childProfile.count,

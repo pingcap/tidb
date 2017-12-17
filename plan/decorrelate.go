@@ -106,13 +106,13 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 			innerPlan = sel.children[0].(LogicalPlan)
 			setParentAndChildren(apply, outerPlan, innerPlan)
 			return s.optimize(p, nil)
-		} else if m, ok := innerPlan.(*MaxOneRow); ok {
+		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
 			if m.children[0].Schema().MaxOneRow {
 				innerPlan = m.children[0].(LogicalPlan)
 				setParentAndChildren(apply, outerPlan, innerPlan)
 				return s.optimize(p, nil)
 			}
-		} else if proj, ok := innerPlan.(*Projection); ok {
+		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}

@@ -41,7 +41,6 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
-	log "github.com/Sirupsen/logrus"
 	proxyprotocol "github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -339,7 +339,13 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	conn.ctx.Cancel()
+	conn.mu.RLock()
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
+
 	if !query {
 		conn.killed = true
 	}

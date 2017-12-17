@@ -14,12 +14,12 @@
 package domain
 
 import (
+	"crypto/tls"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -432,6 +433,7 @@ func (m *MockFailure) getValue() bool {
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
 	EtcdAddrs() []string
+	TLSConfig() *tls.Config
 	StartGCWorker() error
 }
 
@@ -461,6 +463,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
 				},
+				TLS: ebd.TLSConfig(),
 			})
 			if err != nil {
 				return errors.Trace(err)

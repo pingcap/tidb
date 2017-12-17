@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -128,6 +128,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	if e.ctx.Txn().Valid() {
+		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
 		return e.ctx.Txn().Rollback()
 	}
 	return nil

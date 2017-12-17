@@ -14,12 +14,12 @@
 package aggregation
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	log "github.com/sirupsen/logrus"
 )
 
 type sumFunction struct {

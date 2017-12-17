@@ -25,8 +25,7 @@ func ToString(p Plan) string {
 }
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
-	switch in.(type) {
-	case *LogicalJoin, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *LogicalApply, *PhysicalApply, *PhysicalMergeJoin, *PhysicalIndexJoin:
+	if len(in.Children()) > 1 {
 		idxs = append(idxs, len(strs))
 	}
 
@@ -110,21 +109,24 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *Exists:
+	case *LogicalExists, *PhysicalExists:
 		str = "Exists"
-	case *MaxOneRow:
+	case *LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
-	case *Limit:
+	case *LogicalLimit, *PhysicalLimit:
 		str = "Limit"
-	case *SelectLock:
+	case *PhysicalLock, *LogicalLock:
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *Sort:
-		str = "Sort"
-		if x.ExecLimit != nil {
-			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
+	case *Show:
+		if len(x.Conditions) == 0 {
+			str = "Show"
+		} else {
+			str = fmt.Sprintf("Show(%s)", x.Conditions)
 		}
+	case *LogicalSort, *PhysicalSort:
+		str = "Sort"
 	case *LogicalJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
@@ -137,7 +139,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *Union:
+	case *LogicalUnionAll, *PhysicalUnionAll:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -154,11 +156,13 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)
 	case *PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)
-	case *Projection:
+	case *LogicalProjection, *PhysicalProjection:
 		str = "Projection"
-	case *TopN:
+	case *LogicalTopN:
 		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
-	case *TableDual:
+	case *PhysicalTopN:
+		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
+	case *LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
 		str = "HashAgg"
