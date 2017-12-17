@@ -23,10 +23,10 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -35,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 type domainMap struct {
@@ -195,7 +197,7 @@ func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()
-			err := rs.NextChunk(chk)
+			err := rs.NextChunk(goCtx, chk)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -275,7 +277,17 @@ func DialPumpClientWithRetry(binlogSocket string, maxRetries int, dialerOpt grpc
 	err := util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		log.Infof("setup binlog client")
 		var err error
-		clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
+		tlsConfig, err := config.GetGlobalConfig().Security.ToTLSConfig()
+		if err != nil {
+			log.Infof("error happen when setting binlog client: %s", errors.ErrorStack(err))
+		}
+
+		if tlsConfig != nil {
+			clientCon, err = grpc.Dial(binlogSocket, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), dialerOpt)
+		} else {
+			clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
+		}
+
 		if err != nil {
 			log.Infof("error happen when setting binlog client: %s", errors.ErrorStack(err))
 		}

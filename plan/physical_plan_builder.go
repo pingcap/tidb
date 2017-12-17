@@ -16,7 +16,6 @@ package plan
 import (
 	"math"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -68,42 +68,14 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
-// convert2NewPhysicalPlan implements PhysicalPlan interface.
-// If this sort is a topN plan, we will try to push the sort down and leave the limit.
-// TODO: If this is a sort plan and the coming prop is not nil, this plan is redundant and can be removed.
-func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	t := p.getTask(prop)
-	if t != nil {
-		return t, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// TODO: This is a trick here, because an operator that can be pushed to Coprocessor can never be pushed across sort.
-		// e.g. If an aggregation want to be pushed, the SQL is always like select count(*) from t order by ...
-		// The Sort will on top of Aggregation. If the SQL is like select count(*) from (select * from s order by k).
-		// The Aggregation will also be blocked by projection. In the future we will break this restriction.
-		p.storeTask(prop, invalidTask)
+func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+	if !prop.isEmpty() {
 		return invalidTask, nil
 	}
-	// enforce branch
-	t, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	t = p.attach2Task(t)
-	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
-	if canPassProp {
-		newProp.expectedCnt = prop.expectedCnt
-		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if orderedTask.cost() < t.cost() {
-			t = orderedTask
-		}
-	}
-	t = prop.enforceProperty(t, p.ctx)
-	p.storeTask(prop, t)
-	return t, nil
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
+	dual.profile = p.profile
+	dual.SetSchema(p.schema)
+	return &rootTask{p: dual}, nil
 }
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
@@ -119,17 +91,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 		p.storeTask(prop, t)
 		return t, nil
 	}
-	// Now we only consider rootTask.
-	if len(p.basePlan.children) == 0 {
-		// When the children length is 0, we process it specially.
-		t = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
-		t = prop.enforceProperty(t, p.basePlan.ctx)
-		p.storeTask(prop, t)
-		return t, nil
-	}
-	// Else we suppose it only has one child.
-	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
-		t, err = p.getBestTask(t, prop, pp)
+	for _, pp := range p.self.genPhysPlansByReqProp(prop) {
+		t, err = p.getBestTask(t, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -138,27 +101,27 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	return t, nil
 }
 
-func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan) (task, error) {
-	newProps := pp.getChildrenPossibleProps(prop)
-	for _, newProp := range newProps {
-		tasks := make([]task, 0, len(p.basePlan.children))
-		for i, child := range p.basePlan.children {
-			childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(newProp[i])
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			tasks = append(tasks, childTask)
+func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
+	tasks := make([]task, 0, len(p.basePlan.children))
+	for i, child := range p.basePlan.children {
+		childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(pp.getChildReqProps(i))
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		resultTask := pp.attach2Task(tasks...)
-		if resultTask.cost() < bestTask.cost() {
-			bestTask = resultTask
-		}
+		tasks = append(tasks, childTask)
+	}
+	resultTask := pp.attach2Task(tasks...)
+	if resultTask.cost() < bestTask.cost() {
+		bestTask = resultTask
 	}
 	return bestTask, nil
 }
 
 // tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
 func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) {
+	if !prop.isEmpty() {
+		return nil, nil
+	}
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
 	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
@@ -185,7 +148,6 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 		retPlan = sel
 	}
 	task = &rootTask{p: retPlan}
-	task = prop.enforceProperty(task, p.ctx)
 	return task, nil
 }
 
@@ -198,7 +160,7 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 				return nil, errors.Trace(err)
 			}
 			if !result {
-				dual := TableDual{}.init(p.ctx)
+				dual := PhysicalTableDual{}.init(p.ctx)
 				dual.SetSchema(p.schema)
 				dual.profile = p.profile
 				return &rootTask{
@@ -339,13 +301,9 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
 	is.Ranges = ranger.FullIndexRange()
 	if len(p.pushedDownConds) > 0 {
-		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
-		for _, cond := range p.pushedDownConds {
-			conds = append(conds, cond.Clone())
-		}
 		if len(idxCols) > 0 {
 			var ranges []ranger.Range
-			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(conds, idxCols, colLengths)
+			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(p.pushedDownConds, idxCols, colLengths)
 			ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -356,10 +314,10 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 				return nil, errors.Trace(err)
 			}
 		} else {
-			is.filterCondition = conds
+			is.filterCondition = p.pushedDownConds
 		}
 	}
-	is.profile = p.getStatsProfileByFilter(p.pushedDownConds)
+	is.profile = p.profile
 
 	cop := &copTask{
 		indexPlan: is,
@@ -463,11 +421,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			indexConds = is.filterCondition
 		}
 		if indexConds != nil {
-			condsClone := make([]expression.Expression, 0, len(indexConds))
-			for _, cond := range indexConds {
-				condsClone = append(condsClone, cond.Clone())
-			}
-			indexSel := PhysicalSelection{Conditions: condsClone}.init(is.ctx)
+			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx)
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
 			indexSel.profile = p.getStatsProfileByFilter(append(is.AccessCondition, indexConds...))
@@ -585,23 +539,19 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 	}
 	if len(p.pushedDownConds) > 0 {
-		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
-		for _, cond := range p.pushedDownConds {
-			conds = append(conds, cond.Clone())
-		}
 		if pkCol != nil {
 			var ranges []ranger.Range
-			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, conds, pkCol)
+			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, p.pushedDownConds, pkCol)
 			ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 			ts.Ranges = ranger.Ranges2IntRanges(ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
-			ts.filterCondition = conds
+			ts.filterCondition = p.pushedDownConds
 		}
 	}
-	ts.profile = p.getStatsProfileByFilter(p.pushedDownConds)
+	ts.profile = p.profile
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
 	if pkCol != nil {

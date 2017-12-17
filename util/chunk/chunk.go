@@ -92,6 +92,11 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	}
 }
 
+// SwapColumns swaps columns with another Chunk.
+func (c *Chunk) SwapColumns(other *Chunk) {
+	c.columns, other.columns = other.columns, c.columns
+}
+
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
@@ -497,6 +502,18 @@ func (r Row) GetJSON(colIdx int) json.JSON {
 	return j
 }
 
+// GetDatumRow converts chunk.Row to types.DatumRow.
+// Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
+// this function works only if the underlying chunk is valid or unchanged.
+func (r Row) GetDatumRow(fields []*types.FieldType) types.DatumRow {
+	datumRow := make(types.DatumRow, 0, r.c.NumCols())
+	for colIdx := 0; colIdx < r.c.NumCols(); colIdx++ {
+		datum := r.GetDatum(colIdx, fields[colIdx])
+		datumRow = append(datumRow, datum)
+	}
+	return datumRow
+}
+
 // GetDatum implements the types.Row interface.
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
@@ -533,6 +550,8 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {
 			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
+			d.SetLength(tp.Flen)
+			d.SetFrac(tp.Decimal)
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {

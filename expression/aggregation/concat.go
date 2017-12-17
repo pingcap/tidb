@@ -25,6 +25,8 @@ import (
 
 type concatFunction struct {
 	aggFunction
+	separator string
+	sepInited bool
 }
 
 // Clone implements Aggregation interface.
@@ -49,9 +51,30 @@ func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
 	}
 }
 
+func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.Row) error {
+	sepArg := cf.Args[len(cf.Args)-1]
+	sep, isNull, err := sepArg.EvalString(row, sc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if isNull {
+		return errors.Errorf("Invalid separator argument.")
+	}
+	cf.separator = sep
+	cf.Args = cf.Args[:len(cf.Args)-1]
+	return nil
+}
+
 // Update implements Aggregation interface.
 func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
+	if !cf.sepInited {
+		err := cf.initSeparator(sc, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cf.sepInited = true
+	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
@@ -74,8 +97,7 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 	if ctx.Buffer == nil {
 		ctx.Buffer = &bytes.Buffer{}
 	} else {
-		// now use comma separator
-		ctx.Buffer.WriteString(",")
+		ctx.Buffer.WriteString(cf.separator)
 	}
 	for _, val := range datumBuf {
 		cf.writeValue(ctx, val)

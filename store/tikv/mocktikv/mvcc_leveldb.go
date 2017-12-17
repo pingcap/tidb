@@ -18,7 +18,6 @@ import (
 	"math"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/iterator"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
+	log "github.com/sirupsen/logrus"
 )
 
 // MVCCLevelDB implements the MVCCStore interface.
