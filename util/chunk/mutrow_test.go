@@ -36,15 +36,34 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	}
 
 	mutRow = MutRowFromValues("abc", 123)
+	c.Assert(row.IsNull(0), check.IsFalse)
 	c.Assert(mutRow.ToRow().GetString(0), check.Equals, "abc")
+	c.Assert(row.IsNull(1), check.IsFalse)
 	c.Assert(mutRow.ToRow().GetInt64(1), check.Equals, int64(123))
 	mutRow.SetValues("abcd", 456)
 	row = mutRow.ToRow()
 	c.Assert(row.GetString(0), check.Equals, "abcd")
+	c.Assert(row.IsNull(0), check.IsFalse)
 	c.Assert(row.GetInt64(1), check.Equals, int64(456))
+	c.Assert(row.IsNull(1), check.IsFalse)
 	mutRow.SetDatums(types.NewStringDatum("defgh"), types.NewIntDatum(33))
+	c.Assert(row.IsNull(0), check.IsFalse)
 	c.Assert(row.GetString(0), check.Equals, "defgh")
+	c.Assert(row.IsNull(1), check.IsFalse)
 	c.Assert(row.GetInt64(1), check.Equals, int64(33))
+
+	mutRow.SetRow(MutRowFromValues("foobar", nil).ToRow())
+	row = mutRow.ToRow()
+	c.Assert(row.IsNull(0), check.IsFalse)
+	c.Assert(row.IsNull(1), check.IsTrue)
+
+	nRow := MutRowFromValues(nil, 111).ToRow()
+	c.Assert(nRow.IsNull(0), check.IsTrue)
+	c.Assert(nRow.IsNull(1), check.IsFalse)
+	mutRow.SetRow(nRow)
+	row = mutRow.ToRow()
+	c.Assert(row.IsNull(0), check.IsTrue)
+	c.Assert(row.IsNull(1), check.IsFalse)
 }
 
 func BenchmarkMutRowSetRow(b *testing.B) {
