@@ -214,7 +214,7 @@ func (bj BinaryJSON) getString() []byte {
 }
 
 func (bj BinaryJSON) getElemCount() int {
-	return int(binary.LittleEndian.Uint32(bj.Value))
+	return int(endian.Uint32(bj.Value))
 }
 
 func (bj BinaryJSON) arrayGetElem(idx int) BinaryJSON {
@@ -248,7 +248,7 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 		totalLen := uint32(lenLen) + uint32(strLen)
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
 	}
-	dataSize := binary.LittleEndian.Uint32(bj.Value[valOff+4:])
+	dataSize := endian.Uint32(bj.Value[valOff+4:])
 	return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+dataSize]}
 }
 
@@ -525,7 +525,7 @@ func appendZero(buf []byte, length int) []byte {
 
 func appendUint32(buf []byte, v uint32) []byte {
 	var tmp [4]byte
-	binary.LittleEndian.PutUint32(tmp[:], v)
+	endian.PutUint32(tmp[:], v)
 	return append(buf, tmp[:]...)
 }
 
