@@ -102,11 +102,6 @@ const (
 	// User could change it to a smaller one to avoid breaking the transaction size limitation.
 	TiDBDMLBatchSize = "tidb_dml_batch_size"
 
-	// tidb_max_row_count_for_inlj is used when do index nested loop join.
-	// It controls the max row count of outer table when do index nested loop join without hint.
-	// After the row count of the inner table is accurate, this variable will be removed.
-	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
-
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 )
@@ -119,7 +114,6 @@ const (
 	DefIndexLookupSize            = 20000
 	DefDistSQLScanConcurrency     = 10
 	DefBuildStatsConcurrency      = 4
-	DefMaxRowCountForINLJ         = 128
 	DefSkipUTF8Check              = false
 	DefOptAggPushDown             = false
 	DefOptInSubqUnfolding         = false
