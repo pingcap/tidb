@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,7 +49,10 @@ type Handle struct {
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap tableDeltaMap
+	globalMap    tableDeltaMap
+	feedbackLock sync.Mutex
+	// feedback is used to store query feedback info.
+	feedback []*QueryFeedback
 
 	Lease time.Duration
 }
@@ -69,6 +73,9 @@ func (h *Handle) Clear() {
 	h.globalMap = make(tableDeltaMap)
 }
 
+// For now, we do not use the query feedback, so just set it to 1.
+const maxQueryFeedBackCount = 1
+
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	handle := &Handle{
@@ -78,6 +85,7 @@ func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
+		feedback:        make([]*QueryFeedback, 0, maxQueryFeedBackCount),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle

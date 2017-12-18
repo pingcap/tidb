@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
@@ -141,6 +142,68 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	}
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "commit")
 	return errors.Trace(err)
+}
+
+// QueryFeedback is used to represent the query stats info.
+type QueryFeedback struct {
+	tableID     int64
+	colID       int64
+	intRanges   []ranger.IntColumnRange
+	idxRanges   []*ranger.IndexRange
+	histVersion uint64 // histVersion is the version of the histogram when we issue the query.
+	expected    int64
+	actual      int64
+}
+
+// NewQueryFeedback returns a new query feedback.
+func NewQueryFeedback(tableID int64, colID int64, histVer uint64, expected int64) *QueryFeedback {
+	return &QueryFeedback{
+		tableID:     tableID,
+		colID:       colID,
+		histVersion: histVer,
+		expected:    expected,
+		actual:      0}
+}
+
+// Update updates the query feedback, if there are some errors happened, then `count` will be less than 0.
+func (q *QueryFeedback) Update(count int64) {
+	if count >= 0 && q.actual >= 0 {
+		q.actual += count
+		return
+	}
+	q.actual = -1
+}
+
+// Actual returns the actual row count. It is only used in test.
+func (q *QueryFeedback) Actual() int64 {
+	return q.actual
+}
+
+// StoreQueryFeedback stores the query feedback.
+func (h *Handle) StoreQueryFeedback(q *QueryFeedback, intRanges []ranger.IntColumnRange, idxRanges []*ranger.IndexRange) {
+	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
+	if h == nil || q.histVersion == 0 || q.actual < 0 {
+		return
+	}
+	q.intRanges, q.idxRanges = intRanges, idxRanges
+	h.feedbackLock.Lock()
+	defer h.feedbackLock.Unlock()
+	if len(h.feedback)-1 >= maxQueryFeedBackCount {
+		return
+	}
+	h.feedback = append(h.feedback, q)
+}
+
+// GetQueryFeedback gets the query feedback.
+func (h *Handle) GetQueryFeedback() []*QueryFeedback {
+	h.feedbackLock.Lock()
+	feedback := make([]*QueryFeedback, len(h.feedback))
+	for i, f := range h.feedback {
+		feedback[i] = f
+	}
+	h.feedback = h.feedback[:0]
+	h.feedbackLock.Unlock()
+	return feedback
 }
 
 const (

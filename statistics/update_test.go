@@ -305,3 +305,37 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.NDV, Equals, int64(1))
 	c.Assert(len(hg.Buckets), Equals, 1)
 }
+
+func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx(a))")
+	testKit.MustExec("insert into t values (1,2),(2,3),(4,5)")
+	testKit.MustExec("analyze table t")
+
+	h := s.do.StatsHandle()
+	tests := []struct {
+		sql    string
+		actual int64
+	}{
+		{
+			sql:    "select * from t where t.a <= 1",
+			actual: 1,
+		},
+		{
+			sql:    "select * from t use index(idx) where t.a <= 2",
+			actual: 2,
+		},
+		{
+			sql:    "select a from t use index(idx) where t.a <= 4",
+			actual: 3,
+		},
+	}
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+		feedback := h.GetQueryFeedback()
+		c.Assert(len(feedback), Equals, 1)
+		c.Assert(feedback[0].Actual(), Equals, t.actual)
+	}
+}

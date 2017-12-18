@@ -43,11 +43,11 @@ var (
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Next gets the next partial result.
-	Next(goctx.Context) (PartialResult, error)
+	Next(goctx.Context) (PartialResult, int64, error)
 	// NextRaw gets the next raw result.
 	NextRaw() ([]byte, error)
 	// NextChunk reads the data into chunk.
-	NextChunk(goctx.Context, *chunk.Chunk) error
+	NextChunk(goctx.Context, *chunk.Chunk) (int64, error)
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -120,18 +120,21 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 }
 
 // Next returns the next row.
-func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
+func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, int64, error) {
 	re := <-r.results
 	if re.err != nil {
-		return nil, errors.Trace(re.err)
+		return nil, -1, errors.Trace(re.err)
 	}
 	if re.result == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 	pr := &partialResult{}
 	pr.rowLen = r.rowLen
 	err := pr.unmarshal(re.result)
-	return pr, errors.Trace(err)
+	if len(pr.resp.OutputCounts) > 0 {
+		return pr, pr.resp.OutputCounts[0], errors.Trace(err)
+	}
+	return pr, -1, errors.Trace(err)
 }
 
 // NextRaw returns the next raw partial result.
@@ -141,46 +144,57 @@ func (r *selectResult) NextRaw() ([]byte, error) {
 }
 
 // NextChunk reads data to the chunk.
-func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (int64, error) {
 	chk.Reset()
+	count := int64(0)
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
-			err := r.getSelectResp()
-			if err != nil || r.selectResp == nil {
-				return errors.Trace(err)
+			cnt, err := r.getSelectResp()
+			if err != nil {
+				return -1, errors.Trace(err)
+			}
+			count += cnt
+			if r.selectResp == nil {
+				return count, nil
 			}
 		}
 		err := r.readRowsData(chk)
 		if err != nil {
-			return errors.Trace(err)
+			return -1, errors.Trace(err)
 		}
 		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
 			r.respChkIdx++
 		}
 	}
-	return nil
+	return count, nil
 }
 
-func (r *selectResult) getSelectResp() error {
+func (r *selectResult) getSelectResp() (int64, error) {
 	r.respChkIdx = 0
+	count := int64(0)
 	for {
 		re := <-r.results
 		if re.err != nil {
-			return errors.Trace(re.err)
+			return -1, errors.Trace(re.err)
 		}
 		if re.result == nil {
 			r.selectResp = nil
-			return nil
+			return count, nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result)
 		if err != nil {
-			return errors.Trace(err)
+			return -1, errors.Trace(err)
+		}
+		if len(r.selectResp.OutputCounts) > 0 {
+			count += r.selectResp.OutputCounts[0]
+		} else {
+			count = -1
 		}
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
-		return nil
+		return count, nil
 	}
 }
 

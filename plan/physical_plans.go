@@ -112,6 +112,8 @@ type PhysicalIndexScan struct {
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
 	dataSourceSchema *expression.Schema
+
+	HistVersion uint64
 }
 
 // PhysicalMemTable reads memory table.
@@ -154,6 +156,8 @@ type PhysicalTableScan struct {
 
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
+
+	HistVersion uint64
 }
 
 // PhysicalProjection is the physical operator of projection.
