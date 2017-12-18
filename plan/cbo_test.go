@@ -335,6 +335,11 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			sql:  "select * from t2 where t2.a <= 2",
 			best: "TableReader(Table(t2)->Sel([le(test.t2.a, 2)]))",
 		},
+		// Test analyze all index.
+		{
+			sql:  "analyze table t2 index",
+			best: "Analyze{Index(t2.a),Index(t2.b)}",
+		},
 		// TODO: Refine these tests in the future.
 		//{
 		//	sql:  "select * from t2 where t2.a = 1 and t2.b <= 2",
