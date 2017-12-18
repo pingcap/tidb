@@ -301,8 +301,9 @@ func (e *DeleteExec) deleteSingleTable() error {
 	}
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
+	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 	for {
-		if batchDelete && rowCount >= BatchDeleteSize {
+		if batchDelete && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -722,14 +723,6 @@ func (e *InsertExec) Schema() *expression.Schema {
 	return expression.NewSchema()
 }
 
-// BatchInsertSize is the batch size of auto-splitted insert data.
-// This will be used when tidb_batch_insert is set to ON.
-var BatchInsertSize = 20000
-
-// BatchDeleteSize is the batch size of auto-splitted delete data.
-// This will be used when tidb_batch_delete is set to ON.
-var BatchDeleteSize = 20000
-
 // Next implements the Executor Next interface.
 func (e *InsertExec) Next() (Row, error) {
 	if e.finished {
@@ -752,11 +745,12 @@ func (e *InsertExec) Next() (Row, error) {
 
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
+	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 
 	txn := e.ctx.Txn()
 	rowCount := 0
 	for _, row := range rows {
-		if batchInsert && rowCount >= BatchInsertSize {
+		if batchInsert && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)

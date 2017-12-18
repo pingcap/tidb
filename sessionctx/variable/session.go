@@ -222,6 +222,10 @@ type SessionVars struct {
 	// BatchDelete indicates if we should split delete data into multiple batches.
 	BatchDelete bool
 
+	// DMLBatchSize indicates the size of batches for DML.
+	// It will be used when BatchInsert or BatchDelete is on.
+	DMLBatchSize int
+
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 }
@@ -246,6 +250,7 @@ func NewSessionVars() *SessionVars {
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
+		DMLBatchSize:               DefDMLBatchSize,
 	}
 }
 
