@@ -27,7 +27,7 @@ import (
 )
 
 // TypeCode indicates JSON type.
-type TypeCode byte
+type TypeCode = byte
 
 const (
 	// TypeCodeObject indicates the JSON is an object.

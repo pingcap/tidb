@@ -27,7 +27,7 @@ func (s *pushDownTopNOptimizer) optimize(p LogicalPlan, ctx context.Context) (Lo
 }
 
 func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
-	p := s.basePlan.self.(LogicalPlan)
+	p := s.self
 	for i, child := range p.Children() {
 		p.Children()[i] = child.(LogicalPlan).pushDownTopN(nil)
 		p.Children()[i].SetParents(p)
