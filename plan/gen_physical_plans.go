@@ -286,7 +286,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	var (
 		bestIndexInfo  *model.IndexInfo
 		rangesOfBest   []*ranger.IndexRange
-		maxRangeLen    int
+		maxUsedCols    int
 		remainedOfBest []expression.Expression
 	)
 	orderedInnerKeys := make([]*expression.Column, len(innerJoinKeys))
@@ -297,12 +297,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		if !isOk {
 			continue
 		}
-		// We choose the index by the length of the range, the longer the better.
+		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
 		// And obviously when the range is nil, we don't need index join.
-		if len(ranges) > 0 || len(ranges[0].LowVal) > maxRangeLen {
+		if len(ranges) > 0 || len(ranges[0].LowVal) > maxUsedCols {
 			bestIndexInfo = indexInfo
-			maxRangeLen = len(ranges[0].LowVal)
+			maxUsedCols = len(ranges[0].LowVal)
 			rangesOfBest = ranges
 			remainedOfBest = remained
 
