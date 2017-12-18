@@ -165,7 +165,7 @@ func NewQueryFeedback(tableID int64, colID int64, histVer uint64, expected int64
 		actual:      0}
 }
 
-// Update updates the query feedback, if there are some errors happened, then `count` will be less than 0.
+// Increase increases the actual count. If there are some errors happened, then `count` will be less than 0.
 func (q *QueryFeedback) Increase(count int64) {
 	if count >= 0 && q.actual >= 0 {
 		q.actual += count
