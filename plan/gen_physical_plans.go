@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"bytes"
 	"math"
 
 	"github.com/juju/errors"
@@ -324,6 +325,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 			eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
 			conds = append(conds, eqFunc)
 		}
+		lastExprHashCode := conds[offsetsMap[maxIndexColIdx]].HashCode()
 		conds = append(conds, x.pushedDownConds...)
 		// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occurs in the same time.
 		// So we can guarantee that once count of the columns in the ranges is no lower than the max idx
@@ -332,8 +334,16 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
 		terror.Log(errors.Trace(err))
 		idxRanges := ranger.Ranges2IndexRanges(ranges)
-		// We'd better guarantee that all the index column in the join's equal condition is used.
-		if len(idxRanges) == 0 || len(idxRanges[0].LowVal) <= maxIndexColIdx {
+		// We should guarantee that all the index column in the join's equal condition is used.
+		// Only check the last one is ok.
+		valid := false
+		for _, expr := range accesses {
+			if bytes.Equal(expr.HashCode(), lastExprHashCode) {
+				valid = true
+				break
+			}
+		}
+		if !valid {
 			continue
 		}
 		// This compare way is a little easy, we can use the average unit size of one index in the future to determine which index to choose.
