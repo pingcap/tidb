@@ -155,26 +155,26 @@ func (bj BinaryJSON) objectSearchKey(key []byte) (BinaryJSON, bool) {
 }
 
 func buildBinaryArray(elems []BinaryJSON) BinaryJSON {
-	totalSize := 8 + len(elems)*5
+	totalSize := headerSize + len(elems)*valEntrySize
 	for _, elem := range elems {
 		if elem.TypeCode != TypeCodeLiteral {
 			totalSize += len(elem.Value)
 		}
 	}
-	buf := make([]byte, 8+len(elems)*5, totalSize)
+	buf := make([]byte, headerSize+len(elems)*valEntrySize, totalSize)
 	endian.PutUint32(buf, uint32(len(elems)))
-	endian.PutUint32(buf[4:], uint32(totalSize))
-	buf = buildBinaryElements(buf, 8, elems)
+	endian.PutUint32(buf[dataSizeOff:], uint32(totalSize))
+	buf = buildBinaryElements(buf, headerSize, elems)
 	return BinaryJSON{TypeCode: TypeCodeArray, Value: buf}
 }
 
 func buildBinaryElements(buf []byte, entryStart int, elems []BinaryJSON) []byte {
 	for i, elem := range elems {
-		buf[entryStart+i*5] = elem.TypeCode
+		buf[entryStart+i*valEntrySize] = elem.TypeCode
 		if elem.TypeCode == TypeCodeLiteral {
-			buf[entryStart+i*5+1] = elem.Value[0]
+			buf[entryStart+i*valEntrySize+valTypeSize] = elem.Value[0]
 		} else {
-			endian.PutUint32(buf[entryStart+i*5+1:], uint32(len(buf)))
+			endian.PutUint32(buf[entryStart+i*valEntrySize+valTypeSize:], uint32(len(buf)))
 			buf = append(buf, elem.Value...)
 		}
 	}
@@ -182,22 +182,22 @@ func buildBinaryElements(buf []byte, entryStart int, elems []BinaryJSON) []byte 
 }
 
 func buildBinaryObject(keys [][]byte, elems []BinaryJSON) BinaryJSON {
-	totalSize := 8 + len(elems)*11
+	totalSize := headerSize + len(elems)*(keyEntrySize+valEntrySize)
 	for i, elem := range elems {
 		if elem.TypeCode != TypeCodeLiteral {
 			totalSize += len(elem.Value)
 		}
 		totalSize += len(keys[i])
 	}
-	buf := make([]byte, 8+len(elems)*11, totalSize)
+	buf := make([]byte, headerSize+len(elems)*(keyEntrySize+valEntrySize), totalSize)
 	endian.PutUint32(buf, uint32(len(elems)))
-	endian.PutUint32(buf[4:], uint32(totalSize))
+	endian.PutUint32(buf[dataSizeOff:], uint32(totalSize))
 	for i, key := range keys {
-		endian.PutUint32(buf[8+i*6:], uint32(len(buf)))
-		endian.PutUint16(buf[8+i*6+4:], uint16(len(key)))
+		endian.PutUint32(buf[headerSize+i*keyEntrySize:], uint32(len(buf)))
+		endian.PutUint16(buf[headerSize+i*keyEntrySize+keyLenOff:], uint16(len(key)))
 		buf = append(buf, key...)
 	}
-	entryStart := 8 + len(elems)*6
+	entryStart := headerSize + len(elems)*keyEntrySize
 	buf = buildBinaryElements(buf, entryStart, elems)
 	return BinaryJSON{TypeCode: TypeCodeObject, Value: buf}
 }
@@ -404,36 +404,36 @@ func (bm *binaryModifier) rebuild() BinaryJSON {
 	elemCount := bj.getElemCount()
 	var size, valEntryStart int
 	if bj.TypeCode == TypeCodeArray {
-		size = 8 + elemCount*5
-		valEntryStart = 8
+		size = headerSize + elemCount*valEntrySize
+		valEntryStart = headerSize
 		buf = append(buf, bj.Value[:size]...)
 	} else {
-		size = 8 + elemCount*11
-		valEntryStart = 8 + elemCount*6
+		size = headerSize + elemCount*(keyEntrySize+valEntrySize)
+		valEntryStart = headerSize + elemCount*keyEntrySize
 		buf = append(buf, bj.Value[:size]...)
 		if elemCount > 0 {
-			firstKeyOff := int(endian.Uint32(bj.Value[8:]))
-			lastKeyOff := int(endian.Uint32(bj.Value[8+(elemCount-1)*6:]))
-			lastKeyLen := int(endian.Uint16(bj.Value[8+(elemCount-1)*6+4:]))
+			firstKeyOff := int(endian.Uint32(bj.Value[headerSize:]))
+			lastKeyOff := int(endian.Uint32(bj.Value[headerSize+(elemCount-1)*keyEntrySize:]))
+			lastKeyLen := int(endian.Uint16(bj.Value[headerSize+(elemCount-1)*keyEntrySize+keyLenOff:]))
 			buf = append(buf, bj.Value[firstKeyOff:lastKeyOff+lastKeyLen]...)
 		}
 	}
 	for i := 0; i < elemCount; i++ {
-		valEntryOff := valEntryStart + i*5
+		valEntryOff := valEntryStart + i*valEntrySize
 		elem := bj.valEntryGet(valEntryOff)
 		if bm.modifyPtr == &elem.Value[0] {
 			elem = bm.modifyValue
 		}
 		buf[valEntryOff] = elem.TypeCode
 		if elem.TypeCode == TypeCodeLiteral {
-			endian.PutUint32(buf[valEntryOff+1:], uint32(elem.Value[0]))
+			endian.PutUint32(buf[valEntryOff+valTypeSize:], uint32(elem.Value[0]))
 			continue
 		}
-		endian.PutUint32(buf[valEntryOff+1:], uint32(len(buf)))
+		endian.PutUint32(buf[valEntryOff+valTypeSize:], uint32(len(buf)))
 		buf = append(buf, elem.Value...)
 		size += len(elem.Value)
 	}
-	endian.PutUint32(buf[4:], uint32(size))
+	endian.PutUint32(buf[dataSizeOff:], uint32(size))
 	return BinaryJSON{TypeCode: bj.TypeCode, Value: buf}
 }
 
