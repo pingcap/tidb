@@ -334,10 +334,10 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 			var count int64
 			e.partialResult, count, err = e.result.Next(goCtx)
 			if err != nil {
-				e.feedback.Update(-1)
+				e.feedback.Increase(-1)
 				return nil, errors.Trace(err)
 			}
-			e.feedback.Update(count)
+			e.feedback.Increase(count)
 			if e.partialResult == nil {
 				// Finished.
 				return nil, nil
@@ -346,7 +346,7 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		// Get a row from partial result.
 		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
-			e.feedback.Update(-1)
+			e.feedback.Increase(-1)
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
@@ -358,7 +358,7 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		}
 		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
-			e.feedback.Update(-1)
+			e.feedback.Increase(-1)
 			return nil, errors.Trace(err)
 		}
 		return rowData, nil
@@ -369,10 +369,10 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 func (e *TableReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	count, err := e.result.NextChunk(goCtx, chk)
 	if err != nil {
-		e.feedback.Update(-1)
+		e.feedback.Increase(-1)
 		return errors.Trace(err)
 	}
-	e.feedback.Update(count)
+	e.feedback.Increase(count)
 	return nil
 }
 
@@ -390,12 +390,12 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
-		e.feedback.Update(-1)
+		e.feedback.Increase(-1)
 		return errors.Trace(err)
 	}
 	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
-		e.feedback.Update(-1)
+		e.feedback.Increase(-1)
 		return errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
@@ -453,10 +453,10 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 			var err error
 			e.partialResult, count, err = e.result.Next(goCtx)
 			if err != nil {
-				e.feedback.Update(-1)
+				e.feedback.Increase(-1)
 				return nil, errors.Trace(err)
 			}
-			e.feedback.Update(count)
+			e.feedback.Increase(count)
 			if e.partialResult == nil {
 				// Finished.
 				return nil, nil
@@ -465,7 +465,7 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		// Get a row from partial result.
 		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
-			e.feedback.Update(-1)
+			e.feedback.Increase(-1)
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
@@ -477,7 +477,7 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		}
 		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
-			e.feedback.Update(-1)
+			e.feedback.Increase(-1)
 			return nil, errors.Trace(err)
 		}
 		return rowData, nil
@@ -488,10 +488,10 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 func (e *IndexReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	count, err := e.result.NextChunk(goCtx, chk)
 	if err != nil {
-		e.feedback.Update(-1)
+		e.feedback.Increase(-1)
 		return errors.Trace(err)
 	}
-	e.feedback.Update(count)
+	e.feedback.Increase(count)
 	return nil
 }
 
@@ -509,12 +509,12 @@ func (e *IndexReaderExecutor) Open(goCtx goctx.Context) error {
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
-		e.feedback.Update(-1)
+		e.feedback.Increase(-1)
 		return errors.Trace(err)
 	}
 	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
-		e.feedback.Update(-1)
+		e.feedback.Increase(-1)
 		return errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
@@ -596,7 +596,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 	go func() {
 		goCtx1, cancel := goctx.WithCancel(goCtx)
 		count := worker.fetchHandles(goCtx1, result)
-		e.feedback.Update(count)
+		e.feedback.Increase(count)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
@@ -708,12 +708,12 @@ func (w *tableWorker) pickAndExecTask(goCtx goctx.Context) {
 func (e *IndexLookUpExecutor) Open(goCtx goctx.Context) error {
 	kvRanges, err := indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
 	if err != nil {
-		e.feedback.Update(-1)
+		e.feedback.Increase(-1)
 		return errors.Trace(err)
 	}
 	err = e.open(goCtx, kvRanges)
 	if err != nil {
-		e.feedback.Update(-1)
+		e.feedback.Increase(-1)
 	}
 	return errors.Trace(err)
 }
@@ -812,7 +812,7 @@ func (e *IndexLookUpExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
-			e.feedback.Update(-1)
+			e.feedback.Increase(-1)
 			return nil, errors.Trace(err)
 		}
 		if resultTask == nil {
@@ -820,7 +820,7 @@ func (e *IndexLookUpExecutor) Next(goCtx goctx.Context) (Row, error) {
 		}
 		row, err := resultTask.getRow(e.schema)
 		if err != nil {
-			e.feedback.Update(-1)
+			e.feedback.Increase(-1)
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
@@ -835,7 +835,7 @@ func (e *IndexLookUpExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
-			e.feedback.Update(-1)
+			e.feedback.Increase(-1)
 			return errors.Trace(err)
 		}
 		if resultTask == nil {
