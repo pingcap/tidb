@@ -320,9 +320,7 @@ func (base basePhysicalAgg) initForHash(ctx context.Context, props ...*requiredP
 }
 
 func (base basePhysicalAgg) initForStream(ctx context.Context, props ...*requiredProp) *PhysicalStreamAgg {
-	p := &PhysicalStreamAgg{
-		basePhysicalAgg: base,
-	}
+	p := &PhysicalStreamAgg{basePhysicalAgg: base}
 	p.basePlan = newBasePlan(TypeStreamAgg, ctx, p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.childrenReqProps = props

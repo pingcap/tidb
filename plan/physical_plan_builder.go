@@ -99,7 +99,6 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Infof("convert to physical %s end", ToString(pp))
 	}
 	p.storeTask(prop, t)
 	return t, nil

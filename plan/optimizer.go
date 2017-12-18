@@ -154,6 +154,7 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 	p := t.plan()
+	log.Warnf("dag ============ %s", ToString(p))
 	rebuildSchema(p)
 	p.ResolveIndices()
 	return p, nil

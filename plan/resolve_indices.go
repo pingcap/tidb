@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 )
@@ -150,8 +151,10 @@ func (p *PhysicalSelection) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *basePhysicalAgg) ResolveIndices() {
 	p.basePlan.ResolveIndices()
+	log.Warnf("p %s, schema %v", ToString(p.self), p.schema)
 	for _, aggFun := range p.AggFuncs {
 		for _, arg := range aggFun.GetArgs() {
+			log.Infof("p %s, schema %v, agg %s, arg %v", ToString(p.children[0]), p.children[0].Schema(), aggFun.GetName(), arg)
 			arg.ResolveIndices(p.children[0].Schema())
 		}
 	}

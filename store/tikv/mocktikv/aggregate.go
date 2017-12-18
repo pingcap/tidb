@@ -246,6 +246,10 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 }
 
 func (e *streamAggExec) Next(goCtx goctx.Context) (retRow [][]byte, err error) {
+	if e.executed {
+		return nil, nil
+	}
+
 	if e.aggCtxs == nil {
 		for _, agg := range e.aggExprs {
 			e.aggCtxs = append(e.aggCtxs, agg.CreateContext())

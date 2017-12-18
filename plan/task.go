@@ -241,11 +241,10 @@ func finishCopTask(task task, ctx context.Context) task {
 	// `NetWorkStartCost` * (totalCount / perCountIndexRead)
 	log.Infof("000 task %v, cost %v", t, t.cost())
 	t.finishIndexPlan()
-	log.Infof("111 task %v, cost %v", t, t.cost())
 	if t.tablePlan != nil {
 		t.cst += t.count() * netWorkFactor
 	}
-	log.Infof("222 task %v, cost %v", t, t.cost())
+	log.Infof("111 task %v, cost %v", t, t.cost())
 	newTask := &rootTask{
 		cst: t.cst,
 	}
@@ -454,7 +453,8 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalHashAgg) {
+// func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalHashAgg) {
+func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg *basePhysicalAgg) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
@@ -498,9 +498,13 @@ func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalH
 		fun.SetMode(aggregation.FinalMode)
 		finalAggFuncs[i] = fun
 	}
-	finalAgg = basePhysicalAgg{
+	finalAgg = &basePhysicalAgg{
+		basePlan: &basePlan{
+			profile:     p.profile,
+			expectedCnt: p.expectedCnt,
+			schema:      originalSchema},
 		AggFuncs: finalAggFuncs,
-	}.initForHash(p.ctx)
+	}
 	finalAgg.profile = p.profile
 	finalAgg.SetSchema(originalSchema)
 	// add group by columns
@@ -516,69 +520,69 @@ func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalH
 	return
 }
 
-func (p *PhysicalStreamAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalStreamAgg) {
-	// Check if this aggregation can push down.
-	sc := p.ctx.GetSessionVars().StmtCtx
-	client := p.ctx.GetClient()
-	for _, aggFunc := range p.AggFuncs {
-		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
-		if pb == nil {
-			log.Warnf("....")
-			return nil, p
-		}
-	}
-	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
-	if len(remained) > 0 {
-		log.Warnf("....11")
-		return nil, p
-	}
-	partialAgg = p
-	originalSchema := p.schema
-	// TODO: Refactor the way of constructing aggregation functions.
-	partialSchema := expression.NewSchema()
-	partialAgg.SetSchema(partialSchema)
-	cursor := 0
-	finalAggFuncs := make([]aggregation.Aggregation, len(p.AggFuncs))
-	for i, aggFun := range p.AggFuncs {
-		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
-		var args []expression.Expression
-		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
-		if needCount(fun) {
-			ft := types.NewFieldType(mysql.TypeLonglong)
-			ft.Flen = 21
-			ft.Charset = charset.CharsetBin
-			ft.Collate = charset.CollationBin
-			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
-			args = append(args, partialSchema.Columns[cursor].Clone())
-			cursor++
-		}
-		if needValue(fun) {
-			ft := originalSchema.Columns[i].GetType()
-			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
-			args = append(args, partialSchema.Columns[cursor].Clone())
-			cursor++
-		}
-		fun.SetArgs(args)
-		fun.SetMode(aggregation.FinalMode)
-		finalAggFuncs[i] = fun
-	}
-	finalAgg = basePhysicalAgg{
-		AggFuncs: finalAggFuncs,
-	}.initForStream(p.ctx)
-	finalAgg.profile = p.profile
-	finalAgg.SetSchema(originalSchema)
-	// add group by columns
-	for i, gbyExpr := range p.GroupByItems {
-		gbyCol := &expression.Column{
-			FromID:   partialAgg.id,
-			Position: cursor + i,
-			RetType:  gbyExpr.GetType(),
-		}
-		partialSchema.Append(gbyCol)
-		finalAgg.GroupByItems = append(finalAgg.GroupByItems, gbyCol.Clone())
-	}
-	return
-}
+// func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg *basePhysicalAgg) {
+// 	// Check if this aggregation can push down.
+// 	sc := p.ctx.GetSessionVars().StmtCtx
+// 	client := p.ctx.GetClient()
+// 	for _, aggFunc := range p.AggFuncs {
+// 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
+// 		if pb == nil {
+// 			return nil, p
+// 		}
+// 	}
+// 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
+// 	if len(remained) > 0 {
+// 		return nil, p
+// 	}
+// 	partialAgg = p
+// 	originalSchema := p.schema
+// 	// TODO: Refactor the way of constructing aggregation functions.
+// 	partialSchema := expression.NewSchema()
+// 	partialAgg.SetSchema(partialSchema)
+// 	cursor := 0
+// 	finalAggFuncs := make([]aggregation.Aggregation, len(p.AggFuncs))
+// 	for i, aggFun := range p.AggFuncs {
+// 		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
+// 		var args []expression.Expression
+// 		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
+// 		if needCount(fun) {
+// 			ft := types.NewFieldType(mysql.TypeLonglong)
+// 			ft.Flen = 21
+// 			ft.Charset = charset.CharsetBin
+// 			ft.Collate = charset.CollationBin
+// 			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
+// 			args = append(args, partialSchema.Columns[cursor].Clone())
+// 			cursor++
+// 		}
+// 		if needValue(fun) {
+// 			ft := originalSchema.Columns[i].GetType()
+// 			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
+// 			args = append(args, partialSchema.Columns[cursor].Clone())
+// 			cursor++
+// 		}
+// 		fun.SetArgs(args)
+// 		fun.SetMode(aggregation.FinalMode)
+// 		finalAggFuncs[i] = fun
+// 	}
+// 	finalAgg = &basePhysicalAgg{
+// 		basePlan: &basePlan{
+// 			profile:     p.profile,
+// 			expectedCnt: p.expectedCnt,
+// 			schema:      originalSchema},
+// 		AggFuncs: finalAggFuncs,
+// 	}
+// 	// add group by columns
+// 	for i, gbyExpr := range p.GroupByItems {
+// 		gbyCol := &expression.Column{
+// 			FromID:   partialAgg.id,
+// 			Position: cursor + i,
+// 			RetType:  gbyExpr.GetType(),
+// 		}
+// 		partialSchema.Append(gbyCol)
+// 		finalAgg.GroupByItems = append(finalAgg.GroupByItems, gbyCol.Clone())
+// 	}
+// 	return
+// }
 
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
@@ -586,25 +590,31 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		return invalidTask
 	}
 	task := tasks[0].copy()
-	log.Infof("stream agg p %s, task %v, count %v", ToString(p), task, task.count())
+	log.Infof("stream agg p %s, p.count %v, task %v, count %v", ToString(p), p.profile.count, task, task.count())
 	if cop, ok := task.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
-		if partialAgg != nil {
+		partialBaseAgg, finalBaseAgg := p.newPartialAggregate()
+		finalAgg := finalBaseAgg.initForStream(p.ctx)
+		var partialAgg *PhysicalStreamAgg
+		if partialBaseAgg != nil {
+			partialAgg = partialBaseAgg.initForStream(p.ctx)
 			if cop.tablePlan != nil {
+				log.Infof("stream agg [table] child schema %s", cop.tablePlan.Schema())
 				partialAgg.SetChildren(cop.tablePlan)
 				cop.tablePlan = partialAgg
 			} else {
+				log.Infof("stream agg [index] child schema %s", cop.indexPlan.Schema())
 				partialAgg.SetChildren(cop.indexPlan)
 				cop.indexPlan = partialAgg
 			}
 		}
-		log.Warnf("stream agg cop, 0p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
+		log.Warnf("stream agg child schema %v, index plan schema %v", partialAgg.children[0].Schema(), cop.indexPlan.Schema())
+		log.Warnf("stream agg cop, 0p %s, agg %s, task count %v, cost %v", ToString(p), ToString(finalAgg), task.count(), task.cost())
 		task = finishCopTask(cop, p.ctx)
 		attachPlan2Task(finalAgg, task)
 		task.addCost(task.count() * cpuFactor)
 		log.Warnf("stream agg cop, 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	} else {
-		log.Warnf("stream agg root 0p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
+		log.Warnf("stream agg root 0p %s, p profile count %v, task count %v", ToString(p), p.profile.count, task.count())
 		attachPlan2Task(p, task)
 		task.addCost(task.count() * cpuFactor)
 		log.Warnf("stream agg root 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
@@ -619,7 +629,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	}
 	cardinality := p.statsProfile().count
 	task := tasks[0].copy()
-	log.Infof("p %s, task %v, count %v", ToString(p), task, task.count())
+	log.Infof("p %s, p.count %v, task %v, count %v", ToString(p), p.profile.count, task, task.count())
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
@@ -632,8 +642,9 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 				cop.indexPlan = partialAgg
 			}
 		}
+		log.Warnf("hash child schema %v", partialAgg.children[0].Schema())
 		task = finishCopTask(cop, p.ctx)
-		log.Warnf("cop, 0p %s, task count %v", ToString(p), task.count())
+		log.Warnf("cop, 0p %s, agg %s, p.count %v, agg.count %v, task count %v, cost %v", ToString(p), ToString(finalAgg), p.profile.count, finalAgg.profile.count, task.count(), task.cost())
 		attachPlan2Task(finalAgg, task)
 		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		log.Warnf("cop, 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
