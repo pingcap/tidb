@@ -161,6 +161,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.BatchInsert = tidbOptOn(sVal)
 	case variable.TiDBBatchDelete:
 		vars.BatchDelete = tidbOptOn(sVal)
+	case variable.TiDBDMLBatchSize:
+		vars.DMLBatchSize = tidbOptPositiveInt(sVal, variable.DefDMLBatchSize)
 	case variable.TiDBMaxRowCountForINLJ:
 		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
 	case variable.TiDBCurrentTS:
