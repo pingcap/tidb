@@ -195,8 +195,9 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan
 }
 
 // joinKeysMatchIndex checks if all keys match columns in index.
+// It returns a slice a[] what a[i] means index.Column[i] is related with keys[a[i]].
 func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
-	if len(keys) > len(index.Columns) {
+	if len(index.Columns) < len(keys) {
 		return nil
 	}
 	offsetsMap := make([]int, len(index.Columns))
@@ -255,8 +256,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
 // because we will swap the children of join when the right child is outer child.
 // First of all, we will extract the join keys for p's equal conditions. Then check whether all of them is a part of index
-// or just the primary key. If so we will construct the index join.
-// We may support that not all of the equal key need to match one index or pk, just part of them match is enough in the future.
+// or just the primary key. If so we will choose the best one and construct a index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) []PhysicalPlan {
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
 	var (
@@ -297,16 +297,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		if !isOk {
 			continue
 		}
-		// This compare way is a little easy, we can use the average unit size of one index in the future to determine which index to choose.
-		// There may be the cases like `a = 1 and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
-		// And obviously the range is nil is the better case.
-		if len(ranges) == 0 || len(ranges[0].LowVal) > maxRangeLen {
+		// We choose the index by the length of the range, the longer the better.
+		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
+		// And obviously when the range is nil, we don't need index join.
+		if len(ranges) > 0 || len(ranges[0].LowVal) > maxRangeLen {
 			bestIndexInfo = indexInfo
-			if len(ranges) == 0 {
-				maxRangeLen = math.MaxInt32
-			} else {
-				maxRangeLen = len(ranges[0].LowVal)
-			}
+			maxRangeLen = len(ranges[0].LowVal)
 			rangesOfBest = ranges
 			remainedOfBest = remained
 
@@ -332,9 +328,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 }
 
 // checkIndexForIndexJoin checks whether this index can be used for building index join and return enough information to
-// determine whether this index can be chosen and how to construct the index join.
+// determine whether this index is better and how to construct the index join.
 func (p *LogicalJoin) checkIndexForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (ok bool,
-	remained []expression.Expression, ranges []*ranger.IndexRange, offsetsMap []int) {
+	remained []expression.Expression, indexRanges []*ranger.IndexRange, offsetsMap []int) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
 	if len(idxCols) == 0 {
 		return false, nil, nil, nil
@@ -353,7 +349,7 @@ func (p *LogicalJoin) checkIndexForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	}
 
 	// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down so cannot
-	// to calculate range either.
+	// to calculate range either. So we only need the innerPlan.pushedDownConds and the eq conditions that we generate.
 	// TODO: There may be a selection that block the index join.
 	conds := make([]expression.Expression, 0, len(offsetsMap)+len(innerPlan.pushedDownConds))
 	// Construct a fake equal expression for calculate the range.
@@ -367,14 +363,13 @@ func (p *LogicalJoin) checkIndexForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	lastExprHashCode := conds[offsetsMap[maxIndexColIdx]].HashCode()
 
 	conds = append(conds, innerPlan.pushedDownConds...)
-	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occurs in the same time.
-	// And if there's cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
-	// So we can guarantee that once count of the columns in the ranges is no lower than the max idx
-	// that the inner keys matched in the index, then the equal conditions of join are all used.
+	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
+	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
+	// So DetachIndexConditions won't miss the equal conditions we generate.
 	accesses, remained := ranger.DetachIndexConditions(conds, idxCols, colLengths)
 
-	// We should guarantee that all the index column in the join's equal condition is used.
-	// Only check the last one is ok.
+	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
+	// Here the last means that the corresponding index column's position is maximum.
 	valid := false
 	for _, expr := range accesses {
 		if bytes.Equal(expr.HashCode(), lastExprHashCode) {
@@ -386,13 +381,13 @@ func (p *LogicalJoin) checkIndexForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return false, nil, nil, nil
 	}
 
-	r, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
+	ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return false, nil, nil, nil
 	}
-	ranges = ranger.Ranges2IndexRanges(r)
-	return true, remained, ranges, offsetsMap
+	indexRanges = ranger.Ranges2IndexRanges(ranges)
+	return true, remained, indexRanges, offsetsMap
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
