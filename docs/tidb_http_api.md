@@ -26,28 +26,31 @@ curl http://{TiDBIP}:10080/regions/meta
 curl http://{TiDBIP}:10080/regions/{regionID}
 ```
 
-> 5. Get regions info from db.table
+> 5. Get regions Information from db.table
 
 ```
 curl http://{TiDBIP}:10080/tables/{db}/{table}/regions
 ```
 
-> 6. Get schema info about all db
+> 6. Get schema Information about all db
 
 ```
 curl http://{TiDBIP}:10080/schema
 ```
 
-> 7. Get schema info about db
+> 7. Get schema Information about db
 
 ```
 curl http://{TiDBIP}:10080/schema/{db}
 ```
 
-> 8. Get schema info about db.table
+> 8. Get schema Information about db.table, and you can get schema info by tableid
 
 ```
 curl http://{TiDBIP}:10080/schema/{db}/{table}
+
+curl http://{TiDBIP}:10080/schema?tableid={tableid}
+
 ```
 
 > 9. Get disk-usage info about db.table
@@ -56,19 +59,19 @@ curl http://{TiDBIP}:10080/schema/{db}/{table}
 curl http://{TiDBIP}:10080/tables/{db}/{table}/disk-usage
 ```
 
-> 10. Get MVCC info of the key with a specified handle ID
+> 10. Get MVCC Information of the key with a specified handle ID
 
 ```
 curl http://{TiDBIP}:10080/mvcc/key/{db}/{table}/{handle}
 ```
 
-> 11. Get MVCC info of the first key in the table with a specified start ts
+> 11. Get MVCC Information of the first key in the table with a specified start ts
 
 ```
 curl http://{TiDBIP}:10080/mvcc/txn/{startTS}/{db}/{table}
 ```
 
-> 12. Get MVCC info of the key with a specified handle ID
+> 12. Get MVCC Information of the key with a specified handle ID
 
 ```
 curl http://{TiDBIP}:10080/mvcc/txn/{startTS}
@@ -80,8 +83,13 @@ curl http://{TiDBIP}:10080/mvcc/txn/{startTS}
 curl http://{TiDBIP}:10080/mvcc/hex/{hexKey}
 ```
 
-> 14. Get MVCC Information of index record key
+> 14. Get MVCC Information of index record key, and you can get MVCC info of a specified index key, argument example: column_name_1=column_value_1&column_name_2=column_value2...
 
 ```
 curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}
+```
+> 15. Get MVCC Information of a specified index key, argument example: column_name_1=column_value_1&column_name_2=column_value2...
+
+```
+curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
 ```
