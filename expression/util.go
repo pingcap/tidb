@@ -30,16 +30,30 @@ import (
 
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) (cols []*Column) {
+	result := make([]*Column, 0, 5)
+	return extractColumns(result, expr, nil)
+}
+
+// ExtractColumnsFromExpression is a more effecient version of ExtractColumns for batch operation.
+func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter func(*Column) bool) []*Column {
+	for _, expr := range exprs {
+		result = extractColumns(result, expr, filter)
+	}
+	return result
+}
+
+func extractColumns(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
 	switch v := expr.(type) {
 	case *Column:
-		return []*Column{v}
+		if filter == nil || filter(v) {
+			result = append(result, v)
+		}
 	case *ScalarFunction:
-		cols = make([]*Column, 0, len(v.GetArgs()))
 		for _, arg := range v.GetArgs() {
-			cols = append(cols, ExtractColumns(arg)...)
+			result = extractColumns(result, arg, filter)
 		}
 	}
-	return
+	return result
 }
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
