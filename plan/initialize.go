@@ -344,9 +344,10 @@ func (p PhysicalTableReader) init(ctx context.Context) *PhysicalTableReader {
 func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(TypeIndexReader, ctx, &p)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	if _, ok := p.indexPlan.(*PhysicalHashAgg); ok {
+	switch p.indexPlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
 		p.schema = p.indexPlan.Schema()
-	} else {
+	default:
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
 		p.schema = is.dataSourceSchema
 	}

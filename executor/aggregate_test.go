@@ -284,7 +284,7 @@ func (s *testSuite) TestStreamAgg(c *C) {
 	tk.MustExec("insert t values(1,1,1)")
 	// IndexReader(Index(t.idx)[[<nil>,+inf]]->StreamAgg)->StreamAgg->HashAgg
 	// tk.MustQuery("select distinct a from t group by a").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
 	//	// tk.MustExec("insert t values(1,1,1),(1,1,2),(1,1,3),(2,1,4),(3,2,5),(3,3,6);")
 	//	tk.MustExec("insert t values(1,1,1),(1,1,2),(1,1,3),(2,1,4),(3,2,5),(3,3,6);")
 	//	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))

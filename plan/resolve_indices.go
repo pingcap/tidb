@@ -161,6 +161,7 @@ func (p *basePhysicalAgg) ResolveIndices() {
 	for _, item := range p.GroupByItems {
 		item.ResolveIndices(p.children[0].Schema())
 	}
+	log.Warnf("p %s, schema %v ------------- end", ToString(p.self), p.schema)
 }
 
 // ResolveIndices implements Plan interface.
