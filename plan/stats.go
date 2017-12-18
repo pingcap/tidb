@@ -21,7 +21,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// statsInfo stores the basic information of statistics for the a plan's output. It is used for cost estimation.
+// statsInfo stores the basic information of statistics for the plan's output. It is used for cost estimation.
 type statsInfo struct {
 	count       float64
 	cardinality []float64
@@ -43,7 +43,7 @@ func (s *statsInfo) scale(factor float64) *statsInfo {
 	return profile
 }
 
-// we try to scale statsInfo to an expectCnt which must be smaller than the derived cnt.
+// We try to scale statsInfo to an expectCnt which must be smaller than the derived cnt.
 func (s *statsInfo) scaleByExpectCnt(expectCnt float64) *statsInfo {
 	if expectCnt > s.count {
 		return s
@@ -212,7 +212,7 @@ func (p *LogicalAggregation) deriveStats() *statsInfo {
 	return p.stats
 }
 
-// deriveStats prepares statsInfo profile.
+// deriveStats prepares statsInfo.
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
 // If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose cardinality should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
