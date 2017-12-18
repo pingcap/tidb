@@ -628,6 +628,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 			defaultValues, v.OtherConditions, nil, nil)
 	}
 
+	e.supportChk = true
 	return e
 }
 
