@@ -272,8 +272,6 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	basePhysicalPlan
-
-	childNum int // childNum is the number of children
 }
 
 // AggregationType stands for the mode of aggregation plan.
