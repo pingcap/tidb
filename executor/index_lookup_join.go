@@ -107,8 +107,8 @@ type IndexLookUpJoin struct {
 	curBatchSize int
 	exhausted    bool // exhausted means whether all data has been extracted.
 
-	indexRanges []*ranger.IndexRange
-	offsetsMap  []int
+	indexRanges   []*ranger.IndexRange
+	keyOff2IdxOff []int
 }
 
 // Open implements the Executor Open interface.
@@ -266,7 +266,7 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 	goCtx := goctx.TODO()
-	innerExec, err := e.innerExecBuilder.buildExecutorForIndexJoin(goCtx, requestRows, e.indexRanges, e.offsetsMap)
+	innerExec, err := e.innerExecBuilder.buildExecutorForIndexJoin(goCtx, requestRows, e.indexRanges, e.keyOff2IdxOff)
 	if err != nil {
 		return errors.Trace(err)
 	}

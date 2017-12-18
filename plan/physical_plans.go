@@ -220,8 +220,8 @@ type PhysicalIndexJoin struct {
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.IndexRange
-	// OffsetsMap stores the position of column in the index.
-	OffsetsMap []int
+	// KeyOff2IdxOff stores the position of column in the index.
+	KeyOff2IdxOff []int
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.

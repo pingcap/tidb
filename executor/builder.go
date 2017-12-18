@@ -1094,7 +1094,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, nil, nil),
 		maxBatchSize:     batchSize,
 		indexRanges:      v.Ranges,
-		offsetsMap:       v.OffsetsMap,
+		keyOff2IdxOff:    v.KeyOff2IdxOff,
 	}
 }
 
@@ -1125,7 +1125,7 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 		workerWg:        new(sync.WaitGroup),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 		indexRanges:     v.Ranges,
-		offsetsMap:      v.OffsetsMap,
+		keyOff2IdxOff:   v.KeyOff2IdxOff,
 	}
 	e.supportChk = true
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
@@ -1298,14 +1298,14 @@ type dataReaderBuilder struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context, datums [][]types.Datum,
-	IndexRanges []*ranger.IndexRange, offsetsMap []int) (Executor, error) {
+	IndexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalTableReader:
 		return builder.buildTableReaderForDatums(goCtx, v, datums)
 	case *plan.PhysicalIndexReader:
-		return builder.buildIndexReaderForIndexJoin(goCtx, v, datums, IndexRanges, offsetsMap)
+		return builder.buildIndexReaderForIndexJoin(goCtx, v, datums, IndexRanges, keyOff2IdxOff)
 	case *plan.PhysicalIndexLookUpReader:
-		return builder.buildIndexLookUpReaderForIndexJoin(goCtx, v, datums, IndexRanges, offsetsMap)
+		return builder.buildIndexLookUpReaderForIndexJoin(goCtx, v, datums, IndexRanges, keyOff2IdxOff)
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
@@ -1344,53 +1344,50 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexReader,
-	values [][]types.Datum, indexRanges []*ranger.IndexRange, offsetsMap []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// indexRanges is ordered, values is also ordered, and values is used to set value to some equal condition's range.
-	// So the final kvRanges is still ordered.
-	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(values))
-	for _, val := range values {
-		for _, ran := range indexRanges {
-			for i, pos := range offsetsMap {
-				ran.LowVal[pos] = val[i]
-				ran.HighVal[pos] = val[i]
-			}
-		}
-		tmpKvRanges, err1 := indexRangesToKVRanges(e.tableID, e.index.ID, indexRanges)
-		if err1 != nil {
-			return nil, errors.Trace(err)
-		}
-		kvRanges = append(kvRanges, tmpKvRanges...)
+	kvRanges, err := buildKvRangesForIndexJoin(e.tableID, e.index.ID, values, indexRanges, keyOff2IdxOff)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	err = e.open(goCtx, kvRanges)
 	return e, errors.Trace(err)
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader,
-	values [][]types.Datum, indexRanges []*ranger.IndexRange, offsetsMap []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// indexRanges is ordered, values is also ordered, and values is used to set value to some equal condition's range.
-	// So the final kvRanges is still ordered.
-	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(values))
-	for _, val := range values {
+	kvRanges, err := buildKvRangesForIndexJoin(e.tableID, e.index.ID, values, indexRanges, keyOff2IdxOff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = e.open(goCtx, kvRanges)
+	return e, errors.Trace(err)
+}
+
+// buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
+// keyDatums are multiple rows' key datums and is sorted previously. indexRanges are also ordered.
+// So the kvRanges are still ordered.
+func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
+	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
+	for _, val := range keyDatums {
 		for _, ran := range indexRanges {
-			for i, pos := range offsetsMap {
-				ran.LowVal[pos] = val[i]
-				ran.HighVal[pos] = val[i]
+			for keyOff, idxOff := range keyOff2IdxOff {
+				ran.LowVal[idxOff] = val[keyOff]
+				ran.HighVal[idxOff] = val[keyOff]
 			}
 		}
-		tmpKvRanges, err1 := indexRangesToKVRanges(e.tableID, e.index.ID, indexRanges)
-		if err1 != nil {
+		tmpKvRanges, err := indexRangesToKVRanges(tableID, indexID, indexRanges)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		kvRanges = append(kvRanges, tmpKvRanges...)
 	}
-	err = e.open(goCtx, kvRanges)
-	return e, errors.Trace(err)
+	return kvRanges, nil
 }

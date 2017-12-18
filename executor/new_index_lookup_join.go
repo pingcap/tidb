@@ -58,8 +58,8 @@ type NewIndexLookUpJoin struct {
 
 	resultGenerator joinResultGenerator
 
-	indexRanges []*ranger.IndexRange
-	offsetsMap  []int
+	indexRanges   []*ranger.IndexRange
+	keyOff2IdxOff []int
 }
 
 type outerCtx struct {
@@ -111,8 +111,8 @@ type innerWorker struct {
 	ctx         context.Context
 	executorChk *chunk.Chunk
 
-	indexRanges []*ranger.IndexRange
-	offsetsMap  []int
+	indexRanges   []*ranger.IndexRange
+	keyOff2IdxOff []int
 }
 
 // Open implements the Executor interface.
@@ -161,13 +161,13 @@ func (e *NewIndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerW
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 	iw := &innerWorker{
-		innerCtx:    e.innerCtx,
-		outerCtx:    e.outerCtx,
-		taskCh:      taskCh,
-		ctx:         e.ctx,
-		executorChk: chunk.NewChunk(e.innerCtx.rowTypes),
-		indexRanges: copiedRanges,
-		offsetsMap:  e.offsetsMap,
+		innerCtx:      e.innerCtx,
+		outerCtx:      e.outerCtx,
+		taskCh:        taskCh,
+		ctx:           e.ctx,
+		executorChk:   chunk.NewChunk(e.innerCtx.rowTypes),
+		indexRanges:   copiedRanges,
+		keyOff2IdxOff: e.keyOff2IdxOff,
 	}
 	return iw
 }
@@ -478,7 +478,7 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 }
 
 func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTask, dLookUpKeys [][]types.Datum) error {
-	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(goCtx, dLookUpKeys, iw.indexRanges, iw.offsetsMap)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(goCtx, dLookUpKeys, iw.indexRanges, iw.keyOff2IdxOff)
 	if err != nil {
 		return errors.Trace(err)
 	}
