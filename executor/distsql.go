@@ -445,11 +445,12 @@ func (e *IndexReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (rowData Row, err error) {
+func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
 			var count int64
+			var err error
 			e.partialResult, count, err = e.result.Next(goCtx)
 			if err != nil {
 				e.feedback.Update(-1)
@@ -462,7 +463,7 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (rowData Row, err error)
 			}
 		}
 		// Get a row from partial result.
-		rowData, err = e.partialResult.Next(goCtx)
+		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
 			e.feedback.Update(-1)
 			return nil, errors.Trace(err)
@@ -829,7 +830,8 @@ func (e *IndexLookUpExecutor) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements Exec NextChunk interface.
-func (e *IndexLookUpExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (err error) {
+func (e *IndexLookUpExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
