@@ -84,7 +84,6 @@ func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*requiredProp, bool) {
-	p.expectedCnt = prop.expectedCnt
 	lProp := &requiredProp{taskTp: rootTaskType, cols: p.leftKeys, expectedCnt: math.MaxFloat64}
 	rProp := &requiredProp{taskTp: rootTaskType, cols: p.rightKeys, expectedCnt: math.MaxFloat64}
 	if !prop.isEmpty() {
@@ -129,9 +128,8 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 			DefaultValues:   p.DefaultValues,
 			leftKeys:        leftKeys,
 			rightKeys:       rightKeys,
-		}.init(p.ctx)
+		}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
 		mergeJoin.SetSchema(p.schema)
-		mergeJoin.profile = p.profile
 		mergeJoin.EqualConditions, mergeJoin.OtherConditions = p.getEqAndOtherCondsByOffsets(offsets)
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			mergeJoin.childrenReqProps = reqProps
@@ -152,7 +150,6 @@ func (p *LogicalJoin) getHashSemiJoin() PhysicalPlan {
 		Anti:            p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
 	}.init(p.ctx)
 	semiJoin.SetSchema(p.schema)
-	semiJoin.profile = p.profile
 	return semiJoin
 }
 
@@ -186,9 +183,8 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan
 		Concurrency:     JoinConcurrency,
 		DefaultValues:   p.DefaultValues,
 		SmallChildIdx:   innerIdx,
-	}.init(p.ctx, chReqProps...)
+	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
-	hashJoin.profile = p.profile
 	return hashJoin
 }
 
@@ -239,13 +235,11 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
-	}.init(p.ctx, chReqProps...)
+	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
-	join.profile = p.profile
 	if !prop.isEmpty() {
 		join.KeepOrder = true
 	}
-	join.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{join}
 }
 
@@ -382,7 +376,6 @@ func (p *LogicalJoin) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *LogicalProjection) tryToGetChildProp(prop *requiredProp) (*requiredProp, bool) {
-	p.expectedCnt = prop.expectedCnt
 	newProp := &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt}
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
@@ -409,8 +402,7 @@ func (p *LogicalProjection) genPhysPlansByReqProp(prop *requiredProp) []Physical
 	}
 	proj := PhysicalProjection{
 		Exprs: p.Exprs,
-	}.init(p.ctx, newProp)
-	proj.profile = p.profile
+	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
 }
@@ -424,8 +416,7 @@ func (p *LogicalTopN) getPhysTopN() []PhysicalPlan {
 			Count:   p.Count,
 			Offset:  p.Offset,
 			partial: p.partial,
-		}.init(p.ctx, resultProp)
-		topN.profile = p.profile
+		}.init(p.ctx, p.stats, resultProp)
 		topN.SetSchema(p.schema)
 		ret = append(ret, topN)
 	}
@@ -444,8 +435,7 @@ func (p *LogicalTopN) getPhysLimits() []PhysicalPlan {
 			Count:   p.Count,
 			Offset:  p.Offset,
 			partial: p.partial,
-		}.init(p.ctx, resultProp)
-		limit.profile = p.profile
+		}.init(p.ctx, p.stats, resultProp)
 		limit.SetSchema(p.schema)
 		ret = append(ret, limit)
 	}
@@ -474,9 +464,11 @@ func (p *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 		PhysicalJoin:  join,
 		OuterSchema:   p.corCols,
 		rightChOffset: p.children[0].Schema().Len(),
-	}.init(p.ctx, &requiredProp{expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc}, &requiredProp{expectedCnt: math.MaxFloat64})
+	}.init(p.ctx,
+		p.stats.scaleByExpectCnt(prop.expectedCnt),
+		&requiredProp{expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc},
+		&requiredProp{expectedCnt: math.MaxFloat64})
 	apply.SetSchema(p.schema)
-	apply.profile = p.profile
 	return []PhysicalPlan{apply}
 }
 
@@ -507,7 +499,7 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 		childProp := &requiredProp{
 			cols:        keys,
 			desc:        prop.desc,
-			expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count,
+			expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
 		}
 		if !prop.isPrefix(childProp) {
 			continue
@@ -515,10 +507,8 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 		agg := basePhysicalAgg{
 			GroupByItems: p.GroupByItems,
 			AggFuncs:     p.AggFuncs,
-		}.initForStream(p.ctx, childProp)
+		}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
 		agg.SetSchema(p.schema.Clone())
-		agg.profile = p.profile
-		agg.expectedCnt = prop.expectedCnt
 		streamAggs = append(streamAggs, agg)
 	}
 	return streamAggs
@@ -533,10 +523,8 @@ func (p *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
 		agg := basePhysicalAgg{
 			GroupByItems: p.GroupByItems,
 			AggFuncs:     p.AggFuncs,
-		}.initForHash(p.ctx, &requiredProp{expectedCnt: math.MaxFloat64, taskTp: taskTp})
-		agg.expectedCnt = prop.expectedCnt
+		}.initForHash(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64, taskTp: taskTp})
 		agg.SetSchema(p.schema.Clone())
-		agg.profile = p.profile
 		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs
@@ -555,10 +543,8 @@ func (p *LogicalAggregation) genPhysPlansByReqProp(prop *requiredProp) []Physica
 func (p *LogicalSelection) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
-	}.init(p.ctx, prop)
-	sel.profile = p.profile
+	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), prop)
 	sel.SetSchema(p.Schema())
-	sel.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{sel}
 }
 
@@ -573,8 +559,7 @@ func (p *LogicalLimit) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 			Offset:  p.Offset,
 			Count:   p.Count,
 			partial: p.partial,
-		}.init(p.ctx, resultProp)
-		limit.profile = p.profile
+		}.init(p.ctx, p.stats, resultProp)
 		limit.SetSchema(p.Schema())
 		ret = append(ret, limit)
 	}
@@ -584,10 +569,8 @@ func (p *LogicalLimit) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	lock := PhysicalLock{
 		Lock: p.Lock,
-	}.init(p.ctx, prop)
-	lock.profile = p.profile
+	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), prop)
 	lock.SetSchema(p.schema)
-	lock.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{lock}
 }
 
@@ -596,17 +579,13 @@ func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPl
 	for range p.children {
 		chReqProps = append(chReqProps, prop)
 	}
-	ua := PhysicalUnionAll{childNum: len(p.children)}.init(p.ctx, chReqProps...)
-	ua.profile = p.profile
+	ua := PhysicalUnionAll{}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	ua.SetSchema(p.schema)
-	ua.expectedCnt = prop.expectedCnt
 	return []PhysicalPlan{ua}
 }
 
-func (p *LogicalSort) getPhysicalSort(reqProp *requiredProp) *PhysicalSort {
-	ps := PhysicalSort{ByItems: p.ByItems}.init(p.ctx, &requiredProp{expectedCnt: math.MaxFloat64})
-	ps.profile = p.profile
-	ps.expectedCnt = reqProp.expectedCnt
+func (p *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
+	ps := PhysicalSort{ByItems: p.ByItems}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64})
 	ps.SetSchema(p.schema)
 	return ps
 }
@@ -638,8 +617,7 @@ func (p *LogicalExists) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan
 	if !prop.isEmpty() {
 		return nil
 	}
-	exists := PhysicalExists{}.init(p.ctx, &requiredProp{expectedCnt: 1})
-	exists.profile = p.profile
+	exists := PhysicalExists{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 1})
 	exists.SetSchema(p.schema)
 	return []PhysicalPlan{exists}
 }
@@ -648,8 +626,7 @@ func (p *LogicalMaxOneRow) genPhysPlansByReqProp(prop *requiredProp) []PhysicalP
 	if !prop.isEmpty() {
 		return nil
 	}
-	mor := PhysicalMaxOneRow{}.init(p.ctx, &requiredProp{expectedCnt: 2})
-	mor.profile = p.profile
+	mor := PhysicalMaxOneRow{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 2})
 	mor.SetSchema(p.schema)
 	return []PhysicalPlan{mor}
 }
