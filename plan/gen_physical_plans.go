@@ -332,7 +332,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		// that the inner keys matched in the index, then the equal conditions of join are all used.
 		accesses, remained := ranger.DetachIndexConditions(conds, idxCols, colLengths)
 		ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
-		terror.Log(errors.Trace(err))
+		if err != nil {
+			terror.Log(errors.Trace(err))
+			continue
+		}
 		idxRanges := ranger.Ranges2IndexRanges(ranges)
 		// We should guarantee that all the index column in the join's equal condition is used.
 		// Only check the last one is ok.
@@ -347,9 +350,14 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 			continue
 		}
 		// This compare way is a little easy, we can use the average unit size of one index in the future to determine which index to choose.
-		if len(idxRanges[0].LowVal) > maxRangeLen {
+		// There may be the cases like `a = 1 and b > 2 and b < 1`. So idxRanges can be nil though the conditions are valid.
+		if len(idxRanges) == 0 || len(idxRanges[0].LowVal) > maxRangeLen {
 			bestIndexInfo = indexInfo
-			maxRangeLen = len(idxRanges[0].LowVal)
+			if len(idxRanges) == 0 {
+				maxRangeLen = math.MaxInt32
+			} else {
+				maxRangeLen = len(idxRanges[0].LowVal)
+			}
 			rangesOfBest = idxRanges
 			remainedOfBest = remained
 
