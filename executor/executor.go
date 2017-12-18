@@ -711,7 +711,7 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
+		e.selected, _, err = expression.VectorizedFilter(e.ctx, e.filters, e.childrenResults[0], nil, e.selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1021,7 +1021,7 @@ type UnionExec struct {
 	// finished and all the following variables are used for chunk execution.
 	finished      chan struct{}
 	resourcePools []chan *chunk.Chunk
-	resultPool    chan *unionWorkerResult
+	resultPool    chan *execWorkerResult
 	initialized   bool
 }
 
@@ -1030,11 +1030,11 @@ type execResult struct {
 	err  error
 }
 
-// unionWorkerResult stores the result for a union worker.
-// A "resultPuller" is started for every child to pull result from that child, unionWorkerResult is used to store that pulled result.
+// execWorkerResult stores the result for a union worker.
+// A "resultPuller" is started for every child to pull result from that child, execWorkerResult is used to store that pulled result.
 // "src" is used for Chunk resuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
 // enable the corresponding "resultPuller" continue to work.
-type unionWorkerResult struct {
+type execWorkerResult struct {
 	chk *chunk.Chunk
 	err error
 	src chan<- *chunk.Chunk
@@ -1098,7 +1098,7 @@ func (e *UnionExec) Open(goCtx goctx.Context) error {
 
 func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 	if forChunk {
-		e.resultPool = make(chan *unionWorkerResult, len(e.children))
+		e.resultPool = make(chan *execWorkerResult, len(e.children))
 		e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
 		for i := range e.children {
 			e.resourcePools[i] = make(chan *chunk.Chunk, 1)
@@ -1119,7 +1119,7 @@ func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 
 func (e *UnionExec) resultPuller(goCtx goctx.Context, childID int) {
 	defer e.wg.Done()
-	result := &unionWorkerResult{
+	result := &execWorkerResult{
 		err: nil,
 		chk: nil,
 		src: e.resourcePools[childID],

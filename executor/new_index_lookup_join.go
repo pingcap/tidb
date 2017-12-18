@@ -323,7 +323,7 @@ func (ow *outerWorker) buildTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
 	if ow.filter != nil {
 		outerMatch := make([]bool, 0, task.outerResult.NumRows())
 		var err error
-		task.outerMatch, err = expression.VectorizedFilter(ow.ctx, ow.filter, task.outerResult, outerMatch)
+		task.outerMatch, _, err = expression.VectorizedFilter(ow.ctx, ow.filter, task.outerResult, nil, outerMatch)
 		if err != nil {
 			return task, errors.Trace(err)
 		}
@@ -497,27 +497,8 @@ func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTa
 }
 
 func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
-	keyBuf := make([]byte, 0, 64)
-	valBuf := make([]byte, 8)
-	for i := 0; i < task.innerResult.NumChunks(); i++ {
-		chk := task.innerResult.GetChunk(i)
-		for j := 0; j < chk.NumRows(); j++ {
-			innerRow := chk.GetRow(j)
-			keyBuf = keyBuf[:0]
-			for _, keyCol := range iw.keyCols {
-				d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
-				var err error
-				keyBuf, err = codec.EncodeKey(keyBuf, d)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			rowPtr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
-			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			task.lookupMap.Put(keyBuf, valBuf)
-		}
-	}
-	return nil
+	err := buildMapForList(iw.keyCols, iw.rowTypes, task.innerResult, task.lookupMap, true)
+	return errors.Trace(err)
 }
 
 // Close implements the Executor interface.

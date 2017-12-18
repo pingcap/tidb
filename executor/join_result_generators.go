@@ -37,13 +37,13 @@ var (
 type joinResultGenerator interface {
 	// emit tries to join an outer row with a batch of inner rows.
 	// When len(inners) == 0, it means that the outer row can not be joined with any inner row:
-	//     1. SemiJoin:	unmatched outer row is ignored.
-	//     2. AntiSemiJoin:  unmatched outer row is appended to the result buffer.
-	//     3. LeftOuterSemiJoin: unmatched outer row is appended with 0 and appended to the result buffer.
+	//     1. SemiJoin:              unmatched outer row is ignored.
+	//     2. AntiSemiJoin:          unmatched outer row is appended to the result buffer.
+	//     3. LeftOuterSemiJoin:     unmatched outer row is appended with 0 and appended to the result buffer.
 	//     4. AntiLeftOuterSemiJoin: unmatched outer row is appended with 1 and appended to the result buffer.
-	//     5. LeftOuterJoin: unmatched outer row is joined with a row of NULLs and appended to the result buffer.
-	//     6. RightOuterJoin: unmatched outer row is joined with a row of NULLs and appended to the result buffer.
-	//     7. InnerJoin: unmatched outer row is ignored.
+	//     5. LeftOuterJoin:         unmatched outer row is joined with a row of NULLs and appended to the result buffer.
+	//     6. RightOuterJoin:        unmatched outer row is joined with a row of NULLs and appended to the result buffer.
+	//     7. InnerJoin:             unmatched outer row is ignored.
 	// When len(inner) != 0 but all the joined rows are filtered, this means that the outer row is unmatched and the above action is tacked as well.
 	// Otherwise, the outer row is matched and some joined rows is appended to the result buffer.
 	emit(outer Row, inners []Row, resultBuffer []Row) ([]Row, error)
@@ -184,21 +184,6 @@ func (outputer *baseJoinResultGenerator) filterResult(resultBuffer []Row, origin
 		}
 	}
 	return resultBuffer[:curLen], curLen > originLen, nil
-}
-
-func (outputer *baseJoinResultGenerator) filterChunk(input, output *chunk.Chunk) (matched bool, err error) {
-	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.filter, input, outputer.selected)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	for i := 0; i < len(outputer.selected); i++ {
-		if !outputer.selected[i] {
-			continue
-		}
-		matched = true
-		output.AppendRow(0, input.GetRow(i))
-	}
-	return matched, nil
 }
 
 type semiJoinResultGenerator struct {
@@ -531,7 +516,7 @@ func (outputer *leftOuterJoinResultGenerator) emitToChunk(outer chunk.Row, inner
 	}
 
 	// reach here, chkForJoin is outputer.chk
-	matched, err := outputer.filterChunk(chkForJoin, chk)
+	_, matched, err := expression.VectorizedFilter(outputer.ctx, outputer.filter, chkForJoin, chk, outputer.selected)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -594,7 +579,7 @@ func (outputer *rightOuterJoinResultGenerator) emitToChunk(outer chunk.Row, inne
 	}
 
 	// reach here, chkForJoin is outputer.chk
-	matched, err := outputer.filterChunk(chkForJoin, chk)
+	_, matched, err := expression.VectorizedFilter(outputer.ctx, outputer.filter, chkForJoin, chk, outputer.selected)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -659,7 +644,7 @@ func (outputer *innerJoinResultGenerator) emitToChunk(outer chunk.Row, inners []
 	}
 
 	// reach here, chkForJoin is outputer.chk
-	_, err := outputer.filterChunk(chkForJoin, chk)
+	_, _, err := expression.VectorizedFilter(outputer.ctx, outputer.filter, chkForJoin, chk, outputer.selected)
 	if err != nil {
 		return errors.Trace(err)
 	}

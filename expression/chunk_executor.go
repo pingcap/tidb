@@ -235,9 +235,11 @@ func executeToString(sc *stmtctx.StatementContext, expr Expression, fieldType *t
 	return nil
 }
 
-// VectorizedFilter applys a list of filters to a Chunk and returns a bool slice, which indicates whether a row is passed the filters.
+// VectorizedFilter applies a list of filters to a Chunk and
+// returns a bool slice, which indicates whether a row is passed the filters and
+// if remained is not nil, the rows matched the filter will be appended to remained.
 // Filters is executed vectorized.
-func VectorizedFilter(ctx context.Context, filters []Expression, input *chunk.Chunk, selected []bool) ([]bool, error) {
+func VectorizedFilter(ctx context.Context, filters []Expression, input, remained *chunk.Chunk, selected []bool) (_ []bool, matched bool, err error) {
 	selected = selected[:0]
 	for i, numRows := 0, input.NumRows(); i < numRows; i++ {
 		selected = append(selected, true)
@@ -249,10 +251,19 @@ func VectorizedFilter(ctx context.Context, filters []Expression, input *chunk.Ch
 			}
 			filterResult, isNull, err := filter.EvalInt(row, ctx.GetSessionVars().StmtCtx)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, false, errors.Trace(err)
 			}
 			selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
 		}
 	}
-	return selected, nil
+	for idx, ok := range selected {
+		if !ok {
+			continue
+		}
+		matched = true
+		if remained != nil {
+			remained.AppendRow(0, input.GetRow(idx))
+		}
+	}
+	return selected, matched, nil
 }
