@@ -343,7 +343,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else {
+	} else if fld.Column.Tp != mysql.TypeBit {
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.
 		// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
