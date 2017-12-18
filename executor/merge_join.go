@@ -70,15 +70,18 @@ type rowBlockIterator struct {
 	goCtx     goctx.Context
 
 	// for chunk executions
-	firstRowForKey  chunk.Row
-	curRow          chunk.Row
-	curChunk        *chunk.Chunk
-	curChunkInUse   bool
-	curSelected     []bool
-	resultPool      []*chunk.Chunk
-	resourcePool    []*chunk.Chunk
+	firstRowForKey chunk.Row
+	curRow         chunk.Row
+	curChunk       *chunk.Chunk
+	curChunkInUse  bool
+	curSelected    []bool
+	resultPool     []*chunk.Chunk
+	resourcePool   []*chunk.Chunk
+	// resultGenerator is "nil" means this iterator works on the inner table,
+	// otherwise it works on the outer table and is used to eimt un-matched
+	// outers to "resultChunk".
 	resultGenerator joinResultGenerator
-	isOuter         bool
+	resultChunk     *chunk.Chunk
 }
 
 func (rb *rowBlockIterator) init() error {
@@ -145,7 +148,7 @@ func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 	}
 }
 
-func (rb *rowBlockIterator) initForChunk(chk4Reader, chk4UnSelectedOuters *chunk.Chunk) (err error) {
+func (rb *rowBlockIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
 	if rb.reader == nil || rb.joinKeys == nil || len(rb.joinKeys) == 0 || rb.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
@@ -155,11 +158,11 @@ func (rb *rowBlockIterator) initForChunk(chk4Reader, chk4UnSelectedOuters *chunk
 	rb.curRow = chk4Reader.End()
 	rb.curChunkInUse = false
 	rb.resultPool = append(rb.resultPool, chk4Reader)
-	rb.firstRowForKey, err = rb.nextSelectedRow(chk4UnSelectedOuters)
+	rb.firstRowForKey, err = rb.nextSelectedRow()
 	return errors.Trace(err)
 }
 
-func (rb *rowBlockIterator) rowsWithSameKey(chk4UnSelectedOuters *chunk.Chunk) (rows []chunk.Row, err error) {
+func (rb *rowBlockIterator) rowsWithSameKey() (rows []chunk.Row, err error) {
 	rb.resourcePool = append(rb.resourcePool, rb.resultPool[0:len(rb.resultPool)-1]...)
 	rb.resultPool = rb.resultPool[len(rb.resultPool)-1:]
 	// no more data.
@@ -168,7 +171,7 @@ func (rb *rowBlockIterator) rowsWithSameKey(chk4UnSelectedOuters *chunk.Chunk) (
 	}
 	rows = append(rows, rb.firstRowForKey)
 	for {
-		selectedRow, err := rb.nextSelectedRow(chk4UnSelectedOuters)
+		selectedRow, err := rb.nextSelectedRow()
 		// error happens or no more data.
 		if err != nil || selectedRow == rb.curChunk.End() {
 			rb.firstRowForKey = rb.curChunk.End()
@@ -187,7 +190,7 @@ func (rb *rowBlockIterator) rowsWithSameKey(chk4UnSelectedOuters *chunk.Chunk) (
 	}
 }
 
-func (rb *rowBlockIterator) nextSelectedRow(chk4UnSelectedOuters *chunk.Chunk) (chunk.Row, error) {
+func (rb *rowBlockIterator) nextSelectedRow() (chunk.Row, error) {
 	for {
 		for ; rb.curRow != rb.curChunk.End(); rb.curRow = rb.curRow.Next() {
 			if rb.curSelected[rb.curRow.Idx()] {
@@ -195,8 +198,9 @@ func (rb *rowBlockIterator) nextSelectedRow(chk4UnSelectedOuters *chunk.Chunk) (
 				rb.curChunkInUse = true
 				rb.curRow = rb.curRow.Next()
 				return result, nil
-			} else if rb.isOuter {
-				err := rb.resultGenerator.emitToChunk(rb.curRow, nil, chk4UnSelectedOuters)
+			} else if rb.resultGenerator != nil {
+				// If this iterator works on the outer table, we should emit the un-matched outer row to result Chunk.
+				err := rb.resultGenerator.emitToChunk(rb.curRow, nil, rb.resultChunk)
 				if err != nil {
 					return rb.curChunk.End(), errors.Trace(err)
 				}
@@ -359,22 +363,21 @@ func (e *MergeJoinExec) prepare(goCtx goctx.Context, forChunk bool) error {
 		e.resultChunk = e.newChunk()
 		e.outerIter.filter = e.outerFilter
 		e.outerIter.resultGenerator = e.resultGenerator
-		e.outerIter.isOuter = true
-		e.innerIter.isOuter = false
-		err := e.outerIter.initForChunk(e.childrenResults[e.outerIdx], e.resultChunk)
+		e.outerIter.resultChunk = e.resultChunk
+		err := e.outerIter.initForChunk(e.childrenResults[e.outerIdx])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = e.innerIter.initForChunk(e.childrenResults[e.outerIdx^1], nil)
+		err = e.innerIter.initForChunk(e.childrenResults[e.outerIdx^1])
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		e.outerChunkRows, err = e.outerIter.rowsWithSameKey(e.resultChunk)
+		e.outerChunkRows, err = e.outerIter.rowsWithSameKey()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.innerChunkRows, err = e.innerIter.rowsWithSameKey(nil)
+		e.innerChunkRows, err = e.innerIter.rowsWithSameKey()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -449,14 +452,14 @@ func (e *MergeJoinExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		}
 
 		// reach here means there no more data in "e.resultChunk"
-		hasMore, err := e.joinToChunk(e.resultChunk)
+		hasMore, err := e.joinToResultChunk()
 		if err != nil || !hasMore {
 			return errors.Trace(err)
 		}
 	}
 }
 
-func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (bool, error) {
+func (e *MergeJoinExec) joinToResultChunk() (bool, error) {
 	var (
 		cmpResult int
 		err       error
@@ -475,7 +478,7 @@ func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (bool, error) {
 				return false, errors.Trace(err)
 			}
 			if cmpResult > 0 {
-				e.innerChunkRows, err = e.innerIter.rowsWithSameKey(nil)
+				e.innerChunkRows, err = e.innerIter.rowsWithSameKey()
 				if err != nil {
 					return false, errors.Trace(err)
 				}
@@ -486,28 +489,28 @@ func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (bool, error) {
 		// reach here, cmpResult <= 0 is guaranteed.
 		if cmpResult < 0 {
 			for _, unMatchedOuter := range e.outerChunkRows {
-				err = e.resultGenerator.emitToChunk(unMatchedOuter, nil, chk)
+				err = e.resultGenerator.emitToChunk(unMatchedOuter, nil, e.resultChunk)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
 			}
 		} else {
 			for _, outer := range e.outerChunkRows {
-				err = e.resultGenerator.emitToChunk(outer, e.innerChunkRows, chk)
+				err = e.resultGenerator.emitToChunk(outer, e.innerChunkRows, e.resultChunk)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
 			}
-			e.innerChunkRows, err = e.innerIter.rowsWithSameKey(nil)
+			e.innerChunkRows, err = e.innerIter.rowsWithSameKey()
 			if err != nil {
 				return false, errors.Trace(err)
 			}
 		}
-		e.outerChunkRows, err = e.outerIter.rowsWithSameKey(chk)
+		e.outerChunkRows, err = e.outerIter.rowsWithSameKey()
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if chk.NumRows() > 0 {
+		if e.resultChunk.NumRows() > 0 {
 			return true, nil
 		}
 	}
