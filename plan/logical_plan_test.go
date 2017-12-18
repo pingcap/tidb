@@ -545,6 +545,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 }
 
 func (s *testPlanSuite) TestSubquery(c *C) {
+	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql  string
 		best string
