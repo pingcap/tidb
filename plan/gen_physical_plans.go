@@ -299,66 +299,21 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	orderedOuterKeys := make([]*expression.Column, len(innerJoinKeys))
 	idxInIndex := make([]int, 0, len(innerJoinKeys))
 	for _, indexInfo := range indices {
-		idxCols, colLengths := expression.IndexInfo2Cols(p.children[1-outerIdx].Schema().Columns, indexInfo)
-		if len(idxCols) == 0 {
-			continue
-		}
-		offsetsMap := joinKeysMatchIndex(innerJoinKeys, indexInfo)
-		if offsetsMap == nil {
-			continue
-		}
-		maxIndexColIdx := 0
-		for i := len(indexInfo.Columns) - 1; i >= 0; i-- {
-			if offsetsMap[i] != -1 {
-				maxIndexColIdx = i
-				break
-			}
-		}
-		// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down so cannot
-		// to calculate range either.
-		// TODO: There may be a selection that block the index join.
-		conds := make([]expression.Expression, 0, len(offsetsMap)+len(x.pushedDownConds))
-		// Construct a fake equal expression for calculate the range.
-		for _, key := range innerJoinKeys {
-			fakeConstant := expression.One.Clone().(*expression.Constant)
-			fakeConstant.RetType = types.NewFieldType(key.RetType.Tp)
-			eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
-			conds = append(conds, eqFunc)
-		}
-		lastExprHashCode := conds[offsetsMap[maxIndexColIdx]].HashCode()
-		conds = append(conds, x.pushedDownConds...)
-		// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occurs in the same time.
-		// So we can guarantee that once count of the columns in the ranges is no lower than the max idx
-		// that the inner keys matched in the index, then the equal conditions of join are all used.
-		accesses, remained := ranger.DetachIndexConditions(conds, idxCols, colLengths)
-		ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
-		if err != nil {
-			terror.Log(errors.Trace(err))
-			continue
-		}
-		idxRanges := ranger.Ranges2IndexRanges(ranges)
-		// We should guarantee that all the index column in the join's equal condition is used.
-		// Only check the last one is ok.
-		valid := false
-		for _, expr := range accesses {
-			if bytes.Equal(expr.HashCode(), lastExprHashCode) {
-				valid = true
-				break
-			}
-		}
-		if !valid {
+		isOk, remained, ranges, offsetsMap := p.checkIndexForIndexJoin(indexInfo, x, innerJoinKeys)
+		if !isOk {
 			continue
 		}
 		// This compare way is a little easy, we can use the average unit size of one index in the future to determine which index to choose.
-		// There may be the cases like `a = 1 and b > 2 and b < 1`. So idxRanges can be nil though the conditions are valid.
-		if len(idxRanges) == 0 || len(idxRanges[0].LowVal) > maxRangeLen {
+		// There may be the cases like `a = 1 and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
+		// And obviously the range is nil is the better case.
+		if len(ranges) == 0 || len(ranges[0].LowVal) > maxRangeLen {
 			bestIndexInfo = indexInfo
-			if len(idxRanges) == 0 {
+			if len(ranges) == 0 {
 				maxRangeLen = math.MaxInt32
 			} else {
-				maxRangeLen = len(idxRanges[0].LowVal)
+				maxRangeLen = len(ranges[0].LowVal)
 			}
-			rangesOfBest = idxRanges
+			rangesOfBest = ranges
 			remainedOfBest = remained
 
 			idxInIndex = idxInIndex[:0]
@@ -380,6 +335,70 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		return p.constructIndexJoin(prop, orderedInnerKeys, orderedOuterKeys, outerIdx, innerPlan, rangesOfBest, idxInIndex)
 	}
 	return nil
+}
+
+// checkIndexForIndexJoin checks whether this index can be used for building index join and return enough information to
+// determine whether this index can be chosen and how to construct the index join.
+func (p *LogicalJoin) checkIndexForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (ok bool,
+	remained []expression.Expression, ranges []*ranger.IndexRange, offsetsMap []int) {
+	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
+	if len(idxCols) == 0 {
+		return false, nil, nil, nil
+	}
+
+	offsetsMap = joinKeysMatchIndex(innerJoinKeys, indexInfo)
+	if offsetsMap == nil {
+		return false, nil, nil, nil
+	}
+	maxIndexColIdx := 0
+	for i := len(indexInfo.Columns) - 1; i >= 0; i-- {
+		if offsetsMap[i] != -1 {
+			maxIndexColIdx = i
+			break
+		}
+	}
+
+	// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down so cannot
+	// to calculate range either.
+	// TODO: There may be a selection that block the index join.
+	conds := make([]expression.Expression, 0, len(offsetsMap)+len(innerPlan.pushedDownConds))
+	// Construct a fake equal expression for calculate the range.
+	for _, key := range innerJoinKeys {
+		fakeConstant := expression.One.Clone().(*expression.Constant)
+		fakeConstant.RetType = types.NewFieldType(key.RetType.Tp)
+		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
+		conds = append(conds, eqFunc)
+	}
+
+	lastExprHashCode := conds[offsetsMap[maxIndexColIdx]].HashCode()
+
+	conds = append(conds, innerPlan.pushedDownConds...)
+	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occurs in the same time.
+	// And if there's cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
+	// So we can guarantee that once count of the columns in the ranges is no lower than the max idx
+	// that the inner keys matched in the index, then the equal conditions of join are all used.
+	accesses, remained := ranger.DetachIndexConditions(conds, idxCols, colLengths)
+
+	// We should guarantee that all the index column in the join's equal condition is used.
+	// Only check the last one is ok.
+	valid := false
+	for _, expr := range accesses {
+		if bytes.Equal(expr.HashCode(), lastExprHashCode) {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return false, nil, nil, nil
+	}
+
+	r, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
+	if err != nil {
+		terror.Log(errors.Trace(err))
+		return false, nil, nil, nil
+	}
+	ranges = ranger.Ranges2IndexRanges(r)
+	return true, remained, ranges, offsetsMap
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value

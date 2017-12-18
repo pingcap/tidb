@@ -229,9 +229,9 @@ type PhysicalIndexJoin struct {
 
 	DefaultValues []types.Datum
 
-	// ranges stores the IndexRanges when the inner plan is index scan.
+	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.IndexRange
-	// idxInIdxOfCol stores the position of column in the index.
+	// OffsetsMap stores the position of column in the index.
 	OffsetsMap []int
 }
 

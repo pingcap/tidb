@@ -1299,7 +1299,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context,
 	case *plan.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForIndexJoin(goCtx, v, datums, IndexRanges, offsetsMap)
 	}
-	return nil, errors.New("Wrong plan type for dataReaderbuilder")
+	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
@@ -1341,6 +1341,8 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// indexRanges is ordered, values is also ordered, and values is used to set value to some equal condition's range.
+	// So the final kvRanges is still ordered.
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(values))
 	for _, val := range values {
 		for _, ran := range indexRanges {
@@ -1365,6 +1367,8 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// indexRanges is ordered, values is also ordered, and values is used to set value to some equal condition's range.
+	// So the final kvRanges is still ordered.
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(values))
 	for _, val := range values {
 		for _, ran := range indexRanges {
