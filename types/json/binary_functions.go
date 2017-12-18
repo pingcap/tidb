@@ -60,7 +60,7 @@ func (bj BinaryJSON) Unquote() (string, error) {
 		}
 		// Remove prefix and suffix '"' and '\''.
 		slen := len(s)
-		if slen > 0 {
+		if slen > 1 {
 			head, tail := s[0], s[slen-1]
 			if (head == '\'' && tail == '\'') || (head == '"' && tail == '"') {
 				return s[1 : slen-1], nil

@@ -216,7 +216,7 @@ func (bj BinaryJSON) getFloat64() float64 {
 
 func (bj BinaryJSON) getString() []byte {
 	strLen, lenLen := uint64(bj.Value[0]), 1
-	if strLen >= 0x80 {
+	if strLen >= utf8.RuneSelf {
 		strLen, lenLen = binary.Uvarint(bj.Value)
 	}
 	return bj.Value[lenLen : lenLen+int(strLen)]

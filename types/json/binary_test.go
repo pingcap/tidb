@@ -123,6 +123,9 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 		{j: `true`, unquoted: "true"},
 		{j: `null`, unquoted: "null"},
 		{j: `{"a": [1, 2]}`, unquoted: `{"a":[1,2]}`},
+		{j: `"\""`, unquoted: `"`},
+		{j: `"'"`, unquoted: `'`},
+		{j: `""`, unquoted: ``},
 	}
 	for _, tt := range tests {
 		bj := mustParseBinaryFromString(c, tt.j)
@@ -278,7 +281,7 @@ func (s *testJSONSuite) TestBinaryJSONMerge(c *C) {
 
 func mustParseBinaryFromString(c *C, s string) BinaryJSON {
 	bj, err := ParseBinaryFromString(s)
-	c.Check(err, IsNil)
+	c.Assert(err, IsNil)
 	return bj
 }
 
