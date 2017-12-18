@@ -251,7 +251,7 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+8]}
 	case TypeCodeString:
 		strLen, lenLen := uint64(bj.Value[valOff]), 1
-		if strLen >= 0x80 {
+		if strLen >= utf8.RuneSelf {
 			strLen, lenLen = binary.Uvarint(bj.Value[valOff:])
 		}
 		totalLen := uint32(lenLen) + uint32(strLen)
