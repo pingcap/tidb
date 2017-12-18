@@ -230,6 +230,10 @@ type SessionVars struct {
 	// BatchDelete indicates if we should split delete data into multiple batches.
 	BatchDelete bool
 
+	// DMLBatchSize indicates the size of batches for DML.
+	// It will be used when BatchInsert or BatchDelete is on.
+	DMLBatchSize int
+
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 
@@ -239,6 +243,10 @@ type SessionVars struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// EnableChunk indicates whether the chunk execution model is enabled.
+	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
+	EnableChunk bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -263,6 +271,7 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 		MaxChunkSize:               DefMaxChunkSize,
+		DMLBatchSize:               DefDMLBatchSize,
 	}
 }
 

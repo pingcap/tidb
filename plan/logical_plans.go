@@ -88,7 +88,6 @@ const (
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	*basePlan
 	baseLogicalPlan
 
 	JoinType       JoinType
@@ -159,7 +158,6 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	*basePlan
 	baseLogicalPlan
 
 	Exprs []expression.Expression
@@ -179,7 +177,6 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	*basePlan
 	baseLogicalPlan
 
 	AggFuncs     []aggregation.Aggregation
@@ -206,7 +203,6 @@ func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCol
 
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
-	*basePlan
 	baseLogicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
@@ -242,19 +238,16 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalExists checks if a query returns result.
 type LogicalExists struct {
-	*basePlan
 	baseLogicalPlan
 }
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
-	*basePlan
 	baseLogicalPlan
 }
 
 // LogicalTableDual represents a dual table plan.
 type LogicalTableDual struct {
-	*basePlan
 	baseLogicalPlan
 
 	RowCount int
@@ -262,7 +255,6 @@ type LogicalTableDual struct {
 
 // LogicalUnionScan is only used in non read-only txn.
 type LogicalUnionScan struct {
-	*basePlan
 	baseLogicalPlan
 
 	conditions []expression.Expression
@@ -270,7 +262,6 @@ type LogicalUnionScan struct {
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
-	*basePlan
 	baseLogicalPlan
 
 	indexHints []*ast.IndexHint
@@ -315,13 +306,11 @@ func (p *DataSource) TableInfo() *model.TableInfo {
 
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
-	*basePlan
 	baseLogicalPlan
 }
 
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
-	*basePlan
 	baseLogicalPlan
 
 	ByItems []*ByItems
@@ -337,7 +326,6 @@ func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
-	*basePlan
 	baseLogicalPlan
 
 	ByItems []*ByItems
@@ -355,7 +343,6 @@ func (t *LogicalTopN) isLimit() bool {
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	*basePlan
 	baseLogicalPlan
 
 	Offset uint64
@@ -367,7 +354,6 @@ type LogicalLimit struct {
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
-	*basePlan
 	baseLogicalPlan
 
 	Lock ast.SelectLockType
