@@ -278,7 +278,7 @@ func (e *ShowDDLJobsExec) Next(goCtx goctx.Context) (Row, error) {
 // NextChunk implements the Executor NextChunk interface.
 func (e *ShowDDLJobsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.cursor > len(e.jobs) {
+	if e.cursor >= len(e.jobs) {
 		return nil
 	}
 	numCurBatch := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, len(e.jobs)-e.cursor)
