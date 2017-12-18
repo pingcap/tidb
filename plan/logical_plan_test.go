@@ -546,7 +546,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 func (s *testPlanSuite) TestSubquery(c *C) {
 	tests := []struct {
-		sql string
+		sql  string
 		best string
 	}{
 		{
