@@ -415,6 +415,11 @@ func (cc *clientConn) Run() {
 		}
 	}()
 
+	// Usually, client connection status changes between [dispatching] <=> [reading].
+	// When some event happens, server may notify this client connection by setting
+	// the status to special values, for example: kill or graceful shutdown.
+	// The client connection would detect the events when it fails to change status
+	// by CAS operation, it would then take some actions accordingly.
 	for {
 		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
 			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
@@ -477,9 +482,13 @@ func (cc *clientConn) ShutdownOrNotify() bool {
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
 		return false
 	}
+	// If the client connection status is reading, it's safe to shutdown it.
 	if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusShutdown) {
 		return true
 	}
+	// If the client connection status is dispatching, we can't shutdown it immediately,
+	// so set the status to WaitShutdown as a notification, the client will detect it
+	// and then exit.
 	atomic.StoreInt32(&cc.status, connStatusWaitShutdown)
 	return false
 }
