@@ -44,8 +44,8 @@ func (s *statsProfile) collapse(factor float64) *statsProfile {
 }
 
 func (p *basePhysicalPlan) statsProfile() *statsProfile {
-	profile := p.basePlan.profile
-	expectedCnt := p.basePlan.expectedCnt
+	profile := p.profile
+	expectedCnt := p.expectedCnt
 	if expectedCnt > 0 && expectedCnt < profile.count {
 		factor := expectedCnt / profile.count
 		result := &statsProfile{count: expectedCnt}
@@ -58,19 +58,19 @@ func (p *basePhysicalPlan) statsProfile() *statsProfile {
 }
 
 func (p *baseLogicalPlan) prepareStatsProfile() *statsProfile {
-	if len(p.basePlan.children) == 0 {
+	if len(p.children) == 0 {
 		profile := &statsProfile{
 			count:       float64(1),
-			cardinality: make([]float64, p.basePlan.schema.Len()),
+			cardinality: make([]float64, p.schema.Len()),
 		}
 		for i := range profile.cardinality {
 			profile.cardinality[i] = float64(1)
 		}
-		p.basePlan.profile = profile
+		p.profile = profile
 		return profile
 	}
-	p.basePlan.profile = p.basePlan.children[0].(LogicalPlan).prepareStatsProfile()
-	return p.basePlan.profile
+	p.profile = p.children[0].(LogicalPlan).prepareStatsProfile()
+	return p.profile
 }
 
 func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsProfile {
