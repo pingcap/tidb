@@ -34,7 +34,17 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	return extractColumns(result, expr, nil)
 }
 
-// ExtractColumnsFromExpression is a more effecient version of ExtractColumns for batch operation.
+// ExtractColumnsFromExpressions is a more effecient version of ExtractColumns for batch operation.
+// filter can be nil, or a function to filter the result column.
+// It's often observed that the pattern of the caller like this:
+//
+// cols := ExtractColumns(...)
+// for _, col := range cols {
+//     if xxx(col) {...}
+// }
+//
+// Provide an additional filter argument, this can be done in one step.
+// To avoid allocation for cols that not need.
 func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter func(*Column) bool) []*Column {
 	for _, expr := range exprs {
 		result = extractColumns(result, expr, filter)
