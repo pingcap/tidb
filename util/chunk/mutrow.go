@@ -58,7 +58,7 @@ func MutRowFromDatums(datums []types.Datum) MutRow {
 	return MutRow{c: c, idx: 0}
 }
 
-// MutRowFromTypes creates a MutRow from a datum slice, each column is initialized to default
+// MutRowFromTypes creates a MutRow from a FieldType slice, each column is initialized to zero value.
 func MutRowFromTypes(types []*types.FieldType) MutRow {
 	c := &Chunk{}
 	for _, tp := range types {
