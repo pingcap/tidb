@@ -208,7 +208,7 @@ func (rb *readerIterator) nextSelectedRow() (chunk.Row, error) {
 				}
 			}
 		}
-		rb.resetCurReaderResult()
+		rb.reallocReaderResult()
 		rb.curRow = rb.curResult.Begin()
 		err := rb.reader.NextChunk(rb.goCtx, rb.curResult)
 		// error happens or no more data.
@@ -222,16 +222,16 @@ func (rb *readerIterator) nextSelectedRow() (chunk.Row, error) {
 	}
 }
 
-// resetCurReaderResult resets "rb.curResult" to an empty Chunk to buffer the result of "rb.reader".
+// reallocReaderResult resets "rb.curResult" to an empty Chunk to buffer the result of "rb.reader".
 // It pops a Chunk from "rb.resourceQueue" and push it into "rb.resultQueue" immediately.
-func (rb *readerIterator) resetCurReaderResult() {
+func (rb *readerIterator) reallocReaderResult() {
 	if !rb.curResultInUse {
-		// "rb.curResult" is guaranteed to be the last element of "rb.resultQueue".
-		rb.resourceQueue = append(rb.resourceQueue, rb.curResult)
-		rb.resultQueue = rb.resultQueue[:len(rb.resultQueue)-1]
+		// If "rb.curResult" is not in use, we can just reuse it.
+		rb.curResult.Reset()
+		return
 	}
 
-	// Create a new Chunk and append it to "resourceQueue" if there is no
+	// Create a new Chunk and append it to "resourceQueue" if there is no more
 	// available chunk in "resourceQueue".
 	if len(rb.resourceQueue) == 0 {
 		rb.resourceQueue = append(rb.resourceQueue, rb.reader.newChunk())
