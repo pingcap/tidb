@@ -206,7 +206,7 @@ func (rb *rowBlockIterator) nextSelectedRow() (chunk.Row, error) {
 				}
 			}
 		}
-		rb.curReaderResult = rb.getChunk4Reader()
+		rb.resetCurReaderResult()
 		rb.curReaderRow = rb.curReaderResult.Begin()
 		err := rb.reader.NextChunk(rb.goCtx, rb.curReaderResult)
 		// error happens or no more data.
@@ -220,10 +220,9 @@ func (rb *rowBlockIterator) nextSelectedRow() (chunk.Row, error) {
 	}
 }
 
-// getChunk4Reader gets an empty Chunk from "rb.readerResourceQueue" to buffer
-// the output of "rb.reader". Once a Chunk is poped from "rb.readerResourceQueue",
-// it is pushed into "rb.readerResultQueue" immediately.
-func (rb *rowBlockIterator) getChunk4Reader() *chunk.Chunk {
+// resetCurReaderResult resets "rb.curReaderResult" to an empty Chunk to buffer the result of "rb.reader".
+// It pops a Chunk from "rb.readerResourceQueue" and push it into "rb.readerResultQueue" immediately.
+func (rb *rowBlockIterator) resetCurReaderResult() {
 	if !rb.curReaderResultInUse {
 		// "rb.curReaderResult" is guaranteed to be the last element of "rb.readerResultQueue".
 		rb.readerResourceQueue = append(rb.readerResourceQueue, rb.curReaderResult)
