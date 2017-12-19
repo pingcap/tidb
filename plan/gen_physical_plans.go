@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/sirupsen/logrus"
 )
 
 func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
@@ -217,7 +216,6 @@ func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column
 			continue
 		}
 		if idxCol.ColName.L == key.ColName.L {
-			logrus.Warnf("key: %v, idx: %v, off: %v", key.ColName.L, idxCol.ColName.L, idxOff)
 			return idxOff
 		}
 	}
@@ -307,7 +305,6 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	}
 	if bestIndexInfo != nil {
 		innerPlan := x.forceToIndexScan(bestIndexInfo, remainedOfBest)
-		logrus.Warnf("offsetsMap: %v", keyOff2IdxOff)
 		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
 	}
 	return nil
