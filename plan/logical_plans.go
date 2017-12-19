@@ -26,18 +26,17 @@ import (
 var (
 	_ LogicalPlan = &LogicalJoin{}
 	_ LogicalPlan = &LogicalAggregation{}
-	_ LogicalPlan = &Projection{}
+	_ LogicalPlan = &LogicalProjection{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &Exists{}
-	_ LogicalPlan = &MaxOneRow{}
-	_ LogicalPlan = &TableDual{}
+	_ LogicalPlan = &LogicalExists{}
+	_ LogicalPlan = &LogicalMaxOneRow{}
+	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &LogicalUnionAll{}
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
-	_ LogicalPlan = &Show{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -81,20 +80,20 @@ func (tp JoinType) String() string {
 }
 
 const (
-	preferLeftAsOuter = 1 << iota
-	preferRightAsOuter
+	preferLeftAsIndexOuter = 1 << iota
+	preferRightAsIndexOuter
+	preferHashJoin
+	preferMergeJoin
 )
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	*basePlan
 	baseLogicalPlan
 
-	JoinType        JoinType
-	reordered       bool
-	cartesianJoin   bool
-	preferINLJ      int
-	preferMergeJoin bool
+	JoinType       JoinType
+	reordered      bool
+	cartesianJoin  bool
+	preferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
@@ -106,8 +105,10 @@ type LogicalJoin struct {
 	leftProperties  [][]*expression.Column
 	rightProperties [][]*expression.Column
 
-	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
-	// instead of null padding.
+	// DefaultValues is only used for left/right outer join, which is values the inner row's should be when the outer table
+	// doesn't match any inner table's row.
+	// That it's nil just means the default values is a slice of NULL.
+	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
 	// redundantSchema contains columns which are eliminated in join.
@@ -155,11 +156,9 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Projection represents a select fields plan.
-type Projection struct {
-	*basePlan
+// LogicalProjection represents a select fields plan.
+type LogicalProjection struct {
 	baseLogicalPlan
-	basePhysicalPlan
 
 	Exprs []expression.Expression
 
@@ -168,7 +167,7 @@ type Projection struct {
 	calculateGenCols bool
 }
 
-func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, extractCorColumns(expr)...)
@@ -178,7 +177,6 @@ func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	*basePlan
 	baseLogicalPlan
 
 	AggFuncs     []aggregation.Aggregation
@@ -205,7 +203,6 @@ func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCol
 
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
-	*basePlan
 	baseLogicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
@@ -239,32 +236,25 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Exists checks if a query returns result.
-type Exists struct {
-	*basePlan
+// LogicalExists checks if a query returns result.
+type LogicalExists struct {
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// MaxOneRow checks if a query returns no more than one row.
-type MaxOneRow struct {
-	*basePlan
+// LogicalMaxOneRow checks if a query returns no more than one row.
+type LogicalMaxOneRow struct {
 	baseLogicalPlan
-	basePhysicalPlan
 }
 
-// TableDual represents a dual table plan.
-type TableDual struct {
-	*basePlan
+// LogicalTableDual represents a dual table plan.
+type LogicalTableDual struct {
 	baseLogicalPlan
-	basePhysicalPlan
 
 	RowCount int
 }
 
 // LogicalUnionScan is only used in non read-only txn.
 type LogicalUnionScan struct {
-	*basePlan
 	baseLogicalPlan
 
 	conditions []expression.Expression
@@ -272,7 +262,6 @@ type LogicalUnionScan struct {
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
-	*basePlan
 	baseLogicalPlan
 
 	indexHints []*ast.IndexHint
@@ -317,13 +306,11 @@ func (p *DataSource) TableInfo() *model.TableInfo {
 
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
-	*basePlan
 	baseLogicalPlan
 }
 
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
-	*basePlan
 	baseLogicalPlan
 
 	ByItems []*ByItems
@@ -337,11 +324,9 @@ func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// TopN represents a top-n plan.
-type TopN struct {
-	*basePlan
+// LogicalTopN represents a top-n plan.
+type LogicalTopN struct {
 	baseLogicalPlan
-	basePhysicalPlan
 
 	ByItems []*ByItems
 	Offset  uint64
@@ -352,13 +337,12 @@ type TopN struct {
 }
 
 // isLimit checks if TopN is a limit plan.
-func (t *TopN) isLimit() bool {
+func (t *LogicalTopN) isLimit() bool {
 	return len(t.ByItems) == 0
 }
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	*basePlan
 	baseLogicalPlan
 
 	Offset uint64
@@ -370,7 +354,6 @@ type LogicalLimit struct {
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
-	*basePlan
 	baseLogicalPlan
 
 	Lock ast.SelectLockType

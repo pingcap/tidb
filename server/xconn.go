@@ -18,7 +18,6 @@ import (
 	"net"
 	"runtime"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -29,12 +28,14 @@ import (
 	"github.com/pingcap/tidb/xprotocol/xpacketio"
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Connection"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
+	"sync"
 )
 
-// mysqlXClientConn represents a connection between server and client,
+// xClientConn represents a connection between server and client,
 // it maintains connection specific state, handles client query.
-type mysqlXClientConn struct {
+type xClientConn struct {
 	pkt          *xpacketio.XPacketIO           // a helper to read and write data in packet format.
 	conn         net.Conn                       // MySQL conn, used by authentication
 	xsession     *xSession                      // client session
@@ -51,6 +52,12 @@ type mysqlXClientConn struct {
 	ctx          QueryCtx                       // an interface to execute sql statements.
 	attrs        map[string]string              // attributes parsed from client handshake response, not used for now.
 	state        clientState                    // client state
+
+	// mu is used for cancelling the execution of current transaction.
+	mu struct {
+		sync.RWMutex
+		cancelFunc goctx.CancelFunc
+	}
 }
 
 type clientState int32
@@ -67,7 +74,7 @@ const (
 	clientClosed
 )
 
-func (xcc *mysqlXClientConn) Run() {
+func (xcc *xClientConn) Run() {
 	const size = 4096
 	defer func() {
 		r := recover()
@@ -122,7 +129,7 @@ func (xcc *mysqlXClientConn) Run() {
 	}
 }
 
-func (xcc *mysqlXClientConn) Close() error {
+func (xcc *xClientConn) Close() error {
 	xcc.state = clientClosing
 	xcc.server.rwlock.Lock()
 	delete(xcc.server.clients, xcc.connectionID)
@@ -138,7 +145,7 @@ func (xcc *mysqlXClientConn) Close() error {
 	return nil
 }
 
-func (xcc *mysqlXClientConn) handleMessage(tp Mysqlx.ClientMessages_Type, msg []byte) error {
+func (xcc *xClientConn) handleMessage(tp Mysqlx.ClientMessages_Type, msg []byte) error {
 	switch tp {
 	case Mysqlx.ClientMessages_CON_CLOSE:
 		if err := xutil.SendOK(xcc.pkt, "bye!"); err != nil {
@@ -163,7 +170,7 @@ func (xcc *mysqlXClientConn) handleMessage(tp Mysqlx.ClientMessages_Type, msg []
 	}
 }
 
-func (xcc *mysqlXClientConn) getCapabilities() error {
+func (xcc *xClientConn) getCapabilities() error {
 	resp, err := xcc.capabilities.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -174,7 +181,7 @@ func (xcc *mysqlXClientConn) getCapabilities() error {
 	return nil
 }
 
-func (xcc *mysqlXClientConn) setCapabilities(msg []byte) error {
+func (xcc *xClientConn) setCapabilities(msg []byte) error {
 	vals, err := capability.DecodeCapabilitiesSetMsg(msg)
 	if err != nil {
 		return err
@@ -197,7 +204,7 @@ func (xcc *mysqlXClientConn) setCapabilities(msg []byte) error {
 	return nil
 }
 
-func (xcc *mysqlXClientConn) handshake() error {
+func (xcc *xClientConn) handshake() error {
 	// Open session
 	ctx, err := xcc.server.driver.OpenCtx(uint64(xcc.connectionID), xcc.capability, uint8(xcc.collation), xcc.dbname, nil)
 	if err != nil {
@@ -211,11 +218,11 @@ func (xcc *mysqlXClientConn) handshake() error {
 	return nil
 }
 
-func (xcc *mysqlXClientConn) flush() error {
+func (xcc *xClientConn) flush() error {
 	return xcc.pkt.Flush()
 }
 
-func (xcc *mysqlXClientConn) writeError(e error) error {
+func (xcc *xClientConn) writeError(e error) error {
 	var (
 		m  *mysql.SQLError
 		te *terror.Error
@@ -234,26 +241,15 @@ func (xcc *mysqlXClientConn) writeError(e error) error {
 	return xcc.pkt.WritePacket(Mysqlx.ServerMessages_ERROR, errMsg)
 }
 
-func (xcc *mysqlXClientConn) isKilled() bool {
-	return xcc.state == clientClosed
-}
-
-func (xcc *mysqlXClientConn) Cancel(query bool) {
-	xcc.ctx.Cancel()
-	if !query {
-		xcc.state = clientClosed
-	}
-}
-
-func (xcc *mysqlXClientConn) id() uint32 {
+func (xcc *xClientConn) id() uint32 {
 	return xcc.connectionID
 }
 
-func (xcc *mysqlXClientConn) showProcess() util.ProcessInfo {
+func (xcc *xClientConn) showProcess() util.ProcessInfo {
 	return xcc.ctx.ShowProcess()
 }
 
-func (xcc *mysqlXClientConn) useDB(db string) (err error) {
+func (xcc *xClientConn) useDB(db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
 	_, err = xcc.ctx.Execute(goctx.Background(), "use `"+db+"`")
@@ -264,11 +260,11 @@ func (xcc *mysqlXClientConn) useDB(db string) (err error) {
 	return
 }
 
-func (xcc *mysqlXClientConn) addCapability(h capability.Handler) {
+func (xcc *xClientConn) addCapability(h capability.Handler) {
 	xcc.capabilities.Capabilities = append(xcc.capabilities.Capabilities, h.Get())
 }
 
-func (xcc *mysqlXClientConn) configCapabilities() {
+func (xcc *xClientConn) configCapabilities() {
 	xcc.addCapability(&capability.HandlerAuthMechanisms{Values: []string{"MYSQL41"}})
 	xcc.addCapability(&capability.HandlerReadOnlyValue{Name: "doc.formats", Value: "text"})
 	xcc.addCapability(&capability.HandlerReadOnlyValue{Name: "node_type", Value: "mysql"})

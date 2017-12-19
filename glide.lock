@@ -1,5 +1,5 @@
-hash: 706074c30615e1e0a706adef7eaeaab84e7acaeaa98132e5a1d487173ebfd5ef
-updated: 2017-11-29T15:54:56.281890071+09:00
+hash: 954683bfc1b8994e70719fc6fca477f25313937581894de028502ea71d949e6d
+updated: 2017-12-14T03:56:28.438888559Z
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -75,6 +75,8 @@ imports:
   - ptypes/any
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- name: github.com/google/btree
+  version: 316fb6d3f031ae8f4d457c6c5186b9e3ded70435
 - name: github.com/gorilla/context
   version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
 - name: github.com/gorilla/mux
@@ -110,14 +112,10 @@ imports:
   subpackages:
   - ext
   - log
-- name: github.com/petar/GoLLRB
-  version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
-  subpackages:
-  - llrb
 - name: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - name: github.com/pingcap/check
-  version: 9b266636177e249ec28b0aeffe8e86bc272bb481
+  version: 1c287c953996ab3a0bf535dba9d53d809d3dc0b6
 - name: github.com/pingcap/goleveldb
   version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
@@ -134,7 +132,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: e33073e1475021e04c795c3de5e1f4e28baa708a
+  version: d21ce07c35b9ea66436dc632210a01d927361ed4
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -145,13 +143,13 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/mysqlx-driver
-  version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
+  version: c4df4e6e9be29ffb2f81f953d46665b8b37341bd
 - name: github.com/pingcap/pd
-  version: 96db717124a5bd980e8a244af2db8952e04159d6
+  version: eed819b6999186a4bf2d25255f8d61b371a450d6
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: a497eca3b8920e192aae1a5af81e573f90e59a6b
+  version: 07ff5b094233a557a3ac11b1e4d8714d8c6ff406
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -183,7 +181,7 @@ imports:
   - model
 - name: github.com/prometheus/procfs
   version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
-- name: github.com/Sirupsen/logrus
+- name: github.com/sirupsen/logrus
   version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/spaolacci/murmur3
   version: 0d12bf811670bf6a1a63828dfbd003eded177fce

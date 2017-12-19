@@ -16,7 +16,6 @@ package server
 import (
 	"sync/atomic"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/mysql"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/xprotocol/util"
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Session"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -39,7 +39,7 @@ const (
 )
 
 type xSession struct {
-	xcc                    *mysqlXClientConn
+	xcc                    *xClientConn
 	xsql                   *xSQL
 	crud                   *xCrud
 	sessionID              uint32
@@ -50,7 +50,7 @@ type xSession struct {
 	stateBeforeClose       sessionState
 }
 
-func (xcc *mysqlXClientConn) createXSession() *xSession {
+func (xcc *xClientConn) createXSession() *xSession {
 	return &xSession{
 		xcc:                    xcc,
 		xsql:                   createXSQL(xcc),

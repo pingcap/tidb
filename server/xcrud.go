@@ -14,7 +14,6 @@
 package server
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/xprotocol/expr"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Crud"
 	"github.com/pingcap/tipb/go-mysqlx/Expr"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -170,7 +170,7 @@ func (crud *xCrud) dealCrudStmtExecute(goCtx goctx.Context, msgType Mysqlx.Clien
 	return SendExecOk(crud.pkt, crud.ctx.AffectedRows(), crud.ctx.LastInsertID())
 }
 
-func createCrud(xcc *mysqlXClientConn) *xCrud {
+func createCrud(xcc *xClientConn) *xCrud {
 	return &xCrud{
 		ctx:   xcc.ctx,
 		pkt:   xcc.pkt,

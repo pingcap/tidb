@@ -45,7 +45,7 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-func (cc *mysqlClientConn) handleStmtPrepare(sql string) error {
+func (cc *clientConn) handleStmtPrepare(sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -102,11 +102,10 @@ func (cc *mysqlClientConn) handleStmtPrepare(sql string) error {
 	return errors.Trace(cc.flush())
 }
 
-func (cc *mysqlClientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err error) {
+func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err error) {
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
-
 	pos := 0
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
@@ -164,7 +163,7 @@ func (cc *mysqlClientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (
 			return errors.Trace(err)
 		}
 	}
-	rs, err := stmt.Execute(args...)
+	rs, err := stmt.Execute(goCtx, args...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -311,7 +310,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 	return
 }
 
-func (cc *mysqlClientConn) handleStmtClose(data []byte) (err error) {
+func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	if len(data) < 4 {
 		return
 	}
@@ -324,7 +323,7 @@ func (cc *mysqlClientConn) handleStmtClose(data []byte) (err error) {
 	return
 }
 
-func (cc *mysqlClientConn) handleStmtSendLongData(data []byte) (err error) {
+func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 	if len(data) < 6 {
 		return mysql.ErrMalformPacket
 	}
@@ -341,7 +340,7 @@ func (cc *mysqlClientConn) handleStmtSendLongData(data []byte) (err error) {
 	return stmt.AppendParam(paramID, data[6:])
 }
 
-func (cc *mysqlClientConn) handleStmtReset(data []byte) (err error) {
+func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	if len(data) < 4 {
 		return mysql.ErrMalformPacket
 	}
@@ -357,7 +356,7 @@ func (cc *mysqlClientConn) handleStmtReset(data []byte) (err error) {
 }
 
 // See https://dev.mysql.com/doc/internals/en/com-set-option.html
-func (cc *mysqlClientConn) handleSetOption(data []byte) (err error) {
+func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket
 	}

@@ -16,6 +16,7 @@ package plan
 import (
 	"fmt"
 	"math"
+	"math/bits"
 	"reflect"
 	"strings"
 	"unicode"
@@ -42,6 +43,8 @@ const (
 	TiDBMergeJoin = "tidb_smj"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
+	// TiDBHashJoin is hint enforce hash join.
+	TiDBHashJoin = "tidb_hj"
 )
 
 const (
@@ -257,15 +260,21 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	if b.TableHints() != nil {
 		leftAlias := extractTableAlias(leftPlan)
 		rightAlias := extractTableAlias(rightPlan)
-		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
+		if b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias) {
+			joinPlan.preferJoinType |= preferMergeJoin
+		}
+		if b.TableHints().ifPreferHashJoin(leftAlias, rightAlias) {
+			joinPlan.preferJoinType |= preferHashJoin
+		}
 		if b.TableHints().ifPreferINLJ(leftAlias) {
-			joinPlan.preferINLJ = joinPlan.preferINLJ | preferLeftAsOuter
+			joinPlan.preferJoinType |= preferLeftAsIndexOuter
 		}
 		if b.TableHints().ifPreferINLJ(rightAlias) {
-			joinPlan.preferINLJ = joinPlan.preferINLJ | preferRightAsOuter
+			joinPlan.preferJoinType |= preferRightAsIndexOuter
 		}
-		if joinPlan.preferMergeJoin && joinPlan.preferINLJ > 0 {
-			b.err = errors.New("Optimizer Hints is conflict")
+		// If there're multiple join type and one of them is not the index join hints, then is conflict.
+		if bits.OnesCount(joinPlan.preferJoinType) > 1 && (joinPlan.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
+			b.err = errors.New("Join hints are conflict, you can only specify one type of join")
 			return nil
 		}
 	}
@@ -298,10 +307,8 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin
-		joinPlan.DefaultValues = make([]types.Datum, rightPlan.Schema().Len())
 	} else if join.Tp == ast.RightJoin {
 		joinPlan.JoinType = RightOuterJoin
-		joinPlan.DefaultValues = make([]types.Datum, leftPlan.Schema().Len())
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
@@ -424,7 +431,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 					continue
 				} else {
 					// If there is condition which is always false, return dual plan directly.
-					dual := TableDual{}.init(b.ctx)
+					dual := LogicalTableDual{}.init(b.ctx)
 					dual.SetSchema(p.Schema().Clone())
 					return dual
 				}
@@ -527,7 +534,7 @@ func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
-	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.ctx)
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	for _, field := range fields {
@@ -595,7 +602,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			}
 		}
 		if needProjection {
-			proj := Projection{Exprs: exprs}.init(b.ctx)
+			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
 			proj.schema = schema4Union.Clone()
 			for _, col := range proj.schema.Columns {
 				col.FromID = proj.ID()
@@ -622,9 +629,9 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
 			return nil
 		}
-		if _, ok := sel.(*Projection); !ok {
+		if _, ok := sel.(*LogicalProjection); !ok {
 			b.optFlag |= flagEliminateProjection
-			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.ctx)
+			proj := LogicalProjection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.ctx)
 			schema := sel.Schema().Clone()
 			for _, col := range schema.Columns {
 				col.FromID = proj.ID()
@@ -1411,21 +1418,24 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 }
 
 func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	var sortMergeTables, INLJTables []model.CIStr
+	var sortMergeTables, INLJTables, hashJoinTables []model.CIStr
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin:
 			sortMergeTables = append(sortMergeTables, hint.Tables...)
 		case TiDBIndexNestedLoopJoin:
 			INLJTables = append(INLJTables, hint.Tables...)
+		case TiDBHashJoin:
+			hashJoinTables = append(hashJoinTables, hint.Tables...)
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables) != 0 || len(INLJTables) != 0 {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
+			hashJoinTables:            hashJoinTables,
 		})
 		return true
 	}
@@ -1540,7 +1550,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
-		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
 		setParentAndChildren(proj, p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
@@ -1554,7 +1564,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
-	dual := TableDual{RowCount: 1}.init(b.ctx)
+	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
 	dual.SetSchema(expression.NewSchema())
 	return dual
 }
@@ -1656,7 +1666,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 // projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
 // we add a projection on the original DataSource, and calculate those columns in the projection
 // so that plans above it can reference generated columns by their name.
-func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) *Projection {
+func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) *LogicalProjection {
 	var hasVirtualGeneratedColumn = false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
@@ -1667,7 +1677,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	if !hasVirtualGeneratedColumn {
 		return nil
 	}
-	var proj = Projection{
+	var proj = LogicalProjection{
 		Exprs:            make([]expression.Expression, 0, len(columns)),
 		calculateGenCols: true,
 	}.init(b.ctx)
@@ -1705,9 +1715,6 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.ctx)
-	if tp == LeftOuterJoin {
-		ap.DefaultValues = make([]types.Datum, innerPlan.Schema().Len())
-	}
 	setParentAndChildren(ap, outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
@@ -1736,7 +1743,7 @@ out:
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *Projection, *LogicalSort:
+		case *LogicalProjection, *LogicalSort:
 			p = p.Children()[0].(LogicalPlan)
 			p.SetParents()
 		case *LogicalAggregation:
@@ -1750,7 +1757,7 @@ out:
 			break out
 		}
 	}
-	exists := Exists{}.init(b.ctx)
+	exists := LogicalExists{}.init(b.ctx)
 	setParentAndChildren(exists, p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
@@ -1761,7 +1768,7 @@ out:
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := MaxOneRow{}.init(b.ctx)
+	maxOneRow := LogicalMaxOneRow{}.init(b.ctx)
 	setParentAndChildren(maxOneRow, p)
 	maxOneRow.SetSchema(p.Schema().Clone())
 	return maxOneRow
@@ -1800,10 +1807,20 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	if b.TableHints() != nil {
 		outerAlias := extractTableAlias(outerPlan)
 		innerAlias := extractTableAlias(innerPlan)
-		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias)
+		if b.TableHints().ifPreferMergeJoin(outerAlias, innerAlias) {
+			joinPlan.preferJoinType |= preferMergeJoin
+		}
+		if b.TableHints().ifPreferHashJoin(outerAlias, innerAlias) {
+			joinPlan.preferJoinType |= preferHashJoin
+		}
 		// semi join's outer is always the left side.
 		if b.TableHints().ifPreferINLJ(outerAlias) {
-			joinPlan.preferINLJ = preferLeftAsOuter
+			joinPlan.preferJoinType = preferLeftAsIndexOuter
+		}
+		// If there're multiple join hints, they're conflict.
+		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
+			b.err = errors.New("Join hints are conflict, you can only specify one type of join")
+			return nil
 		}
 	}
 	return joinPlan
@@ -1953,7 +1970,7 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 			}
 			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
 		}
-	case *Projection:
+	case *LogicalProjection:
 		if x.calculateGenCols {
 			ds := x.Children()[0].(*DataSource)
 			alias := extractTableAlias(x)

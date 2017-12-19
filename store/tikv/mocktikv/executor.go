@@ -432,14 +432,12 @@ func (e *aggregateExec) getGroupKey() ([]byte, [][]byte, error) {
 		return nil, nil, nil
 	}
 	bufLen := 0
-	vals := make([]types.Datum, 0, length)
 	row := make([][]byte, 0, length)
 	for _, item := range e.groupByExprs {
 		v, err := item.Eval(e.row)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		vals = append(vals, v)
 		b, err := codec.EncodeValue(nil, v)
 		if err != nil {
 			return nil, nil, errors.Trace(err)

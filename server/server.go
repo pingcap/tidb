@@ -42,7 +42,6 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
-	log "github.com/Sirupsen/logrus"
 	proxyprotocol "github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
@@ -52,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/xprotocol/xpacketio"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -93,7 +93,7 @@ type Server struct {
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	tp                protocolType
-	clients           map[uint32]clientConn
+	clients           map[uint32]baseClientConn
 	capability        uint32
 
 	// When a critical error occurred, we don't want to exit the process, because there may be
@@ -122,7 +122,7 @@ func (s *Server) getXClientsInfo() []xClientInfo {
 	var info []xClientInfo
 	s.rwlock.RLock()
 	for _, v := range s.clients {
-		c := v.(*mysqlXClientConn)
+		c := v.(*xClientConn)
 		info = append(info, xClientInfo{clientID: c.id(), user: c.user, host: "", sessionID: c.xsession.sessionID})
 	}
 	s.rwlock.RUnlock()
@@ -139,12 +139,13 @@ func (s *Server) releaseToken(token *Token) {
 
 // newConn creates a new *ClientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
-func (s *Server) newConn(conn net.Conn) *mysqlClientConn {
-	cc := &mysqlClientConn{
+func (s *Server) newConn(conn net.Conn) *clientConn {
+	cc := &clientConn{
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
+		status:       connStatusDispatching,
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
@@ -159,8 +160,8 @@ func (s *Server) newConn(conn net.Conn) *mysqlClientConn {
 	return cc
 }
 
-func (s *Server) newXConn(conn net.Conn) *mysqlXClientConn {
-	return &mysqlXClientConn{
+func (s *Server) newXConn(conn net.Conn) *xClientConn {
+	return &xClientConn{
 		conn:         conn,
 		pkt:          xpacketio.NewXPacketIO(conn),
 		server:       s,
@@ -184,7 +185,7 @@ func NewServer(cfg *config.Config, driver IDriver, protocolType protocolType) (*
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		rwlock:            &sync.RWMutex{},
 		tp:                protocolType,
-		clients:           make(map[uint32]clientConn),
+		clients:           make(map[uint32]baseClientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
 	s.loadTLSCertificates()
@@ -373,8 +374,10 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
-		if client.isKilled() {
-			continue
+		if c, ok := client.(*clientConn); ok {
+			if atomic.LoadInt32(&c.status) == connStatusWaitShutdown {
+				continue
+			}
 		}
 		rs = append(rs, client.showProcess())
 	}
@@ -392,7 +395,66 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	conn.Cancel(query)
+	// TODO: need check for x client.
+	if c, ok := conn.(*clientConn); ok {
+		c.mu.RLock()
+		cancelFunc := c.mu.cancelFunc
+		c.mu.RUnlock()
+		if cancelFunc != nil {
+			cancelFunc()
+		}
+	}
+
+	if !query {
+		// Mark the client connection status as WaitShutdown, when the goroutine detect
+		// this, it will end the dispatch loop and exit.
+		// TODO: need check for x client.
+		if c, ok := conn.(*clientConn); ok {
+			atomic.StoreInt32(&c.status, connStatusWaitShutdown)
+		}
+	}
+}
+
+// GracefulDown waits all clients to close.
+func (s *Server) GracefulDown() {
+	log.Info("graceful shutdown.")
+
+	count := s.ConnectionCount()
+	for i := 0; count > 0; i++ {
+		time.Sleep(time.Second)
+		s.kickIdleConnection()
+
+		count = s.ConnectionCount()
+		// Print information for every 30s.
+		if i%30 == 0 {
+			log.Infof("graceful shutdown...connection count %d\n", count)
+		}
+	}
+}
+
+func (s *Server) kickIdleConnection() {
+	var conns []baseClientConn
+	s.rwlock.RLock()
+	for _, cc := range s.clients {
+		// TODO: need check for x client.
+		if c, ok := cc.(*clientConn); ok {
+			if c.ShutdownOrNotify() {
+				// Shutdowned conn will be closed by us, and notified conn will exist themselves.
+				conns = append(conns, cc)
+			}
+		}
+	}
+	s.rwlock.RUnlock()
+
+	for _, cc := range conns {
+		// TODO: need check for x client.
+		if c, ok := cc.(*clientConn); ok {
+			err := c.Close()
+			if err != nil {
+				log.Error("close connection error:", err)
+			}
+		}
+	}
 }
 
 // Server error codes.

@@ -19,13 +19,13 @@ import (
 	"net/http"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 )
 
 var once sync.Once
@@ -47,13 +47,15 @@ func (s *Server) startHTTPServer() {
 	if s.cfg.Store == "tikv" {
 		tikvHandler := s.newRegionHandler()
 		// HTTP path for regions
-		router.Handle("/tables/{db}/{table}/regions", tableRegionsHandler{tikvHandler})
+		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandler, opTableRegions})
+		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandler, opTableDiskUsage})
 		router.Handle("/regions/meta", tikvHandler)
 		router.Handle("/regions/{regionID}", tikvHandler)
-		router.Handle("/mvcc/key/{db}/{table}/{recordID}", mvccTxnHandler{tikvHandler, opMvccGetByKey})
+		router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandler, opMvccGetByKey})
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandler, opMvccGetByHex})
+		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandler, opMvccGetByIdx})
 		router.Handle("/schema", schemaHandler{tikvHandler})
 		router.Handle("/schema/{db}", schemaHandler{tikvHandler})
 		router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandler})
@@ -64,7 +66,14 @@ func (s *Server) startHTTPServer() {
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
 	http.Handle("/", router)
-	err := http.ListenAndServe(addr, nil)
+
+	var err error
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		err = http.ListenAndServeTLS(addr, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey, nil)
+	} else {
+		err = http.ListenAndServe(addr, nil)
+	}
+
 	if err != nil {
 		log.Fatal(err)
 	}

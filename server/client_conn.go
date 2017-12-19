@@ -20,19 +20,13 @@ import (
 	"github.com/pingcap/tidb/util"
 )
 
-// clientConn is used to communicate with user's client, it is usually dependence goroutine.
-type clientConn interface {
+// baseClientConn is used to communicate with user's client, it is usually dependence goroutine.
+type baseClientConn interface {
 	// start the main routine, receive message from client and reply the result set.
 	Run()
 
-	// cancel the connection.
-	Cancel(query bool)
-
 	// check the legacy of the client.
 	handshake() error
-
-	// check whether the client is killed
-	isKilled() bool
 
 	// return the connection id of the client
 	id() uint32
@@ -42,7 +36,7 @@ type clientConn interface {
 }
 
 // create client connection according to the server type, mysql or x-protocol
-func createClientConn(conn net.Conn, s *Server) clientConn {
+func createClientConn(conn net.Conn, s *Server) baseClientConn {
 	switch s.tp {
 	case MySQLProtocol:
 		return s.newConn(conn)

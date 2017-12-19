@@ -39,14 +39,12 @@ import:
   version: 6352e005618615ffaf1cb1c6622b8e91435751fe
 - package: github.com/ngaut/sync2
   version: 7a24ed77b2efb460c1468b7dc917821c66e80e55
-- package: github.com/petar/GoLLRB
-  version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
-  subpackages:
-  - llrb
+- package: github.com/google/btree
+  version: 316fb6d3f031ae8f4d457c6c5186b9e3ded70435
 - package: github.com/peterh/liner
   version: 3f3a91ddf7d2784892a58e27ddf48d70e3304bb7
 - package: github.com/pingcap/check
-  version: 9b266636177e249ec28b0aeffe8e86bc272bb481
+  version: 1c287c953996ab3a0bf535dba9d53d809d3dc0b6
 - package: github.com/pingcap/goleveldb
   version: 8d44bfdf1030639ae7130922c95df12d6d4da3b6
   subpackages:
@@ -62,7 +60,7 @@ import:
   - leveldb/storage
   - leveldb/table
   - leveldb/util
-- package: github.com/Sirupsen/logrus
+- package: github.com/sirupsen/logrus
   version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - package: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
@@ -136,11 +134,11 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: 96db717124a5bd980e8a244af2db8952e04159d6
+  version: eed819b6999186a4bf2d25255f8d61b371a450d6
   subpackages:
   - pd-client
 - package: github.com/pingcap/tipb
-  version: a497eca3b8920e192aae1a5af81e573f90e59a6b
+  version: 07ff5b094233a557a3ac11b1e4d8714d8c6ff406
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -156,7 +154,7 @@ import:
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: e33073e1475021e04c795c3de5e1f4e28baa708a
+  version: d21ce07c35b9ea66436dc632210a01d927361ed4
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
@@ -197,7 +195,7 @@ import:
 - package: github.com/spaolacci/murmur3
   version: v1.0
 - package: github.com/pingcap/mysqlx-driver
-  version: 812a857f2c5cdb7c3e6325d7f6059430c3291ef6
+  version: c4df4e6e9be29ffb2f81f953d46665b8b37341bd
 - package: github.com/apache/thrift
   version: ">=0.9.3, <0.11.0"
   subpackages:

@@ -462,6 +462,11 @@ func (m SQLMode) HasNoBackslashEscapesMode() bool {
 	return m&ModeNoBackslashEscapes == ModeNoBackslashEscapes
 }
 
+// HasIgnoreSpaceMode detects if 'IGNORE_SPACE' mode is set in SQLMode
+func (m SQLMode) HasIgnoreSpaceMode() bool {
+	return m&ModeIgnoreSpace == ModeIgnoreSpace
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0

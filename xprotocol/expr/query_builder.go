@@ -16,11 +16,11 @@ package expr
 import (
 	"strconv"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/xprotocol/util"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
 	"github.com/pingcap/tipb/go-mysqlx/Expr"
+	log "github.com/sirupsen/logrus"
 )
 
 type queryBuilder struct {

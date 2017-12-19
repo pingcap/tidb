@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tipb/go-mysqlx/Datatypes"
+	log "github.com/sirupsen/logrus"
 )
 
 // FormatQuery formats query for xsql.

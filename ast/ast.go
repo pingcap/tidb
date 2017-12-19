@@ -16,6 +16,8 @@
 package ast
 
 import (
+	"io"
+
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -76,6 +78,9 @@ type ExprNode interface {
 	SetFlag(flag uint64)
 	// GetFlag returns the flag of the expression.
 	GetFlag() uint64
+
+	// Format formats the AST into a writer.
+	Format(w io.Writer)
 }
 
 // FuncNode represents function call expression node.
@@ -136,7 +141,7 @@ type RecordSet interface {
 	Next(goCtx goctx.Context) (row types.Row, err error)
 
 	// NextChunk reads records into chunk.
-	NextChunk(chk *chunk.Chunk) error
+	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk

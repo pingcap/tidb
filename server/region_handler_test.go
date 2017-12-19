@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"sort"
@@ -45,8 +46,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sIndex := int64(11)
 	eTableID := int64(9)
 
-	startKey := codec.EncodeBytes(nil, tablecodec.EncodeTableIndexPrefix(sTableID, sIndex))
-	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
+	startKey := tablecodec.EncodeTableIndexPrefix(sTableID, sIndex)
+	endKey := tablecodec.GenTableRecordPrefix(eTableID)
+
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
@@ -70,8 +72,8 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	sTableID := int64(15)
 	eTableID := int64(math.MaxInt64)
-	startKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(sTableID))
-	endKey := codec.EncodeBytes(nil, []byte("z_aaaaafdfd"))
+	startKey := tablecodec.GenTableRecordPrefix(sTableID)
+	endKey := []byte("z_aaaaafdfd")
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
@@ -95,8 +97,8 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C)
 	sTableID := int64(math.MinInt64)
 	sIndexID := int64(math.MinInt64)
 	eTableID := int64(9)
-	startKey := codec.EncodeBytes(nil, []byte("m_aaaaafdfd"))
-	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
+	startKey := []byte("m_aaaaafdfd")
+	endKey := tablecodec.GenTableRecordPrefix(eTableID)
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
@@ -225,19 +227,38 @@ func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
 
 	dbt.mustExec("create database tidb;")
 	dbt.mustExec("use tidb;")
-	dbt.mustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	dbt.mustExec("create table tidb.test (a int auto_increment primary key, b varchar(20));")
 	dbt.mustExec("insert tidb.test values (1, 1);")
 	txn1, err := dbt.db.Begin()
 	c.Assert(err, IsNil)
 	_, err = txn1.Exec("update tidb.test set b = b + 1 where a = 1;")
 	c.Assert(err, IsNil)
-	_, err = txn1.Exec("insert tidb.test values (2,2);")
+	_, err = txn1.Exec("insert tidb.test values (2, 2);")
+	c.Assert(err, IsNil)
+	_, err = txn1.Exec("insert tidb.test (a) values (3);")
+	c.Assert(err, IsNil)
+	_, err = txn1.Exec("insert tidb.test values (4, '');")
 	c.Assert(err, IsNil)
 	err = txn1.Commit()
 	c.Assert(err, IsNil)
+	dbt.mustExec("alter table tidb.test add index idx1 (a, b);")
+	dbt.mustExec("alter table tidb.test add unique index idx2 (a, b);")
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
+func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
+	decoder := json.NewDecoder(closer)
+	var data kvrpcpb.MvccGetByKeyResponse
+	err := decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	if valid {
+		c.Assert(data.Info, NotNil)
+		c.Assert(len(data.Info.Writes), Greater, 0)
+	} else {
+		c.Assert(data.Info, IsNil)
+	}
+}
+
+func (ts *TidbRegionHandlerTestSuite) TestGetTableMvcc(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -303,6 +324,63 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
 	err = decoder.Decode(&p)
 	c.Assert(err, IsNil)
 	c.Assert(p.Info, IsNil)
+}
+
+func (ts *TidbRegionHandlerTestSuite) TestGetIndexMvcc(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+
+	// tests for normal index key
+	resp, err := http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/1?a=1&b=2")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/1?a=1&b=2")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
+	// tests for index key which includes null
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/3?a=3&b")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/3?a=3&b")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
+	// tests for index key which includes empty string
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/4?a=4&b=")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/3?a=4&b=")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
+	// tests for wrong key
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/5?a=5&b=1")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, false)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/5?a=5&b=1")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, false)
+
+	// tests for missing column value
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/1?a=1")
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var data1 kvrpcpb.MvccGetByKeyResponse
+	err = decoder.Decode(&data1)
+	c.Assert(err, NotNil)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx2/1?a=1")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data2 kvrpcpb.MvccGetByKeyResponse
+	err = decoder.Decode(&data2)
+	c.Assert(err, NotNil)
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {

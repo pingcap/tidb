@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	_ "github.com/pingcap/mysqlx-driver"
@@ -33,6 +32,7 @@ import (
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	log "github.com/sirupsen/logrus"
 )
 
 func TestT(t *testing.T) {

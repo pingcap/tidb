@@ -76,7 +76,6 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	s.Systems[key] = gVal
 	return gVal, nil
 }
 
@@ -163,8 +162,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.BatchInsert = tidbOptOn(sVal)
 	case variable.TiDBBatchDelete:
 		vars.BatchDelete = tidbOptOn(sVal)
-	case variable.TiDBMaxRowCountForINLJ:
-		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
+	case variable.TiDBDMLBatchSize:
+		vars.DMLBatchSize = tidbOptPositiveInt(sVal, variable.DefDMLBatchSize)
 	case variable.TiDBCurrentTS:
 		return variable.ErrReadOnly
 	case variable.TiDBMaxChunkSize:

@@ -52,9 +52,7 @@ func (a *aggregationOptimizer) isDecomposable(fun aggregation.Aggregation) bool 
 func (a *aggregationOptimizer) getAggFuncChildIdx(aggFunc aggregation.Aggregation, schema *expression.Schema) int {
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
-	for _, arg := range aggFunc.GetArgs() {
-		cols = append(cols, expression.ExtractColumns(arg)...)
-	}
+	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.GetArgs(), nil)
 	for _, col := range cols {
 		if schema.Contains(col) {
 			fromLeft = true
@@ -356,7 +354,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 						p = proj
 					}
 				}
-			} else if proj, ok1 := child.(*Projection); ok1 {
+			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
 				for i, gbyItem := range agg.GroupByItems {
@@ -374,9 +372,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				setParentAndChildren(agg, projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
 				var gbyCols []*expression.Column
-				for _, gbyExpr := range agg.GroupByItems {
-					gbyCols = append(gbyCols, expression.ExtractColumns(gbyExpr)...)
-				}
+				gbyCols = expression.ExtractColumnsFromExpressions(gbyCols, agg.GroupByItems, nil)
 				pushedAgg := a.makeNewAgg(agg.AggFuncs, gbyCols)
 				newChildren := make([]Plan, 0, len(union.children))
 				for _, child := range union.children {
@@ -401,7 +397,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation) *Projection {
+func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
 	schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 	coveredByUniqueKey := false
 	for _, key := range agg.children[0].Schema().Keys {
@@ -419,8 +415,8 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation
 	return nil
 }
 
-func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation, ctx context.Context) *Projection {
-	proj := Projection{
+func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation, ctx context.Context) *LogicalProjection {
+	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.init(a.ctx)
 	for _, fun := range agg.AggFuncs {

@@ -14,7 +14,6 @@
 package server
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -27,16 +26,17 @@ import (
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Resultset"
 	"github.com/pingcap/tipb/go-mysqlx/Sql"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
 type xSQL struct {
-	xcc *mysqlXClientConn
+	xcc *xClientConn
 	ctx QueryCtx
 	pkt *xpacketio.XPacketIO
 }
 
-func createXSQL(xcc *mysqlXClientConn) *xSQL {
+func createXSQL(xcc *xClientConn) *xSQL {
 	return &xSQL{
 		xcc: xcc,
 		ctx: xcc.ctx,

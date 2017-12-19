@@ -14,11 +14,10 @@
 package plan
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/types"
+	log "github.com/sirupsen/logrus"
 )
 
 type columnPruner struct {
@@ -60,7 +59,7 @@ func exprHasSetVar(expr expression.Expression) bool {
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar functions, we do not prune it.
-func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
@@ -70,18 +69,14 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
-	for _, expr := range p.Exprs {
-		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
-	}
+	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	child.PruneColumns(selfUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	for _, cond := range p.Conditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(cond)...)
-	}
+	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(child.Schema())
 }
@@ -98,9 +93,7 @@ func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range p.AggFuncs {
-		for _, arg := range aggrFunc.GetArgs() {
-			selfUsedCols = append(selfUsedCols, expression.ExtractColumns(arg)...)
-		}
+		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.GetArgs(), nil)
 	}
 	if len(p.GroupByItems) > 0 {
 		for i := len(p.GroupByItems) - 1; i >= 0; i-- {
@@ -190,11 +183,11 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *TableDual) PruneColumns(_ []*expression.Column) {
+func (p *LogicalTableDual) PruneColumns(_ []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Exists) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalExists) PruneColumns(parentUsedCols []*expression.Column) {
 	p.children[0].(LogicalPlan).PruneColumns(nil)
 }
 
@@ -245,12 +238,6 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) {
 	rChild := p.children[1].(LogicalPlan)
 	lChild.PruneColumns(leftCols)
 	rChild.PruneColumns(rightCols)
-	// After column pruning, the size of schema may change, so we should also change the len of default value.
-	if p.JoinType == LeftOuterJoin {
-		p.DefaultValues = make([]types.Datum, p.children[1].Schema().Len())
-	} else if p.JoinType == RightOuterJoin {
-		p.DefaultValues = make([]types.Datum, p.children[0].Schema().Len())
-	}
 	p.mergeSchema()
 }
 
