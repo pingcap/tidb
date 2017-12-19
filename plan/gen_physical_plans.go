@@ -374,7 +374,7 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 		fakeConstant := &expression.Constant{Value: types.NewIntDatum(1), RetType: key.GetType()}
 		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
 		conds = append(conds, eqFunc)
-		eqConds = append(conds, eqFunc)
+		eqConds = append(eqConds, eqFunc)
 	}
 
 	conds = append(conds, innerPlan.pushedDownConds...)
