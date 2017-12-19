@@ -488,11 +488,26 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
-	if len(as.IndexNames) == 0 {
-		return b.buildAnalyzeTable(as)
+func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
+	p := &Analyze{}
+	tblInfo := as.TableNames[0].TableInfo
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+		}
 	}
-	return b.buildAnalyzeIndex(as)
+	p.SetSchema(&expression.Schema{})
+	return p
+}
+
+func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
+	if as.IndexFlag {
+		if len(as.IndexNames) == 0 {
+			return b.buildAnalyzeAllIndex(as)
+		}
+		return b.buildAnalyzeIndex(as)
+	}
+	return b.buildAnalyzeTable(as)
 }
 
 func buildShowDDLFields() *expression.Schema {
@@ -1058,12 +1073,11 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
-		retFields := []string{"id", "parents", "children", "task", "operator info"}
+		retFields := []string{"id", "parents", "children", "task", "operator info", "count"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
 		}
-		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
 		p.SetSchema(schema)
 		p.explainedPlans = map[int]bool{}
 		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
