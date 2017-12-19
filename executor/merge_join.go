@@ -163,8 +163,9 @@ func (rb *rowBlockIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
 }
 
 func (rb *rowBlockIterator) rowsWithSameKey() (rows []chunk.Row, err error) {
-	rb.readerResourceQueue = append(rb.readerResourceQueue, rb.readerResultQueue[0:len(rb.readerResultQueue)-1]...)
-	rb.readerResultQueue = rb.readerResultQueue[len(rb.readerResultQueue)-1:]
+	lastReaderResultIdx := len(rb.readerResultQueue) - 1
+	rb.readerResourceQueue = append(rb.readerResourceQueue, rb.readerResultQueue[0:lastReaderResultIdx]...)
+	rb.readerResultQueue = rb.readerResultQueue[lastReaderResultIdx:]
 	// no more data.
 	if rb.firstReaderRow4Key == rb.curReaderResult.End() {
 		return nil, nil
