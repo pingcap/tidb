@@ -79,7 +79,6 @@ func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, er
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
-	log.Infof("convert to physical p %s", ToString(p.self))
 	// look up the task map
 	t = p.getTask(prop)
 	if t != nil {
@@ -87,13 +86,11 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	}
 	t = invalidTask
 	if prop.taskTp != rootTaskType {
-		log.Infof("convert to physical %v", prop)
 		// Currently all plan cannot totally push down.
 		p.storeTask(prop, t)
 		return t, nil
 	}
 	for _, pp := range p.self.genPhysPlansByReqProp(prop) {
-		// log.Infof("convert to physical %s start", ToString(pp))
 		t, err = p.getBestTask(t, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -106,7 +103,6 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
 	tasks := make([]task, 0, len(p.basePlan.children))
 	for i, child := range p.basePlan.children {
-		log.Infof("get best task no. %v, p %s, child %s, prop %v", i, ToString(p.self), ToString(child), pp.getChildReqProps(i))
 		childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(pp.getChildReqProps(i))
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -202,7 +198,6 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices := p.availableIndices.indices
 	includeTableScan := p.availableIndices.includeTableScan
-	log.Infof("datasource, convert to physical p %s, include table scan %v, len conds %v", ToString(p.self), includeTableScan, len(p.pushedDownConds))
 	t = invalidTask
 	if includeTableScan {
 		t, err = p.convertToTableScan(prop)

@@ -16,7 +16,6 @@ package plan
 import (
 	"math"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
@@ -523,7 +522,6 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 				AggFuncs:     p.AggFuncs,
 			}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
 			agg.SetSchema(p.schema.Clone())
-			log.Infof("stream agg %v, tp %s", agg, tp)
 			streamAggs = append(streamAggs, agg)
 		}
 	}
@@ -541,7 +539,6 @@ func (p *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
 			AggFuncs:     p.AggFuncs,
 		}.initForHash(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64, taskTp: taskTp})
 		agg.SetSchema(p.schema.Clone())
-		log.Infof("hash agg %v, tp %s", agg, taskTp)
 		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs

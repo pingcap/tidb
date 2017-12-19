@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -239,12 +238,10 @@ func finishCopTask(task task, ctx context.Context) task {
 	}
 	// FIXME: When it is a double reading. The cost should be more expensive. The right cost should add the
 	// `NetWorkStartCost` * (totalCount / perCountIndexRead)
-	log.Infof("000 task %v, cost %v", t, t.cost())
 	t.finishIndexPlan()
 	if t.tablePlan != nil {
 		t.cst += t.count() * netWorkFactor
 	}
-	log.Infof("111 task %v, cost %v", t, t.cost())
 	newTask := &rootTask{
 		cst: t.cst,
 	}
@@ -255,12 +252,10 @@ func finishCopTask(task task, ctx context.Context) task {
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
 		p.stats = t.indexPlan.statsInfo()
-		log.Infof("222 task %v, stats %v", t, p.stats)
 		newTask.p = p
 	} else {
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
 		p.stats = t.tablePlan.statsInfo()
-		log.Infof("222 task %v, stats %v", t, p.stats)
 		newTask.p = p
 	}
 	return newTask
@@ -416,13 +411,11 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	switch tp := t.(type) {
 	case *copTask:
-		log.Warnf("proj attach task %v", t)
 		// TODO: Support projection push down.
 		t = finishCopTask(t, p.ctx)
 		t = attachPlan2Task(p, t)
 		return t
 	case *rootTask:
-		log.Warnf("proj attach task %v", t)
 		return attachPlan2Task(p, tp)
 	}
 	return nil
@@ -531,30 +524,23 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		return invalidTask
 	}
 	task := tasks[0].copy()
-	log.Infof("stream agg p %s, p.count %v, task %v, count %v", ToString(p), p.stats.count, task, task.count())
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
-				log.Infof("stream agg [table] child schema %s", cop.tablePlan.Schema())
 				partialAgg.SetChildren(cop.tablePlan)
 				cop.tablePlan = partialAgg
 			} else {
-				log.Infof("stream agg [index] child schema %s", cop.indexPlan.Schema())
 				partialAgg.SetChildren(cop.indexPlan)
 				cop.indexPlan = partialAgg
 			}
 		}
-		log.Warnf("stream agg cop, 0p %s, agg %s, task count %v, cost %v", ToString(p), ToString(finalAgg), task.count(), task.cost())
 		task = finishCopTask(cop, p.ctx)
 		attachPlan2Task(finalAgg, task)
 		task.addCost(task.count() * cpuFactor)
-		log.Warnf("stream agg cop, 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	} else {
-		log.Warnf("stream agg root 0p %s, p profile count %v, task count %v", ToString(p), p.stats.count, task.count())
 		attachPlan2Task(p, task)
 		task.addCost(task.count() * cpuFactor)
-		log.Warnf("stream agg root 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	}
 	return task
 }
@@ -566,7 +552,6 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	}
 	cardinality := p.statsInfo().count
 	task := tasks[0].copy()
-	log.Infof("p %s, p.count %v, task %v, count %v", ToString(p), p.stats.count, task, task.count())
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
@@ -580,15 +565,11 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			}
 		}
 		task = finishCopTask(cop, p.ctx)
-		log.Warnf("cop, 0p %s, agg %s, p.count %v, agg.count %v, task count %v, cost %v", ToString(p), ToString(finalAgg), p.stats.count, finalAgg.statsInfo().count, task.count(), task.cost())
 		attachPlan2Task(finalAgg, task)
 		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
-		log.Warnf("cop, 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	} else {
-		log.Warnf("root 0p %s, p profile count %v, task count %v", ToString(p), p.stats.count, task.count())
 		attachPlan2Task(p, task)
 		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
-		log.Warnf("root 1p %s, task count %v, cost %v", ToString(p), task.count(), task.cost())
 	}
 	return task
 }
