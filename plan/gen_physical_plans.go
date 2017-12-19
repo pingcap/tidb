@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/sirupsen/logrus"
 )
 
 func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
@@ -199,18 +200,15 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 	if len(indexCols) < len(keys) {
 		return nil
 	}
-	idxOff2KeyOff := make([]int, len(indexCols))
-	for i := range idxOff2KeyOff {
-		idxOff2KeyOff[i] = -1
-	}
+	keyOff2IdxOff := make([]int, len(keys))
 	for keyOff, key := range keys {
 		idxOff := joinKeyMatchIndexCol(key, indexCols, colLengths)
 		if idxOff == -1 {
 			return nil
 		}
-		idxOff2KeyOff[idxOff] = keyOff
+		keyOff2IdxOff[keyOff] = idxOff
 	}
-	return idxOff2KeyOff
+	return keyOff2IdxOff
 }
 
 func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column, colLengths []int) int {
@@ -219,6 +217,7 @@ func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column
 			continue
 		}
 		if idxCol.ColName.L == key.ColName.L {
+			logrus.Warnf("key: %v, idx: %v, off: %v", key.ColName.L, idxCol.ColName.L, idxOff)
 			return idxOff
 		}
 	}
@@ -291,12 +290,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		rangesOfBest   []*ranger.IndexRange
 		maxUsedCols    int
 		remainedOfBest []expression.Expression
+		keyOff2IdxOff  []int
 	)
-	orderedInnerKeys := make([]*expression.Column, len(innerJoinKeys))
-	orderedOuterKeys := make([]*expression.Column, len(innerJoinKeys))
-	keyOff2IdxOff := make([]int, 0, len(innerJoinKeys))
 	for _, indexInfo := range indices {
-		ranges, remained, idxOff2KeyOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
+		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
 		// But obviously when the range is nil, we don't need index join.
@@ -305,24 +302,13 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 			maxUsedCols = len(ranges[0].LowVal)
 			rangesOfBest = ranges
 			remainedOfBest = remained
-
-			keyOff2IdxOff = keyOff2IdxOff[:0]
-			for idxOff, keyOff := range idxOff2KeyOff {
-				if keyOff == -1 {
-					continue
-				}
-				keyOff2IdxOff = append(keyOff2IdxOff, idxOff)
-			}
-			for i, idxOff := range keyOff2IdxOff {
-				keyOff := idxOff2KeyOff[idxOff]
-				orderedOuterKeys[i] = outerJoinKeys[keyOff]
-				orderedInnerKeys[i] = innerJoinKeys[keyOff]
-			}
+			keyOff2IdxOff = tmpKeyOff2IdxOff
 		}
 	}
 	if bestIndexInfo != nil {
 		innerPlan := x.forceToIndexScan(bestIndexInfo, remainedOfBest)
-		return p.constructIndexJoin(prop, orderedInnerKeys, orderedOuterKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
+		logrus.Warnf("offsetsMap: %v", keyOff2IdxOff)
+		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
 	}
 	return nil
 }
@@ -330,13 +316,13 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 // buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.
 // If this index is invalid, just return nil range.
 func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (
-	indexRanges []*ranger.IndexRange, remained []expression.Expression, idxOff2KeyOff []int) {
+	indexRanges []*ranger.IndexRange, remained []expression.Expression, keyOff2IdxOff []int) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
 	if len(idxCols) == 0 {
 		return nil, nil, nil
 	}
 
-	accesses, remained, idxOff2KeyOff := p.buildAccessCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
+	accesses, remained, keyOff2IdxOff := p.buildAccessCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
 
 	// If there's no access condition, this index should be useless.
 	if len(accesses) == 0 {
@@ -349,14 +335,14 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 	indexRanges = ranger.Ranges2IndexRanges(ranges)
-	return indexRanges, remained, idxOff2KeyOff
+	return indexRanges, remained, keyOff2IdxOff
 }
 
 func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
-	innerPlan *DataSource) (accesses, remained []expression.Expression, idxOff2KeyOff []int) {
+	innerPlan *DataSource) (accesses, remained []expression.Expression, keyOff2IdxOff []int) {
 	// Check whether all join keys match one column from index.
-	idxOff2KeyOff = joinKeysMatchIndex(keys, idxCols, colLengths)
-	if idxOff2KeyOff == nil {
+	keyOff2IdxOff = joinKeysMatchIndex(keys, idxCols, colLengths)
+	if keyOff2IdxOff == nil {
 		return nil, nil, nil
 	}
 
@@ -388,7 +374,7 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 		}
 	}
 
-	return accesses, remained, idxOff2KeyOff
+	return accesses, remained, keyOff2IdxOff
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
