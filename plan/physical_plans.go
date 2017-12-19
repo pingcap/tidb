@@ -160,7 +160,8 @@ type PhysicalTableScan struct {
 type PhysicalProjection struct {
 	basePhysicalPlan
 
-	Exprs []expression.Expression
+	Exprs            []expression.Expression
+	CalculateNoDelay bool
 }
 
 // PhysicalTopN is the physical operator of topN.

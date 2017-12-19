@@ -228,8 +228,10 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql)
 	}
-	// Fields or Schema are only used for statements that return result set.
+	// "e.Schema().Len() == 0" means the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
+		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
+	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
 	}
 
@@ -266,8 +268,7 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 	}()
 
 	if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
-		chk := chunk.NewChunk(nil)
-		err = e.NextChunk(goCtx, chk)
+		err = e.NextChunk(goCtx, e.newChunk())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

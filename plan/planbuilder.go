@@ -232,7 +232,11 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}))
 
-	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
+	p := LogicalProjection{
+		Exprs:            make([]expression.Expression, 0, len(v.Exprs)),
+		calculateNoDelay: true,
+	}.init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
@@ -240,10 +244,15 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 			return nil
 		}
 		p.Exprs = append(p.Exprs, expr)
+		schema.Append(&expression.Column{
+			FromID:   p.id,
+			Position: schema.Len() + 1,
+			RetType:  expr.GetType(),
+		})
 	}
 	setParentAndChildren(p, dual)
 	p.self = p
-	p.SetSchema(expression.NewSchema())
+	p.SetSchema(schema)
 	return p
 }
 
