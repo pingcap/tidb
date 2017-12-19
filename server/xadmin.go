@@ -38,7 +38,7 @@ const (
 	//   - MySQL: json_unquote(json_extract(`doc`,''$._id''))'
 	countID = "COUNT(CASE WHEN (column_name = '_id' " +
 		"AND generation_expression = " +
-		"'JSON_UNQUOTE(JSON_EXTRACT(doc,''$._id''))') THEN 1 ELSE NULL END)"
+		"'json_unquote(json_extract(`doc`, \"$._id\"))') THEN 1 ELSE NULL END)"
 	countGen = "COUNT(CASE WHEN (column_name != '_id' " +
 		"AND generation_expression RLIKE " +
 		"'^(json_unquote[[.(.]])?json_extract[[.(.]]`doc`," +
