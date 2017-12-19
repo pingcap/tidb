@@ -191,19 +191,7 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 	}
-
-	var err error
-	e.jobs, err = admin.GetDDLJobs(e.ctx.Txn())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	e.jobs = append(e.jobs, historyJobs...)
+	e.supportChk = true
 	return e
 }
 
