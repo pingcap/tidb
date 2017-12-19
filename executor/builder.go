@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -1386,9 +1385,6 @@ func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum
 		tmpKvRanges, err := indexRangesToKVRanges(tableID, indexID, indexRanges)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		for i, indexRange := range indexRanges {
-			logrus.Warnf("%v, %v", indexRange, tmpKvRanges[i])
 		}
 		kvRanges = append(kvRanges, tmpKvRanges...)
 	}
