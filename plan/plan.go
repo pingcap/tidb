@@ -177,8 +177,8 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
-	// prepareStatsProfile will prepare the stats for this plan.
-	prepareStatsProfile() *statsProfile
+	// deriveStats derives statistic info between plans.
+	deriveStats() *statsInfo
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -207,8 +207,8 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
 
-	// statsProfile will return the stats for this plan.
-	statsProfile() *statsProfile
+	// statsInfo will return the statsInfo for this plan.
+	statsInfo() *statsInfo
 }
 
 type baseLogicalPlan struct {
@@ -311,13 +311,11 @@ type basePlan struct {
 	parents  []Plan
 	children []Plan
 
-	schema  *expression.Schema
-	tp      string
-	id      int
-	ctx     context.Context
-	profile *statsProfile
-	// expectedCnt means this operator may be closed after fetching expectedCnt records.
-	expectedCnt float64
+	schema *expression.Schema
+	tp     string
+	id     int
+	ctx    context.Context
+	stats  *statsInfo
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
