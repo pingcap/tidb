@@ -383,7 +383,7 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
 	// Here the last means that the corresponding index column's position is maximum.
 	for _, eqCond := range eqConds {
-		if expression.Contains(accesses, eqCond) {
+		if !expression.Contains(accesses, eqCond) {
 			return nil, nil, nil
 		}
 	}
