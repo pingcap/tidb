@@ -172,15 +172,14 @@ func indexRangesToKVRanges(tid, idxID int64, ranges []*ranger.IndexRange) ([]kv.
 	return krs, nil
 }
 
-func (w *indexWorker) extractTaskHandles(goCtx goctx.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, count int64, err error) {
+func (w *indexWorker) extractTaskHandles(goCtx goctx.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
-		cnt, e0 := idxResult.NextChunk(goCtx, chk)
+		e0 := idxResult.NextChunk(goCtx, chk)
 		if e0 != nil {
 			err = errors.Trace(e0)
 			return
 		}
-		count += cnt
 		if chk.NumRows() == 0 {
 			return
 		}
@@ -317,10 +316,10 @@ type TableReaderExecutor struct {
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
+	domain.GetDomain(e.ctx).StatsHandle().StoreQueryFeedback(e.feedback, e.result.ScanCount(), e.ranges, nil)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
 	e.partialResult = nil
-	domain.GetDomain(e.ctx).StatsHandle().StoreQueryFeedback(e.feedback, e.ranges, nil)
 	return errors.Trace(err)
 }
 
@@ -330,15 +329,11 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		// Get partial result.
 		if e.partialResult == nil {
 			var err error
-			var count int64
-			e.partialResult, count, err = e.result.Next(goCtx)
-			if count < 0 || err != nil {
-				e.feedback.Invalidate()
-			}
+			e.partialResult, err = e.result.Next(goCtx)
 			if err != nil {
+				e.feedback.Invalidate()
 				return nil, errors.Trace(err)
 			}
-			e.feedback.Increase(count)
 			if e.partialResult == nil {
 				// Finished.
 				return nil, nil
@@ -368,11 +363,9 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *TableReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	count, err := e.result.NextChunk(goCtx, chk)
-	if count < 0 || err != nil {
+	err := e.result.NextChunk(goCtx, chk)
+	if err != nil {
 		e.feedback.Invalidate()
-	} else {
-		e.feedback.Increase(count)
 	}
 	return errors.Trace(err)
 }
@@ -438,10 +431,10 @@ type IndexReaderExecutor struct {
 
 // Close implements the Executor Close interface.
 func (e *IndexReaderExecutor) Close() error {
+	domain.GetDomain(e.ctx).StatsHandle().StoreQueryFeedback(e.feedback, e.result.ScanCount(), nil, e.ranges)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
 	e.partialResult = nil
-	domain.GetDomain(e.ctx).StatsHandle().StoreQueryFeedback(e.feedback, nil, e.ranges)
 	return errors.Trace(err)
 }
 
@@ -450,16 +443,12 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
-			var count int64
 			var err error
-			e.partialResult, count, err = e.result.Next(goCtx)
-			if count < 0 || err != nil {
-				e.feedback.Invalidate()
-			}
+			e.partialResult, err = e.result.Next(goCtx)
 			if err != nil {
+				e.feedback.Invalidate()
 				return nil, errors.Trace(err)
 			}
-			e.feedback.Increase(count)
 			if e.partialResult == nil {
 				// Finished.
 				return nil, nil
@@ -489,11 +478,9 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *IndexReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	count, err := e.result.NextChunk(goCtx, chk)
-	if count < 0 || err != nil {
+	err := e.result.NextChunk(goCtx, chk)
+	if err != nil {
 		e.feedback.Invalidate()
-	} else {
-		e.feedback.Increase(count)
 	}
 	return errors.Trace(err)
 }
@@ -598,12 +585,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 	e.idxWorkerWg.Add(1)
 	go func() {
 		goCtx1, cancel := goctx.WithCancel(goCtx)
-		count := worker.fetchHandles(goCtx1, result)
-		if count < 0 {
-			e.feedback.Invalidate()
-		} else {
-			e.feedback.Increase(count)
+		err := worker.fetchHandles(goCtx1, result)
+		scanCount := result.ScanCount()
+		if err != nil {
+			scanCount = -1
 		}
+		domain.GetDomain(e.ctx).StatsHandle().StoreQueryFeedback(e.feedback, scanCount, nil, e.ranges)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
@@ -618,29 +605,27 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(goCtx goctx.Context, result distsql.SelectResult) (count int64) {
+func (w *indexWorker) fetchHandles(goCtx goctx.Context, result distsql.SelectResult) error {
 	chk := chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	for {
-		handles, cnt, err := w.extractTaskHandles(goCtx, chk, result)
+		handles, err := w.extractTaskHandles(goCtx, chk, result)
 		if err != nil {
-			count = -1
 			doneCh := make(chan error, 1)
 			doneCh <- errors.Trace(err)
 			w.resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
-			return
+			return err
 		}
-		count += cnt
 		if len(handles) == 0 {
-			return
+			return nil
 		}
 		task := w.buildTableTask(handles)
 		select {
 		case <-goCtx.Done():
-			return
+			return nil
 		case <-w.finished:
-			return
+			return nil
 		case w.workCh <- task:
 			w.resultCh <- task
 		}
@@ -810,7 +795,6 @@ func (e *IndexLookUpExecutor) Close() error {
 		e.tblWorkerWg.Wait()
 		e.finished = nil
 	}
-	domain.GetDomain(e.ctx).StatsHandle().StoreQueryFeedback(e.feedback, nil, e.ranges)
 	return nil
 }
 
@@ -819,7 +803,6 @@ func (e *IndexLookUpExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
-			e.feedback.Invalidate()
 			return nil, errors.Trace(err)
 		}
 		if resultTask == nil {
@@ -827,7 +810,6 @@ func (e *IndexLookUpExecutor) Next(goCtx goctx.Context) (Row, error) {
 		}
 		row, err := resultTask.getRow(e.schema)
 		if err != nil {
-			e.feedback.Invalidate()
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
@@ -842,7 +824,6 @@ func (e *IndexLookUpExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
-			e.feedback.Invalidate()
 			return errors.Trace(err)
 		}
 		if resultTask == nil {

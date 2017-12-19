@@ -97,6 +97,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	}
 	counts := make([]int64, len(dagReq.Executors))
 	for offset := len(dagReq.Executors) - 1; e != nil; e, offset = e.GetSrcExec(), offset-1 {
+		// Because the last call to `executor.Next` always returns a `nil`, so the actual count should be `Count - 1`
 		counts[offset] = e.Count() - 1
 	}
 	return buildResp(chunks, counts, err)

@@ -42,17 +42,19 @@ var (
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
-	// Next gets the next partial result and the actual row scanned.
-	Next(goctx.Context) (PartialResult, int64, error)
+	// Next gets the next partial result.
+	Next(goctx.Context) (PartialResult, error)
 	// NextRaw gets the next raw result.
 	NextRaw() ([]byte, error)
-	// NextChunk reads the data into chunk and returns the actual row scanned.
-	NextChunk(goctx.Context, *chunk.Chunk) (int64, error)
+	// NextChunk reads the data into chunk.
+	NextChunk(goctx.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch(goctx.Context)
+	// ScanCount gets the total scan row count.
+	ScanCount() int64
 }
 
 // PartialResult is the result from a single region server.
@@ -78,6 +80,8 @@ type selectResult struct {
 
 	selectResp *tipb.SelectResponse
 	respChkIdx int
+
+	scanCount int64
 }
 
 type newResultWithErr struct {
@@ -120,21 +124,23 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 }
 
 // Next returns the next row.
-func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, int64, error) {
+func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
 	re := <-r.results
 	if re.err != nil {
-		return nil, 0, errors.Trace(re.err)
+		return nil, errors.Trace(re.err)
 	}
 	if re.result == nil {
-		return nil, 0, nil
+		return nil, nil
 	}
 	pr := &partialResult{}
 	pr.rowLen = r.rowLen
 	err := pr.unmarshal(re.result)
 	if len(pr.resp.OutputCounts) > 0 {
-		return pr, pr.resp.OutputCounts[0], errors.Trace(err)
+		r.scanCount += pr.resp.OutputCounts[0]
+	} else {
+		r.scanCount = -1
 	}
-	return pr, -1, errors.Trace(err)
+	return pr, errors.Trace(err)
 }
 
 // NextRaw returns the next raw partial result.
@@ -144,58 +150,56 @@ func (r *selectResult) NextRaw() ([]byte, error) {
 }
 
 // NextChunk reads data to the chunk.
-func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (int64, error) {
+func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	count := int64(0)
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
-			cnt, err := r.getSelectResp()
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			count += cnt
-			if r.selectResp == nil {
-				return count, nil
+			err := r.getSelectResp()
+			if err != nil || r.selectResp == nil {
+				return errors.Trace(err)
 			}
 		}
 		err := r.readRowsData(chk)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
 			r.respChkIdx++
 		}
 	}
-	return count, nil
+	return nil
 }
 
-func (r *selectResult) getSelectResp() (int64, error) {
+func (r *selectResult) getSelectResp() error {
 	r.respChkIdx = 0
-	count := int64(0)
 	for {
 		re := <-r.results
 		if re.err != nil {
-			return 0, errors.Trace(re.err)
+			return errors.Trace(re.err)
 		}
 		if re.result == nil {
 			r.selectResp = nil
-			return count, nil
+			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if len(r.selectResp.OutputCounts) > 0 {
-			count += r.selectResp.OutputCounts[0]
+			r.scanCount += r.selectResp.OutputCounts[0]
 		} else {
-			count = -1
+			r.scanCount = -1
 		}
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
-		return count, nil
+		return nil
 	}
+}
+
+func (r *selectResult) ScanCount() int64 {
+	return r.scanCount
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {

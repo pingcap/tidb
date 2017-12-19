@@ -164,14 +164,8 @@ func NewQueryFeedback(tableID int64, colID int64, histVer uint64, expected int64
 		colID:       colID,
 		histVersion: histVer,
 		expected:    expected,
-		actual:      0,
 		valid:       true,
 	}
-}
-
-// Increase increases the actual count.
-func (q *QueryFeedback) Increase(count int64) {
-	q.actual += count
 }
 
 // Invalidate is used to invalidate the query feedback.
@@ -185,12 +179,12 @@ func (q *QueryFeedback) Actual() int64 {
 }
 
 // StoreQueryFeedback stores the query feedback.
-func (h *Handle) StoreQueryFeedback(q *QueryFeedback, intRanges []ranger.IntColumnRange, idxRanges []*ranger.IndexRange) {
+func (h *Handle) StoreQueryFeedback(q *QueryFeedback, actual int64, intRanges []ranger.IntColumnRange, idxRanges []*ranger.IndexRange) {
 	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
-	if h == nil || q.histVersion == 0 || !q.valid {
+	if h == nil || q.histVersion == 0 || actual < 0 || !q.valid {
 		return
 	}
-	q.intRanges, q.idxRanges = intRanges, idxRanges
+	q.actual, q.intRanges, q.idxRanges = actual, intRanges, idxRanges
 	h.feedbackLock.Lock()
 	defer h.feedbackLock.Unlock()
 	if len(h.feedback) >= maxQueryFeedBackCount {
