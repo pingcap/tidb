@@ -22,12 +22,12 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-type bitXorFunction struct {
+type bitOrFunction struct {
 	aggFunction
 }
 
 // Clone implements Aggregation interface.
-func (bf *bitXorFunction) Clone() Aggregation {
+func (bf *bitOrFunction) Clone() Aggregation {
 	nf := *bf
 	for i, arg := range bf.Args {
 		nf.Args[i] = arg.Clone()
@@ -36,7 +36,7 @@ func (bf *bitXorFunction) Clone() Aggregation {
 }
 
 // CalculateDefaultValue implements Aggregation interface.
-func (bf *bitXorFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (bf *bitOrFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := bf.Args[0]
 	result := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if con, ok := result.(*expression.Constant); ok {
@@ -49,7 +49,7 @@ func (bf *bitXorFunction) CalculateDefaultValue(schema *expression.Schema, ctx c
 }
 
 // GetType implements Aggregation interface.
-func (bf *bitXorFunction) GetType() *types.FieldType {
+func (bf *bitOrFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	ft.Flen = 21
 	types.SetBinChsClnFlag(ft)
@@ -58,7 +58,7 @@ func (bf *bitXorFunction) GetType() *types.FieldType {
 }
 
 // Update implements Aggregation interface.
-func (bf *bitXorFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (bf *bitOrFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -68,17 +68,17 @@ func (bf *bitXorFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		ctx.Value.SetUint64(0)
 	}
 	if !value.IsNull() {
-		ctx.Value.SetUint64(ctx.Value.GetUint64() ^ value.GetUint64())
+		ctx.Value.SetUint64(ctx.Value.GetUint64() | value.GetUint64())
 	}
 	return nil
 }
 
 // GetResult implements Aggregation interface.
-func (bf *bitXorFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
+func (bf *bitOrFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
 	return ctx.Value
 }
 
 // GetPartialResult implements Aggregation interface.
-func (bf *bitXorFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
+func (bf *bitOrFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{bf.GetResult(ctx)}
 }
