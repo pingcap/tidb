@@ -62,9 +62,6 @@ func (mmf *maxMinFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Dat
 
 // Update implements Aggregation interface.
 func (mmf *maxMinFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if len(mmf.Args) != 1 {
-		return errors.New("Wrong number of args for AggFuncMaxMin")
-	}
 	a := mmf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
