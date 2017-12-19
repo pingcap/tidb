@@ -302,7 +302,7 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	parentInfo := strings.Join(parentIDs, ",")
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.statsProfile().count, 'f', -1, 64))
+	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().count, 'f', -1, 64))
 	row := []string{p.ExplainID(), parentInfo, childrenInfo, taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }
