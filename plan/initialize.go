@@ -320,9 +320,10 @@ func (p PhysicalApply) init(ctx context.Context, stats *statsInfo, props ...*req
 	return &p
 }
 
-func (p PhysicalUnionScan) init(ctx context.Context, props ...*requiredProp) *PhysicalUnionScan {
+func (p PhysicalUnionScan) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalUnionScan {
 	p.basePhysicalPlan = newBasePhysicalPlan(TypeUnionScan, ctx, &p)
 	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 

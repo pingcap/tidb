@@ -23,8 +23,12 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// SupportStreamAggPushDown will be removed after supporting stream aggregation on TiKV.
+// TODO: Remove it.
+var SupportStreamAggPushDown bool
+
 func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, prop)
+	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, p.stats, prop)
 	us.SetSchema(p.schema)
 	return []PhysicalPlan{us}
 }
@@ -501,7 +505,9 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			if tp == copDoubleReadTaskType {
 				continue
 			}
-			log.Infof("tp %s, prop %v, keys %v", tp, prop, keys)
+			if !SupportStreamAggPushDown && tp == copSingleReadTaskType {
+				continue
+			}
 			childProp := &requiredProp{
 				taskTp:      tp,
 				cols:        keys,
@@ -512,7 +518,6 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			if !prop.isPrefix(childProp) {
 				continue
 			}
-			log.Infof("2222 tp %s, prop %v, keys %v", tp, prop, keys)
 			agg := basePhysicalAgg{
 				GroupByItems: p.GroupByItems,
 				AggFuncs:     p.AggFuncs,
@@ -536,6 +541,7 @@ func (p *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
 			AggFuncs:     p.AggFuncs,
 		}.initForHash(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64, taskTp: taskTp})
 		agg.SetSchema(p.schema.Clone())
+		log.Infof("hash agg %v, tp %s", agg, taskTp)
 		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs

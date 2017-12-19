@@ -106,7 +106,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
 	tasks := make([]task, 0, len(p.basePlan.children))
 	for i, child := range p.basePlan.children {
-		log.Infof("get best task, p %s, child %s", ToString(p.self), ToString(child))
+		log.Infof("get best task no. %v, p %s, child %s, prop %v", i, ToString(p.self), ToString(child), pp.getChildReqProps(i))
 		childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(pp.getChildReqProps(i))
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -202,6 +202,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices := p.availableIndices.indices
 	includeTableScan := p.availableIndices.includeTableScan
+	log.Infof("datasource, convert to physical p %s, include table scan %v, len conds %v", ToString(p.self), includeTableScan, len(p.pushedDownConds))
 	t = invalidTask
 	if includeTableScan {
 		t, err = p.convertToTableScan(prop)

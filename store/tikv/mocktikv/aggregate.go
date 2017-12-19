@@ -178,6 +178,7 @@ type streamAggExec struct {
 	row               types.DatumRow
 	tmpGroupByRow     types.DatumRow
 	currGroupByRow    types.DatumRow
+	nextGroupByRow    types.DatumRow
 	currGroupByValues [][]byte
 	executed          bool
 	hasData           bool
@@ -211,6 +212,7 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 		}
 		e.currGroupByValues = append(e.currGroupByValues, buf)
 	}
+	e.currGroupByRow = e.nextGroupByRow.Copy()
 	return append(value, e.currGroupByValues...), nil
 }
 
@@ -221,7 +223,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 
 	e.tmpGroupByRow = e.tmpGroupByRow[:0]
 	matched, firstGroup := true, false
-	if e.currGroupByRow == nil {
+	if e.nextGroupByRow == nil {
 		matched, firstGroup = false, true
 	}
 	for i, item := range e.groupByExprs {
@@ -230,7 +232,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := d.CompareDatum(e.evalCtx.sc, &e.currGroupByRow[i])
+			c, err := d.CompareDatum(e.evalCtx.sc, &e.nextGroupByRow[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -238,10 +240,13 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 		}
 		e.tmpGroupByRow = append(e.tmpGroupByRow, d)
 	}
+	if firstGroup {
+		e.currGroupByRow = e.tmpGroupByRow.Copy()
+	}
 	if matched {
 		return false, nil
 	}
-	e.currGroupByRow = e.tmpGroupByRow
+	e.nextGroupByRow = e.tmpGroupByRow
 	return !firstGroup, nil
 }
 

@@ -255,10 +255,12 @@ func finishCopTask(task task, ctx context.Context) task {
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
 		p.stats = t.indexPlan.statsInfo()
+		log.Infof("222 task %v, stats %v", t, p.stats)
 		newTask.p = p
 	} else {
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
 		p.stats = t.tablePlan.statsInfo()
+		log.Infof("222 task %v, stats %v", t, p.stats)
 		newTask.p = p
 	}
 	return newTask
@@ -459,12 +461,12 @@ func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg PhysicalPl
 	for _, aggFunc := range p.AggFuncs {
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			return nil, p
+			return nil, p.self
 		}
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
-		return nil, p
+		return nil, p.self
 	}
 	partialAgg = p.self
 	originalSchema := p.schema
@@ -543,7 +545,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 				cop.indexPlan = partialAgg
 			}
 		}
-		log.Warnf("stream agg child schema %v, index plan schema %v", partialAgg.Children()[0].Schema(), cop.indexPlan.Schema())
 		log.Warnf("stream agg cop, 0p %s, agg %s, task count %v, cost %v", ToString(p), ToString(finalAgg), task.count(), task.cost())
 		task = finishCopTask(cop, p.ctx)
 		attachPlan2Task(finalAgg, task)
