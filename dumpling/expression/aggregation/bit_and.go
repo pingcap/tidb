@@ -55,43 +55,29 @@ func (bf *bitAndFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	ft.Flen = 21
 	types.SetBinChsClnFlag(ft)
-	ft.Flag |= mysql.UnsignedFlag
+	ft.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	return ft
 }
 
 // Update implements Aggregation interface.
 func (bf *bitAndFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if bf.mode == CompleteMode {
-		if len(bf.Args) == 0 {
-			return nil
-		} else if len(bf.Args) != 1 {
-			return errors.New("Wrong number of args for AggFuncBitAnd")
-		}
-		a := bf.Args[0]
-		value, err := a.Eval(row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if ctx.Value.IsNull() {
-			ctx.Value.SetUint64(math.MaxUint64)
-		}
-		if !value.IsNull() {
-			ctx.Value.SetUint64(ctx.Value.GetUint64() & value.GetUint64())
-		}
-	} else {
-		if ctx.Value.IsNull() {
-			ctx.Value.SetUint64(math.MaxUint64)
-		}
-		v := row.GetUint64(0)
-		ctx.Value.SetUint64(ctx.Value.GetUint64() & v)
+	a := bf.Args[0]
+	value, err := a.Eval(row)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ctx.Value.IsNull() {
+		ctx.Value.SetUint64(math.MaxUint64)
+	}
+	if !value.IsNull() {
+		ctx.Value.SetUint64(ctx.Value.GetUint64() & value.GetUint64())
 	}
 	return nil
 }
 
 // GetResult implements Aggregation interface.
-func (bf *bitAndFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	d.SetUint64(ctx.Value.GetUint64())
-	return d
+func (bf *bitAndFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
+	return ctx.Value
 }
 
 // GetPartialResult implements Aggregation interface.
