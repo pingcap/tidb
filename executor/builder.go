@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -705,12 +704,8 @@ func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
 		return nil
 	}
-	dualSchema := v.Schema()
-	if dualSchema.Len() == 0 {
-		dualSchema = expression.NewSchema(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)})
-	}
 	e := &TableDualExec{
-		baseExecutor: newBaseExecutor(dualSchema, b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		numDualRows:  v.RowCount,
 	}
 	e.supportChk = true

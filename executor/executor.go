@@ -664,7 +664,7 @@ func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
 		return nil, nil
 	}
 	e.numReturned = e.numDualRows
-	return Row{}, nil
+	return Row{types.Datum{}}, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
