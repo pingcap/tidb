@@ -42,11 +42,11 @@ var (
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
-	// Next gets the next partial result.
+	// Next gets the next partial result and the actual row scanned.
 	Next(goctx.Context) (PartialResult, int64, error)
 	// NextRaw gets the next raw result.
 	NextRaw() ([]byte, error)
-	// NextChunk reads the data into chunk.
+	// NextChunk reads the data into chunk and returns the actual row scanned.
 	NextChunk(goctx.Context, *chunk.Chunk) (int64, error)
 	// Close closes the iterator.
 	Close() error
@@ -123,7 +123,7 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, int64, error) {
 	re := <-r.results
 	if re.err != nil {
-		return nil, -1, errors.Trace(re.err)
+		return nil, 0, errors.Trace(re.err)
 	}
 	if re.result == nil {
 		return nil, 0, nil
@@ -151,7 +151,7 @@ func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (int64, 
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			cnt, err := r.getSelectResp()
 			if err != nil {
-				return -1, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			count += cnt
 			if r.selectResp == nil {
@@ -160,7 +160,7 @@ func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (int64, 
 		}
 		err := r.readRowsData(chk)
 		if err != nil {
-			return -1, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
 			r.respChkIdx++
@@ -175,7 +175,7 @@ func (r *selectResult) getSelectResp() (int64, error) {
 	for {
 		re := <-r.results
 		if re.err != nil {
-			return -1, errors.Trace(re.err)
+			return 0, errors.Trace(re.err)
 		}
 		if re.result == nil {
 			r.selectResp = nil
@@ -184,7 +184,7 @@ func (r *selectResult) getSelectResp() (int64, error) {
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result)
 		if err != nil {
-			return -1, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if len(r.selectResp.OutputCounts) > 0 {
 			count += r.selectResp.OutputCounts[0]

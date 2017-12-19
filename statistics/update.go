@@ -144,7 +144,8 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	return errors.Trace(err)
 }
 
-// QueryFeedback is used to represent the query stats info.
+// QueryFeedback is used to represent the query feedback info. It contains the expected scan row count and
+// the actual scan row count, so that we could use these info to adjust the statistics.
 type QueryFeedback struct {
 	tableID     int64
 	colID       int64
@@ -153,6 +154,7 @@ type QueryFeedback struct {
 	histVersion uint64 // histVersion is the version of the histogram when we issue the query.
 	expected    int64
 	actual      int64
+	valid       bool
 }
 
 // NewQueryFeedback returns a new query feedback.
@@ -162,16 +164,19 @@ func NewQueryFeedback(tableID int64, colID int64, histVer uint64, expected int64
 		colID:       colID,
 		histVersion: histVer,
 		expected:    expected,
-		actual:      0}
+		actual:      0,
+		valid:       true,
+	}
 }
 
-// Increase increases the actual count. If there are some errors happened, then `count` will be less than 0.
+// Increase increases the actual count.
 func (q *QueryFeedback) Increase(count int64) {
-	if count >= 0 && q.actual >= 0 {
-		q.actual += count
-		return
-	}
-	q.actual = -1
+	q.actual += count
+}
+
+// Invalidate is used to invalidate the query feedback.
+func (q *QueryFeedback) Invalidate() {
+	q.valid = false
 }
 
 // Actual returns the actual row count. It is only used in test.
@@ -182,13 +187,13 @@ func (q *QueryFeedback) Actual() int64 {
 // StoreQueryFeedback stores the query feedback.
 func (h *Handle) StoreQueryFeedback(q *QueryFeedback, intRanges []ranger.IntColumnRange, idxRanges []*ranger.IndexRange) {
 	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
-	if h == nil || q.histVersion == 0 || q.actual < 0 {
+	if h == nil || q.histVersion == 0 || !q.valid {
 		return
 	}
 	q.intRanges, q.idxRanges = intRanges, idxRanges
 	h.feedbackLock.Lock()
 	defer h.feedbackLock.Unlock()
-	if len(h.feedback)-1 >= maxQueryFeedBackCount {
+	if len(h.feedback) >= maxQueryFeedBackCount {
 		return
 	}
 	h.feedback = append(h.feedback, q)
