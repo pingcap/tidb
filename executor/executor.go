@@ -795,6 +795,10 @@ type TableScanExec struct {
 	isVirtualTable     bool
 	virtualTableRows   [][]types.Datum
 	virtualTableCursor int
+
+	// for chunk execution
+	virtualTableChunkList *chunk.List
+	virtualTableChunkIdx  int
 }
 
 // Next implements the Executor interface.
@@ -802,43 +806,13 @@ func (e *TableScanExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.isVirtualTable {
 		return e.nextForInfoSchema()
 	}
-	for {
-		if e.cursor >= len(e.ranges) {
-			return nil, nil
-		}
-		ran := e.ranges[e.cursor]
-		if e.seekHandle < ran.LowVal {
-			e.seekHandle = ran.LowVal
-		}
-		if e.seekHandle > ran.HighVal {
-			e.cursor++
-			continue
-		}
-		handle, found, err := e.t.Seek(e.ctx, e.seekHandle)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !found {
-			return nil, nil
-		}
-		if handle > ran.HighVal {
-			// The handle is out of the current range, but may be in following ranges.
-			// We seek to the range that may contains the handle, so we
-			// don't need to seek key again.
-			inRange := e.seekRange(handle)
-			if !inRange {
-				// The handle may be less than the current range low value, can not
-				// return directly.
-				continue
-			}
-		}
-		row, err := e.getRow(handle)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.seekHandle = handle + 1
-		return row, nil
+	handle, found, err := e.nextHandle()
+	if err != nil || !found {
+		return nil, errors.Trace(err)
 	}
+	row, err := e.getRow(handle)
+	e.seekHandle = handle + 1
+	return row, errors.Trace(err)
 }
 
 func (e *TableScanExec) nextForInfoSchema() (Row, error) {
@@ -861,6 +835,98 @@ func (e *TableScanExec) nextForInfoSchema() (Row, error) {
 	row := e.virtualTableRows[e.virtualTableCursor]
 	e.virtualTableCursor++
 	return row, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.isVirtualTable {
+		return errors.Trace(e.nextChunk4InfoSchema(goCtx, chk))
+	}
+	handle, found, err := e.nextHandle()
+	if err != nil || !found {
+		return errors.Trace(err)
+	}
+
+	for chk.NumRows() < e.ctx.GetSessionVars().MaxChunkSize {
+		row, err := e.getRow(handle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.seekHandle = handle + 1
+		for i, col := range e.Schema().Columns {
+			appendDatum2Chunk(chk, &row[i], i, col.RetType)
+		}
+	}
+	return nil
+}
+
+func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.virtualTableChunkList == nil {
+		e.virtualTableChunkList = chunk.NewList(e.Schema().GetTypes(), e.ctx.GetSessionVars().MaxChunkSize)
+		columns := make([]*table.Column, e.schema.Len())
+		for i, colInfo := range e.columns {
+			columns[i] = table.ToColumn(colInfo)
+		}
+		virtualTableChunk := e.newChunk()
+		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+			for i := range cols {
+				appendDatum2Chunk(virtualTableChunk, &rec[i], i, e.Schema().Columns[i].RetType)
+			}
+			if virtualTableChunk.NumRows() >= e.ctx.GetSessionVars().MaxChunkSize {
+				e.virtualTableChunkList.Add(virtualTableChunk)
+				virtualTableChunk = e.newChunk()
+			}
+			return true, nil
+		})
+		if virtualTableChunk.NumRows() != 0 {
+			e.virtualTableChunkList.Add(virtualTableChunk)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// no more data.
+	if e.virtualTableChunkIdx >= e.virtualTableChunkList.NumChunks() {
+		return nil
+	}
+	virtualTableChunk := e.virtualTableChunkList.GetChunk(e.virtualTableChunkIdx)
+	e.virtualTableChunkIdx++
+	chk.SwapColumns(virtualTableChunk)
+	return nil
+}
+
+func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
+	for {
+		if e.cursor >= len(e.ranges) {
+			return 0, false, nil
+		}
+		ran := e.ranges[e.cursor]
+		if e.seekHandle < ran.LowVal {
+			e.seekHandle = ran.LowVal
+		}
+		if e.seekHandle > ran.HighVal {
+			e.cursor++
+			continue
+		}
+		handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
+		if err != nil || !found {
+			return 0, false, errors.Trace(err)
+		}
+		if handle > ran.HighVal {
+			// The handle is out of the current range, but may be in following ranges.
+			// We seek to the range that may contains the handle, so we
+			// don't need to seek key again.
+			inRange := e.seekRange(handle)
+			if !inRange {
+				// The handle may be less than the current range low value, can not
+				// return directly.
+				continue
+			}
+		}
+		return handle, true, nil
+	}
 }
 
 // seekRange increments the range cursor to the range
@@ -898,6 +964,7 @@ func (e *TableScanExec) getRow(handle int64) (Row, error) {
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(goCtx goctx.Context) error {
 	e.iter = nil
+	e.virtualTableChunkList = nil
 	e.cursor = 0
 	return nil
 }
