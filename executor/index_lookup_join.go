@@ -113,6 +113,8 @@ func (e *IndexLookUpJoin) Open(goCtx goctx.Context) error {
 		return errors.Trace(err)
 	}
 
+	e.outerOrderedRows = newKeyRowBlock(e.maxBatchSize, true)
+	e.innerOrderedRows = newKeyRowBlock(e.maxBatchSize, false)
 	e.resultCursor = 0
 	e.curBatchSize = 32
 	e.resultBuffer = make([]Row, 0, e.maxBatchSize)
@@ -129,15 +131,8 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 
 	// release all resource references.
-	e.outerExec = nil
-	e.innerExecBuilder = nil
-	e.outerKeys = nil
-	e.innerKeys = nil
-	e.outerFilter = nil
-	e.innerFilter = nil
 	e.outerOrderedRows = nil
 	e.innerOrderedRows = nil
-	e.resultGenerator = nil
 	e.resultBuffer = nil
 	e.buffer4JoinKeys = nil
 	e.buffer4JoinKey = nil
@@ -179,7 +174,10 @@ func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			} else if !matched {
-				e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outerRow, e.resultBuffer)
+				e.resultBuffer, err = e.resultGenerator.emit(outerRow, nil, e.resultBuffer)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			} else {
 				e.outerOrderedRows.rows = append(e.outerOrderedRows.rows, outerRow)
 			}
@@ -319,24 +317,30 @@ func (e *IndexLookUpJoin) doMergeJoin() (err error) {
 			innerCursor = e.innerOrderedRows.nextBatch(innerCursor)
 		case compareResult < 0:
 			outerNextCursor := e.outerOrderedRows.nextBatch(outerCursor)
-			e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerOrderedRows.rows[outerCursor:outerNextCursor], e.resultBuffer)
+			for _, unMatchedOuter := range e.outerOrderedRows.rows[outerCursor:outerNextCursor] {
+				e.resultBuffer, err = e.resultGenerator.emit(unMatchedOuter, nil, e.resultBuffer)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
 			outerCursor = outerNextCursor
 		case compareResult == 0:
 			outerNextCursor := e.outerOrderedRows.nextBatch(outerCursor)
 			innerNextCursor := e.innerOrderedRows.nextBatch(innerCursor)
 			for _, outerRow := range e.outerOrderedRows.rows[outerCursor:outerNextCursor] {
-				matched := true
-				e.resultBuffer, matched, err = e.resultGenerator.emitMatchedInners(outerRow, e.innerOrderedRows.rows[innerCursor:innerNextCursor], e.resultBuffer)
+				e.resultBuffer, err = e.resultGenerator.emit(outerRow, e.innerOrderedRows.rows[innerCursor:innerNextCursor], e.resultBuffer)
 				if err != nil {
 					return errors.Trace(err)
-				}
-				if !matched {
-					e.resultBuffer = e.resultGenerator.emitUnMatchedOuter(outerRow, e.resultBuffer)
 				}
 			}
 			outerCursor, innerCursor = outerNextCursor, innerNextCursor
 		}
 	}
-	e.resultBuffer = e.resultGenerator.emitUnMatchedOuters(e.outerOrderedRows.rows[outerCursor:], e.resultBuffer)
+	for _, unMatchedOuter := range e.outerOrderedRows.rows[outerCursor:] {
+		e.resultBuffer, err = e.resultGenerator.emit(unMatchedOuter, nil, e.resultBuffer)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }

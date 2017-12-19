@@ -16,13 +16,13 @@ package privileges
 import (
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	log "github.com/sirupsen/logrus"
 )
 
 // Enable enables the new privilege check feature.
