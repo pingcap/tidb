@@ -848,15 +848,15 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
+	var mutableRow chunk.MutRow
 	for chk.NumRows() < e.ctx.GetSessionVars().MaxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		e.seekHandle = handle + 1
-		for i, col := range e.Schema().Columns {
-			appendDatum2Chunk(chk, &row[i], i, col.RetType)
-		}
+		mutableRow.SetDatums(row...)
+		chk.AppendRow(0, mutableRow.ToRow())
 	}
 	return nil
 }
@@ -870,10 +870,11 @@ func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chu
 			columns[i] = table.ToColumn(colInfo)
 		}
 		virtualTableChunk := e.newChunk()
+		var mutableRow chunk.MutRow
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
-			for i := range cols {
-				appendDatum2Chunk(virtualTableChunk, &rec[i], i, e.Schema().Columns[i].RetType)
-			}
+
+			mutableRow.SetDatums(rec...)
+			virtualTableChunk.AppendRow(0, mutableRow.ToRow())
 			if virtualTableChunk.NumRows() >= e.ctx.GetSessionVars().MaxChunkSize {
 				e.virtualTableChunkList.Add(virtualTableChunk)
 				virtualTableChunk = e.newChunk()
