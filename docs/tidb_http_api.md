@@ -83,12 +83,7 @@ curl http://{TiDBIP}:10080/mvcc/txn/{startTS}
 curl http://{TiDBIP}:10080/mvcc/hex/{hexKey}
 ```
 
-> 14. Get MVCC Information of index record key
-
-```
-curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}
-```
-> 15. Get MVCC Information of a specified index key, argument example: column_name_1=column_value_1&column_name_2=column_value2...
+> 14. Get MVCC Information of a specified index key, argument example: column_name_1=column_value_1&column_name_2=column_value2...
 
 ```
 curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
