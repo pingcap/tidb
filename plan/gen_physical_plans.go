@@ -294,29 +294,26 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	)
 	orderedInnerKeys := make([]*expression.Column, len(innerJoinKeys))
 	orderedOuterKeys := make([]*expression.Column, len(innerJoinKeys))
-	indexColOffsets := make([]int, 0, len(innerJoinKeys))
+	keyOff2IdxOff := make([]int, 0, len(innerJoinKeys))
 	for _, indexInfo := range indices {
-		isOk, remained, ranges, idxOff2KeyOff := p.checkIndexForIndexJoin(indexInfo, x, innerJoinKeys)
-		if !isOk {
-			continue
-		}
+		ranges, remained, idxOff2KeyOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
-		// And obviously when the range is nil, we don't need index join.
+		// But obviously when the range is nil, we don't need index join.
 		if len(ranges) > 0 && len(ranges[0].LowVal) > maxUsedCols {
 			bestIndexInfo = indexInfo
 			maxUsedCols = len(ranges[0].LowVal)
 			rangesOfBest = ranges
 			remainedOfBest = remained
 
-			indexColOffsets = indexColOffsets[:0]
-			for key, val := range idxOff2KeyOff {
-				if val == -1 {
+			keyOff2IdxOff = keyOff2IdxOff[:0]
+			for idxOff, keyOff := range idxOff2KeyOff {
+				if keyOff == -1 {
 					continue
 				}
-				indexColOffsets = append(indexColOffsets, key)
+				keyOff2IdxOff = append(keyOff2IdxOff, idxOff)
 			}
-			for i, idxOff := range indexColOffsets {
+			for i, idxOff := range keyOff2IdxOff {
 				keyOff := idxOff2KeyOff[idxOff]
 				orderedOuterKeys[i] = outerJoinKeys[keyOff]
 				orderedInnerKeys[i] = innerJoinKeys[keyOff]
@@ -325,34 +322,34 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	}
 	if bestIndexInfo != nil {
 		innerPlan := x.forceToIndexScan(bestIndexInfo, remainedOfBest)
-		return p.constructIndexJoin(prop, orderedInnerKeys, orderedOuterKeys, outerIdx, innerPlan, rangesOfBest, indexColOffsets)
+		return p.constructIndexJoin(prop, orderedInnerKeys, orderedOuterKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
 	}
 	return nil
 }
 
-// checkIndexForIndexJoin checks whether this index can be used for building index join and return enough information to
-// determine whether this index is better and how to construct the index join.
-func (p *LogicalJoin) checkIndexForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (ok bool,
-	remained []expression.Expression, indexRanges []*ranger.IndexRange, idxOff2KeyOff []int) {
+// buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.
+// If this index is invalid, just return nil range.
+func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (
+	indexRanges []*ranger.IndexRange, remained []expression.Expression, idxOff2KeyOff []int) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
 	if len(idxCols) == 0 {
-		return false, nil, nil, nil
+		return nil, nil, nil
 	}
 
 	accesses, remained, idxOff2KeyOff := p.buildAccessCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
 
 	// If there's no access condition, this index should be useless.
 	if len(accesses) == 0 {
-		return false, nil, nil, nil
+		return nil, nil, nil
 	}
 
 	ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
-		return false, nil, nil, nil
+		return nil, nil, nil
 	}
 	indexRanges = ranger.Ranges2IndexRanges(ranges)
-	return true, remained, indexRanges, idxOff2KeyOff
+	return indexRanges, remained, idxOff2KeyOff
 }
 
 func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
@@ -385,15 +382,10 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 
 	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
 	// Here the last means that the corresponding index column's position is maximum.
-	valid := true
 	for _, eqCond := range eqConds {
-		valid = expression.Contains(accesses, eqCond) && valid
-		if !valid {
-			break
+		if expression.Contains(accesses, eqCond) {
+			return nil, nil, nil
 		}
-	}
-	if !valid {
-		return nil, nil, idxOff2KeyOff
 	}
 
 	return accesses, remained, idxOff2KeyOff
