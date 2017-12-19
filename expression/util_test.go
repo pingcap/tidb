@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"testing"
+
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -68,4 +70,21 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	ret := PushDownNot(notFunc, false, ctx)
 	c.Assert(ret.Equal(orFunc2, ctx), check.IsTrue)
+}
+
+func BenchmarkExtractColumns(b *testing.B) {
+	conditions := []Expression{
+		newFunction(ast.EQ, newColumn(0), newColumn(1)),
+		newFunction(ast.EQ, newColumn(1), newColumn(2)),
+		newFunction(ast.EQ, newColumn(2), newColumn(3)),
+		newFunction(ast.EQ, newColumn(3), newLonglong(1)),
+		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+	}
+	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ExtractColumns(expr)
+	}
+	b.ReportAllocs()
 }
