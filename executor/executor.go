@@ -848,7 +848,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	var mutableRow chunk.MutRow
+	mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
 	for chk.NumRows() < e.ctx.GetSessionVars().MaxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
@@ -870,9 +870,8 @@ func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chu
 			columns[i] = table.ToColumn(colInfo)
 		}
 		virtualTableChunk := e.newChunk()
-		var mutableRow chunk.MutRow
+		mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
-
 			mutableRow.SetDatums(rec...)
 			virtualTableChunk.AppendRow(0, mutableRow.ToRow())
 			if virtualTableChunk.NumRows() >= e.ctx.GetSessionVars().MaxChunkSize {
@@ -968,10 +967,6 @@ func (e *TableScanExec) Open(goCtx goctx.Context) error {
 	e.virtualTableChunkList = nil
 	e.cursor = 0
 	return nil
-}
-
-func (e *TableScanExec) supportChunk() bool {
-	return false
 }
 
 // ExistsExec represents exists executor.
