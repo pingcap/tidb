@@ -374,7 +374,6 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 		bo := NewBackoffer(copNextMaxBackoff, ctx1)
 		startTime := time.Now()
 		it.handleTask(bo, task, ch)
-		// metrics
 		costTime := time.Since(startTime)
 		if costTime > minLogCopTaskTime {
 			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
@@ -384,7 +383,6 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 		if bo.totalSleep > 0 {
 			backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
 		}
-
 		if it.req.KeepOrder {
 			close(ch)
 		}

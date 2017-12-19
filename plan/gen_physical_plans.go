@@ -513,7 +513,6 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 				desc:        prop.desc,
 				expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
 			}
-			// if prop is empty
 			if !prop.isPrefix(childProp) {
 				continue
 			}
