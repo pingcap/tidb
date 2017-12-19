@@ -209,7 +209,7 @@ func (e *CancelDDLJobsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) err
 	if e.cursor >= len(e.jobIDs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, len(e.jobIDs)-e.cursor)
+	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendInt64(0, e.jobIDs[i])
 		if e.errs[i] != nil {
@@ -319,7 +319,7 @@ func (e *ShowDDLJobsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 	if e.cursor >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, len(e.jobs)-e.cursor)
+	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendString(0, e.jobs[i].String())
 		chk.AppendString(1, e.jobs[i].State.String())
@@ -849,7 +849,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 
 	mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
-	for chk.NumRows() < e.ctx.GetSessionVars().MaxChunkSize {
+	for chk.NumRows() < e.maxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
 			return errors.Trace(err)
@@ -864,7 +864,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(e.Schema().GetTypes(), e.ctx.GetSessionVars().MaxChunkSize)
+		e.virtualTableChunkList = chunk.NewList(e.Schema().GetTypes(), e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
@@ -874,7 +874,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chu
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			virtualTableChunk.AppendRow(0, mutableRow.ToRow())
-			if virtualTableChunk.NumRows() >= e.ctx.GetSessionVars().MaxChunkSize {
+			if virtualTableChunk.NumRows() >= e.maxChunkSize {
 				e.virtualTableChunkList.Add(virtualTableChunk)
 				virtualTableChunk = e.newChunk()
 			}
