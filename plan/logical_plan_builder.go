@@ -1209,6 +1209,18 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 	return dual
 }
 
+func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
+	return &expression.Column{
+		FromID:   ds.id,
+		DBName:   ds.DBName,
+		TblName:  ds.tableInfo.Name,
+		ColName:  model.ExtraHandleName,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Position: len(ds.tableInfo.Columns), // set a unique position
+		ID:       model.ExtraHandleID,
+	}
+}
+
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
 	var statisticTable *statistics.Table
