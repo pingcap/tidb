@@ -374,8 +374,14 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
+		// TODO: need check for x client.
 		if c, ok := client.(*clientConn); ok {
 			if atomic.LoadInt32(&c.status) == connStatusWaitShutdown {
+				continue
+			}
+		}
+		if c, ok := client.(*xClientConn); ok {
+			if c.isKilled() {
 				continue
 			}
 		}
@@ -395,14 +401,11 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	// TODO: need check for x client.
-	if c, ok := conn.(*clientConn); ok {
-		c.mu.RLock()
-		cancelFunc := c.mu.cancelFunc
-		c.mu.RUnlock()
-		if cancelFunc != nil {
-			cancelFunc()
-		}
+	conn.lockConn()
+	cancelFunc := conn.getCancelFunc()
+	conn.unlockConn()
+	if cancelFunc != nil {
+		cancelFunc()
 	}
 
 	if !query {
@@ -412,6 +415,10 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		if c, ok := conn.(*clientConn); ok {
 			atomic.StoreInt32(&c.status, connStatusWaitShutdown)
 		}
+	}
+
+	if c, ok := conn.(*xClientConn); ok {
+		c.Cancel(query)
 	}
 }
 

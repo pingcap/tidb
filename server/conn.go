@@ -997,3 +997,15 @@ func (cc *clientConn) id() uint32 {
 func (cc *clientConn) showProcess() util.ProcessInfo {
 	return cc.ctx.ShowProcess()
 }
+
+func (cc *clientConn) lockConn() {
+	cc.mu.RLock()
+}
+
+func (cc *clientConn) unlockConn() {
+	cc.mu.RUnlock()
+}
+
+func (cc *clientConn) getCancelFunc() goctx.CancelFunc {
+	return cc.mu.cancelFunc
+}

@@ -17,8 +17,10 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"sync"
 
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tipb/go-mysqlx/Connection"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
-	"sync"
 )
 
 // xClientConn represents a connection between server and client,
@@ -100,6 +101,14 @@ func (xcc *xClientConn) Run() {
 			return
 		}
 		log.Debugf("[%d] receive msg type[%d]", xcc.connectionID, tp)
+
+		span := opentracing.StartSpan("server.dispatch")
+		goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
+		_, cancelFunc := goctx.WithCancel(goCtx)
+		xcc.mu.Lock()
+		xcc.mu.cancelFunc = cancelFunc
+		xcc.mu.Unlock()
+
 		if xcc.state != clientAccepted && xcc.xsession != nil {
 			if err = xcc.xsession.handleMessage(tp, payload); err != nil {
 				if terror.ErrorEqual(err, terror.ErrResultUndetermined) {
@@ -241,6 +250,16 @@ func (xcc *xClientConn) writeError(e error) error {
 	return xcc.pkt.WritePacket(Mysqlx.ServerMessages_ERROR, errMsg)
 }
 
+func (xcc *xClientConn) isKilled() bool {
+	return xcc.state == clientClosed
+}
+
+func (xcc *xClientConn) Cancel(query bool) {
+	if !query {
+		xcc.state = clientClosed
+	}
+}
+
 func (xcc *xClientConn) id() uint32 {
 	return xcc.connectionID
 }
@@ -268,4 +287,16 @@ func (xcc *xClientConn) configCapabilities() {
 	xcc.addCapability(&capability.HandlerAuthMechanisms{Values: []string{"MYSQL41"}})
 	xcc.addCapability(&capability.HandlerReadOnlyValue{Name: "doc.formats", Value: "text"})
 	xcc.addCapability(&capability.HandlerReadOnlyValue{Name: "node_type", Value: "mysql"})
+}
+
+func (xcc *xClientConn) lockConn() {
+	xcc.mu.RLock()
+}
+
+func (xcc *xClientConn) unlockConn() {
+	xcc.mu.RUnlock()
+}
+
+func (xcc *xClientConn) getCancelFunc() goctx.CancelFunc {
+	return xcc.mu.cancelFunc
 }
