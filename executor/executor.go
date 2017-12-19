@@ -281,6 +281,25 @@ type ShowDDLJobsExec struct {
 	jobs   []*model.Job
 }
 
+// Open implements the Executor Open interface.
+func (e *ShowDDLJobsExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.jobs = append(e.jobs, jobs...)
+	e.jobs = append(e.jobs, historyJobs...)
+	e.cursor = 0
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *ShowDDLJobsExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.cursor >= len(e.jobs) {
@@ -292,6 +311,21 @@ func (e *ShowDDLJobsExec) Next(goCtx goctx.Context) (Row, error) {
 	e.cursor++
 
 	return row, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *ShowDDLJobsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.cursor >= len(e.jobs) {
+		return nil
+	}
+	numCurBatch := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, len(e.jobs)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+		chk.AppendString(0, e.jobs[i].String())
+		chk.AppendString(1, e.jobs[i].State.String())
+	}
+	e.cursor += numCurBatch
+	return nil
 }
 
 // CheckTableExec represents a check table executor.

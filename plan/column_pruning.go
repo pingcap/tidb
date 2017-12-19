@@ -69,18 +69,14 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
-	for _, expr := range p.Exprs {
-		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
-	}
+	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	child.PruneColumns(selfUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	for _, cond := range p.Conditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(cond)...)
-	}
+	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(child.Schema())
 }
@@ -97,9 +93,7 @@ func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range p.AggFuncs {
-		for _, arg := range aggrFunc.GetArgs() {
-			selfUsedCols = append(selfUsedCols, expression.ExtractColumns(arg)...)
-		}
+		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.GetArgs(), nil)
 	}
 	if len(p.GroupByItems) > 0 {
 		for i := len(p.GroupByItems) - 1; i >= 0; i-- {
