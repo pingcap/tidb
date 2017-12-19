@@ -30,7 +30,8 @@ import (
 
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) (cols []*Column) {
-	result := make([]*Column, 0, 5)
+	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
+	result := make([]*Column, 0, 8)
 	return extractColumns(result, expr, nil)
 }
 
