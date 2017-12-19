@@ -96,6 +96,8 @@ func NewAggFunction(funcType string, funcArgs []expression.Expression, distinct 
 		return &maxMinFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), isMax: false}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+	case ast.AggFuncBitOr:
+		return &bitOrFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncBitXor:
 		return &bitXorFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncBitAnd:
@@ -129,6 +131,8 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false)}, nil
 	case tipb.ExprType_First:
 		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
+	case tipb.ExprType_Agg_BitOr:
+		return &bitOrFunction{aggFunction: newAggFunc(ast.AggFuncBitOr, args, false)}, nil
 	case tipb.ExprType_Agg_BitXor:
 		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
 	case tipb.ExprType_Agg_BitAnd:
