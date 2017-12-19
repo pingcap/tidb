@@ -522,8 +522,8 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	task := tasks[0].copy()
-	if cop, ok := task.(*copTask); ok {
+	t := tasks[0].copy()
+	if cop, ok := t.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
@@ -534,14 +534,14 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 				cop.indexPlan = partialAgg
 			}
 		}
-		task = finishCopTask(cop, p.ctx)
-		attachPlan2Task(finalAgg, task)
-		task.addCost(task.count() * cpuFactor)
+		t = finishCopTask(cop, p.ctx)
+		attachPlan2Task(finalAgg, t)
+		t.addCost(t.count() * cpuFactor)
 	} else {
-		attachPlan2Task(p, task)
-		task.addCost(task.count() * cpuFactor)
+		attachPlan2Task(p, t)
+		t.addCost(t.count() * cpuFactor)
 	}
-	return task
+	return t
 }
 
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
