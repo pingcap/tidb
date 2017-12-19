@@ -62,7 +62,7 @@ func (bj BinaryJSON) Unquote() (string, error) {
 		slen := len(s)
 		if slen > 1 {
 			head, tail := s[0], s[slen-1]
-			if (head == '\'' && tail == '\'') || (head == '"' && tail == '"') {
+			if head == '"' && tail == '"' {
 				return s[1 : slen-1], nil
 			}
 		}

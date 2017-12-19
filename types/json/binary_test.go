@@ -125,6 +125,7 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 		{j: `{"a": [1, 2]}`, unquoted: `{"a":[1,2]}`},
 		{j: `"\""`, unquoted: `"`},
 		{j: `"'"`, unquoted: `'`},
+		{j: `"''"`, unquoted: `''`},
 		{j: `""`, unquoted: ``},
 	}
 	for _, tt := range tests {
