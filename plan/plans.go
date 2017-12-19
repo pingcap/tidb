@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // ShowDDL is for showing DDL information.
@@ -133,7 +135,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema,
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
-			return cacheValue.(*PSTMTPlanCacheValue).Plan, nil
+			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
+			err := e.rebuildRange(plan)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return plan, nil
 		}
 	}
 	p, err := Optimize(ctx, prepared.Stmt, is)
@@ -144,6 +151,67 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema,
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
+}
+
+func (e *Execute) rebuildRange(p Plan) error {
+	sc := p.context().GetSessionVars().StmtCtx
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		ts := x.TablePlans[0].(*PhysicalTableScan)
+		cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
+		var pkCol *expression.Column
+		if ts.Table.PKIsHandle {
+			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+				pkCol = expression.ColInfo2Col(cols, pkColInfo)
+			}
+		}
+		newRanges := ranger.FullIntRange()
+		if pkCol != nil {
+			ranges, err := ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newRanges = ranger.Ranges2IntRanges(ranges)
+		}
+		ts.Ranges = newRanges
+	case *PhysicalIndexReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		var err error
+		is.Ranges, err = e.buildRangeForIndexScan(sc, is)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	case *PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		var err error
+		is.Ranges, err = e.buildRangeForIndexScan(sc, is)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	default:
+		var err error
+		for _, child := range x.Children() {
+			err = e.rebuildRange(child)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *PhysicalIndexScan) ([]*ranger.IndexRange, error) {
+	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
+	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
+	newRanges := ranger.FullIndexRange()
+	if len(idxCols) > 0 {
+		ranges, err := ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newRanges = ranger.Ranges2IndexRanges(ranges)
+	}
+	return newRanges, nil
 }
 
 // Deallocate represents deallocate plan.
