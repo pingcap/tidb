@@ -17,12 +17,12 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tipb/go-binlog"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	grpc "google.golang.org/grpc"
 )

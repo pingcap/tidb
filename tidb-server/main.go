@@ -24,7 +24,6 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
 
@@ -116,11 +116,12 @@ var (
 )
 
 var (
-	cfg     *config.Config
-	storage kv.Storage
-	dom     *domain.Domain
-	svr     *server.Server
-	xsvr    *xserver.Server
+	cfg      *config.Config
+	storage  kv.Storage
+	dom      *domain.Domain
+	svr      *server.Server
+	xsvr     *xserver.Server
+	graceful bool
 )
 
 func main() {
@@ -402,11 +403,14 @@ func setupSignalHandler() {
 
 	go func() {
 		sig := <-sc
-		log.Infof("Got signal [%d] to exit.", sig)
+		log.Infof("Got signal [%s] to exit.", sig)
 		if xsvr != nil {
 			xsvr.Close() // Should close xserver before server.
 		}
 		svr.Close()
+		if sig == syscall.SIGTERM {
+			graceful = true
+		}
 	}()
 }
 
@@ -438,6 +442,9 @@ func runServer() {
 }
 
 func cleanup() {
+	if graceful {
+		svr.GracefulDown()
+	}
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))

@@ -101,6 +101,11 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 	tc.TableDeltaMap[tableID] = item
 }
 
+// ClearDelta clears the delta map.
+func (tc *TransactionContext) ClearDelta() {
+	tc.TableDeltaMap = nil
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	// UsersLock is a lock for user defined variables.
@@ -225,6 +230,10 @@ type SessionVars struct {
 	// BatchDelete indicates if we should split delete data into multiple batches.
 	BatchDelete bool
 
+	// DMLBatchSize indicates the size of batches for DML.
+	// It will be used when BatchInsert or BatchDelete is on.
+	DMLBatchSize int
+
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 
@@ -234,6 +243,10 @@ type SessionVars struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// EnableChunk indicates whether the chunk execution model is enabled.
+	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
+	EnableChunk bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -256,8 +269,8 @@ func NewSessionVars() *SessionVars {
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 		MaxChunkSize:               DefMaxChunkSize,
+		DMLBatchSize:               DefDMLBatchSize,
 	}
 }
 

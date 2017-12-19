@@ -23,11 +23,11 @@ import (
 	gotime "time"
 	"unicode"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 )
 
 // Portable analogs of some common call errors.
