@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"math"
 	"sort"
 	"sync"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -1372,8 +1374,6 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-// keyDatums are multiple rows' key datums and is sorted previously. indexRanges are also ordered.
-// So the kvRanges are still ordered.
 func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
 	for _, val := range keyDatums {
@@ -1387,7 +1387,14 @@ func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		for i, indexRange := range indexRanges {
+			logrus.Warnf("%v, %v", indexRange, tmpKvRanges[i])
+		}
 		kvRanges = append(kvRanges, tmpKvRanges...)
 	}
+	// kvRanges don't overlap each other. So compare StartKey is enough.
+	sort.Slice(kvRanges, func(i, j int) bool {
+		return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+	})
 	return kvRanges, nil
 }

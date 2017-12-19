@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"bytes"
 	"math"
 
 	"github.com/juju/errors"
@@ -196,30 +195,34 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan
 
 // joinKeysMatchIndex checks if all keys match columns in index.
 // It returns a slice a[] what a[i] means index.Column[i] is related with keys[a[i]].
-func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
-	if len(index.Columns) < len(keys) {
+func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) []int {
+	if len(indexCols) < len(keys) {
 		return nil
 	}
-	idxOff2KeyOff := make([]int, len(index.Columns))
+	idxOff2KeyOff := make([]int, len(indexCols))
 	for i := range idxOff2KeyOff {
 		idxOff2KeyOff[i] = -1
 	}
-	for i, key := range keys {
-		found := false
-		for j, idxCol := range index.Columns {
-			if idxCol.Length != types.UnspecifiedLength {
-				continue
-			}
-			if idxCol.Name.L == key.ColName.L {
-				idxOff2KeyOff[j] = i
-				found = true
-			}
-		}
-		if !found {
+	for keyOff, key := range keys {
+		idxOff := joinKeyMatchIndexCol(key, indexCols, colLengths)
+		if idxOff == -1 {
 			return nil
 		}
+		idxOff2KeyOff[idxOff] = keyOff
 	}
 	return idxOff2KeyOff
+}
+
+func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column, colLengths []int) int {
+	for idxOff, idxCol := range indexCols {
+		if colLengths[idxOff] != types.UnspecifiedLength {
+			continue
+		}
+		if idxCol.ColName.L == key.ColName.L {
+			return idxOff
+		}
+	}
+	return -1
 }
 
 // When inner plan is TableReader, the last two parameter will be nil
@@ -291,7 +294,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	)
 	orderedInnerKeys := make([]*expression.Column, len(innerJoinKeys))
 	orderedOuterKeys := make([]*expression.Column, len(innerJoinKeys))
-	idxInIndex := make([]int, 0, len(innerJoinKeys))
+	indexColOffsets := make([]int, 0, len(innerJoinKeys))
 	for _, indexInfo := range indices {
 		isOk, remained, ranges, idxOff2KeyOff := p.checkIndexForIndexJoin(indexInfo, x, innerJoinKeys)
 		if !isOk {
@@ -306,14 +309,14 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 			rangesOfBest = ranges
 			remainedOfBest = remained
 
-			idxInIndex = idxInIndex[:0]
+			indexColOffsets = indexColOffsets[:0]
 			for key, val := range idxOff2KeyOff {
 				if val == -1 {
 					continue
 				}
-				idxInIndex = append(idxInIndex, key)
+				indexColOffsets = append(indexColOffsets, key)
 			}
-			for i, idxOff := range idxInIndex {
+			for i, idxOff := range indexColOffsets {
 				keyOff := idxOff2KeyOff[idxOff]
 				orderedOuterKeys[i] = outerJoinKeys[keyOff]
 				orderedInnerKeys[i] = innerJoinKeys[keyOff]
@@ -322,7 +325,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	}
 	if bestIndexInfo != nil {
 		innerPlan := x.forceToIndexScan(bestIndexInfo, remainedOfBest)
-		return p.constructIndexJoin(prop, orderedInnerKeys, orderedOuterKeys, outerIdx, innerPlan, rangesOfBest, idxInIndex)
+		return p.constructIndexJoin(prop, orderedInnerKeys, orderedOuterKeys, outerIdx, innerPlan, rangesOfBest, indexColOffsets)
 	}
 	return nil
 }
@@ -336,48 +339,10 @@ func (p *LogicalJoin) checkIndexForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return false, nil, nil, nil
 	}
 
-	idxOff2KeyOff = joinKeysMatchIndex(innerJoinKeys, indexInfo)
-	if idxOff2KeyOff == nil {
-		return false, nil, nil, nil
-	}
-	maxIndexColIdx := 0
-	for i := len(indexInfo.Columns) - 1; i >= 0; i-- {
-		if idxOff2KeyOff[i] != -1 {
-			maxIndexColIdx = i
-			break
-		}
-	}
+	accesses, remained, idxOff2KeyOff := p.buildAccessCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
 
-	// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down so cannot
-	// to calculate range either. So we only need the innerPlan.pushedDownConds and the eq conditions that we generate.
-	// TODO: There may be a selection that block the index join.
-	conds := make([]expression.Expression, 0, len(idxOff2KeyOff)+len(innerPlan.pushedDownConds))
-	// Construct a fake equal expression for calculating the range.
-	for _, key := range innerJoinKeys {
-		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
-		fakeConstant := &expression.Constant{Value: types.NewIntDatum(1), RetType: key.GetType()}
-		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
-		conds = append(conds, eqFunc)
-	}
-
-	lastExprHashCode := conds[idxOff2KeyOff[maxIndexColIdx]].HashCode()
-
-	conds = append(conds, innerPlan.pushedDownConds...)
-	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
-	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
-	// So DetachIndexConditions won't miss the equal conditions we generate.
-	accesses, remained := ranger.DetachIndexConditions(conds, idxCols, colLengths)
-
-	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
-	// Here the last means that the corresponding index column's position is maximum.
-	valid := false
-	for _, expr := range accesses {
-		if bytes.Equal(expr.HashCode(), lastExprHashCode) {
-			valid = true
-			break
-		}
-	}
-	if !valid {
+	// If there's no access condition, this index should be useless.
+	if len(accesses) == 0 {
 		return false, nil, nil, nil
 	}
 
@@ -388,6 +353,50 @@ func (p *LogicalJoin) checkIndexForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	}
 	indexRanges = ranger.Ranges2IndexRanges(ranges)
 	return true, remained, indexRanges, idxOff2KeyOff
+}
+
+func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
+	innerPlan *DataSource) (accesses, remained []expression.Expression, idxOff2KeyOff []int) {
+	// Check whether all join keys match one column from index.
+	idxOff2KeyOff = joinKeysMatchIndex(keys, idxCols, colLengths)
+	if idxOff2KeyOff == nil {
+		return nil, nil, nil
+	}
+
+	// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down and
+	// cannot calculate range either. So we only need the innerPlan.pushedDownConds and the eq conditions that we generate.
+	// TODO: There may be a selection that block the index join.
+	conds := make([]expression.Expression, 0, len(keys)+len(innerPlan.pushedDownConds))
+	eqConds := make([]expression.Expression, 0, len(keys))
+	// Construct a fake equal expression for calculating the range.
+	for _, key := range keys {
+		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
+		fakeConstant := &expression.Constant{Value: types.NewIntDatum(1), RetType: key.GetType()}
+		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
+		conds = append(conds, eqFunc)
+		eqConds = append(conds, eqFunc)
+	}
+
+	conds = append(conds, innerPlan.pushedDownConds...)
+	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
+	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
+	// So DetachIndexConditions won't miss the equal conditions we generate.
+	accesses, remained = ranger.DetachIndexConditions(conds, idxCols, colLengths)
+
+	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
+	// Here the last means that the corresponding index column's position is maximum.
+	valid := true
+	for _, eqCond := range eqConds {
+		valid = expression.Contains(accesses, eqCond) && valid
+		if !valid {
+			break
+		}
+	}
+	if !valid {
+		return nil, nil, idxOff2KeyOff
+	}
+
+	return accesses, remained, idxOff2KeyOff
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
