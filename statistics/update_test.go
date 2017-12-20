@@ -304,6 +304,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo.ID)
 	c.Assert(stats.Count, Equals, int64(2))
+	// Modify count is non-zero means that we do not analyze the table.
 	c.Assert(stats.ModifyCount, Equals, int64(1))
 
 	_, err = testKit.Exec("create index idx on t(a)")
