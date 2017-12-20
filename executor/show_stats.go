@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-func (e *ShowExec) fetchShowStatsMeta() error {
+func (e *ShowExec) fetchShowStatsMeta(forChunk bool) error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
@@ -33,21 +33,29 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
-				row := types.MakeDatums(
-					db.Name.O,
-					tbl.Name.O,
-					e.versionToTime(statsTbl.Version),
-					statsTbl.ModifyCount,
-					statsTbl.Count,
-				)
-				e.rows = append(e.rows, row)
+				if forChunk {
+					e.result.AppendString(0, db.Name.O)
+					e.result.AppendString(1, tbl.Name.O)
+					e.result.AppendTime(2, e.versionToTime(statsTbl.Version))
+					e.result.AppendInt64(3, statsTbl.ModifyCount)
+					e.result.AppendInt64(4, statsTbl.Count)
+				} else {
+					row := types.MakeDatums(
+						db.Name.O,
+						tbl.Name.O,
+						e.versionToTime(statsTbl.Version),
+						statsTbl.ModifyCount,
+						statsTbl.Count,
+					)
+					e.rows = append(e.rows, row)
+				}
 			}
 		}
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowStatsHistogram() error {
+func (e *ShowExec) fetchShowStatsHistogram(forChunk bool) error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
@@ -56,10 +64,10 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
-					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram))
+					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, forChunk)
 				}
 				for _, idx := range statsTbl.Indices {
-					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram))
+					e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram, forChunk)
 				}
 			}
 		}
@@ -67,8 +75,18 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	return nil
 }
 
-func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) Row {
-	return types.MakeDatums(
+func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram, forChunk bool) {
+	if forChunk {
+		e.result.AppendString(0, dbName)
+		e.result.AppendString(1, tblName)
+		e.result.AppendString(2, colName)
+		e.result.AppendInt64(3, int64(isIndex))
+		e.result.AppendTime(4, e.versionToTime(hist.LastUpdateVersion))
+		e.result.AppendInt64(5, hist.NDV)
+		e.result.AppendInt64(6, hist.NullCount)
+		return
+	}
+	e.rows = append(e.rows, types.MakeDatums(
 		dbName,
 		tblName,
 		colName,
@@ -76,7 +94,7 @@ func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string,
 		e.versionToTime(hist.LastUpdateVersion),
 		hist.NDV,
 		hist.NullCount,
-	)
+	))
 }
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
@@ -84,7 +102,7 @@ func (e *ShowExec) versionToTime(version uint64) types.Time {
 	return types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime}
 }
 
-func (e *ShowExec) fetchShowStatsBuckets() error {
+func (e *ShowExec) fetchShowStatsBuckets(forChunk bool) error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
@@ -93,18 +111,16 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
-					rows, err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
+					err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, forChunk)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					e.rows = append(e.rows, rows...)
 				}
 				for _, idx := range statsTbl.Indices {
-					rows, err := e.bucketsToRows(db.Name.O, tbl.Name.O, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
+					err := e.bucketsToRows(db.Name.O, tbl.Name.O, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, forChunk)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					e.rows = append(e.rows, rows...)
 				}
 			}
 		}
@@ -114,35 +130,45 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 
 // bucketsToRows converts histogram buckets to rows. If the histogram is built from index, then numOfCols equals to number
 // of index columns, else numOfCols is 0.
-func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram) ([]Row, error) {
+func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram, forChunk bool) error {
 	isIndex := 0
 	if numOfCols > 0 {
 		isIndex = 1
 	}
-	var rows []Row
 	for i, bkt := range hist.Buckets {
 		lowerBoundStr, err := e.valueToString(bkt.LowerBound, numOfCols)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		upperBoundStr, err := e.valueToString(bkt.UpperBound, numOfCols)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		row := types.MakeDatums(
-			dbName,
-			tblName,
-			colName,
-			isIndex,
-			i,
-			bkt.Count,
-			bkt.Repeats,
-			lowerBoundStr,
-			upperBoundStr,
-		)
-		rows = append(rows, row)
+		if forChunk {
+			e.result.AppendString(0, dbName)
+			e.result.AppendString(1, tblName)
+			e.result.AppendString(2, colName)
+			e.result.AppendInt64(3, int64(isIndex))
+			e.result.AppendInt64(4, int64(i))
+			e.result.AppendInt64(5, bkt.Count)
+			e.result.AppendInt64(6, bkt.Repeats)
+			e.result.AppendString(7, lowerBoundStr)
+			e.result.AppendString(8, upperBoundStr)
+		} else {
+			e.rows = append(e.rows, types.MakeDatums(
+				dbName,
+				tblName,
+				colName,
+				isIndex,
+				i,
+				bkt.Count,
+				bkt.Repeats,
+				lowerBoundStr,
+				upperBoundStr,
+			))
+		}
 	}
-	return rows, nil
+	return nil
 }
 
 // valueToString converts a possible encoded value to a formatted string. If the value is encoded, then

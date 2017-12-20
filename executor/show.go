@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
 	goctx "golang.org/x/net/context"
 )
@@ -57,13 +59,14 @@ type ShowExec struct {
 
 	fetched bool
 	rows    []Row
+	result  *chunk.Chunk
 	cursor  int
 }
 
 // Next implements Execution Next interface.
 func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.rows == nil {
-		err := e.fetchAll()
+		err := e.fetchAll(false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -88,72 +91,100 @@ func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	return row, nil
 }
 
-func (e *ShowExec) fetchAll() error {
+// NextChunk implements the Executor NextChunk interface.
+func (e *ShowExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.result == nil {
+		e.result = e.newChunk()
+		err := e.fetchAll(true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if e.cursor >= e.result.NumRows() {
+		return nil
+	}
+	numCurBatch := mathutil.Min(e.maxChunkSize, e.result.NumRows()-e.cursor)
+	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
+	e.cursor += numCurBatch
+	return nil
+}
+
+func (e *ShowExec) fetchAll(forChunk bool) error {
 	switch e.Tp {
 	case ast.ShowCharset:
-		return e.fetchShowCharset()
+		return e.fetchShowCharset(forChunk)
 	case ast.ShowCollation:
-		return e.fetchShowCollation()
+		return e.fetchShowCollation(forChunk)
 	case ast.ShowColumns:
-		return e.fetchShowColumns()
+		return e.fetchShowColumns(forChunk)
 	case ast.ShowCreateTable:
-		return e.fetchShowCreateTable()
+		return e.fetchShowCreateTable(forChunk)
 	case ast.ShowCreateDatabase:
-		return e.fetchShowCreateDatabase()
+		return e.fetchShowCreateDatabase(forChunk)
 	case ast.ShowDatabases:
-		return e.fetchShowDatabases()
+		return e.fetchShowDatabases(forChunk)
 	case ast.ShowEngines:
-		return e.fetchShowEngines()
+		return e.fetchShowEngines(forChunk)
 	case ast.ShowGrants:
-		return e.fetchShowGrants()
+		return e.fetchShowGrants(forChunk)
 	case ast.ShowIndex:
-		return e.fetchShowIndex()
+		return e.fetchShowIndex(forChunk)
 	case ast.ShowProcedureStatus:
-		return e.fetchShowProcedureStatus()
+		return e.fetchShowProcedureStatus(forChunk)
 	case ast.ShowStatus:
-		return e.fetchShowStatus()
+		return e.fetchShowStatus(forChunk)
 	case ast.ShowTables:
-		return e.fetchShowTables()
+		return e.fetchShowTables(forChunk)
 	case ast.ShowTableStatus:
-		return e.fetchShowTableStatus()
+		return e.fetchShowTableStatus(forChunk)
 	case ast.ShowTriggers:
-		return e.fetchShowTriggers()
+		return e.fetchShowTriggers(forChunk)
 	case ast.ShowVariables:
-		return e.fetchShowVariables()
+		return e.fetchShowVariables(forChunk)
 	case ast.ShowWarnings:
-		return e.fetchShowWarnings()
+		return e.fetchShowWarnings(forChunk)
 	case ast.ShowProcessList:
-		return e.fetchShowProcessList()
+		return e.fetchShowProcessList(forChunk)
 	case ast.ShowEvents:
 		// empty result
 	case ast.ShowStatsMeta:
-		return e.fetchShowStatsMeta()
+		return e.fetchShowStatsMeta(forChunk)
 	case ast.ShowStatsHistograms:
-		return e.fetchShowStatsHistogram()
+		return e.fetchShowStatsHistogram(forChunk)
 	case ast.ShowStatsBuckets:
-		return e.fetchShowStatsBuckets()
+		return e.fetchShowStatsBuckets(forChunk)
 	case ast.ShowPlugins:
-		return e.fetchShowPlugins()
+		return e.fetchShowPlugins(forChunk)
 	case ast.ShowProfiles:
 		// empty result
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowEngines() error {
-	row := types.MakeDatums(
-		"InnoDB",
-		"DEFAULT",
-		"Supports transactions, row-level locking, and foreign keys",
-		"YES",
-		"YES",
-		"YES",
-	)
-	e.rows = append(e.rows, row)
+func (e *ShowExec) fetchShowEngines(forChunk bool) error {
+	if forChunk {
+		e.result.AppendString(0, "InnoDB")
+		e.result.AppendString(1, "DEFAULT")
+		e.result.AppendString(2, "Supports transactions, row-level locking, and foreign keys")
+		e.result.AppendString(3, "YES")
+		e.result.AppendString(4, "YES")
+		e.result.AppendString(5, "YES")
+	} else {
+		row := types.MakeDatums(
+			"InnoDB",
+			"DEFAULT",
+			"Supports transactions, row-level locking, and foreign keys",
+			"YES",
+			"YES",
+			"YES",
+		)
+		e.rows = append(e.rows, row)
+	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowDatabases() error {
+func (e *ShowExec) fetchShowDatabases(forChunk bool) error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	// TODO: let information_schema be the first database
@@ -162,12 +193,16 @@ func (e *ShowExec) fetchShowDatabases() error {
 		if checker != nil && !checker.DBIsVisible(d) {
 			continue
 		}
-		e.rows = append(e.rows, types.MakeDatums(d))
+		if forChunk {
+			e.result.AppendString(0, d)
+		} else {
+			e.rows = append(e.rows, types.MakeDatums(d))
+		}
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowProcessList() error {
+func (e *ShowExec) fetchShowProcessList(forChunk bool) error {
 	sm := e.ctx.GetSessionManager()
 	if sm == nil {
 		return nil
@@ -187,23 +222,34 @@ func (e *ShowExec) fetchShowProcessList() error {
 			info = fmt.Sprintf("%.100v", pi.Info)
 		}
 
-		row := []types.Datum{
-			types.NewUintDatum(pi.ID),
-			types.NewStringDatum(pi.User),
-			types.NewStringDatum(pi.Host),
-			types.NewStringDatum(pi.DB),
-			types.NewStringDatum(pi.Command),
-			types.NewUintDatum(t),
-			types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
-			types.NewStringDatum(info),
+		if forChunk {
+			e.result.AppendUint64(0, pi.ID)
+			e.result.AppendString(1, pi.User)
+			e.result.AppendString(2, pi.Host)
+			e.result.AppendString(3, pi.DB)
+			e.result.AppendString(4, pi.Command)
+			e.result.AppendUint64(5, t)
+			e.result.AppendString(3, fmt.Sprintf("%d", pi.State))
+			e.result.AppendString(4, info)
+		} else {
+			row := []types.Datum{
+				types.NewUintDatum(pi.ID),
+				types.NewStringDatum(pi.User),
+				types.NewStringDatum(pi.Host),
+				types.NewStringDatum(pi.DB),
+				types.NewStringDatum(pi.Command),
+				types.NewUintDatum(t),
+				types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
+				types.NewStringDatum(info),
+			}
+			e.rows = append(e.rows, row)
 		}
-		e.rows = append(e.rows, row)
 	}
 
 	return nil
 }
 
-func (e *ShowExec) fetchShowTables() error {
+func (e *ShowExec) fetchShowTables(forChunk bool) error {
 	if !e.is.SchemaExists(e.DBName) {
 		return errors.Errorf("Can not find DB: %s", e.DBName)
 	}
@@ -220,18 +266,31 @@ func (e *ShowExec) fetchShowTables() error {
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
-		data := types.MakeDatums(v)
-		if e.Full {
+		switch {
+		case e.Full && forChunk:
+			e.result.AppendString(0, v)
 			// TODO: support "VIEW" later if we have supported view feature.
 			// now, just use "BASE TABLE".
-			data = append(data, types.NewDatum("BASE TABLE"))
+			e.result.AppendString(1, "BASE TABLE")
+		case e.Full && !forChunk:
+			// TODO: support "VIEW" later if we have supported view feature.
+			// now, just use "BASE TABLE".
+			e.rows = append(e.rows, types.MakeDatums(
+				v,
+				types.NewDatum("BASE TABLE"),
+			))
+		case !e.Full && forChunk:
+			e.result.AppendString(0, v)
+		case !e.Full && !forChunk:
+			e.rows = append(e.rows, types.MakeDatums(
+				v,
+			))
 		}
-		e.rows = append(e.rows, data)
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowTableStatus() error {
+func (e *ShowExec) fetchShowTableStatus(forChunk bool) error {
 	if !e.is.SchemaExists(e.DBName) {
 		return errors.Errorf("Can not find DB: %s", e.DBName)
 	}
@@ -242,14 +301,35 @@ func (e *ShowExec) fetchShowTableStatus() error {
 
 	for _, t := range tables {
 		now := types.CurrentTime(mysql.TypeDatetime)
-		data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
-			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
-		e.rows = append(e.rows, data)
+		if forChunk {
+			e.result.AppendString(0, t.Meta().Name.O)
+			e.result.AppendString(1, "InnoDB")
+			e.result.AppendString(2, "10")
+			e.result.AppendString(3, "Compact")
+			e.result.AppendInt64(4, 100)
+			e.result.AppendInt64(5, 100)
+			e.result.AppendInt64(6, 100)
+			e.result.AppendInt64(7, 100)
+			e.result.AppendInt64(8, 100)
+			e.result.AppendInt64(9, 100)
+			e.result.AppendInt64(10, 100)
+			e.result.AppendTime(11, now)
+			e.result.AppendTime(12, now)
+			e.result.AppendTime(13, now)
+			e.result.AppendString(14, "utf8_general_ci")
+			e.result.AppendString(15, "")
+			e.result.AppendString(16, "")
+			e.result.AppendString(17, t.Meta().Comment)
+		} else {
+			data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
+				now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
+			e.rows = append(e.rows, data)
+		}
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowColumns() error {
+func (e *ShowExec) fetchShowColumns(forChunk bool) error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
@@ -264,9 +344,23 @@ func (e *ShowExec) fetchShowColumns() error {
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
-		var row Row
-		if e.Full {
-			row = types.MakeDatums(
+		switch {
+		case e.Full && forChunk:
+			e.result.AppendString(0, desc.Field)
+			e.result.AppendString(1, desc.Type)
+			e.result.AppendString(2, desc.Collation)
+			e.result.AppendString(3, desc.Null)
+			e.result.AppendString(4, desc.Key)
+			defaultValueStr, err := desc.DefaultValue.(*types.Datum).ToString()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			e.result.AppendString(5, defaultValueStr)
+			e.result.AppendString(6, desc.Extra)
+			e.result.AppendString(7, desc.Privileges)
+			e.result.AppendString(8, desc.Comment)
+		case e.Full && !forChunk:
+			e.rows = append(e.rows, types.MakeDatums(
 				desc.Field,
 				desc.Type,
 				desc.Collation,
@@ -276,25 +370,35 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Extra,
 				desc.Privileges,
 				desc.Comment,
-			)
-		} else {
-			row = types.MakeDatums(
+			))
+		case !e.Full && forChunk:
+			e.result.AppendString(0, desc.Field)
+			e.result.AppendString(1, desc.Type)
+			e.result.AppendString(2, desc.Null)
+			e.result.AppendString(3, desc.Key)
+			defaultValueStr, err := desc.DefaultValue.(*types.Datum).ToString()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			e.result.AppendString(4, defaultValueStr)
+			e.result.AppendString(5, desc.Extra)
+		case !e.Full && !forChunk:
+			e.rows = append(e.rows, types.MakeDatums(
 				desc.Field,
 				desc.Type,
 				desc.Null,
 				desc.Key,
 				desc.DefaultValue,
 				desc.Extra,
-			)
+			))
 		}
-		e.rows = append(e.rows, row)
 	}
 	return nil
 }
 
 // TODO: index collation can have values A (ascending) or NULL (not sorted).
 // see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
-func (e *ShowExec) fetchShowIndex() error {
+func (e *ShowExec) fetchShowIndex(forChunk bool) error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
@@ -307,22 +411,37 @@ func (e *ShowExec) fetchShowIndex() error {
 				break
 			}
 		}
-		data := types.MakeDatums(
-			tb.Meta().Name.O, // Table
-			0,                // Non_unique
-			"PRIMARY",        // Key_name
-			1,                // Seq_in_index
-			pkCol.Name.O,     // Column_name
-			"A",              // Collation
-			0,                // Cardinality
-			nil,              // Sub_part
-			nil,              // Packed
-			"",               // Null
-			"BTREE",          // Index_type
-			"",               // Comment
-			"",               // Index_comment
-		)
-		e.rows = append(e.rows, data)
+		if forChunk {
+			e.result.AppendString(0, tb.Meta().Name.O)
+			e.result.AppendInt64(1, 0)
+			e.result.AppendString(2, "PRIMARY")
+			e.result.AppendInt64(3, 1)
+			e.result.AppendString(4, pkCol.Name.O)
+			e.result.AppendString(5, "A")
+			e.result.AppendInt64(6, 0)
+			e.result.AppendNull(7)
+			e.result.AppendNull(8)
+			e.result.AppendString(9, "")
+			e.result.AppendString(10, "BTREE")
+			e.result.AppendString(11, "")
+			e.result.AppendString(12, "")
+		} else {
+			e.rows = append(e.rows, types.MakeDatums(
+				tb.Meta().Name.O, // Table
+				0,                // Non_unique
+				"PRIMARY",        // Key_name
+				1,                // Seq_in_index
+				pkCol.Name.O,     // Column_name
+				"A",              // Collation
+				0,                // Cardinality
+				nil,              // Sub_part
+				nil,              // Packed
+				"",               // Null
+				"BTREE",          // Index_type
+				"",               // Comment
+				"",               // Index_comment
+			))
+		}
 	}
 	for _, idx := range tb.Indices() {
 		for i, col := range idx.Meta().Columns {
@@ -334,22 +453,41 @@ func (e *ShowExec) fetchShowIndex() error {
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
-			data := types.MakeDatums(
-				tb.Meta().Name.O,  // Table
-				nonUniq,           // Non_unique
-				idx.Meta().Name.O, // Key_name
-				i+1,               // Seq_in_index
-				col.Name.O,        // Column_name
-				"A",               // Collation
-				0,                 // Cardinality
-				subPart,           // Sub_part
-				nil,               // Packed
-				"YES",             // Null
-				idx.Meta().Tp.String(), // Index_type
-				"",                 // Comment
-				idx.Meta().Comment, // Index_comment
-			)
-			e.rows = append(e.rows, data)
+			if forChunk {
+				e.result.AppendString(0, tb.Meta().Name.O)
+				e.result.AppendInt64(1, int64(nonUniq))
+				e.result.AppendString(2, idx.Meta().Name.O)
+				e.result.AppendInt64(3, int64(i+1))
+				e.result.AppendString(4, col.Name.O)
+				e.result.AppendString(5, "A")
+				e.result.AppendInt64(6, 0)
+				if subPart == nil {
+					e.result.AppendNull(7)
+				} else {
+					e.result.AppendInt64(7, int64(col.Length))
+				}
+				e.result.AppendNull(8)
+				e.result.AppendString(9, "YES")
+				e.result.AppendString(10, idx.Meta().Tp.String())
+				e.result.AppendString(11, "")
+				e.result.AppendString(12, idx.Meta().Comment)
+			} else {
+				e.rows = append(e.rows, types.MakeDatums(
+					tb.Meta().Name.O,  // Table
+					nonUniq,           // Non_unique
+					idx.Meta().Name.O, // Key_name
+					i+1,               // Seq_in_index
+					col.Name.O,        // Column_name
+					"A",               // Collation
+					0,                 // Cardinality
+					subPart,           // Sub_part
+					nil,               // Packed
+					"YES",             // Null
+					idx.Meta().Tp.String(), // Index_type
+					"",                 // Comment
+					idx.Meta().Comment, // Index_comment
+				))
+			}
 		}
 	}
 	return nil
@@ -357,21 +495,28 @@ func (e *ShowExec) fetchShowIndex() error {
 
 // fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
-func (e *ShowExec) fetchShowCharset() error {
+func (e *ShowExec) fetchShowCharset(forChunk bool) error {
 	descs := charset.GetAllCharsets()
 	for _, desc := range descs {
-		row := types.MakeDatums(
-			desc.Name,
-			desc.Desc,
-			desc.DefaultCollation,
-			desc.Maxlen,
-		)
-		e.rows = append(e.rows, row)
+		if forChunk {
+			e.result.AppendString(0, desc.Name)
+			e.result.AppendString(1, desc.Desc)
+			e.result.AppendString(2, desc.DefaultCollation)
+			e.result.AppendInt64(3, int64(desc.Maxlen))
+		} else {
+			row := types.MakeDatums(
+				desc.Name,
+				desc.Desc,
+				desc.DefaultCollation,
+				desc.Maxlen,
+			)
+			e.rows = append(e.rows, row)
+		}
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() (err error) {
+func (e *ShowExec) fetchShowVariables(forChunk bool) (err error) {
 	var (
 		value         string
 		ok            bool
@@ -398,8 +543,13 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			unreachedVars = append(unreachedVars, v.Name)
 			continue
 		}
-		row := types.MakeDatums(v.Name, value)
-		e.rows = append(e.rows, row)
+		if forChunk {
+			e.result.AppendString(0, v.Name)
+			e.result.AppendString(1, value)
+		} else {
+			row := types.MakeDatums(v.Name, value)
+			e.rows = append(e.rows, row)
+		}
 	}
 	if len(unreachedVars) != 0 {
 		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
@@ -411,14 +561,19 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			if !ok {
 				varValue = variable.SysVars[varName].Value
 			}
-			row := types.MakeDatums(varName, varValue)
-			e.rows = append(e.rows, row)
+			if forChunk {
+				e.result.AppendString(0, varName)
+				e.result.AppendString(1, varValue)
+			} else {
+				row := types.MakeDatums(varName, varValue)
+				e.rows = append(e.rows, row)
+			}
 		}
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowStatus() error {
+func (e *ShowExec) fetchShowStatus(forChunk bool) error {
 	sessionVars := e.ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
@@ -436,13 +591,17 @@ func (e *ShowExec) fetchShowStatus() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row := types.MakeDatums(status, value)
-		e.rows = append(e.rows, row)
+		if forChunk {
+			e.result.AppendString(0, value)
+		} else {
+			row := types.MakeDatums(status, value)
+			e.rows = append(e.rows, row)
+		}
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowCreateTable() error {
+func (e *ShowExec) fetchShowCreateTable(forChunk bool) error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
@@ -602,13 +761,18 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}
 
-	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
-	e.rows = append(e.rows, data)
+	if forChunk {
+		e.result.AppendString(0, tb.Meta().Name.O)
+		e.result.AppendString(1, buf.String())
+	} else {
+		data := types.MakeDatums(tb.Meta().Name.O, buf.String())
+		e.rows = append(e.rows, data)
+	}
 	return nil
 }
 
 // fetchShowCreateDatabase composes show create database result.
-func (e *ShowExec) fetchShowCreateDatabase() error {
+func (e *ShowExec) fetchShowCreateDatabase(forChunk bool) error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
@@ -620,32 +784,46 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
 	}
 
-	data := types.MakeDatums(db.Name.O, buf.String())
-	e.rows = append(e.rows, data)
+	if forChunk {
+		e.result.AppendString(0, db.Name.O)
+		e.result.AppendString(0, buf.String())
+	} else {
+		data := types.MakeDatums(db.Name.O, buf.String())
+		e.rows = append(e.rows, data)
+	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowCollation() error {
+func (e *ShowExec) fetchShowCollation(forChunk bool) error {
 	collations := charset.GetCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
 			isDefault = "Yes"
 		}
-		row := types.MakeDatums(
-			v.Name,
-			v.CharsetName,
-			v.ID,
-			isDefault,
-			"Yes",
-			1,
-		)
-		e.rows = append(e.rows, row)
+		if forChunk {
+			e.result.AppendString(0, v.Name)
+			e.result.AppendString(1, v.CharsetName)
+			e.result.AppendInt64(2, int64(v.ID))
+			e.result.AppendString(3, isDefault)
+			e.result.AppendString(4, "Yes")
+			e.result.AppendInt64(5, 1)
+		} else {
+			row := types.MakeDatums(
+				v.Name,
+				v.CharsetName,
+				v.ID,
+				isDefault,
+				"Yes",
+				1,
+			)
+			e.rows = append(e.rows, row)
+		}
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowGrants() error {
+func (e *ShowExec) fetchShowGrants(forChunk bool) error {
 	// Get checker
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
@@ -656,40 +834,57 @@ func (e *ShowExec) fetchShowGrants() error {
 		return errors.Trace(err)
 	}
 	for _, g := range gs {
-		data := types.MakeDatums(g)
-		e.rows = append(e.rows, data)
+		if forChunk {
+			e.result.AppendString(0, g)
+		} else {
+			data := types.MakeDatums(g)
+			e.rows = append(e.rows, data)
+		}
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowTriggers() error {
+func (e *ShowExec) fetchShowTriggers(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowProcedureStatus() error {
+func (e *ShowExec) fetchShowProcedureStatus(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowPlugins() error {
+func (e *ShowExec) fetchShowPlugins(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowWarnings() error {
+func (e *ShowExec) fetchShowWarnings(forChunk bool) error {
 	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	for _, warn := range warns {
-		datums := make([]types.Datum, 3)
-		datums[0] = types.NewStringDatum("Warning")
 		warn = errors.Cause(warn)
-		switch x := warn.(type) {
-		case *terror.Error:
-			sqlErr := x.ToSQLError()
-			datums[1] = types.NewIntDatum(int64(sqlErr.Code))
-			datums[2] = types.NewStringDatum(sqlErr.Message)
-		default:
-			datums[1] = types.NewIntDatum(int64(mysql.ErrUnknown))
-			datums[2] = types.NewStringDatum(warn.Error())
+		if forChunk {
+			e.result.AppendString(0, "Warning")
+			switch x := warn.(type) {
+			case *terror.Error:
+				sqlErr := x.ToSQLError()
+				e.result.AppendInt64(1, int64(sqlErr.Code))
+				e.result.AppendString(2, sqlErr.Message)
+			default:
+				e.result.AppendInt64(1, int64(mysql.ErrUnknown))
+				e.result.AppendString(2, warn.Error())
+			}
+		} else {
+			datums := make([]types.Datum, 3)
+			datums[0] = types.NewStringDatum("Warning")
+			switch x := warn.(type) {
+			case *terror.Error:
+				sqlErr := x.ToSQLError()
+				datums[1] = types.NewIntDatum(int64(sqlErr.Code))
+				datums[2] = types.NewStringDatum(sqlErr.Message)
+			default:
+				datums[1] = types.NewIntDatum(int64(mysql.ErrUnknown))
+				datums[2] = types.NewStringDatum(warn.Error())
+			}
+			e.rows = append(e.rows, datums)
 		}
-		e.rows = append(e.rows, datums)
 	}
 	return nil
 }
