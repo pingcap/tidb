@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -147,13 +146,14 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
 	e := &CancelDDLJobsExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		JobIDs:       v.JobIDs,
+		jobIDs:       v.JobIDs,
 	}
-	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.JobIDs)
+	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.jobIDs)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
-
+	e.supportChk = true
 	return e
 }
 
@@ -182,6 +182,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	}
 	e.ddlInfo = ddlInfo
 	e.selfID = ownerManager.ID()
+	e.supportChk = true
 	return e
 }
 
@@ -189,19 +190,7 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 	}
-
-	var err error
-	e.jobs, err = admin.GetDDLJobs(e.ctx.Txn())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	e.jobs = append(e.jobs, historyJobs...)
+	e.supportChk = true
 	return e
 }
 
@@ -425,7 +414,13 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
-	return &DDLExec{baseExecutor: newBaseExecutor(nil, b.ctx), Statement: v.Statement, is: b.is}
+	e := &DDLExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		stmt:         v.Statement,
+		is:           b.is,
+	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
@@ -1011,43 +1006,6 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGR
 	return dagReq, nil
 }
 
-func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []ranger.IntColumnRange, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
-	newRanges = ranger.FullIntRange()
-	var pkCol *expression.Column
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			pkCol = expression.ColInfo2Col(cols, pkColInfo)
-		}
-	}
-	if pkCol != nil {
-		var ranges []ranger.Range
-		ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		newRanges = ranger.Ranges2IntRanges(ranges)
-	}
-	return newRanges, nil
-}
-
-func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newRanges []*ranger.IndexRange, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
-	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
-	newRanges = ranger.FullIndexRange()
-	if len(idxCols) > 0 {
-		var ranges []ranger.Range
-		ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		newRanges = ranger.Ranges2IndexRanges(ranges)
-	}
-	return newRanges, nil
-}
-
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
 	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
@@ -1157,12 +1115,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 	}
 
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
-	newRanges, err1 := b.constructTableRanges(ts)
-	if err1 != nil {
-		b.err = errors.Trace(err1)
-		return nil
-	}
-	ret.ranges = newRanges
+	ret.ranges = ts.Ranges
 	return ret
 }
 
@@ -1201,12 +1154,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 	}
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	newRanges, err1 := b.constructIndexRanges(is)
-	if err1 != nil {
-		b.err = errors.Trace(err1)
-		return nil
-	}
-	ret.ranges = newRanges
+	ret.ranges = is.Ranges
 	return ret
 }
 
@@ -1255,16 +1203,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	newRanges, err1 := b.constructIndexRanges(is)
-	if err1 != nil {
-		b.err = errors.Trace(err1)
-		return nil
-	}
-	ranges := make([]*ranger.IndexRange, 0, len(newRanges))
-	for _, rangeInPlan := range newRanges {
-		ranges = append(ranges, rangeInPlan.Clone())
-	}
-	ret.ranges = ranges
+	ret.ranges = is.Ranges
 	return ret
 }
 

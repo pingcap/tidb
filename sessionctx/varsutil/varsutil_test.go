@@ -157,11 +157,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, variable.TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
-	//Test case for tidb_max_row_count_for_inlj.
-	c.Assert(v.MaxRowCountForINLJ, Equals, 128)
-	SetSessionSystemVar(v, variable.TiDBMaxRowCountForINLJ, types.NewStringDatum("127"))
-	c.Assert(v.MaxRowCountForINLJ, Equals, 127)
-
 	c.Assert(v.MaxChunkSize, Equals, 1024)
 	SetSessionSystemVar(v, variable.TiDBMaxChunkSize, types.NewStringDatum("2"))
 	c.Assert(v.MaxChunkSize, Equals, 2)
