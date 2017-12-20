@@ -115,6 +115,7 @@ func (us *UnionScanExec) Next(goCtx goctx.Context) (Row, error) {
 // NextChunk implements the Executor NextChunk interface.
 func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	mutableRow := chunk.MutRowFromTypes(us.Schema().GetTypes())
 	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
 		row, err := us.getOneRow(goCtx)
 		if err != nil {
@@ -124,9 +125,8 @@ func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 		if row == nil {
 			return nil
 		}
-		for j, col := range us.Schema().Columns {
-			appendDatum2Chunk(chk, &row[j], j, col.RetType)
-		}
+		mutableRow.SetDatums(row...)
+		chk.AppendRow(0, mutableRow.ToRow())
 	}
 	return nil
 }

@@ -102,11 +102,9 @@ type baseJoinResultGenerator struct {
 }
 
 func (outputer *baseJoinResultGenerator) initDefaultChunkInner(innerTypes []*types.FieldType) {
-	shadowChunk := chunk.NewChunk(innerTypes)
-	for i, colType := range innerTypes {
-		appendDatum2Chunk(shadowChunk, &outputer.defaultInner[i], i, colType)
-	}
-	outputer.defaultChunkInner = shadowChunk.Begin()
+	mutableRow := chunk.MutRowFromTypes(innerTypes)
+	mutableRow.SetDatums(outputer.defaultInner...)
+	outputer.defaultChunkInner = mutableRow.ToRow()
 }
 
 // makeJoinRowToBuffer concatenates "lhs" and "rhs" to "buffer" and return that buffer.
