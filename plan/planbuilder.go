@@ -1086,7 +1086,6 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			return nil
 		}
 	}
-	setParents4FinalPlan(pp)
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
@@ -1097,7 +1096,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		}
 		p.SetSchema(schema)
 		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan), "")
 	case ast.ExplainFormatDOT:
 		retFields := []string{"dot contents"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
