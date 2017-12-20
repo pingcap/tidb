@@ -109,6 +109,14 @@ func (pe PathExpression) popOneLeg() (pathLeg, PathExpression) {
 	return pe.legs[0], newPe
 }
 
+// popOneLastLeg returns the a parent PathExpression and the last pathLeg
+func (pe PathExpression) popOneLastLeg() (PathExpression, pathLeg) {
+	lastLegIdx := len(pe.legs) - 1
+	lastLeg := pe.legs[lastLegIdx]
+	// It is used only in modification, it has been checked that there is no asterisks.
+	return PathExpression{legs: pe.legs[:lastLegIdx]}, lastLeg
+}
+
 // ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
 // object which can be used in JSON_EXTRACT, JSON_SET and so on.
 func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
