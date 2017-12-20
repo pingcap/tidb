@@ -391,7 +391,7 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 }
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
-	return &GrantExec{
+	e := &GrantExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		Privs:        grant.Privs,
 		ObjectType:   grant.ObjectType,
@@ -400,6 +400,8 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		WithGrant:    grant.WithGrant,
 		is:           b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
