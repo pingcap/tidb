@@ -159,7 +159,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 		return false
 	}
 	for _, col := range tbl.Columns {
-		if len(col.Buckets) > 0 {
+		if col.Count > 0 {
 			return false
 		}
 	}
