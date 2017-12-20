@@ -148,6 +148,15 @@ var (
 	endian   = binary.LittleEndian
 )
 
+const (
+	headerSize   = 8 // element size + data size.
+	dataSizeOff  = 4
+	keyEntrySize = 6 // keyOff +  keyLen
+	keyLenOff    = 4
+	valTypeSize  = 1
+	valEntrySize = 5
+)
+
 // String implements fmt.Stringer interface.
 func (bj BinaryJSON) String() string {
 	out, err := bj.MarshalJSON()
@@ -160,6 +169,13 @@ func (bj BinaryJSON) ToJSON() (JSON, error) {
 	return decode(bj.TypeCode, bj.Value)
 }
 
+// Copy makes a copy of the BinaryJSON
+func (bj BinaryJSON) Copy() BinaryJSON {
+	buf := make([]byte, len(bj.Value))
+	copy(buf, bj.Value)
+	return BinaryJSON{TypeCode: bj.TypeCode, Value: buf}
+}
+
 // MarshalJSON implements the json.Marshaler interface.
 func (bj BinaryJSON) MarshalJSON() ([]byte, error) {
 	buf := make([]byte, 0, len(bj.Value)*3/2)
@@ -169,11 +185,7 @@ func (bj BinaryJSON) MarshalJSON() ([]byte, error) {
 func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		strLen, lenLen := uint64(bj.Value[0]), 1
-		if strLen >= 0x80 {
-			strLen, lenLen = binary.Uvarint(bj.Value)
-		}
-		return marshalStringTo(buf, bj.Value[lenLen:lenLen+int(strLen)]), nil
+		return marshalStringTo(buf, bj.getString()), nil
 	case TypeCodeLiteral:
 		return marshalLiteralTo(buf, bj.Value[0]), nil
 	case TypeCodeInt64:
@@ -200,6 +212,53 @@ func (bj BinaryJSON) getUint64() uint64 {
 
 func (bj BinaryJSON) getFloat64() float64 {
 	return math.Float64frombits(bj.getUint64())
+}
+
+func (bj BinaryJSON) getString() []byte {
+	strLen, lenLen := uint64(bj.Value[0]), 1
+	if strLen >= utf8.RuneSelf {
+		strLen, lenLen = binary.Uvarint(bj.Value)
+	}
+	return bj.Value[lenLen : lenLen+int(strLen)]
+}
+
+func (bj BinaryJSON) getElemCount() int {
+	return int(endian.Uint32(bj.Value))
+}
+
+func (bj BinaryJSON) arrayGetElem(idx int) BinaryJSON {
+	return bj.valEntryGet(headerSize + idx*valEntrySize)
+}
+
+func (bj BinaryJSON) objectGetKey(i int) []byte {
+	keyOff := int(endian.Uint32(bj.Value[headerSize+i*keyEntrySize:]))
+	keyLen := int(endian.Uint16(bj.Value[headerSize+i*keyEntrySize+keyLenOff:]))
+	return bj.Value[keyOff : keyOff+keyLen]
+}
+
+func (bj BinaryJSON) objectGetVal(i int) BinaryJSON {
+	elemCount := bj.getElemCount()
+	return bj.valEntryGet(headerSize + elemCount*keyEntrySize + i*valEntrySize)
+}
+
+func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
+	tpCode := bj.Value[valEntryOff]
+	valOff := endian.Uint32(bj.Value[valEntryOff+valTypeSize:])
+	switch tpCode {
+	case TypeCodeLiteral:
+		return BinaryJSON{TypeCode: TypeCodeLiteral, Value: bj.Value[valEntryOff+valTypeSize : valEntryOff+valTypeSize+1]}
+	case TypeCodeUint64, TypeCodeInt64, TypeCodeFloat64:
+		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+8]}
+	case TypeCodeString:
+		strLen, lenLen := uint64(bj.Value[valOff]), 1
+		if strLen >= utf8.RuneSelf {
+			strLen, lenLen = binary.Uvarint(bj.Value[valOff:])
+		}
+		totalLen := uint32(lenLen) + uint32(strLen)
+		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
+	}
+	dataSize := endian.Uint32(bj.Value[valOff+dataSizeOff:])
+	return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+dataSize]}
 }
 
 func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
@@ -236,15 +295,13 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 
 func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 	elemCount := int(endian.Uint32(bj.Value))
-	entryStart := 8
-	entryEnd := entryStart + elemCount*5
 	buf = append(buf, '[')
-	for i := entryStart; i < entryEnd; i += 5 {
-		if i != entryStart {
+	for i := 0; i < elemCount; i++ {
+		if i != 0 {
 			buf = append(buf, ',')
 		}
 		var err error
-		buf, err = bj.marshalValueEntryTo(buf, i)
+		buf, err = bj.arrayGetElem(i).marshalTo(buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -254,19 +311,15 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 
 func (bj BinaryJSON) marshalObjTo(buf []byte) ([]byte, error) {
 	elemCount := int(endian.Uint32(bj.Value))
-	keyEntryStart := 8
-	valEntryStart := keyEntryStart + elemCount*6
 	buf = append(buf, '{')
 	for i := 0; i < elemCount; i++ {
 		if i != 0 {
 			buf = append(buf, ',')
 		}
-		keyOff := int(endian.Uint32(bj.Value[keyEntryStart+i*6:]))
-		keyLen := int(endian.Uint16(bj.Value[keyEntryStart+i*6+4:]))
-		buf = marshalStringTo(buf, bj.Value[keyOff:keyOff+keyLen])
+		buf = marshalStringTo(buf, bj.objectGetKey(i))
 		buf = append(buf, ':')
 		var err error
-		buf, err = bj.marshalValueEntryTo(buf, valEntryStart+i*5)
+		buf, err = bj.objectGetVal(i).marshalTo(buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -407,6 +460,15 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// CreateBinary creates a BinaryJSON from interface.
+func CreateBinary(in interface{}) BinaryJSON {
+	typeCode, buf, err := appendBinary(nil, in)
+	if err != nil {
+		panic(err)
+	}
+	return BinaryJSON{TypeCode: typeCode, Value: buf}
+}
+
 func appendBinary(buf []byte, in interface{}) (TypeCode, []byte, error) {
 	var typeCode byte
 	var err error
@@ -472,7 +534,7 @@ func appendZero(buf []byte, length int) []byte {
 
 func appendUint32(buf []byte, v uint32) []byte {
 	var tmp [4]byte
-	binary.LittleEndian.PutUint32(tmp[:], v)
+	endian.PutUint32(tmp[:], v)
 	return append(buf, tmp[:]...)
 }
 
@@ -522,18 +584,18 @@ func appendBinaryUint64(buf []byte, v uint64) []byte {
 func appendBinaryArray(buf []byte, array []interface{}) ([]byte, error) {
 	docOff := len(buf)
 	buf = appendUint32(buf, uint32(len(array)))
-	buf = appendZero(buf, 4)
+	buf = appendZero(buf, dataSizeOff)
 	valEntryBegin := len(buf)
-	buf = appendZero(buf, len(array)*5)
+	buf = appendZero(buf, len(array)*valEntrySize)
 	for i, val := range array {
 		var err error
-		buf, err = appendBinaryValElem(buf, docOff, valEntryBegin+i*5, val)
+		buf, err = appendBinaryValElem(buf, docOff, valEntryBegin+i*valEntrySize, val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	docSize := len(buf) - docOff
-	endian.PutUint32(buf[docOff+4:], uint32(docSize))
+	endian.PutUint32(buf[docOff+dataSizeOff:], uint32(docSize))
 	return buf, nil
 }
 
@@ -567,11 +629,11 @@ type field struct {
 func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 	docOff := len(buf)
 	buf = appendUint32(buf, uint32(len(x)))
-	buf = appendZero(buf, 4)
+	buf = appendZero(buf, dataSizeOff)
 	keyEntryBegin := len(buf)
-	buf = appendZero(buf, len(x)*6)
+	buf = appendZero(buf, len(x)*keyEntrySize)
 	valEntryBegin := len(buf)
-	buf = appendZero(buf, len(x)*5)
+	buf = appendZero(buf, len(x)*valEntrySize)
 
 	fields := make([]field, 0, len(x))
 	for key, val := range x {
@@ -581,21 +643,21 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 		return fields[i].key < fields[j].key
 	})
 	for i, field := range fields {
-		keyEntryOff := keyEntryBegin + i*6
+		keyEntryOff := keyEntryBegin + i*keyEntrySize
 		keyOff := len(buf) - docOff
 		keyLen := uint32(len(field.key))
 		endian.PutUint32(buf[keyEntryOff:], uint32(keyOff))
-		endian.PutUint16(buf[keyEntryOff+4:], uint16(keyLen))
+		endian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(keyLen))
 		buf = append(buf, field.key...)
 	}
 	for i, field := range fields {
 		var err error
-		buf, err = appendBinaryValElem(buf, docOff, valEntryBegin+i*5, field.val)
+		buf, err = appendBinaryValElem(buf, docOff, valEntryBegin+i*valEntrySize, field.val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	docSize := len(buf) - docOff
-	endian.PutUint32(buf[docOff+4:], uint32(docSize))
+	endian.PutUint32(buf[docOff+dataSizeOff:], uint32(docSize))
 	return buf, nil
 }

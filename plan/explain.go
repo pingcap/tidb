@@ -21,42 +21,6 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 )
 
-func setParents4FinalPlan(plan PhysicalPlan) {
-	allPlans := []PhysicalPlan{plan}
-	planMark := map[int]bool{}
-	planMark[plan.ID()] = true
-	for pID := 0; pID < len(allPlans); pID++ {
-		allPlans[pID].SetParents()
-		switch copPlan := allPlans[pID].(type) {
-		case *PhysicalTableReader:
-			setParents4FinalPlan(copPlan.tablePlan)
-		case *PhysicalIndexReader:
-			setParents4FinalPlan(copPlan.indexPlan)
-		case *PhysicalIndexLookUpReader:
-			setParents4FinalPlan(copPlan.indexPlan)
-			setParents4FinalPlan(copPlan.tablePlan)
-		}
-		for _, p := range allPlans[pID].Children() {
-			if !planMark[p.ID()] {
-				allPlans = append(allPlans, p.(PhysicalPlan))
-				planMark[p.ID()] = true
-			}
-		}
-	}
-
-	allPlans = allPlans[0:1]
-	planMark[plan.ID()] = false
-	for pID := 0; pID < len(allPlans); pID++ {
-		for _, p := range allPlans[pID].Children() {
-			p.SetParents(allPlans[pID])
-			if planMark[p.ID()] {
-				planMark[p.ID()] = false
-				allPlans = append(allPlans, p.(PhysicalPlan))
-			}
-		}
-	}
-}
-
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalLock) ExplainInfo() string {
 	return p.Lock.String()
