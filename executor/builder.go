@@ -205,10 +205,12 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 }
 
 func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
-	return &DeallocateExec{
+	e := &DeallocateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		Name:         v.Name,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
