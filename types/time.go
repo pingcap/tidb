@@ -502,10 +502,9 @@ func (t *Time) Check() error {
 func (t *Time) Sub(t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
-		// TODO: Consider time_zone variable.
-		a, err := t.Time.GoTime(gotime.Local)
+		a, err := t.Time.GoTime(t.TimeZone)
 		terror.Log(errors.Trace(err))
-		b, err := t1.Time.GoTime(gotime.Local)
+		b, err := t1.Time.GoTime(t.TimeZone)
 		terror.Log(errors.Trace(err))
 		duration = a.Sub(b)
 	} else {
