@@ -18,13 +18,13 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -159,7 +159,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 		return false
 	}
 	for _, col := range tbl.Columns {
-		if len(col.Buckets) > 0 {
+		if col.Count > 0 {
 			return false
 		}
 	}

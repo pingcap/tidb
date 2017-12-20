@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -285,8 +285,9 @@ func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	}
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
+	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 	for {
-		if batchDelete && rowCount >= BatchDeleteSize {
+		if batchDelete && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -699,14 +700,6 @@ type InsertExec struct {
 	finished bool
 }
 
-// BatchInsertSize is the batch size of auto-splitted insert data.
-// This will be used when tidb_batch_insert is set to ON.
-var BatchInsertSize = 20000
-
-// BatchDeleteSize is the batch size of auto-splitted delete data.
-// This will be used when tidb_batch_delete is set to ON.
-var BatchDeleteSize = 20000
-
 func (e *InsertExec) exec(goCtx goctx.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
@@ -728,11 +721,12 @@ func (e *InsertExec) exec(goCtx goctx.Context) (Row, error) {
 
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
+	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 
 	txn := e.ctx.Txn()
 	rowCount := 0
 	for _, row := range rows {
-		if batchInsert && rowCount >= BatchInsertSize {
+		if batchInsert && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
@@ -1318,17 +1312,8 @@ type UpdateExec struct {
 	cursor      int
 }
 
-// Next implements the Executor Next interface.
-func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
-	if !e.fetched {
-		err := e.fetchRows(goCtx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.fetched = true
-	}
-
-	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema().Len())
+func (e *UpdateExec) exec(goCtx goctx.Context, schema *expression.Schema) (Row, error) {
+	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1340,13 +1325,13 @@ func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
-	for id, cols := range e.SelectExec.Schema().TblID2Handle {
+	for id, cols := range schema.TblID2Handle {
 		tbl := e.tblID2table[id]
 		if e.updatedRowKeys[id] == nil {
 			e.updatedRowKeys[id] = make(map[int64]struct{})
 		}
 		for _, col := range cols {
-			offset := getTableOffset(e.SelectExec.Schema(), col)
+			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
 			handle := row[col.Index].GetInt64()
 			oldData := row[offset:end]
@@ -1377,6 +1362,46 @@ func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
 	return Row{}, nil
 }
 
+// Next implements the Executor Next interface.
+func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
+	if !e.fetched {
+		err := e.fetchRows(goCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.fetched = true
+	}
+
+	return e.exec(goCtx, e.SelectExec.Schema())
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *UpdateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.fetched {
+		err := e.fetchChunkRows(goCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.fetched = true
+
+		for {
+			row, err := e.exec(goCtx, e.children[0].Schema())
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// once "row == nil" there is no more data waiting to be updated,
+			// the execution of UpdateExec is finished.
+			if row == nil {
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
 func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range assignList {
@@ -1384,6 +1409,45 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 		assignFlag[idx] = true
 	}
 	return assignFlag, nil
+}
+
+func (e *UpdateExec) fetchChunkRows(goCtx goctx.Context) error {
+	fields := e.children[0].Schema().GetTypes()
+	for {
+		chk := chunk.NewChunk(fields)
+		err := e.children[0].NextChunk(goCtx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			chunkRow := chk.GetRow(rowIdx)
+			datumRow := chunkRow.GetDatumRow(fields)
+			newRow, err1 := e.composeNewRow(datumRow)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			e.rows = append(e.rows, datumRow)
+			e.newRowsData = append(e.newRowsData, newRow)
+		}
+	}
+	return nil
+}
+
+func (e *UpdateExec) composeNewRow(oldRow Row) (Row, error) {
+	newRowData := oldRow.Copy()
+	for _, assign := range e.OrderedList {
+		val, err := assign.Expr.Eval(newRowData)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newRowData[assign.Col.Index] = val
+	}
+	return newRowData, nil
 }
 
 func (e *UpdateExec) fetchRows(goCtx goctx.Context) error {
@@ -1395,13 +1459,9 @@ func (e *UpdateExec) fetchRows(goCtx goctx.Context) error {
 		if row == nil {
 			return nil
 		}
-		newRowData := row.Copy()
-		for _, assign := range e.OrderedList {
-			val, err := assign.Expr.Eval(newRowData)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			newRowData[assign.Col.Index] = val
+		newRowData, err := e.composeNewRow(row)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		e.rows = append(e.rows, row)
 		e.newRowsData = append(e.newRowsData, newRowData)
