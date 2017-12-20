@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
@@ -61,7 +62,7 @@ func (e *RevokeExec) Next(goCtx goctx.Context) (Row, error) {
 // NextChunk implements the Executor NextChunk interface.
 func (e *RevokeExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	if e.done {
-		return nil, nil
+		return nil
 	}
 	e.done = true
 	return errors.Trace(e.run(goCtx))
@@ -73,19 +74,19 @@ func (e *RevokeExec) run(goCtx goctx.Context) error {
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if !exists {
-			return nil, errors.Errorf("Unknown user: %s", user.User)
+			return errors.Errorf("Unknown user: %s", user.User)
 		}
 
 		err = e.revokeOneUser(user.User.Username, user.User.Hostname)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil, nil
+	return nil
 }
 
 func (e *RevokeExec) revokeOneUser(user, host string) error {

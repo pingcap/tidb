@@ -412,6 +412,7 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 		is:         b.is,
 	}
 	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
