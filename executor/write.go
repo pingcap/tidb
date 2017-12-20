@@ -203,9 +203,7 @@ func (e *DeleteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	if e.finished {
 		return nil
 	}
-	defer func() {
-		e.finished = true
-	}()
+	e.finished = true
 
 	if e.IsMultiTable {
 		return e.deleteMultiTablesByChunk(goCtx)
@@ -328,9 +326,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
+	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	fields := e.children[0].Schema().GetTypes()
 	for {
-		chk := chunk.NewChunk(fields)
+		chk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -340,8 +339,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			if batchDelete && rowCount >= BatchDeleteSize {
+		for chunkRow := chk.Begin(); chunkRow != chk.End(); chunkRow.Next() {
+			if batchDelete && rowCount >= batchDMLSize {
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -349,7 +348,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 				rowCount = 0
 			}
 
-			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
 			err = e.deleteOneRow(tbl, handleCol, datumRow)
 			if err != nil {
@@ -409,7 +407,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 	tblRowMap := make(tableRowMapType)
 	fields := e.children[0].Schema().GetTypes()
 	for {
-		chk := chunk.NewChunk(fields)
+		chk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -419,8 +417,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			joinedChunkRow := chk.GetRow(rowIdx)
+		for joinedChunkRow := chk.Begin(); joinedChunkRow != chk.End(); joinedChunkRow.Next() {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}
