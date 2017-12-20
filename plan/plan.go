@@ -28,8 +28,6 @@ import (
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
-	// Get all the parents.
-	Parents() []Plan
 	// Get all the children.
 	Children() []Plan
 	// Set the schema.
@@ -40,8 +38,6 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() string
-	// SetParents sets the parents for the plan.
-	SetParents(...Plan)
 	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
 	// replaceExprColumns replace all the column reference in the plan's expression node.
@@ -340,19 +336,9 @@ func (p *basePlan) Schema() *expression.Schema {
 	return p.schema
 }
 
-// Parents implements Plan Parents interface.
-func (p *basePlan) Parents() []Plan {
-	return p.parents
-}
-
 // Children implements Plan Children interface.
 func (p *basePlan) Children() []Plan {
 	return p.children
-}
-
-// SetParents implements Plan SetParents interface.
-func (p *basePlan) SetParents(pars ...Plan) {
-	p.parents = pars
 }
 
 // SetChildren implements Plan SetChildren interface.
