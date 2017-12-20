@@ -46,8 +46,8 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 		return predicates, p.self
 	}
 	child := p.children[0].(LogicalPlan)
-	rest, ch := child.PredicatePushDown(predicates)
-	addSelection(p.self, ch, rest, 0)
+	rest, newChild := child.PredicatePushDown(predicates)
+	addSelection(p.self, newChild, rest, 0)
 	return nil, p.self
 }
 
@@ -310,8 +310,8 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 			newCond := expression.ColumnSubstitute(cond, p.Schema(), expression.Column2Exprs(proj.Schema().Columns))
 			newExprs = append(newExprs, newCond)
 		}
-		retCond, ch := proj.(LogicalPlan).PredicatePushDown(newExprs)
-		addSelection(p, ch, retCond, i)
+		retCond, newChild := proj.(LogicalPlan).PredicatePushDown(newExprs)
+		addSelection(p, newChild, retCond, i)
 	}
 	return nil, p
 }
