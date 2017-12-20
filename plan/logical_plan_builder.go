@@ -1641,12 +1641,15 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		}
 	}
 	ds.SetSchema(schema)
-	if handleCol == nil {
+	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
+	if handleCol == nil && !isMemDB {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
 	}
-	schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+	if handleCol != nil {
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+	}
 	// make plan as DS -> US -> Proj
 	var result LogicalPlan = ds
 	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
