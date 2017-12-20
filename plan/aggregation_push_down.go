@@ -52,9 +52,7 @@ func (a *aggregationOptimizer) isDecomposable(fun aggregation.Aggregation) bool 
 func (a *aggregationOptimizer) getAggFuncChildIdx(aggFunc aggregation.Aggregation, schema *expression.Schema) int {
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
-	for _, arg := range aggFunc.GetArgs() {
-		cols = append(cols, expression.ExtractColumns(arg)...)
-	}
+	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.GetArgs(), nil)
 	for _, col := range cols {
 		if schema.Contains(col) {
 			fromLeft = true
@@ -374,9 +372,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				setParentAndChildren(agg, projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
 				var gbyCols []*expression.Column
-				for _, gbyExpr := range agg.GroupByItems {
-					gbyCols = append(gbyCols, expression.ExtractColumns(gbyExpr)...)
-				}
+				gbyCols = expression.ExtractColumnsFromExpressions(gbyCols, agg.GroupByItems, nil)
 				pushedAgg := a.makeNewAgg(agg.AggFuncs, gbyCols)
 				newChildren := make([]Plan, 0, len(union.children))
 				for _, child := range union.children {
