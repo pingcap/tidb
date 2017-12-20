@@ -203,7 +203,9 @@ func (e *DeleteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	if e.finished {
 		return nil
 	}
-	e.finished = true
+	defer func() {
+		e.finished = true
+	}()
 
 	if e.IsMultiTable {
 		return e.deleteMultiTablesByChunk(goCtx)
@@ -339,7 +341,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 			break
 		}
 
-		for chunkRow := chk.Begin(); chunkRow != chk.End(); chunkRow.Next() {
+		for chunkRow := chk.Begin(); chunkRow != chk.End(); chunkRow = chunkRow.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
@@ -417,7 +419,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 			break
 		}
 
-		for joinedChunkRow := chk.Begin(); joinedChunkRow != chk.End(); joinedChunkRow.Next() {
+		for joinedChunkRow := chk.Begin(); joinedChunkRow != chk.End(); joinedChunkRow = joinedChunkRow.Next() {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}
