@@ -238,12 +238,12 @@ type DeallocateExec struct {
 
 // Next implements the Executor Next interface.
 func (e *DeallocateExec) Next(goCtx goctx.Context) (Row, error) {
-	return nil, errors.Trace(e.Run(goCtx))
+	return nil, errors.Trace(e.run(goCtx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *DeallocateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.Run(goCtx))
+	return errors.Trace(e.run(goCtx))
 }
 
 func (e *DeallocateExec) run(goCtx goctx.Context) error {
