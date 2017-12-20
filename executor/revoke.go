@@ -54,7 +54,20 @@ func (e *RevokeExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
+	e.done = true
+	return nil, errors.Trace(e.run(goCtx))
+}
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *RevokeExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	if e.done {
+		return nil, nil
+	}
+	e.done = true
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *RevokeExec) run(goCtx goctx.Context) error {
 	// Revoke for each user
 	for _, user := range e.Users {
 		// Check if user exists.
@@ -71,7 +84,6 @@ func (e *RevokeExec) Next(goCtx goctx.Context) (Row, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	e.done = true
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil, nil
 }
