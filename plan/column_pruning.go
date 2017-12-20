@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -161,7 +162,6 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
-	firstCol, firstColInfo := p.schema.Columns[0], p.Columns[0]
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
@@ -177,8 +177,8 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if p.schema.Len() == 0 {
-		p.schema.Append(firstCol)
-		p.Columns = append(p.Columns, firstColInfo)
+		p.Columns = append(p.Columns, model.NewExtraHandleColInfo())
+		p.schema.Append(p.newExtraHandleSchemaCol())
 	}
 }
 
