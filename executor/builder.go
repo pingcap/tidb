@@ -993,7 +993,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 			return nil
 		}
 	}
-	e.supportChunk = true
+	e.supportChk = true
 	return e
 }
 
