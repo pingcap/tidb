@@ -2667,6 +2667,31 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	result.Check(testkit.Rows("1.1234560000"))
 }
 
+func (s *testIntegrationSuite) TestAggregationBuiltinBitOr(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint)")
+	tk.MustExec("insert into t values(null);")
+	result := tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values(1);")
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2);")
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("3"))
+	tk.MustExec("insert into t values(4);")
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("7"))
+	result = tk.MustQuery("select a, bit_or(a) from t group by a order by a")
+	result.Check(testkit.Rows("<nil> 0", "1 1", "2 2", "4 4"))
+	tk.MustExec("insert into t values(-1);")
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("18446744073709551615"))
+}
+
 func (s *testIntegrationSuite) TestAggregationBuiltinBitXor(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
