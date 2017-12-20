@@ -304,7 +304,6 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	parents  []Plan
 	children []Plan
 
 	schema *expression.Schema
