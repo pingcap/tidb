@@ -295,6 +295,9 @@ func (d *ddl) onAlterTableOption(t *meta.Meta, job *model.Job) (ver int64, _ err
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// https://github.com/pingcap/tidb/issues/5034
+	// alter table can not support the case of auto_increment now.
+	// This validation has been done in plan preprocess checkAlterTableGrammar function.
 	handleTableOptions(options, tblInfo)
 
 	ver, err = updateSchemaVersion(t, job)

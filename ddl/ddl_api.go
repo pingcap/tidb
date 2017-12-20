@@ -919,10 +919,6 @@ func (d *ddl) AlterTableOption(ctx context.Context, ti ast.Ident, options []*ast
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
-	// https://github.com/pingcap/tidb/issues/5034
-	// alter table can not support the case of auto_increment now.
-	// This validation has been done in plan preprocess checkAlterTableGrammar function.
-	handleTableOptions(options, t.Meta())
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -932,11 +928,9 @@ func (d *ddl) AlterTableOption(ctx context.Context, ti ast.Ident, options []*ast
 		Args:       []interface{}{options},
 	}
 
-	if err = d.doDDLJob(ctx, job); err != nil {
-		err = d.callHookOnChanged(err)
-		return errors.Trace(err)
-	}
-	return nil
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 // AddColumn will add a new column to the table.
