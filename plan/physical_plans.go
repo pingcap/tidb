@@ -132,7 +132,7 @@ func needCount(af aggregation.Aggregation) bool {
 func needValue(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat ||
-		af.GetName() == ast.AggFuncBitXor || af.GetName() == ast.AggFuncBitAnd
+		af.GetName() == ast.AggFuncBitOr || af.GetName() == ast.AggFuncBitAnd || af.GetName() == ast.AggFuncBitXor
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -272,8 +272,6 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	basePhysicalPlan
-
-	childNum int // childNum is the number of children
 }
 
 // AggregationType stands for the mode of aggregation plan.
