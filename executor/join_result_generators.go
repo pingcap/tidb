@@ -103,7 +103,7 @@ type baseJoinResultGenerator struct {
 
 func (outputer *baseJoinResultGenerator) initDefaultChunkInner(innerTypes []*types.FieldType) {
 	mutableRow := chunk.MutRowFromTypes(innerTypes)
-	mutableRow.SetDatums(outputer.defaultInner...)
+	mutableRow.SetDatums(outputer.defaultInner[:len(innerTypes)]...)
 	outputer.defaultChunkInner = mutableRow.ToRow()
 }
 
