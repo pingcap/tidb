@@ -357,40 +357,38 @@ type Explain struct {
 
 // prepareExplainInfo4DAGTask generates the following information for every plan:
 // ["id", "parents", "task", "operator info"].
-func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
-	parents := p.Parents()
-	parentIDs := make([]string, 0, len(parents))
-	for _, parent := range parents {
-		parentIDs = append(parentIDs, parent.ExplainID())
-	}
+func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, parentID string) {
 	childrenIDs := make([]string, 0, len(p.Children()))
 	for _, ch := range p.Children() {
 		childrenIDs = append(childrenIDs, ch.ExplainID())
 	}
-	parentInfo := strings.Join(parentIDs, ",")
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().count, 'f', -1, 64))
-	row := []string{p.ExplainID(), parentInfo, childrenInfo, taskType, operatorInfo, count}
+	row := []string{p.ExplainID(), parentID, childrenInfo, taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }
 
 // prepareCopTaskInfo generates explain information for cop-tasks.
 // Only PhysicalTableReader, PhysicalIndexReader and PhysicalIndexLookUpReader have cop-tasks currently.
 func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan) {
-	for _, p := range plans {
-		e.prepareExplainInfo4DAGTask(p, "cop")
+	for i, p := range plans {
+		var parentID string
+		if i+1 < len(plans) {
+			parentID = plans[i+1].ExplainID()
+		}
+		e.prepareExplainInfo4DAGTask(p, "cop", parentID)
 	}
 }
 
 // prepareRootTaskInfo generates explain information for root-tasks.
-func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
+func (e *Explain) prepareRootTaskInfo(p PhysicalPlan, parentID string) {
 	e.explainedPlans[p.ID()] = true
 	for _, child := range p.Children() {
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.prepareRootTaskInfo(child.(PhysicalPlan))
+		e.prepareRootTaskInfo(child.(PhysicalPlan), p.ExplainID())
 	}
 	switch copPlan := p.(type) {
 	case *PhysicalTableReader:
@@ -401,7 +399,7 @@ func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
 		e.prepareCopTaskInfo(copPlan.IndexPlans)
 		e.prepareCopTaskInfo(copPlan.TablePlans)
 	}
-	e.prepareExplainInfo4DAGTask(p, "root")
+	e.prepareExplainInfo4DAGTask(p, "root", parentID)
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
