@@ -221,8 +221,8 @@ type tblColPosInfo struct {
 }
 
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
-// the key in map[int64][]types.Datum is the joined table handle, which represent a unique reference row.
-// the value in map[int64][]types.Datum is all the columns about the row.
+// the key in map[int64]Row is the joined table handle, which represent a unique reference row.
+// the value in map[int64]Row is the deleting row.
 type tableRowMapType map[int64]map[int64]Row
 
 func (e *DeleteExec) deleteMultiTables(goCtx goctx.Context) error {
