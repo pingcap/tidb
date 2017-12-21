@@ -957,6 +957,7 @@ func (e *TableScanExec) getRow(handle int64) (Row, error) {
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(goCtx goctx.Context) error {
 	e.iter = nil
+	e.virtualTableRows = nil
 	e.virtualTableChunkList = nil
 	e.cursor = 0
 	return nil

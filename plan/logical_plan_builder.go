@@ -1641,7 +1641,10 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	ds.SetSchema(schema)
 	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
-	if handleCol == nil && !isMemDB {
+	// We append an extra handle column to the schema when "ds" is not a memory
+	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
+	// column is not the primary key of "ds".
+	if !isMemDB && handleCol == nil {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
