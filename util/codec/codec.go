@@ -109,7 +109,9 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)
-			b = append(b, json.Serialize(vals[i].GetMysqlJSON())...)
+			j := vals[i].GetMysqlJSON()
+			b = append(b, j.TypeCode)
+			b = append(b, j.Value...)
 		case types.KindNull:
 			b = append(b, NilFlag)
 		case types.KindMinNotNull:
@@ -254,13 +256,9 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		if err != nil {
 			return b, d, err
 		}
-
-		var j json.JSON
-		j, err = json.Deserialize(b)
-		if err == nil {
-			b = b[size:]
-			d.SetMysqlJSON(j)
-		}
+		j := json.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
+		d.SetMysqlJSON(j)
+		b = b[size:]
 	case NilFlag:
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
@@ -463,13 +461,8 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		var j json.JSON
-		j, err = json.Deserialize(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		chk.AppendJSON(colIdx, json.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
 		b = b[size:]
-		chk.AppendJSON(colIdx, j)
 	case NilFlag:
 		chk.AppendNull(colIdx)
 	default:
