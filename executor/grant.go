@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
@@ -57,6 +58,20 @@ func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
+	e.done = true
+	return nil, errors.Trace(e.run(goCtx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *GrantExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *GrantExec) run(goCtx goctx.Context) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -66,7 +81,7 @@ func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if !exists {
 			pwd := ""
@@ -77,7 +92,7 @@ func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 					if len(user.AuthOpt.HashString) == 41 && strings.HasPrefix(user.AuthOpt.HashString, "*") {
 						pwd = user.AuthOpt.HashString
 					} else {
-						return nil, errors.Trace(ErrPasswordFormat)
+						return errors.Trace(ErrPasswordFormat)
 					}
 				}
 			}
@@ -86,7 +101,7 @@ func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
 			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 
@@ -98,12 +113,12 @@ func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 		case ast.GrantLevelDB:
 			err := checkAndInitDBPriv(e.ctx, dbName, e.is, user.User.Username, user.User.Hostname)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		case ast.GrantLevelTable:
 			err := checkAndInitTablePriv(e.ctx, dbName, e.Level.TableName, e.is, user.User.Username, user.User.Hostname)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 		privs := e.Privs
@@ -117,27 +132,16 @@ func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 				// TODO: Check validity before insert new entry.
 				err := e.checkAndInitColumnPriv(user.User.Username, user.User.Hostname, priv.Cols)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return errors.Trace(err)
 				}
 			}
 			err := e.grantPriv(priv, user)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 	}
-	e.done = true
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil, nil
-}
-
-// Close implements the Executor Close interface.
-func (e *GrantExec) Close() error {
-	return nil
-}
-
-// Open implements the Executor Open interface.
-func (e *GrantExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
