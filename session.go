@@ -305,12 +305,10 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
-	if s.statsCollector != nil {
-		mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
-		if mapper != nil {
-			for id, item := range mapper {
-				s.statsCollector.Update(id, item.Delta, item.Count)
-			}
+	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
+	if s.statsCollector != nil && mapper != nil {
+		for id, item := range mapper {
+			s.statsCollector.Update(id, item.Delta, item.Count)
 		}
 	}
 	return nil
