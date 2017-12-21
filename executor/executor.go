@@ -869,20 +869,12 @@ func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chu
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
 		}
-		virtualTableChunk := e.newChunk()
 		mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
-			virtualTableChunk.AppendRow(0, mutableRow.ToRow())
-			if virtualTableChunk.NumRows() >= e.maxChunkSize {
-				e.virtualTableChunkList.Add(virtualTableChunk)
-				virtualTableChunk = e.newChunk()
-			}
+			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
 		})
-		if virtualTableChunk.NumRows() != 0 {
-			e.virtualTableChunkList.Add(virtualTableChunk)
-		}
 		if err != nil {
 			return errors.Trace(err)
 		}
