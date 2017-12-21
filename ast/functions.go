@@ -463,6 +463,8 @@ const (
 	AggFuncMin = "min"
 	// AggFuncGroupConcat is the name of group_concat function.
 	AggFuncGroupConcat = "group_concat"
+	// AggFuncBitOr is the name of bit_or function.
+	AggFuncBitOr = "bit_or"
 	// AggFuncBitXor is the name of bit_xor function.
 	AggFuncBitXor = "bit_xor"
 	// AggFuncBitAnd is the name of bit_and function.

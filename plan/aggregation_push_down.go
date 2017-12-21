@@ -213,7 +213,7 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []aggregation.Aggregati
 		}
 	}
 	agg := a.makeNewAgg(aggFuncs, gbyCols)
-	setParentAndChildren(agg, child)
+	agg.SetChildren(child)
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
 	if len(agg.GroupByItems) == 0 {
@@ -304,11 +304,11 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionS
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
 			proj := a.convertAggToProj(newAgg, a.ctx)
-			setParentAndChildren(proj, unionChild)
+			proj.SetChildren(unionChild)
 			return proj
 		}
 	}
-	setParentAndChildren(newAgg, unionChild)
+	newAgg.SetChildren(unionChild)
 	return newAgg
 }
 
@@ -346,7 +346,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 					} else {
 						lChild = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0)
 					}
-					setParentAndChildren(join, lChild, rChild)
+					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 					join.buildKeyInfo()
 					proj := a.tryToEliminateAggregation(agg)
@@ -369,7 +369,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 					aggFunc.SetArgs(newArgs)
 				}
 				projChild := proj.children[0]
-				setParentAndChildren(agg, projChild)
+				agg.SetChildren(projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
 				var gbyCols []*expression.Column
 				gbyCols = expression.ExtractColumnsFromExpressions(gbyCols, agg.GroupByItems, nil)
@@ -379,7 +379,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 					newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
 					newChildren = append(newChildren, newChild)
 				}
-				setParentAndChildren(union, newChildren...)
+				union.SetChildren(newChildren...)
 				union.SetSchema(pushedAgg.schema)
 			}
 		}
@@ -389,7 +389,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 		newChild := a.aggPushDown(child.(LogicalPlan))
 		newChildren = append(newChildren, newChild)
 	}
-	setParentAndChildren(p, newChildren...)
+	p.SetChildren(newChildren...)
 	return p
 }
 
@@ -409,7 +409,7 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation
 	if coveredByUniqueKey {
 		// GroupByCols has unique key, so this aggregation can be removed.
 		proj := a.convertAggToProj(agg, a.ctx)
-		setParentAndChildren(proj, agg.children[0])
+		proj.SetChildren(agg.children[0])
 		return proj
 	}
 	return nil
