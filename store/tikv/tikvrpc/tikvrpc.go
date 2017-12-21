@@ -88,7 +88,7 @@ func (t CmdType) String() string {
 	case CmdCop:
 		return "cop"
 	case CmdCopStream:
-		return "scpStream"
+		return "copStream"
 	case CmdMvccGetByKey:
 		return "mvccGetByKey"
 	case CmdMvccGetByStartTs:
