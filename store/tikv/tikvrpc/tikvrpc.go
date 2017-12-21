@@ -56,47 +56,47 @@ const (
 func (t CmdType) String() string {
 	switch t {
 	case CmdGet:
-		return "get"
+		return "Get"
 	case CmdScan:
-		return "scan"
+		return "Scan"
 	case CmdPrewrite:
-		return "prewrite"
+		return "Prewrite"
 	case CmdCommit:
-		return "commit"
+		return "Commit"
 	case CmdCleanup:
-		return "cleanup"
+		return "Cleanup"
 	case CmdBatchGet:
-		return "batchGet"
+		return "BatchGet"
 	case CmdBatchRollback:
-		return "batchRollback"
+		return "BatchRollback"
 	case CmdScanLock:
-		return "scanLock"
+		return "ScanLock"
 	case CmdResolveLock:
-		return "resolveLock"
+		return "ResolveLock"
 	case CmdGC:
 		return "GC"
 	case CmdDeleteRange:
-		return "deleteRange"
+		return "DeleteRange"
 	case CmdRawGet:
-		return "rawGet"
+		return "RawGet"
 	case CmdRawPut:
-		return "rawPut"
+		return "RawPut"
 	case CmdRawDelete:
-		return "rawDelete"
+		return "RawDelete"
 	case CmdRawScan:
-		return "rawScan"
+		return "RawScan"
 	case CmdCop:
-		return "cop"
+		return "Cop"
 	case CmdCopStream:
-		return "copStream"
+		return "CopStream"
 	case CmdMvccGetByKey:
-		return "mvccGetByKey"
+		return "MvccGetByKey"
 	case CmdMvccGetByStartTs:
-		return "mvccGetByStartTS"
+		return "MvccGetByStartTS"
 	case CmdSplitRegion:
-		return "splitRegion"
+		return "SplitRegion"
 	}
-	return "unknown"
+	return "Unknown"
 }
 
 // Request wraps all kv/coprocessor requests.
