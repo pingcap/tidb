@@ -194,7 +194,7 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan
 }
 
 // joinKeysMatchIndex checks if all keys match columns in index.
-// It returns a slice a[] what a[i] means index.Column[i] is related with keys[a[i]].
+// It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]].
 func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) []int {
 	if len(indexCols) < len(keys) {
 		return nil

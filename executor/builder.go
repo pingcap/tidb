@@ -1234,7 +1234,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context,
 	IndexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalTableReader:
-		return builder.buildTableReaderForDatums(goCtx, v, datums)
+		return builder.buildTableReaderForIndexJoin(goCtx, v, datums)
 	case *plan.PhysicalIndexReader:
 		return builder.buildIndexReaderForIndexJoin(goCtx, v, datums, IndexRanges, keyOff2IdxOff)
 	case *plan.PhysicalIndexLookUpReader:
@@ -1243,7 +1243,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context,
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
-func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
