@@ -194,7 +194,10 @@ func (e *NewIndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 		row := e.joinResult.GetRow(e.joinResultCursor)
 		datumRow := make(types.DatumRow, row.Len())
 		for i := 0; i < row.Len(); i++ {
-			datumRow[i] = row.GetDatum(i, e.schema.Columns[i].RetType)
+			// Here if some datum is KindBytes/KindString and we don't copy it, the datums' data could be in the same space
+			// since row.GetDatum() and datum.SetBytes() don't alloc new space thus causing wrong result.
+			d := row.GetDatum(i, e.schema.Columns[i].RetType)
+			datumRow[i] = *d.Copy()
 		}
 		e.joinResultCursor++
 		return datumRow, nil

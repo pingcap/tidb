@@ -205,10 +205,12 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 }
 
 func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
-	return &DeallocateExec{
+	e := &DeallocateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		Name:         v.Name,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
@@ -303,11 +305,13 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	case *ast.RevokeStmt:
 		return b.buildRevoke(s)
 	}
-	return &SimpleExec{
+	e := &SimpleExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		Statement:    v.Statement,
 		is:           b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
@@ -403,7 +407,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 }
 
 func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
-	return &RevokeExec{
+	e := &RevokeExec{
 		ctx:        b.ctx,
 		Privs:      revoke.Privs,
 		ObjectType: revoke.ObjectType,
@@ -411,6 +415,8 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 		Users:      revoke.Users,
 		is:         b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
