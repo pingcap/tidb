@@ -57,7 +57,7 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		{nil, nil},
 		{``, ``},
 		{`""`, ``},
-		{`''`, ``},
+		{`''`, `''`},
 		{`"a"`, `a`},
 		{`3`, `3`},
 		{`{"a": "b"}`, `{"a": "b"}`},
@@ -98,12 +98,12 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				var j1 json.JSON
-				j1, err = json.ParseFromString(x)
+				var j1 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
 				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
 				var cmp int
-				cmp, err = json.CompareJSON(j1, j2)
+				cmp = json.CompareBinary(j1, j2)
 				c.Assert(err, IsNil)
 				c.Assert(cmp, Equals, 0)
 			}
@@ -145,13 +145,12 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 				c.Assert(err, IsNil)
 				switch x := t.Expected.(type) {
 				case string:
-					var j1 json.JSON
-					j1, err = json.ParseFromString(x)
+					var j1 json.BinaryJSON
+					j1, err = json.ParseBinaryFromString(x)
 					c.Assert(err, IsNil)
 					j2 := d.GetMysqlJSON()
 					var cmp int
-					cmp, err = json.CompareJSON(j1, j2)
-					c.Assert(err, IsNil)
+					cmp = json.CompareBinary(j1, j2)
 					c.Assert(cmp, Equals, 0)
 				}
 				continue
@@ -181,12 +180,11 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 
 		switch x := t.Expected.(type) {
 		case string:
-			j1, err := json.ParseFromString(x)
+			j1, err := json.ParseBinaryFromString(x)
 			c.Assert(err, IsNil)
 			j2 := d.GetMysqlJSON()
-			cmp, err := json.CompareJSON(j1, j2)
-			c.Assert(err, IsNil)
-			c.Assert(cmp, Equals, 0)
+			cmp := json.CompareBinary(j1, j2)
+			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
 		}
 	}
 }
@@ -208,11 +206,10 @@ func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 
-		j1, err := json.ParseFromString(t.Expected)
+		j1, err := json.ParseBinaryFromString(t.Expected)
 		c.Assert(err, IsNil)
 		j2 := d.GetMysqlJSON()
-		cmp, err := json.CompareJSON(j1, j2)
-		c.Assert(err, IsNil)
+		cmp := json.CompareBinary(j1, j2)
 		c.Assert(cmp, Equals, 0)
 	}
 }
@@ -246,13 +243,12 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 				c.Assert(err, IsNil)
 				switch x := t.Expected.(type) {
 				case string:
-					var j1 json.JSON
-					j1, err = json.ParseFromString(x)
+					var j1 json.BinaryJSON
+					j1, err = json.ParseBinaryFromString(x)
 					c.Assert(err, IsNil)
 					j2 := d.GetMysqlJSON()
 					var cmp int
-					cmp, err = json.CompareJSON(j1, j2)
-					c.Assert(err, IsNil)
+					cmp = json.CompareBinary(j1, j2)
 					c.Assert(cmp, Equals, 0)
 				}
 				continue
@@ -298,14 +294,13 @@ func (s *testEvaluatorSuite) TestJSONORemove(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				var j1 json.JSON
-				j1, err = json.ParseFromString(x)
+				var j1 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
 				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
 				var cmp int
-				cmp, err = json.CompareJSON(j1, j2)
-				c.Assert(err, IsNil)
-				c.Assert(cmp, Equals, 0)
+				cmp = json.CompareBinary(j1, j2)
+				c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j2.Value, j1.Value))
 			}
 		} else {
 			c.Assert(err, NotNil)
