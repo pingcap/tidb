@@ -465,11 +465,19 @@ func (e *IndexReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(goCtx goctx.Context) error {
+	kvRanges, err := indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.open(goCtx, kvRanges)
+}
+
+func (e *IndexReaderExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) error {
 	span, goCtx := startSpanFollowsContext(goCtx, "executor.IndexReader.Open")
 	defer span.Finish()
 
 	var builder requestBuilder
-	kvReq, err := builder.SetIndexRanges(e.tableID, e.index.ID, e.ranges).
+	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
