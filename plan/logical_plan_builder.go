@@ -587,12 +587,28 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
-	schema4Union := u.schema
+	unionSchema := u.children[0].Schema().Clone()
+
+	// infer union type
+	for i, col := range unionSchema.Columns {
+		var resultTp *types.FieldType
+		for j, child := range u.children {
+			childTp := child.Schema().Columns[i].RetType
+			if j == 0 {
+				resultTp = childTp
+			} else {
+				resultTp = joinFieldType(resultTp, childTp)
+			}
+		}
+		col.RetType = resultTp
+		col.DBName = model.NewCIStr("")
+	}
+
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
-		needProjection := false
+		_, needProjection := child.(*LogicalProjection)
 		for i, srcCol := range child.Schema().Columns {
-			dstType := schema4Union.Columns[i].RetType
+			dstType := unionSchema.Columns[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
 				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
@@ -604,15 +620,17 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		if needProjection {
 			b.optFlag |= flagEliminateProjection
 			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
-			proj.schema = schema4Union.Clone()
-			for _, col := range proj.schema.Columns {
-				col.FromID = proj.ID()
+			if childID == 0 {
+				for _, col := range unionSchema.Columns {
+					col.FromID = proj.ID()
+				}
 			}
 			proj.SetChildren(u.children[childID])
 			u.children[childID] = proj
 		}
+		u.children[childID].SetSchema(unionSchema.Clone())
 	}
-	u.SetChildren(u.children...)
+	u.SetSchema(unionSchema)
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
@@ -623,34 +641,12 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-	}
-	firstSchema := u.children[0].Schema().Clone()
-	for _, sel := range u.children {
-		if firstSchema.Len() != sel.Schema().Len() {
+		if u.children[i].Schema().Len() != u.children[0].Schema().Len() {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
 			return nil
 		}
 	}
 
-	// infer union type
-	for i, col := range firstSchema.Columns {
-		var resultTp *types.FieldType
-		for j, child := range u.children {
-			childTp := child.Schema().Columns[i].RetType
-			if j == 0 {
-				resultTp = childTp
-			} else {
-				resultTp = joinFieldType(resultTp, childTp)
-			}
-		}
-		col.RetType = resultTp
-	}
-
-	for _, v := range firstSchema.Columns {
-		v.FromID = u.id
-		v.DBName = model.NewCIStr("")
-	}
-	u.SetSchema(firstSchema)
 	b.buildProjection4Union(u)
 	var p LogicalPlan = u
 	if union.Distinct {
