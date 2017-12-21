@@ -226,17 +226,9 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
-	dual.SetSchema(expression.NewSchema(&expression.Column{
-		FromID:   dual.id,
-		Position: 1,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-	}))
+	dual.SetSchema(expression.NewSchema())
 
-	p := LogicalProjection{
-		Exprs:            make([]expression.Expression, 0, len(v.Exprs)),
-		calculateNoDelay: true,
-	}.init(b.ctx)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
+	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
@@ -244,15 +236,10 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 			return nil
 		}
 		p.Exprs = append(p.Exprs, expr)
-		schema.Append(&expression.Column{
-			FromID:   p.id,
-			Position: schema.Len() + 1,
-			RetType:  expr.GetType(),
-		})
 	}
 	p.SetChildren(dual)
 	p.self = p
-	p.SetSchema(schema)
+	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -270,11 +257,7 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
 			}
 			mockTablePlan := LogicalTableDual{}.init(b.ctx)
-			mockTablePlan.SetSchema(expression.NewSchema(&expression.Column{
-				FromID:   mockTablePlan.id,
-				Position: 1,
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-			}))
+			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
 				return nil

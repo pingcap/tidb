@@ -1564,11 +1564,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
 	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
-	dual.SetSchema(expression.NewSchema(&expression.Column{
-		FromID:   dual.id,
-		Position: 1,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-	}))
+	dual.SetSchema(expression.NewSchema())
 	return dual
 }
 

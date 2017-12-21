@@ -228,10 +228,8 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql)
 	}
-	// "e.Schema().Len() == 0" means the executor doesn't return any result to the client, we execute it without delay.
+	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
-	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
 	}
 

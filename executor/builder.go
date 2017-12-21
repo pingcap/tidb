@@ -700,9 +700,8 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 		return nil
 	}
 	e := &ProjectionExec{
-		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, childExec),
-		exprs:            v.Exprs,
-		calculateNoDelay: v.CalculateNoDelay,
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		exprs:        v.Exprs,
 	}
 	e.baseExecutor.supportChk = true
 	return e

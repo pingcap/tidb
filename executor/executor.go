@@ -598,9 +598,8 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	exprs            []expression.Expression
-	vectorizable     bool
-	calculateNoDelay bool
+	exprs        []expression.Expression
+	vectorizable bool
 }
 
 // Open implements the Executor Open interface.
@@ -665,7 +664,7 @@ func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
 		return nil, nil
 	}
 	e.numReturned = e.numDualRows
-	return Row{types.Datum{}}, nil
+	return Row{}, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -674,9 +673,13 @@ func (e *TableDualExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	if e.numReturned >= e.numDualRows {
 		return nil
 	}
-	// Here we only append NULL to the first column, It's a little tricky because
-	// "chk.NumRows()" takes its first column's length as result.
-	chk.AppendNull(0)
+	if e.Schema().Len() == 0 {
+		chk.SetNumVirtualRows(1)
+	} else {
+		for i := range e.Schema().Columns {
+			chk.AppendNull(i)
+		}
+	}
 	e.numReturned = e.numDualRows
 	return nil
 }
