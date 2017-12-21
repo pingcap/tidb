@@ -1606,6 +1606,84 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	rs.Close()
 }
 
+func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk(a int)")
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+
+	for i := 0; i < 99; i++ {
+		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
+	}
+
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+
+	chk := rs.NewChunk()
+	err = rs.NextChunk(goctx.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 1)
+
+	row := chk.GetRow(0)
+	c.Assert(row.GetInt64(0), Equals, int64(99))
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk1(a int)")
+	tk.MustExec("create table chk2(a int)")
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk1 values (%d)", i))
+	}
+
+	for i := 0; i < 50; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk2 values (%d)", i))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+
+	tk.MustExec("delete chk1, chk2 from chk1 inner join chk2 where chk1.a = chk2.a")
+
+	rs, err := tk.Exec("select * from chk1")
+	c.Assert(err, IsNil)
+
+	var idx int
+	for {
+		chk := rs.NewChunk()
+		err = rs.NextChunk(goctx.TODO(), chk)
+		c.Assert(err, IsNil)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for i := 0; i < chk.NumRows(); i++ {
+			row := chk.GetRow(i)
+			c.Assert(row.GetInt64(0), Equals, int64(idx+50))
+			idx++
+		}
+	}
+	c.Assert(idx, Equals, 50)
+	rs.Close()
+
+	rs, err = tk.Exec("select * from chk2")
+	c.Assert(err, IsNil)
+
+	chk := rs.NewChunk()
+	err = rs.NextChunk(goctx.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 0)
+	rs.Close()
+}
+
 func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	// Since normally a single region mock tikv only returns one partial result we need to manually split the
 	// table to test multiple chunks.
