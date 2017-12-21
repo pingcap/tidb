@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
@@ -229,8 +230,8 @@ func (e *ShowExec) fetchShowProcessList(forChunk bool) error {
 			e.result.AppendString(3, pi.DB)
 			e.result.AppendString(4, pi.Command)
 			e.result.AppendUint64(5, t)
-			e.result.AppendString(3, fmt.Sprintf("%d", pi.State))
-			e.result.AppendString(4, info)
+			e.result.AppendString(6, fmt.Sprintf("%d", pi.State))
+			e.result.AppendString(7, info)
 		} else {
 			row := []types.Datum{
 				types.NewUintDatum(pi.ID),
@@ -329,6 +330,47 @@ func (e *ShowExec) fetchShowTableStatus(forChunk bool) error {
 	return nil
 }
 
+func (e *ShowExec) appendDefaultValue(desc *table.ColDesc, colIdx int) {
+	if desc.DefaultValue == nil {
+		e.result.AppendNull(colIdx)
+	} else {
+		switch x := desc.DefaultValue.(type) {
+		case nil:
+			e.result.AppendNull(colIdx)
+		case int:
+			e.result.AppendInt64(colIdx, int64(x))
+		case int64:
+			e.result.AppendInt64(colIdx, x)
+		case uint64:
+			e.result.AppendUint64(colIdx, x)
+		case float64:
+			e.result.AppendFloat64(colIdx, x)
+		case float32:
+			e.result.AppendFloat32(colIdx, x)
+		case string:
+			e.result.AppendString(colIdx, x)
+		case []byte:
+			e.result.AppendBytes(colIdx, x)
+		case types.BinaryLiteral:
+			e.result.AppendBytes(colIdx, x)
+		case *types.MyDecimal:
+			e.result.AppendMyDecimal(colIdx, x)
+		case types.Time:
+			e.result.AppendTime(colIdx, x)
+		case json.JSON:
+			e.result.AppendJSON(colIdx, x)
+		case types.Duration:
+			e.result.AppendDuration(colIdx, x)
+		case types.Enum:
+			e.result.AppendEnum(colIdx, x)
+		case types.Set:
+			e.result.AppendSet(colIdx, x)
+		default:
+			e.result.AppendNull(colIdx)
+		}
+	}
+}
+
 func (e *ShowExec) fetchShowColumns(forChunk bool) error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -351,11 +393,7 @@ func (e *ShowExec) fetchShowColumns(forChunk bool) error {
 			e.result.AppendString(2, desc.Collation)
 			e.result.AppendString(3, desc.Null)
 			e.result.AppendString(4, desc.Key)
-			defaultValueStr, err := desc.DefaultValue.(*types.Datum).ToString()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			e.result.AppendString(5, defaultValueStr)
+			e.appendDefaultValue(desc, 5)
 			e.result.AppendString(6, desc.Extra)
 			e.result.AppendString(7, desc.Privileges)
 			e.result.AppendString(8, desc.Comment)
@@ -376,11 +414,7 @@ func (e *ShowExec) fetchShowColumns(forChunk bool) error {
 			e.result.AppendString(1, desc.Type)
 			e.result.AppendString(2, desc.Null)
 			e.result.AppendString(3, desc.Key)
-			defaultValueStr, err := desc.DefaultValue.(*types.Datum).ToString()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			e.result.AppendString(4, defaultValueStr)
+			e.appendDefaultValue(desc, 4)
 			e.result.AppendString(5, desc.Extra)
 		case !e.Full && !forChunk:
 			e.rows = append(e.rows, types.MakeDatums(
@@ -592,7 +626,8 @@ func (e *ShowExec) fetchShowStatus(forChunk bool) error {
 			return errors.Trace(err)
 		}
 		if forChunk {
-			e.result.AppendString(0, value)
+			e.result.AppendString(0, status)
+			e.result.AppendString(1, value)
 		} else {
 			row := types.MakeDatums(status, value)
 			e.rows = append(e.rows, row)
@@ -786,7 +821,7 @@ func (e *ShowExec) fetchShowCreateDatabase(forChunk bool) error {
 
 	if forChunk {
 		e.result.AppendString(0, db.Name.O)
-		e.result.AppendString(0, buf.String())
+		e.result.AppendString(1, buf.String())
 	} else {
 		data := types.MakeDatums(db.Name.O, buf.String())
 		e.rows = append(e.rows, data)
