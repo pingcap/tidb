@@ -606,7 +606,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
-		_, needProjection := child.(*LogicalProjection)
+		needProjection := false
 		for i, srcCol := range child.Schema().Columns {
 			dstType := unionSchema.Columns[i].RetType
 			srcType := srcCol.RetType
@@ -617,7 +617,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				exprs[i] = srcCol.Clone()
 			}
 		}
-		if needProjection {
+		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
 			b.optFlag |= flagEliminateProjection
 			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
 			if childID == 0 {
@@ -625,7 +625,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 					col.FromID = proj.ID()
 				}
 			}
-			proj.SetChildren(u.children[childID])
+			proj.SetChildren(child)
 			u.children[childID] = proj
 		}
 		u.children[childID].SetSchema(unionSchema.Clone())
