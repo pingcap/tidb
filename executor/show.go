@@ -357,7 +357,7 @@ func (e *ShowExec) appendDefaultValue(desc *table.ColDesc, colIdx int) {
 			e.result.AppendMyDecimal(colIdx, x)
 		case types.Time:
 			e.result.AppendTime(colIdx, x)
-		case json.JSON:
+		case json.BinaryJSON:
 			e.result.AppendJSON(colIdx, x)
 		case types.Duration:
 			e.result.AppendDuration(colIdx, x)
