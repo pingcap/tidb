@@ -84,7 +84,9 @@ func readChunkFromResponse(resp kv.Response, chunk *tipb.Chunk) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// TODO: check stream.Error?
+	if stream.Error != nil {
+		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
+	}
 
 	switch stream.GetEncodeType() {
 	case tipb.EncodeType_TypeDefault:
@@ -92,7 +94,7 @@ func readChunkFromResponse(resp kv.Response, chunk *tipb.Chunk) (bool, error) {
 		return false, errors.New("not implement yet")
 	}
 
-	err = chunk.Unmarshal(data)
+	err = chunk.Unmarshal(stream.Data)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -152,6 +154,9 @@ type tipbChunk struct {
 }
 
 func (pr *tipbChunk) Next(goCtx goctx.Context) (data []types.Datum, err error) {
+	if len(pr.Chunk.RowsData) == 0 {
+		return nil, nil // partial result finished.
+	}
 	return readRowFromChunk(&pr.Chunk, pr.rowLen)
 }
 
