@@ -155,7 +155,7 @@ func (e *NewIndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTa
 }
 
 func (e *NewIndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
-	// Since multiple inner workers runs at one time, we copy the ranges.
+	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
 	copiedRanges := make([]*ranger.IndexRange, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
 		copiedRanges = append(copiedRanges, ran.Clone())

@@ -253,10 +253,10 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 	return []PhysicalPlan{join}
 }
 
-// getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
-// because we will swap the children of join when the right child is outer child.
-// First of all, we will extract the join keys for p's equal conditions. Then check whether all of them is a part of index
-// or just the primary key. If so we will choose the best one and construct a index join.
+// getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
+// First of all, we'll check whether the inner child is DataSource.
+// Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
+// or match some part of on index. If so we will choose the best one and construct a index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) []PhysicalPlan {
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
 	var (
