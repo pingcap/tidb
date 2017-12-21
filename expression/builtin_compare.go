@@ -1729,10 +1729,7 @@ func (s *builtinNullEQJSONSig) evalInt(row types.Row) (val int64, isNull bool, e
 	case isNull0 != isNull1:
 		break
 	default:
-		cmpRes, err := json.CompareJSON(arg0, arg1)
-		if err != nil {
-			return 0, true, errors.Trace(err)
-		}
+		cmpRes := json.CompareBinary(arg0, arg1)
 		if cmpRes == 0 {
 			res = 1
 		}
@@ -1923,6 +1920,5 @@ func compareJSON(args []Expression, row types.Row, ctx context.Context) (int64, 
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
 	}
-	res, err := json.CompareJSON(arg0, arg1)
-	return int64(res), err != nil, errors.Trace(err)
+	return int64(json.CompareBinary(arg0, arg1)), false, nil
 }
