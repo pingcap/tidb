@@ -203,6 +203,15 @@ func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
 }
 
+func (s *session) StoreQueryFeedback(q *variable.QueryFeedback, actual int64, ranges []interface{}) {
+	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
+	if q.HistVersion == 0 || actual < 0 || !q.Valid {
+		return
+	}
+	q.Actual, q.Ranges = actual, ranges
+	s.statsCollector.StoreQueryFeedback(q)
+}
+
 type schemaLeaseChecker struct {
 	domain.SchemaValidator
 	schemaVer       int64
@@ -301,10 +310,12 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
-	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
-	if s.statsCollector != nil && mapper != nil {
-		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count)
+	if s.statsCollector != nil {
+		mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
+		if mapper != nil {
+			for id, item := range mapper {
+				s.statsCollector.Update(id, item.Delta, item.Count)
+			}
 		}
 	}
 	return nil

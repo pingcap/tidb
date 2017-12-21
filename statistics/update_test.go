@@ -310,8 +310,8 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a int, b int, index idx(a))")
-	testKit.MustExec("insert into t values (1,2),(2,3),(4,5)")
+	testKit.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
 
 	h := s.do.StatsHandle()
@@ -324,18 +324,19 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 			actual: 1,
 		},
 		{
-			sql:    "select * from t use index(idx) where t.a <= 2",
+			sql:    "select * from t use index(idx) where t.b <= 2",
 			actual: 2,
 		},
 		{
-			sql:    "select a from t use index(idx) where t.a <= 4",
+			sql:    "select b from t use index(idx) where t.b <= 5",
 			actual: 3,
 		},
 	}
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
+		h.DumpStatsDeltaToKV()
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 1)
-		c.Assert(feedback[0].Actual(), Equals, t.actual)
+		c.Assert(feedback[0].Actual, Equals, t.actual)
 	}
 }

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
@@ -38,22 +37,25 @@ func (m tableDeltaMap) update(id int64, delta int64, count int64) {
 	m[id] = item
 }
 
-func (m tableDeltaMap) merge(handle *SessionStatsCollector) {
-	handle.Lock()
-	defer handle.Unlock()
-	for id, item := range handle.mapper {
-		m.update(id, item.Delta, item.Count)
+func (h *Handle) merge(s *SessionStatsCollector) {
+	s.Lock()
+	defer s.Unlock()
+	for id, item := range s.mapper {
+		h.globalMap.update(id, item.Delta, item.Count)
 	}
-	handle.mapper = make(tableDeltaMap)
+	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
+	s.mapper = make(tableDeltaMap)
+	s.feedback = s.feedback[:0]
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
 	sync.Mutex
 
-	mapper tableDeltaMap
-	prev   *SessionStatsCollector
-	next   *SessionStatsCollector
+	mapper   tableDeltaMap
+	feedback []*variable.QueryFeedback
+	prev     *SessionStatsCollector
+	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
@@ -70,6 +72,26 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64) {
 	s.Lock()
 	defer s.Unlock()
 	s.mapper.update(id, delta, count)
+}
+
+func mergeQueryFeedback(lq []*variable.QueryFeedback, rq []*variable.QueryFeedback) []*variable.QueryFeedback {
+	for _, q := range rq {
+		if len(lq) >= maxQueryFeedBackCount {
+			break
+		}
+		lq = append(lq, q)
+	}
+	return lq
+}
+
+// StoreQueryFeedback will merges the feedback into stats collector.
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback *variable.QueryFeedback) {
+	s.Lock()
+	defer s.Unlock()
+	if len(s.feedback) >= maxQueryFeedBackCount {
+		return
+	}
+	s.feedback = append(s.feedback, feedback)
 }
 
 // tryToRemoveFromList will remove this collector from the list if it's deleted flag is set.
@@ -108,7 +130,7 @@ func (h *Handle) DumpStatsDeltaToKV() {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
-		h.globalMap.merge(collector)
+		h.merge(collector)
 	}
 	h.listHead.Unlock()
 	for id, item := range h.globalMap {
@@ -142,67 +164,6 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	}
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "commit")
 	return errors.Trace(err)
-}
-
-// QueryFeedback is used to represent the query feedback info. It contains the expected scan row count and
-// the actual scan row count, so that we could use these info to adjust the statistics.
-type QueryFeedback struct {
-	tableID     int64
-	colID       int64
-	intRanges   []ranger.IntColumnRange
-	idxRanges   []*ranger.IndexRange
-	histVersion uint64 // histVersion is the version of the histogram when we issue the query.
-	expected    int64
-	actual      int64
-	valid       bool
-}
-
-// NewQueryFeedback returns a new query feedback.
-func NewQueryFeedback(tableID int64, colID int64, histVer uint64, expected int64) *QueryFeedback {
-	return &QueryFeedback{
-		tableID:     tableID,
-		colID:       colID,
-		histVersion: histVer,
-		expected:    expected,
-		valid:       true,
-	}
-}
-
-// Invalidate is used to invalidate the query feedback.
-func (q *QueryFeedback) Invalidate() {
-	q.valid = false
-}
-
-// Actual returns the actual row count. It is only used in test.
-func (q *QueryFeedback) Actual() int64 {
-	return q.actual
-}
-
-// StoreQueryFeedback stores the query feedback.
-func (h *Handle) StoreQueryFeedback(q *QueryFeedback, actual int64, intRanges []ranger.IntColumnRange, idxRanges []*ranger.IndexRange) {
-	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
-	if h == nil || q.histVersion == 0 || actual < 0 || !q.valid {
-		return
-	}
-	q.actual, q.intRanges, q.idxRanges = actual, intRanges, idxRanges
-	h.feedbackLock.Lock()
-	defer h.feedbackLock.Unlock()
-	if len(h.feedback) >= maxQueryFeedBackCount {
-		return
-	}
-	h.feedback = append(h.feedback, q)
-}
-
-// GetQueryFeedback gets the query feedback.
-func (h *Handle) GetQueryFeedback() []*QueryFeedback {
-	h.feedbackLock.Lock()
-	feedback := make([]*QueryFeedback, len(h.feedback))
-	for i, f := range h.feedback {
-		feedback[i] = f
-	}
-	h.feedback = h.feedback[:0]
-	h.feedbackLock.Unlock()
-	return feedback
 }
 
 const (

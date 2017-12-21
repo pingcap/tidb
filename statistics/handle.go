@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -49,10 +49,9 @@ type Handle struct {
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap    tableDeltaMap
-	feedbackLock sync.Mutex
+	globalMap tableDeltaMap
 	// feedback is used to store query feedback info.
-	feedback []*QueryFeedback
+	feedback []*variable.QueryFeedback
 
 	Lease time.Duration
 }
@@ -85,10 +84,18 @@ func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
-		feedback:        make([]*QueryFeedback, 0, maxQueryFeedBackCount),
+		feedback:        make([]*variable.QueryFeedback, 0, maxQueryFeedBackCount),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
+}
+
+// GetQueryFeedback gets the query feedback. It is only use in test.
+func (h *Handle) GetQueryFeedback() []*variable.QueryFeedback {
+	defer func() {
+		h.feedback = h.feedback[:0]
+	}()
+	return h.feedback
 }
 
 // AnalyzeResultCh returns analyze result channel in handle.

@@ -364,3 +364,33 @@ type TableDelta struct {
 	Delta int64
 	Count int64
 }
+
+// QueryFeedback is used to represent the query feedback info. It contains the expected scan row count and
+// the actual scan row count, so that we could use these info to adjust the statistics.
+type QueryFeedback struct {
+	TableID     int64
+	ColID       int64
+	IsIndex     bool
+	Ranges      []interface{}
+	HistVersion uint64 // histVersion is the version of the histogram when we issue the query.
+	Expected    int64
+	Actual      int64
+	Valid       bool
+}
+
+// NewQueryFeedback returns a new query feedback.
+func NewQueryFeedback(tableID int64, colID int64, isIndex bool, histVer uint64, expected int64) *QueryFeedback {
+	return &QueryFeedback{
+		TableID:     tableID,
+		ColID:       colID,
+		IsIndex:     isIndex,
+		HistVersion: histVer,
+		Expected:    expected,
+		Valid:       true,
+	}
+}
+
+// Invalidate is used to invalidate the query feedback.
+func (q *QueryFeedback) Invalidate() {
+	q.Valid = false
+}
