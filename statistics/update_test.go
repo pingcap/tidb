@@ -357,4 +357,10 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		c.Assert(len(feedback), Equals, 1)
 		c.Assert(feedback[0].Actual(), Equals, t.actual)
 	}
+
+	// Feedback from limit executor may not be accurate.
+	testKit.MustQuery("select * from t where t.a <= 2 limit 1")
+	h.DumpStatsDeltaToKV()
+	feedback := h.GetQueryFeedback()
+	c.Assert(len(feedback), Equals, 0)
 }
