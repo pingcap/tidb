@@ -438,7 +438,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flen = len(x.Name)
 		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
-	case json.JSON:
+	case json.BinaryJSON:
 		tp.Tp = mysql.TypeJSON
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = 0

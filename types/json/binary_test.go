@@ -148,10 +148,12 @@ func (s *testJSONSuite) TestBinaryJSONModify(c *C) {
 		{`null`, "$", `{}`, ModifySet, `{}`, true},
 		{`{}`, "$.a", `3`, ModifySet, `{"a": 3}`, true},
 		{`{"a": 3}`, "$.a", `[]`, ModifyReplace, `{"a": []}`, true},
+		{`{"a": 3}`, "$.b", `"3"`, ModifySet, `{"a": 3, "b": "3"}`, true},
 		{`{"a": []}`, "$.a[0]", `3`, ModifySet, `{"a": [3]}`, true},
 		{`{"a": [3]}`, "$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`, true},
 		{`{"a": [3]}`, "$[0]", `4`, ModifySet, `4`, true},
 		{`{"a": [3]}`, "$[1]", `4`, ModifySet, `[{"a": [3]}, 4]`, true},
+		{`{"b": true}`, "$.b", `false`, ModifySet, `{"b": false}`, true},
 
 		// nothing changed because the path is empty and we want to insert.
 		{`{}`, "$", `1`, ModifyInsert, `{}`, true},
@@ -204,6 +206,7 @@ func (s *testJSONSuite) TestBinaryJSONRemove(c *C) {
 		{`{"a":[3,4,5]}`, "$.a[0]", `{"a":[4,5]}`, true},
 		{`{"a":[3,4,5]}`, "$.a[1]", `{"a":[3,5]}`, true},
 		{`{"a":[3,4,5]}`, "$.a[4]", `{"a":[3,4,5]}`, true},
+		{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa", `{"a": [1, 2, {}]}`, true},
 	}
 	for _, tt := range tests {
 		pathExpr, err := ParseJSONPathExpr(tt.path)
@@ -267,6 +270,7 @@ func (s *testJSONSuite) TestBinaryJSONMerge(c *C) {
 		{[]string{`[1]`, `4`}, `[1, 4]`},
 		{[]string{`4`, `{"a": 1}`}, `[4, {"a": 1}]`},
 		{[]string{`4`, `1`}, `[4, 1]`},
+		{[]string{`{}`, `[]`}, `[{}]`},
 	}
 
 	for _, tt := range tests {
