@@ -180,7 +180,7 @@ func (c *Context) GoCtx() goctx.Context {
 }
 
 // StoreQueryFeedback stores the query feedback.
-func (c *Context) StoreQueryFeedback(_ *variable.QueryFeedback, _ int64, _ []interface{}) {}
+func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {

@@ -203,13 +203,8 @@ func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
 }
 
-func (s *session) StoreQueryFeedback(q *variable.QueryFeedback, actual int64, ranges []interface{}) {
-	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
-	if q.HistVersion == 0 || actual < 0 || !q.Valid {
-		return
-	}
-	q.Actual, q.Ranges = actual, ranges
-	s.statsCollector.StoreQueryFeedback(q)
+func (s *session) StoreQueryFeedback(feedback interface{}) {
+	s.statsCollector.StoreQueryFeedback(feedback)
 }
 
 type schemaLeaseChecker struct {

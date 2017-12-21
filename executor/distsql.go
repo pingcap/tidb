@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -309,16 +310,13 @@ type TableReaderExecutor struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	priority      int
-	feedback      *variable.QueryFeedback
+	feedback      *statistics.QueryFeedback
 }
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	ranges := make([]interface{}, 0, len(e.ranges))
-	for _, r := range e.ranges {
-		ranges = append(ranges, r)
-	}
-	e.ctx.StoreQueryFeedback(e.feedback, e.result.ScanCount(), ranges)
+	e.feedback.SetIntRanges(e.ranges).SetActual(e.result.ScanCount())
+	e.ctx.StoreQueryFeedback(e.feedback)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
 	e.partialResult = nil
@@ -428,16 +426,13 @@ type IndexReaderExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
-	feedback *variable.QueryFeedback
+	feedback *statistics.QueryFeedback
 }
 
 // Close implements the Executor Close interface.
 func (e *IndexReaderExecutor) Close() error {
-	ranges := make([]interface{}, 0, len(e.ranges))
-	for _, r := range e.ranges {
-		ranges = append(ranges, r)
-	}
-	e.ctx.StoreQueryFeedback(e.feedback, e.result.ScanCount(), ranges)
+	e.feedback.SetIndexRanges(e.ranges).SetActual(e.result.ScanCount())
+	e.ctx.StoreQueryFeedback(e.feedback)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
 	e.partialResult = nil
@@ -543,7 +538,7 @@ type IndexLookUpExecutor struct {
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
-	feedback   *variable.QueryFeedback
+	feedback   *statistics.QueryFeedback
 }
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
@@ -596,11 +591,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		if err != nil {
 			scanCount = -1
 		}
-		ranges := make([]interface{}, 0, len(e.ranges))
-		for _, r := range e.ranges {
-			ranges = append(ranges, r)
-		}
-		e.ctx.StoreQueryFeedback(e.feedback, scanCount, ranges)
+		e.feedback.SetIndexRanges(e.ranges).SetActual(scanCount)
+		e.ctx.StoreQueryFeedback(e.feedback)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
@@ -658,7 +650,7 @@ func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []in
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
 		priority:     e.priority,
-		feedback:     variable.NewQueryFeedback(0, 0, false, 0, 0),
+		feedback:     statistics.NewQueryFeedback(0, 0, false, 0, 0),
 	}, handles)
 	if err != nil {
 		log.Error(err)

@@ -69,7 +69,7 @@ type Context interface {
 	PreparedPlanCache() *kvcache.SimpleLRUCache
 
 	// StoreQueryFeedback stores the query feedback.
-	StoreQueryFeedback(q *variable.QueryFeedback, actual int64, ranges []interface{})
+	StoreQueryFeedback(feedback interface{})
 }
 
 type basicCtxType int

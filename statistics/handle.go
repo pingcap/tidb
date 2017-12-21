@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -51,7 +50,7 @@ type Handle struct {
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
 	// feedback is used to store query feedback info.
-	feedback []*variable.QueryFeedback
+	feedback []*QueryFeedback
 
 	Lease time.Duration
 }
@@ -84,14 +83,14 @@ func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
-		feedback:        make([]*variable.QueryFeedback, 0, maxQueryFeedBackCount),
+		feedback:        make([]*QueryFeedback, 0, maxQueryFeedBackCount),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
 }
 
 // GetQueryFeedback gets the query feedback. It is only use in test.
-func (h *Handle) GetQueryFeedback() []*variable.QueryFeedback {
+func (h *Handle) GetQueryFeedback() []*QueryFeedback {
 	defer func() {
 		h.feedback = h.feedback[:0]
 	}()

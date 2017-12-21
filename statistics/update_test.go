@@ -355,6 +355,6 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		h.DumpStatsDeltaToKV()
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 1)
-		c.Assert(feedback[0].Actual, Equals, t.actual)
+		c.Assert(feedback[0].Actual(), Equals, t.actual)
 	}
 }
