@@ -205,10 +205,12 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 }
 
 func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
-	return &DeallocateExec{
+	e := &DeallocateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		Name:         v.Name,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
@@ -303,11 +305,13 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	case *ast.RevokeStmt:
 		return b.buildRevoke(s)
 	}
-	return &SimpleExec{
+	e := &SimpleExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		Statement:    v.Statement,
 		is:           b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
@@ -320,20 +324,29 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
+	selectExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+	var baseExec baseExecutor
+	if selectExec != nil {
+		baseExec = newBaseExecutor(nil, b.ctx, selectExec)
+	} else {
+		baseExec = newBaseExecutor(nil, b.ctx)
+	}
+
 	ivs := &InsertValues{
-		baseExecutor:          newBaseExecutor(nil, b.ctx),
+		baseExecutor:          baseExec,
 		Columns:               v.Columns,
 		Lists:                 v.Lists,
 		Setlist:               v.Setlist,
 		GenColumns:            v.GenCols.Columns,
 		GenExprs:              v.GenCols.Exprs,
 		needFillDefaultValues: v.NeedFillDefaultValue,
+		SelectExec:            selectExec,
 	}
-	ivs.SelectExec = b.build(v.SelectPlan)
-	if b.err != nil {
-		b.err = errors.Trace(b.err)
-		return nil
-	}
+
 	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -385,13 +398,15 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
-	return &ReplaceExec{
+	replaceExec := &ReplaceExec{
 		InsertValues: vals,
 	}
+	replaceExec.supportChk = true
+	return replaceExec
 }
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
-	return &GrantExec{
+	e := &GrantExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		Privs:        grant.Privs,
 		ObjectType:   grant.ObjectType,
@@ -400,10 +415,12 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		WithGrant:    grant.WithGrant,
 		is:           b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
-	return &RevokeExec{
+	e := &RevokeExec{
 		ctx:        b.ctx,
 		Privs:      revoke.Privs,
 		ObjectType: revoke.ObjectType,
@@ -411,6 +428,8 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 		Users:      revoke.Users,
 		is:         b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
@@ -964,13 +983,13 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
-	b.err = setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
+	b.err = errors.Trace(setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols))
 	return e
 }
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		tasks:        make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
@@ -978,13 +997,22 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 			taskType: colTask,
 			colExec:  b.buildAnalyzeColumnsPushdown(task),
 		})
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	for _, task := range v.IdxTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: idxTask,
 			idxExec:  b.buildAnalyzeIndexPushdown(task),
 		})
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
+	e.supportChk = true
 	return e
 }
 
