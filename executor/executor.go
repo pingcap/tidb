@@ -889,6 +889,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chu
 	return nil
 }
 
+// nextHandle gets the unique handle for next row.
 func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
 	for {
 		if e.cursor >= len(e.ranges) {
