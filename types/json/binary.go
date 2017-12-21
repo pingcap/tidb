@@ -185,13 +185,13 @@ func (bj BinaryJSON) MarshalJSON() ([]byte, error) {
 func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		return marshalStringTo(buf, bj.getString()), nil
+		return marshalStringTo(buf, bj.GetString()), nil
 	case TypeCodeLiteral:
 		return marshalLiteralTo(buf, bj.Value[0]), nil
 	case TypeCodeInt64:
-		return strconv.AppendInt(buf, bj.getInt64(), 10), nil
+		return strconv.AppendInt(buf, bj.GetInt64(), 10), nil
 	case TypeCodeUint64:
-		return strconv.AppendUint(buf, bj.getUint64(), 10), nil
+		return strconv.AppendUint(buf, bj.GetUint64(), 10), nil
 	case TypeCodeFloat64:
 		return bj.marshalFloat64To(buf)
 	case TypeCodeArray:
@@ -202,19 +202,23 @@ func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-func (bj BinaryJSON) getInt64() int64 {
+// GetInt64 gets the int64 value.
+func (bj BinaryJSON) GetInt64() int64 {
 	return int64(endian.Uint64(bj.Value))
 }
 
-func (bj BinaryJSON) getUint64() uint64 {
+// GetUint64 gets the uint64 value.
+func (bj BinaryJSON) GetUint64() uint64 {
 	return endian.Uint64(bj.Value)
 }
 
-func (bj BinaryJSON) getFloat64() float64 {
-	return math.Float64frombits(bj.getUint64())
+// GetFloat64 gets the float64 value.
+func (bj BinaryJSON) GetFloat64() float64 {
+	return math.Float64frombits(bj.GetUint64())
 }
 
-func (bj BinaryJSON) getString() []byte {
+// GetString gets the string value.
+func (bj BinaryJSON) GetString() []byte {
 	strLen, lenLen := uint64(bj.Value[0]), 1
 	if strLen >= utf8.RuneSelf {
 		strLen, lenLen = binary.Uvarint(bj.Value)
@@ -263,7 +267,7 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 
 func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	// NOTE: copied from Go standard library.
-	f := bj.getFloat64()
+	f := bj.GetFloat64()
 	if math.IsInf(f, 0) || math.IsNaN(f) {
 		return buf, &json.UnsupportedValueError{Str: strconv.FormatFloat(f, 'g', -1, 64)}
 	}
@@ -500,6 +504,9 @@ func appendBinary(buf []byte, in interface{}) (TypeCode, []byte, error) {
 	case string:
 		typeCode = TypeCodeString
 		buf = appendBinaryString(buf, x)
+	case BinaryJSON:
+		typeCode = x.TypeCode
+		buf = append(buf, x.Value...)
 	case []interface{}:
 		typeCode = TypeCodeArray
 		buf, err = appendBinaryArray(buf, x)
@@ -551,9 +558,15 @@ func appendBinaryNumber(buf []byte, x json.Number) (TypeCode, []byte, error) {
 		typeCode = TypeCodeInt64
 		i64, err := x.Int64()
 		if err != nil {
-			return typeCode, nil, errors.Trace(err)
+			typeCode = TypeCodeFloat64
+			f64, err := x.Float64()
+			if err != nil {
+				return typeCode, nil, errors.Trace(err)
+			}
+			buf = appendBinaryFloat64(buf, f64)
+		} else {
+			buf = appendBinaryUint64(buf, uint64(i64))
 		}
-		buf = appendBinaryUint64(buf, uint64(i64))
 	}
 	return typeCode, buf, nil
 }

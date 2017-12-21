@@ -100,7 +100,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 	case mysql.TypeEnum:
 		return types.Enum{}
 	case mysql.TypeJSON:
-		return json.CreateJSON(nil)
+		return json.CreateBinary(nil)
 	default:
 		return nil
 	}
@@ -136,8 +136,11 @@ func makeMutRowColumn(in interface{}) *column {
 		return col
 	case types.Time:
 		return makeMutRowInterfaceColumn(x)
-	case json.JSON:
-		return makeMutRowInterfaceColumn(x)
+	case json.BinaryJSON:
+		col := newMutRowVarLenColumn(len(x.Value) + 1)
+		col.data[0] = x.TypeCode
+		copy(col.data[1:], x.Value)
+		return col
 	case types.Duration:
 		col := newMutRowFixedLenColumn(16)
 		*(*types.Duration)(unsafe.Pointer(&col.data[0])) = x
@@ -264,8 +267,8 @@ func (mr MutRow) SetValue(colIdx int, val interface{}) {
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.Set:
 		setMutRowNameValue(col, x.Name, x.Value)
-	case json.JSON:
-		col.ifaces[0] = x
+	case json.BinaryJSON:
+		setMutRowJSON(col, x)
 	}
 	col.nullBitmap[0] = 1
 }
@@ -334,5 +337,19 @@ func setMutRowNameValue(col *column, name string, val uint64) {
 	}
 	binary.LittleEndian.PutUint64(col.data, val)
 	copy(col.data[8:], name)
+	col.offsets[1] = int32(dataLen)
+}
+
+func setMutRowJSON(col *column, j json.BinaryJSON) {
+	dataLen := len(j.Value) + 1
+	if len(col.data) >= dataLen {
+		col.data = col.data[:dataLen]
+	} else {
+		buf := make([]byte, dataLen)
+		col.data = buf[:dataLen]
+		col.nullBitmap = buf[dataLen:]
+	}
+	col.data[0] = j.TypeCode
+	copy(col.data[1:], j.Value)
 	col.offsets[1] = int32(dataLen)
 }
