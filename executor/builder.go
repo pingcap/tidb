@@ -367,8 +367,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-
-	return &LoadData{
+	loadDataExec := &LoadData{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
@@ -382,6 +381,9 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 			columns:    columns,
 		},
 	}
+
+	loadDataExec.supportChk = true
+	return loadDataExec
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
