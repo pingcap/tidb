@@ -405,7 +405,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 }
 
 func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
-	return &RevokeExec{
+	e := &RevokeExec{
 		ctx:        b.ctx,
 		Privs:      revoke.Privs,
 		ObjectType: revoke.ObjectType,
@@ -413,6 +413,8 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 		Users:      revoke.Users,
 		is:         b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
