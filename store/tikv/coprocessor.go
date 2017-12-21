@@ -535,7 +535,19 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 			NotFillCache:   it.req.NotFillCache,
 		},
 	}
-	resp, err := sender.SendReq(bo, req, task.region, ReadTimeoutMedium)
+	timeout := ReadTimeoutMedium
+	if task.cmdType == tikvrpc.CmdCopStream {
+		// Don't set timeout for streaming, because we use context cancel to implement timeout,
+		// but call cancel() would kill the stream:
+		//
+		//     context, cancel := goctx.WithTimeout(bo, timeout)
+		//     defer cancel()
+		//     resp := client.SendReq(context, ...)
+		//
+		// The resp is a stream and killed by cancel operation immediately.
+		timeout = 0
+	}
+	resp, err := sender.SendReq(bo, req, task.region, timeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
