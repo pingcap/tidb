@@ -788,12 +788,7 @@ func (e *InsertExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 
 	var rows [][]types.Datum
-	var selectExec Executor
-	if len(e.children) > 0 {
-		selectExec = e.children[0]
-	}
-
-	if selectExec != nil {
+	if len(e.children) > 0 && e.children[0] != nil {
 		rows, err = e.getRowsSelect(goCtx, cols, e.IgnoreErr)
 	} else {
 		rows, err = e.getRows(cols, e.IgnoreErr)
@@ -1353,11 +1348,7 @@ func (e *ReplaceExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 
 	var rows [][]types.Datum
-	var selectExec Executor
-	if len(e.children) > 0 {
-		selectExec = e.children[0]
-	}
-	if selectExec != nil {
+	if len(e.children) > 0 && e.children[0] != nil {
 		rows, err = e.getRowsSelectChunk(goCtx, cols, false)
 	} else {
 		rows, err = e.getRows(cols, false)
