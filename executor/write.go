@@ -223,7 +223,7 @@ type tblColPosInfo struct {
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64][]types.Datum is the joined table handle, which represent a unique reference row.
 // the value in map[int64][]types.Datum is all the columns about the row.
-type tableRowMapType map[int64]map[int64][]types.Datum
+type tableRowMapType map[int64]map[int64]Row
 
 func (e *DeleteExec) deleteMultiTables(goCtx goctx.Context) error {
 	if len(e.Tables) == 0 {
@@ -393,7 +393,7 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []t
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if tblRowMap[info.tblID] == nil {
-			tblRowMap[info.tblID] = make(map[int64][]types.Datum)
+			tblRowMap[info.tblID] = make(map[int64]Row)
 		}
 		handle := joinedRow[info.handleIndex].GetInt64()
 		// tblRowMap[info.tblID][handle] hold the row datas binding to this table and this handle.
