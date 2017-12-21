@@ -85,7 +85,7 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 		c.addFixedLenColumn(16, initCap)
 	case mysql.TypeNewDecimal:
 		c.addFixedLenColumn(types.MyDecimalStructSize, initCap)
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeJSON:
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		c.addInterfaceColumn(initCap)
 	default:
 		c.addVarLenColumn(initCap)
@@ -260,8 +260,8 @@ func (c *Chunk) AppendSet(colIdx int, set types.Set) {
 }
 
 // AppendJSON appends a JSON value to the chunk.
-func (c *Chunk) AppendJSON(colIdx int, j json.JSON) {
-	c.columns[colIdx].appendInterface(j)
+func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
+	c.columns[colIdx].appendJSON(j)
 }
 
 type column struct {
@@ -394,6 +394,12 @@ func (c *column) appendNameValue(name string, val uint64) {
 	c.finishAppendVar()
 }
 
+func (c *column) appendJSON(j json.BinaryJSON) {
+	c.data = append(c.data, j.TypeCode)
+	c.data = append(c.data, j.Value...)
+	c.finishAppendVar()
+}
+
 // Row represents a row of data, can be used to assess values.
 type Row struct {
 	c   *Chunk
@@ -496,10 +502,10 @@ func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
 }
 
 // GetJSON returns the JSON value with the colIdx.
-func (r Row) GetJSON(colIdx int) json.JSON {
+func (r Row) GetJSON(colIdx int) json.BinaryJSON {
 	col := r.c.columns[colIdx]
-	j, _ := col.ifaces[r.idx].(json.JSON)
-	return j
+	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
+	return json.BinaryJSON{TypeCode: col.data[start], Value: col.data[start+1 : end]}
 }
 
 // GetDatumRow converts chunk.Row to types.DatumRow.
