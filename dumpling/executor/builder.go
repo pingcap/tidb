@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"math"
 	"sort"
 	"sync"
@@ -27,11 +28,13 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -1054,16 +1057,26 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, innerExecBuilder.Schema().Len())
 	}
+	var outerConditions, innerConditions []expression.Expression
+	if v.OuterIndex == 0 {
+		outerConditions = v.LeftConditions
+		innerConditions = v.RightConditions
+	} else {
+		outerConditions = v.RightConditions
+		innerConditions = v.LeftConditions
+	}
 	return &IndexLookUpJoin{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerExec:        outerExec,
 		innerExecBuilder: innerExecBuilder,
 		outerKeys:        v.OuterJoinKeys,
 		innerKeys:        v.InnerJoinKeys,
-		outerFilter:      v.LeftConditions,
-		innerFilter:      v.RightConditions,
+		outerFilter:      outerConditions,
+		innerFilter:      innerConditions,
 		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, nil, nil),
 		maxBatchSize:     batchSize,
+		indexRanges:      v.Ranges,
+		keyOff2IdxOff:    v.KeyOff2IdxOff,
 	}
 }
 
@@ -1093,6 +1106,8 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 		},
 		workerWg:        new(sync.WaitGroup),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		indexRanges:     v.Ranges,
+		keyOff2IdxOff:   v.KeyOff2IdxOff,
 	}
 	e.supportChk = true
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
@@ -1245,19 +1260,20 @@ type dataReaderBuilder struct {
 	*executorBuilder
 }
 
-func (builder *dataReaderBuilder) buildExecutorForDatums(goCtx goctx.Context, datums [][]types.Datum) (Executor, error) {
+func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context, datums [][]types.Datum,
+	IndexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
-	case *plan.PhysicalIndexReader:
-		return builder.buildIndexReaderForDatums(goCtx, v, datums)
 	case *plan.PhysicalTableReader:
-		return builder.buildTableReaderForDatums(goCtx, v, datums)
+		return builder.buildTableReaderForIndexJoin(goCtx, v, datums)
+	case *plan.PhysicalIndexReader:
+		return builder.buildIndexReaderForIndexJoin(goCtx, v, datums, IndexRanges, keyOff2IdxOff)
 	case *plan.PhysicalIndexLookUpReader:
-		return builder.buildIndexLookUpReaderForDatums(goCtx, v, datums)
+		return builder.buildIndexLookUpReaderForIndexJoin(goCtx, v, datums, IndexRanges, keyOff2IdxOff)
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
-func (builder *dataReaderBuilder) buildTableReaderForDatums(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1290,39 +1306,53 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	return e, nil
 }
 
-func (builder *dataReaderBuilder) buildIndexReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexReader, values [][]types.Datum) (Executor, error) {
+func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexReader,
+	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var b requestBuilder
-	kvReq, err := b.SetIndexValues(e.tableID, e.index.ID, values).
-		SetDAGRequest(e.dagPB).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		Build()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.result.Fetch(goCtx)
-	return e, nil
-}
-
-func (builder *dataReaderBuilder) buildIndexLookUpReaderForDatums(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader, values [][]types.Datum) (Executor, error) {
-	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
+	kvRanges, err := buildKvRangesForIndexJoin(e.tableID, e.index.ID, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	err = e.open(goCtx, kvRanges)
 	return e, errors.Trace(err)
+}
+
+func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader,
+	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	kvRanges, err := buildKvRangesForIndexJoin(e.tableID, e.index.ID, values, indexRanges, keyOff2IdxOff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = e.open(goCtx, kvRanges)
+	return e, errors.Trace(err)
+}
+
+// buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
+func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
+	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
+	for _, val := range keyDatums {
+		for _, ran := range indexRanges {
+			for keyOff, idxOff := range keyOff2IdxOff {
+				ran.LowVal[idxOff] = val[keyOff]
+				ran.HighVal[idxOff] = val[keyOff]
+			}
+		}
+		tmpKvRanges, err := indexRangesToKVRanges(tableID, indexID, indexRanges)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		kvRanges = append(kvRanges, tmpKvRanges...)
+	}
+	// kvRanges don't overlap each other. So compare StartKey is enough.
+	sort.Slice(kvRanges, func(i, j int) bool {
+		return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+	})
+	return kvRanges, nil
 }
