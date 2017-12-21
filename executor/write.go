@@ -700,25 +700,7 @@ type InsertExec struct {
 	finished bool
 }
 
-func (e *InsertExec) exec(goCtx goctx.Context) (Row, error) {
-	if e.finished {
-		return nil, nil
-	}
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var rows [][]types.Datum
-	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(goCtx, cols, e.IgnoreErr)
-	} else {
-		rows, err = e.getRows(cols, e.IgnoreErr)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
 	batchSize := e.ctx.GetSessionVars().DMLBatchSize
@@ -773,7 +755,50 @@ func (e *InsertExec) exec(goCtx goctx.Context) (Row, error) {
 
 // Next implements the Executor Next interface.
 func (e *InsertExec) Next(goCtx goctx.Context) (Row, error) {
-	return e.exec(goCtx)
+	if e.finished {
+		return nil, nil
+	}
+	cols, err := e.getColumns(e.Table.Cols())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var rows [][]types.Datum
+	if e.SelectExec != nil {
+		rows, err = e.getRowsSelect(goCtx, cols, e.IgnoreErr)
+	} else {
+		rows, err = e.getRows(cols, e.IgnoreErr)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return e.exec(goCtx, rows)
+}
+
+// NextChunk implements Exec NextChunk interface.
+func (e *InsertExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.finished {
+		return nil
+	}
+	cols, err := e.getColumns(e.Table.Cols())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var rows [][]types.Datum
+	if len(e.children) > 0 && e.children[0] != nil {
+		rows, err = e.getRowsSelect(goCtx, cols, e.IgnoreErr)
+	} else {
+		rows, err = e.getRows(cols, e.IgnoreErr)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	_, err = e.exec(goCtx, rows)
+	return errors.Trace(err)
 }
 
 // Close implements the Executor Close interface.
@@ -791,13 +816,6 @@ func (e *InsertExec) Open(goCtx goctx.Context) error {
 		return e.SelectExec.Open(goCtx)
 	}
 	return nil
-}
-
-// NextChunk implements Exec NextChunk interface.
-func (e *InsertExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	_, err := e.exec(goCtx)
-	return errors.Trace(err)
 }
 
 // getColumns gets the explicitly specified columns of an insert statement. There are three cases:
@@ -994,6 +1012,37 @@ func (e *InsertValues) getRowsSelect(goCtx goctx.Context, cols []*table.Column, 
 			return nil, errors.Trace(err)
 		}
 		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
+	// process `insert|replace into ... select ... from ...`
+	selectExec := e.children[0]
+	if selectExec.Schema().Len() != len(cols) {
+		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
+	}
+	var rows [][]types.Datum
+	fields := selectExec.Schema().GetTypes()
+	for {
+		chk := selectExec.newChunk()
+		err := selectExec.NextChunk(goCtx, chk)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for innerChunkRow := chk.Begin(); innerChunkRow != chk.End(); innerChunkRow = innerChunkRow.Next() {
+			innerRow := innerChunkRow.GetDatumRow(fields)
+			e.currRow = int64(len(rows))
+			row, err := e.fillRowData(cols, innerRow, ignoreErr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			rows = append(rows, row)
+		}
 	}
 	return rows, nil
 }
@@ -1204,26 +1253,7 @@ func (e *ReplaceExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
-	if e.finished {
-		return nil, nil
-	}
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var rows [][]types.Datum
-	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(goCtx, cols, false)
-	} else {
-		rows, err = e.getRows(cols, false)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -1281,6 +1311,54 @@ func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
 	}
 	e.finished = true
 	return nil, nil
+}
+
+// Next implements the Executor Next interface.
+func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
+	if e.finished {
+		return nil, nil
+	}
+	cols, err := e.getColumns(e.Table.Cols())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var rows [][]types.Datum
+	if e.SelectExec != nil {
+		rows, err = e.getRowsSelect(goCtx, cols, false)
+	} else {
+		rows, err = e.getRows(cols, false)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return e.exec(goCtx, rows)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *ReplaceExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.finished {
+		return nil
+	}
+	cols, err := e.getColumns(e.Table.Cols())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var rows [][]types.Datum
+	if len(e.children) > 0 && e.children[0] != nil {
+		rows, err = e.getRowsSelectChunk(goCtx, cols, false)
+	} else {
+		rows, err = e.getRows(cols, false)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	_, err = e.exec(goCtx, rows)
+	return errors.Trace(err)
 }
 
 // UpdateExec represents a new update executor.

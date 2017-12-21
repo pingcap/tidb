@@ -324,20 +324,29 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
+	selectExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+	var baseExec baseExecutor
+	if selectExec != nil {
+		baseExec = newBaseExecutor(nil, b.ctx, selectExec)
+	} else {
+		baseExec = newBaseExecutor(nil, b.ctx)
+	}
+
 	ivs := &InsertValues{
-		baseExecutor:          newBaseExecutor(nil, b.ctx),
+		baseExecutor:          baseExec,
 		Columns:               v.Columns,
 		Lists:                 v.Lists,
 		Setlist:               v.Setlist,
 		GenColumns:            v.GenCols.Columns,
 		GenExprs:              v.GenCols.Exprs,
 		needFillDefaultValues: v.NeedFillDefaultValue,
+		SelectExec:            selectExec,
 	}
-	ivs.SelectExec = b.build(v.SelectPlan)
-	if b.err != nil {
-		b.err = errors.Trace(b.err)
-		return nil
-	}
+
 	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -389,9 +398,11 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
-	return &ReplaceExec{
+	replaceExec := &ReplaceExec{
 		InsertValues: vals,
 	}
+	replaceExec.supportChk = true
+	return replaceExec
 }
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
