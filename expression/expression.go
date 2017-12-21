@@ -58,7 +58,7 @@ type Expression interface {
 	EvalDuration(row types.Row, sc *stmtctx.StatementContext) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(row types.Row, sc *stmtctx.StatementContext) (val json.JSON, isNull bool, err error)
+	EvalJSON(row types.Row, sc *stmtctx.StatementContext) (val json.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType

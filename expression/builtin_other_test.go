@@ -89,10 +89,10 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 	duration2 := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute)}
 	duration3 := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Second)}
 	duration4 := types.Duration{Duration: time.Duration(12 * time.Hour)}
-	json1 := json.CreateJSON("123")
-	json2 := json.CreateJSON("123.1")
-	json3 := json.CreateJSON("123.2")
-	json4 := json.CreateJSON("123.3")
+	json1 := json.CreateBinary("123")
+	json2 := json.CreateBinary("123.1")
+	json3 := json.CreateBinary("123.2")
+	json4 := json.CreateBinary("123.3")
 	testCases := []struct {
 		args []interface{}
 		res  interface{}

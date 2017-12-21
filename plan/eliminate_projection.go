@@ -69,19 +69,15 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 }
 
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
-	children := make([]Plan, 0, len(p.Children()))
-	for _, child := range p.Children() {
-		newChild := doPhysicalProjectionElimination(child.(PhysicalPlan))
-		children = append(children, newChild)
+	for i, child := range p.Children() {
+		p.Children()[i] = doPhysicalProjectionElimination(child.(PhysicalPlan))
 	}
-	setParentAndChildren(p, children...)
 
 	proj, isProj := p.(*PhysicalProjection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
 	}
 	child := p.Children()[0]
-	removePlan(p)
 	return child.(PhysicalPlan)
 }
 
@@ -114,18 +110,15 @@ func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context) (Log
 // eliminate eliminates the redundant projection in a logical plan.
 func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool) LogicalPlan {
 	proj, isProj := p.(*LogicalProjection)
-	children := make([]Plan, 0, len(p.Children()))
-
 	childFlag := canEliminate
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		childFlag = false
 	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
 		childFlag = true
 	}
-	for _, child := range p.Children() {
-		children = append(children, pe.eliminate(child.(LogicalPlan), replace, childFlag))
+	for i, child := range p.Children() {
+		p.Children()[i] = pe.eliminate(child.(LogicalPlan), replace, childFlag)
 	}
-	setParentAndChildren(p, children...)
 
 	switch p.(type) {
 	case *LogicalSort, *LogicalTopN, *LogicalLimit, *LogicalSelection, *LogicalMaxOneRow, *LogicalLock:
@@ -161,7 +154,6 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
-	removePlan(p)
 	return p.Children()[0].(LogicalPlan)
 }
 
