@@ -305,11 +305,13 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	case *ast.RevokeStmt:
 		return b.buildRevoke(s)
 	}
-	return &SimpleExec{
+	e := &SimpleExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		Statement:    v.Statement,
 		is:           b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
