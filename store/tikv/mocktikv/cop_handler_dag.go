@@ -15,12 +15,15 @@ package mocktikv
 
 import (
 	"bytes"
+	"io"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc/metadata"
 )
 
 var dummySlice = make([]byte, 0)
@@ -55,11 +59,15 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		return resp
 	}
 
+	chunks, err := h.getDAGRequestChunk(req)
+	return buildResp(chunks, err)
+}
+
+func (h *rpcHandler) getDAGRequestChunk(req *coprocessor.Request) ([]tipb.Chunk, error) {
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		resp.OtherError = err.Error()
-		return resp
+		return nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
 	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
@@ -70,9 +78,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
-		return &coprocessor.Response{
-			OtherError: err.Error(),
-		}
+		return nil, errors.Trace(err)
 	}
 	var (
 		chunks []tipb.Chunk
@@ -95,7 +101,24 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks = appendRow(chunks, data, rowCnt)
 		rowCnt++
 	}
-	return buildResp(chunks, err)
+	return chunks, errors.Trace(err)
+}
+
+func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
+	if len(req.Ranges) == 0 {
+		return nil, errors.Errorf("empty request range")
+	}
+	switch req.Tp {
+	case kv.ReqTypeDAG:
+		return h.handleCopStreamDAG(req)
+	case kv.ReqTypeAnalyze:
+	}
+	return nil, errors.New("not implement yet")
+}
+
+func (h *rpcHandler) handleCopStreamDAG(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
+	chunks, err := h.getDAGRequestChunk(req)
+	return buildStreamResponse(chunks, err)
 }
 
 func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
@@ -330,6 +353,81 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
 	sc.PadCharToFullLength = (flags & FlagPadCharToFullLength) > 0
 	return sc
+}
+
+func buildStreamResponse(chunks []tipb.Chunk, err error) (tikvpb.Tikv_CoprocessorStreamClient, error) {
+	return &mockCoprocessorStreamClient{
+		chunks: chunks,
+		err:    err,
+	}, nil
+}
+
+type mockClientStream struct{}
+
+func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
+func (mockClientStream) Trailer() metadata.MD         { return nil }
+func (mockClientStream) CloseSend() error             { return nil }
+func (mockClientStream) Context() goctx.Context       { return nil }
+func (mockClientStream) SendMsg(m interface{}) error  { return nil }
+func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
+
+type mockCoprocessorStreamClient struct {
+	mockClientStream
+
+	chunks []tipb.Chunk
+	idx    int
+	err    error
+}
+
+type streamRegionError struct {
+	mockClientStream
+	*errorpb.Error
+}
+
+func (e *streamRegionError) Recv() (*coprocessor.Response, error) {
+	return &coprocessor.Response{
+		RegionError: e.Error,
+	}, nil
+}
+
+func (mock *mockCoprocessorStreamClient) Recv() (*coprocessor.Response, error) {
+	var resp coprocessor.Response
+	if mock.err != nil {
+		if locked, ok := errors.Cause(mock.err).(*ErrLocked); ok {
+			resp.Locked = &kvrpcpb.LockInfo{
+				Key:         locked.Key,
+				PrimaryLock: locked.Primary,
+				LockVersion: locked.StartTS,
+				LockTtl:     locked.TTL,
+			}
+		} else {
+			resp.OtherError = mock.err.Error()
+		}
+		return &resp, nil
+	}
+
+	if mock.idx >= len(mock.chunks) {
+		// Note here, use io.EOF indicates the stream finish.
+		return nil, io.EOF
+	}
+	data, err := mock.chunks[mock.idx].Marshal()
+	if err != nil {
+		resp.OtherError = err.Error()
+		return &resp, nil
+	}
+	streamResponse := tipb.StreamResponse{
+		Error:      toPBError(err),
+		EncodeType: tipb.EncodeType_TypeDefault,
+		Data:       data,
+	}
+	data1, err1 := proto.Marshal(&streamResponse)
+	if err1 != nil {
+		resp.OtherError = err1.Error()
+		return &resp, nil
+	}
+	resp.Data = data1
+	mock.idx++
+	return &resp, nil
 }
 
 func buildResp(chunks []tipb.Chunk, err error) *coprocessor.Response {
