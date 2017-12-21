@@ -229,6 +229,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	dual.SetSchema(expression.NewSchema())
 
 	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
@@ -236,10 +237,17 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 			return nil
 		}
 		p.Exprs = append(p.Exprs, expr)
+		schema.Append(&expression.Column{
+			FromID:   p.id,
+			Position: schema.Len() + 1,
+			RetType:  expr.GetType(),
+		})
 	}
 	p.SetChildren(dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
+	p.SetSchema(schema)
+	p.calculateNoDelay = true
 	return p
 }
 

@@ -598,8 +598,9 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	exprs        []expression.Expression
-	vectorizable bool
+	exprs            []expression.Expression
+	vectorizable     bool
+	calculateNoDelay bool
 }
 
 // Open implements the Executor Open interface.

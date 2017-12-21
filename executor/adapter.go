@@ -231,6 +231,11 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
 		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
+	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
+		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+		// the Projection has two expressions and two columns in the schema, but we should
+		// not return the result of the two expressions.
+		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
 	}
 
 	return &recordSet{
