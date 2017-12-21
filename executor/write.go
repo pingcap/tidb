@@ -760,8 +760,7 @@ func (k loadDataVarKeyType) String() string {
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
-// Next implements the Executor Next interface.
-func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
+func (e *LoadData) exec(goCtx goctx.Context) (Row, error) {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return nil, errors.New("Load Data: don't support load data without local field")
@@ -783,6 +782,18 @@ func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
 	ctx.SetValue(LoadDataVarKey, e.loadDataInfo)
 
 	return nil, nil
+}
+
+// Next implements the Executor Next interface.
+func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
+	return e.exec(goCtx)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *LoadData) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	_, err := e.exec(goCtx)
+	return errors.Trace(err)
 }
 
 // Close implements the Executor Close interface.
