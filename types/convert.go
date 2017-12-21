@@ -337,7 +337,6 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 	case json.TypeCodeString:
 		return StrToInt(sc, hack.String(j.GetString()))
 	}
-	panic(j.Value)
 	return 0, errors.New("Unknown type code in JSON")
 }
 
