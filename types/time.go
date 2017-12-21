@@ -23,11 +23,11 @@ import (
 	gotime "time"
 	"unicode"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 )
 
 // Portable analogs of some common call errors.
@@ -502,10 +502,9 @@ func (t *Time) Check() error {
 func (t *Time) Sub(t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
-		// TODO: Consider time_zone variable.
-		a, err := t.Time.GoTime(gotime.Local)
+		a, err := t.Time.GoTime(t.TimeZone)
 		terror.Log(errors.Trace(err))
-		b, err := t1.Time.GoTime(gotime.Local)
+		b, err := t1.Time.GoTime(t.TimeZone)
 		terror.Log(errors.Trace(err))
 		duration = a.Sub(b)
 	} else {

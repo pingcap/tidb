@@ -14,6 +14,8 @@
 package statistics_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -132,6 +134,29 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("40", "70"))
+}
+
+func (s *testStatsUpdateSuite) TestRollback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int)")
+	testKit.MustExec("begin")
+	testKit.MustExec("insert into t values (1,2)")
+	testKit.MustExec("rollback")
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := s.do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	h.DumpStatsDeltaToKV()
+	h.Update(is)
+
+	stats := h.GetTableStats(tableInfo.ID)
+	c.Assert(stats.Count, Equals, int64(0))
+	c.Assert(stats.ModifyCount, Equals, int64(0))
 }
 
 func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
@@ -266,6 +291,22 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(stats.Count, Equals, int64(1))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 
+	_, err = testKit.Exec("insert into t values (1)")
+	c.Assert(err, IsNil)
+	h.DumpStatsDeltaToKV()
+	h.Clear()
+	// We set `Lease` here so that `Update` will use load by need strategy.
+	h.Lease = time.Second
+	h.Update(is)
+	h.Lease = 0
+	err = h.HandleAutoAnalyze(is)
+	c.Assert(err, IsNil)
+	h.Update(is)
+	stats = h.GetTableStats(tableInfo.ID)
+	c.Assert(stats.Count, Equals, int64(2))
+	// Modify count is non-zero means that we do not analyze the table.
+	c.Assert(stats.ModifyCount, Equals, int64(1))
+
 	_, err = testKit.Exec("create index idx on t(a)")
 	c.Assert(err, IsNil)
 	is = do.InfoSchema()
@@ -275,7 +316,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo.ID)
-	c.Assert(stats.Count, Equals, int64(1))
+	c.Assert(stats.Count, Equals, int64(2))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
 	c.Assert(ok, IsTrue)

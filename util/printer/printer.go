@@ -17,8 +17,8 @@ import (
 	"bytes"
 	"fmt"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/mysql"
+	log "github.com/sirupsen/logrus"
 )
 
 // Version information.
