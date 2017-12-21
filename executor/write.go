@@ -208,9 +208,9 @@ func (e *DeleteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}()
 
 	if e.IsMultiTable {
-		return e.deleteMultiTablesByChunk(goCtx)
+		return errors.Trace(e.deleteMultiTablesByChunk(goCtx))
 	}
-	return e.deleteSingleTableByChunk(goCtx)
+	return errors.Trace(e.deleteSingleTableByChunk(goCtx))
 }
 
 type tblColPosInfo struct {
@@ -220,7 +220,9 @@ type tblColPosInfo struct {
 	handleIndex   int
 }
 
-// tableRowMapType is a map for unique (Table, Row) pair.
+// tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
+// the key in map[int64][]types.Datum is the joined table handle, which represent a unique reference row.
+// the value in map[int64][]types.Datum is all the columns about the row.
 type tableRowMapType map[int64]map[int64][]types.Datum
 
 func (e *DeleteExec) deleteMultiTables(goCtx goctx.Context) error {
