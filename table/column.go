@@ -380,7 +380,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeEnum:
 		d.SetMysqlEnum(types.Enum{})
 	case mysql.TypeJSON:
-		d.SetMysqlJSON(json.CreateJSON(nil))
+		d.SetMysqlJSON(json.CreateBinary(nil))
 	}
 	return d
 }

@@ -54,7 +54,7 @@ func (bj BinaryJSON) Type() string {
 func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		s, err := unquoteString(hack.String(bj.getString()))
+		s, err := unquoteString(hack.String(bj.GetString()))
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -318,7 +318,7 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) {
 	elemCount := parentBj.getElemCount()
 	insertKey := hack.Slice(lastLeg.dotKey)
 	insertIdx := sort.Search(elemCount, func(i int) bool {
-		return bytes.Compare(newBj.objectGetKey(i), insertKey) >= 0
+		return bytes.Compare(parentBj.objectGetKey(i), insertKey) >= 0
 	})
 	keys := make([][]byte, 0, elemCount+1)
 	elems := make([]BinaryJSON, 0, elemCount+1)
@@ -390,27 +390,34 @@ func (bm *binaryModifier) doRemove(path PathExpression) {
 
 // rebuild merges the old and the modified JSON into a new BinaryJSON
 func (bm *binaryModifier) rebuild() BinaryJSON {
+	buf := make([]byte, 0, len(bm.bj.Value)+len(bm.modifyValue.Value))
+	value, tpCode := bm.rebuildTo(buf)
+	return BinaryJSON{TypeCode: tpCode, Value: value}
+}
+
+func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, TypeCode) {
 	if bm.modifyPtr == &bm.bj.Value[0] {
-		return bm.modifyValue
+		bm.modifyPtr = nil
+		return append(buf, bm.modifyValue.Value...), bm.modifyValue.TypeCode
 	} else if bm.modifyPtr == nil {
-		return bm.bj
+		return append(buf, bm.bj.Value...), bm.bj.TypeCode
 	}
 	bj := bm.bj
 	switch bj.TypeCode {
 	case TypeCodeLiteral, TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64, TypeCodeString:
-		return bj
+		return append(buf, bj.Value...), bj.TypeCode
 	}
-	buf := make([]byte, 0, len(bm.bj.Value)+len(bm.modifyValue.Value))
+	docOff := len(buf)
 	elemCount := bj.getElemCount()
-	var size, valEntryStart int
+	var valEntryStart int
 	if bj.TypeCode == TypeCodeArray {
-		size = headerSize + elemCount*valEntrySize
+		copySize := headerSize + elemCount*valEntrySize
 		valEntryStart = headerSize
-		buf = append(buf, bj.Value[:size]...)
+		buf = append(buf, bj.Value[:copySize]...)
 	} else {
-		size = headerSize + elemCount*(keyEntrySize+valEntrySize)
+		copySize := headerSize + elemCount*(keyEntrySize+valEntrySize)
 		valEntryStart = headerSize + elemCount*keyEntrySize
-		buf = append(buf, bj.Value[:size]...)
+		buf = append(buf, bj.Value[:copySize]...)
 		if elemCount > 0 {
 			firstKeyOff := int(endian.Uint32(bj.Value[headerSize:]))
 			lastKeyOff := int(endian.Uint32(bj.Value[headerSize+(elemCount-1)*keyEntrySize:]))
@@ -421,20 +428,21 @@ func (bm *binaryModifier) rebuild() BinaryJSON {
 	for i := 0; i < elemCount; i++ {
 		valEntryOff := valEntryStart + i*valEntrySize
 		elem := bj.valEntryGet(valEntryOff)
-		if bm.modifyPtr == &elem.Value[0] {
-			elem = bm.modifyValue
+		bm.bj = elem
+		var tpCode TypeCode
+		valOff := len(buf) - docOff
+		buf, tpCode = bm.rebuildTo(buf)
+		buf[docOff+valEntryOff] = tpCode
+		if tpCode == TypeCodeLiteral {
+			lastIdx := len(buf) - 1
+			endian.PutUint32(buf[docOff+valEntryOff+valTypeSize:], uint32(buf[lastIdx]))
+			buf = buf[:lastIdx]
+		} else {
+			endian.PutUint32(buf[docOff+valEntryOff+valTypeSize:], uint32(valOff))
 		}
-		buf[valEntryOff] = elem.TypeCode
-		if elem.TypeCode == TypeCodeLiteral {
-			endian.PutUint32(buf[valEntryOff+valTypeSize:], uint32(elem.Value[0]))
-			continue
-		}
-		endian.PutUint32(buf[valEntryOff+valTypeSize:], uint32(len(buf)))
-		buf = append(buf, elem.Value...)
-		size += len(elem.Value)
 	}
-	endian.PutUint32(buf[dataSizeOff:], uint32(size))
-	return BinaryJSON{TypeCode: bj.TypeCode, Value: buf}
+	endian.PutUint32(buf[docOff+dataSizeOff:], uint32(len(buf)-docOff))
+	return buf, bj.TypeCode
 }
 
 // CompareBinary compares two binary json objects. Returns -1 if left < right,
@@ -453,11 +461,11 @@ func CompareBinary(left, right BinaryJSON) int {
 			// false is less than true.
 			cmp = int(right.Value[0]) - int(left.Value[0])
 		case TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64:
-			leftFloat := i64AsFloat64(left.getInt64(), left.TypeCode)
-			rightFloat := i64AsFloat64(right.getInt64(), right.TypeCode)
+			leftFloat := i64AsFloat64(left.GetInt64(), left.TypeCode)
+			rightFloat := i64AsFloat64(right.GetInt64(), right.TypeCode)
 			cmp = compareFloat64PrecisionLoss(leftFloat, rightFloat)
 		case TypeCodeString:
-			cmp = bytes.Compare(left.getString(), right.getString())
+			cmp = bytes.Compare(left.GetString(), right.GetString())
 		case TypeCodeArray:
 			leftCount := left.getElemCount()
 			rightCount := right.getElemCount()
@@ -488,31 +496,21 @@ func CompareBinary(left, right BinaryJSON) int {
 // 4) an adjacent array and object are merged by autowrapping the object as an array.
 func MergeBinary(bjs []BinaryJSON) BinaryJSON {
 	var remain = bjs
-	var arrays, objects []BinaryJSON
+	var objects []BinaryJSON
 	var results []BinaryJSON
 	for len(remain) > 0 {
-		arrays, remain = getAdjacentArrays(remain)
-		if len(arrays) > 0 {
-			results = append(results, mergeBinaryArray(arrays))
-		}
-		objects, remain = getAdjacentObjects(remain)
-		if len(objects) > 0 {
+		if remain[0].TypeCode != TypeCodeObject {
+			results = append(results, remain[0])
+			remain = remain[1:]
+		} else {
+			objects, remain = getAdjacentObjects(remain)
 			results = append(results, mergeBinaryObject(objects))
 		}
 	}
 	if len(results) == 1 {
 		return results[0]
 	}
-	return buildBinaryArray(results)
-}
-
-func getAdjacentArrays(bjs []BinaryJSON) (arrays, remain []BinaryJSON) {
-	for i := 0; i < len(bjs); i++ {
-		if bjs[i].TypeCode == TypeCodeObject {
-			return bjs[:i], bjs[i:]
-		}
-	}
-	return bjs, nil
+	return mergeBinaryArray(results)
 }
 
 func getAdjacentObjects(bjs []BinaryJSON) (objects, remain []BinaryJSON) {
@@ -536,9 +534,6 @@ func mergeBinaryArray(elems []BinaryJSON) BinaryJSON {
 				buf = append(buf, elem.arrayGetElem(j))
 			}
 		}
-	}
-	if len(buf) == 1 {
-		return buf[0]
 	}
 	return buildBinaryArray(buf)
 }
