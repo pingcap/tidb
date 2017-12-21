@@ -602,6 +602,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			}
 		}
 		if needProjection {
+			b.optFlag |= flagEliminateProjection
 			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
 			proj.schema = schema4Union.Clone()
 			for _, col := range proj.schema.Columns {
@@ -624,22 +625,10 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		}
 	}
 	firstSchema := u.children[0].Schema().Clone()
-	for i, sel := range u.children {
+	for _, sel := range u.children {
 		if firstSchema.Len() != sel.Schema().Len() {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
 			return nil
-		}
-		if _, ok := sel.(*LogicalProjection); !ok {
-			b.optFlag |= flagEliminateProjection
-			proj := LogicalProjection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.ctx)
-			schema := sel.Schema().Clone()
-			for _, col := range schema.Columns {
-				col.FromID = proj.ID()
-			}
-			proj.SetSchema(schema)
-			proj.SetChildren(sel)
-			sel = proj
-			u.children[i] = proj
 		}
 	}
 
