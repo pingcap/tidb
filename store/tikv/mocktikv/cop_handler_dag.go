@@ -259,10 +259,15 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	aggCtxs := make([]*aggregation.AggEvaluateContext, 0, len(aggs))
+	for _, agg := range aggs {
+		aggCtxs = append(aggCtxs, agg.CreateContext())
+	}
 
 	return &streamAggExec{
 		evalCtx:           ctx.evalCtx,
 		aggExprs:          aggs,
+		aggCtxs:           aggCtxs,
 		groupByExprs:      groupBys,
 		currGroupByValues: make([][]byte, 0),
 		relatedColOffsets: relatedColOffsets,

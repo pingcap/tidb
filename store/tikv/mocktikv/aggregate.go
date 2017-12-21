@@ -255,12 +255,6 @@ func (e *streamAggExec) Next(goCtx goctx.Context) (retRow [][]byte, err error) {
 		return nil, nil
 	}
 
-	if e.aggCtxs == nil {
-		for _, agg := range e.aggExprs {
-			e.aggCtxs = append(e.aggCtxs, agg.CreateContext())
-		}
-	}
-
 	for {
 		values, err := e.src.Next(goCtx)
 		if err != nil {

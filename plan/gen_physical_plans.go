@@ -18,13 +18,10 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 )
-
-// SupportStreamAggPushDown will be removed after supporting stream aggregation on TiKV.
-// TODO: Remove it.
-var SupportStreamAggPushDown bool
 
 func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, p.stats, prop)
@@ -501,11 +498,17 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			continue
 		}
 		for _, tp := range wholeTaskTypes {
+			// Table scan can't meet the stream aggregation's require prop.
 			if tp == copDoubleReadTaskType {
 				continue
 			}
-			if !SupportStreamAggPushDown && tp == copSingleReadTaskType {
-				continue
+			// Now we only support pushing down stream aggregation on mocktikv.
+			// TODO: Remove it after TiKV supports stream aggregation.
+			if tp == copSingleReadTaskType {
+				client := p.ctx.GetClient()
+				if client.IsRequestTypeSupported(kv.ReqSubTypeStreamAgg, 0) {
+					continue
+				}
 			}
 			childProp := &requiredProp{
 				taskTp:      tp,

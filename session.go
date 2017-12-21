@@ -1067,12 +1067,6 @@ func createSession(store kv.Storage) (*session, error) {
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
-	// If the value of SupportDeleteRange is true, it means the store is mocktikv.
-	// Now we only support pushing down stream aggregation on mocktikv.
-	// TODO: Remove it.
-	if !store.SupportDeleteRange() {
-		plan.SupportStreamAggPushDown = true
-	}
 	if plan.PreparedPlanCacheEnabled {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
 	}
