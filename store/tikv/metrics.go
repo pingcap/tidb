@@ -85,7 +85,7 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
-		}, []string{"type"})
+		}, []string{"type", "store"})
 
 	coprocessorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
