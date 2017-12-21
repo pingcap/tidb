@@ -437,7 +437,6 @@ func (e *IndexReaderExecutor) Close() error {
 	for _, r := range e.ranges {
 		ranges = append(ranges, r)
 	}
-	log.Warning("")
 	e.ctx.StoreQueryFeedback(e.feedback, e.result.ScanCount(), ranges)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
