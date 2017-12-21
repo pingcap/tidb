@@ -970,13 +970,13 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
-	b.err = setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
+	b.err = errors.Trace(setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols))
 	return e
 }
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		tasks:        make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
@@ -984,13 +984,22 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 			taskType: colTask,
 			colExec:  b.buildAnalyzeColumnsPushdown(task),
 		})
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	for _, task := range v.IdxTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: idxTask,
 			idxExec:  b.buildAnalyzeIndexPushdown(task),
 		})
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
+	e.supportChk = true
 	return e
 }
 
