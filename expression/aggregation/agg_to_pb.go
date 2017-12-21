@@ -43,6 +43,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc Agg
 		tp = tipb.ExprType_Sum
 	case ast.AggFuncAvg:
 		tp = tipb.ExprType_Avg
+	case ast.AggFuncBitOr:
+		tp = tipb.ExprType_Agg_BitOr
 	case ast.AggFuncBitXor:
 		tp = tipb.ExprType_Agg_BitXor
 	case ast.AggFuncBitAnd:

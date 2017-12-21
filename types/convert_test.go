@@ -767,7 +767,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 
 		casted, _ := ConvertJSONToInt(new(stmtctx.StatementContext), j, false)
@@ -793,7 +793,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)

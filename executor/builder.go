@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -191,19 +190,7 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 	}
-
-	var err error
-	e.jobs, err = admin.GetDDLJobs(e.ctx.Txn())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-	e.jobs = append(e.jobs, historyJobs...)
+	e.supportChk = true
 	return e
 }
 
@@ -218,10 +205,12 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 }
 
 func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
-	return &DeallocateExec{
+	e := &DeallocateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		Name:         v.Name,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
@@ -316,11 +305,13 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	case *ast.RevokeStmt:
 		return b.buildRevoke(s)
 	}
-	return &SimpleExec{
+	e := &SimpleExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		Statement:    v.Statement,
 		is:           b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
@@ -333,20 +324,29 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
+	selectExec := b.build(v.SelectPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+	var baseExec baseExecutor
+	if selectExec != nil {
+		baseExec = newBaseExecutor(nil, b.ctx, selectExec)
+	} else {
+		baseExec = newBaseExecutor(nil, b.ctx)
+	}
+
 	ivs := &InsertValues{
-		baseExecutor:          newBaseExecutor(nil, b.ctx),
+		baseExecutor:          baseExec,
 		Columns:               v.Columns,
 		Lists:                 v.Lists,
 		Setlist:               v.Setlist,
 		GenColumns:            v.GenCols.Columns,
 		GenExprs:              v.GenCols.Exprs,
 		needFillDefaultValues: v.NeedFillDefaultValue,
+		SelectExec:            selectExec,
 	}
-	ivs.SelectExec = b.build(v.SelectPlan)
-	if b.err != nil {
-		b.err = errors.Trace(b.err)
-		return nil
-	}
+
 	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -398,13 +398,15 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
-	return &ReplaceExec{
+	replaceExec := &ReplaceExec{
 		InsertValues: vals,
 	}
+	replaceExec.supportChk = true
+	return replaceExec
 }
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
-	return &GrantExec{
+	e := &GrantExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		Privs:        grant.Privs,
 		ObjectType:   grant.ObjectType,
@@ -413,10 +415,12 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		WithGrant:    grant.WithGrant,
 		is:           b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
-	return &RevokeExec{
+	e := &RevokeExec{
 		ctx:        b.ctx,
 		Privs:      revoke.Privs,
 		ObjectType: revoke.ObjectType,
@@ -424,6 +428,8 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 		Users:      revoke.Users,
 		is:         b.is,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
@@ -977,13 +983,13 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
-	b.err = setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
+	b.err = errors.Trace(setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols))
 	return e
 }
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		tasks:        make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
@@ -991,13 +997,22 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 			taskType: colTask,
 			colExec:  b.buildAnalyzeColumnsPushdown(task),
 		})
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	for _, task := range v.IdxTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: idxTask,
 			idxExec:  b.buildAnalyzeIndexPushdown(task),
 		})
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
+	e.supportChk = true
 	return e
 }
 
@@ -1015,43 +1030,6 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGR
 		dagReq.Executors = append(dagReq.Executors, execPB)
 	}
 	return dagReq, nil
-}
-
-func (b *executorBuilder) constructTableRanges(ts *plan.PhysicalTableScan) (newRanges []ranger.IntColumnRange, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
-	newRanges = ranger.FullIntRange()
-	var pkCol *expression.Column
-	if ts.Table.PKIsHandle {
-		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			pkCol = expression.ColInfo2Col(cols, pkColInfo)
-		}
-	}
-	if pkCol != nil {
-		var ranges []ranger.Range
-		ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		newRanges = ranger.Ranges2IntRanges(ranges)
-	}
-	return newRanges, nil
-}
-
-func (b *executorBuilder) constructIndexRanges(is *plan.PhysicalIndexScan) (newRanges []*ranger.IndexRange, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
-	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
-	newRanges = ranger.FullIndexRange()
-	if len(idxCols) > 0 {
-		var ranges []ranger.Range
-		ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		newRanges = ranger.Ranges2IndexRanges(ranges)
-	}
-	return newRanges, nil
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
@@ -1163,12 +1141,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 	}
 
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
-	newRanges, err1 := b.constructTableRanges(ts)
-	if err1 != nil {
-		b.err = errors.Trace(err1)
-		return nil
-	}
-	ret.ranges = newRanges
+	ret.ranges = ts.Ranges
 	return ret
 }
 
@@ -1207,12 +1180,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 	}
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	newRanges, err1 := b.constructIndexRanges(is)
-	if err1 != nil {
-		b.err = errors.Trace(err1)
-		return nil
-	}
-	ret.ranges = newRanges
+	ret.ranges = is.Ranges
 	return ret
 }
 
@@ -1261,16 +1229,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	newRanges, err1 := b.constructIndexRanges(is)
-	if err1 != nil {
-		b.err = errors.Trace(err1)
-		return nil
-	}
-	ranges := make([]*ranger.IndexRange, 0, len(newRanges))
-	for _, rangeInPlan := range newRanges {
-		ranges = append(ranges, rangeInPlan.Clone())
-	}
-	ret.ranges = ranges
+	ret.ranges = is.Ranges
 	return ret
 }
 

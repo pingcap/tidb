@@ -754,7 +754,7 @@ func (s *testCodecSuite) TestJSON(c *C) {
 	datums := make([]types.Datum, 0, len(tbl))
 	for _, t := range tbl {
 		var d types.Datum
-		j, err := json.ParseFromString(t)
+		j, err := json.ParseBinaryFromString(t)
 		c.Assert(err, IsNil)
 		d.SetMysqlJSON(j)
 		datums = append(datums, d)
@@ -902,7 +902,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
 		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
 		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
-		{json.CreateJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
+		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
 		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
 
