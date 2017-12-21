@@ -45,37 +45,3 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	}
 	return n, true
 }
-
-// replaceChild replaces p's child with some plan else.
-func replaceChild(p, child, replace Plan) {
-	for i, ch := range p.Children() {
-		if ch.ID() == child.ID() {
-			p.Children()[i] = replace
-		}
-	}
-}
-
-// setParentAndChildren sets parent and children relationship.
-func setParentAndChildren(parent Plan, children ...Plan) {
-	if children == nil || parent == nil {
-		return
-	}
-	for _, child := range children {
-		child.SetParents(parent)
-	}
-	parent.SetChildren(children...)
-}
-
-// removePlan removes a plan from its parent and child.
-func removePlan(p Plan) {
-	parents := p.Parents()
-	children := p.Children()
-	if len(parents) == 0 {
-		child := children[0]
-		child.SetParents()
-		return
-	}
-	parent, child := parents[0], children[0]
-	replaceChild(parent, p, child)
-	child.SetParents(parent)
-}

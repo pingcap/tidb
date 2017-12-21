@@ -276,6 +276,14 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("insert into t2 values('abc')")
 	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
 	result.Sort().Check(testkit.Rows("abc abc"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10), index idx(a))")
+	tk.MustExec("insert into t values('1'), ('2'), ('3')")
+	tk.MustExec("set @@tidb_max_chunk_size=1")
+	result = tk.MustQuery("select a from (select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
+	result.Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("set @@tidb_max_chunk_size=1024")
 }
 
 func (s *testSuite) TestUsing(c *C) {

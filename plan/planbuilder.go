@@ -237,8 +237,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	}
 	dual.SetSchema(expression.NewSchema())
 	p := LogicalProjection{Exprs: exprs}.init(b.ctx)
-	setParentAndChildren(p, dual)
-	p.self = p
+	p.SetChildren(dual)
 	p.SetSchema(expression.NewSchema())
 	return p
 }
@@ -381,7 +380,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
-	setParentAndChildren(selectLock, src)
+	selectLock.SetChildren(src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
