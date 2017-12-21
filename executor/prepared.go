@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
@@ -72,13 +73,12 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 type PrepareExec struct {
 	baseExecutor
 
-	IS      infoschema.InfoSchema
-	Name    string
-	SQLText string
+	is      infoschema.InfoSchema
+	name    string
+	sqlText string
 
 	ID         uint32
 	ParamCount int
-	Err        error
 	Fields     []*ast.ResultField
 }
 
@@ -86,37 +86,30 @@ type PrepareExec struct {
 func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
 		baseExecutor: newBaseExecutor(nil, ctx),
-		IS:           is,
-		SQLText:      sqlTxt,
+		is:           is,
+		sqlText:      sqlTxt,
 	}
 }
 
 // Next implements the Executor Next interface.
 func (e *PrepareExec) Next(goCtx goctx.Context) (Row, error) {
-	e.DoPrepare()
-	return nil, e.Err
+	return nil, errors.Trace(e.DoPrepare())
 }
 
-// Close implements the Executor Close interface.
-func (e *PrepareExec) Close() error {
-	return nil
+// NextChunk implements the Executor NextChunk interface.
+func (e *PrepareExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.DoPrepare())
 }
 
-// Open implements the Executor Open interface.
-func (e *PrepareExec) Open(goCtx goctx.Context) error {
-	return nil
-}
-
-// DoPrepare prepares the statement, it can be called multiple times without
-// side effect.
-func (e *PrepareExec) DoPrepare() {
+// DoPrepare prepares the statement, it can be called multiple times without side effect.
+func (e *PrepareExec) DoPrepare() error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
 		// Make sure it is idempotent.
 		_, ok := vars.PreparedStmts[e.ID]
 		if ok {
-			return
+			return nil
 		}
 	}
 	charset, collation := vars.GetCharsetInfo()
@@ -125,29 +118,25 @@ func (e *PrepareExec) DoPrepare() {
 		err   error
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
-		stmts, err = sqlParser.ParseSQL(e.SQLText, charset, collation)
+		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
-		stmts, err = parser.New().Parse(e.SQLText, charset, collation)
+		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
 	}
 	if err != nil {
-		e.Err = errors.Trace(err)
-		return
+		return errors.Trace(err)
 	}
 	if len(stmts) != 1 {
-		e.Err = errors.Trace(ErrPrepareMulti)
-		return
+		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
 	if _, ok := stmt.(ast.DDLNode); ok {
-		e.Err = errors.Trace(ErrPrepareDDL)
-		return
+		return ErrPrepareDDL
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.Preprocess(e.ctx, stmt, e.IS, true)
+	err = plan.Preprocess(e.ctx, stmt, e.is, true)
 	if err != nil {
-		e.Err = errors.Trace(err)
-		return
+		return errors.Trace(err)
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -162,7 +151,7 @@ func (e *PrepareExec) DoPrepare() {
 	prepared := &plan.Prepared{
 		Stmt:          stmt,
 		Params:        sorter.markers,
-		SchemaVersion: e.IS.SchemaMetaVersion(),
+		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
 	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
 
@@ -170,19 +159,19 @@ func (e *PrepareExec) DoPrepare() {
 	for i := range prepared.Params {
 		prepared.Params[i].SetDatum(types.NewIntDatum(0))
 	}
-	_, err = plan.BuildLogicalPlan(e.ctx, stmt, e.IS)
+	_, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
-		e.Err = errors.Trace(err)
-		return
+		return errors.Trace(err)
 	}
 
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
 	}
-	if e.Name != "" {
-		vars.PreparedStmtNameToID[e.Name] = e.ID
+	if e.name != "" {
+		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 	vars.PreparedStmts[e.ID] = prepared
+	return nil
 }
 
 // ExecuteExec represents an EXECUTE executor.
@@ -249,23 +238,22 @@ type DeallocateExec struct {
 
 // Next implements the Executor Next interface.
 func (e *DeallocateExec) Next(goCtx goctx.Context) (Row, error) {
+	return nil, errors.Trace(e.run(goCtx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *DeallocateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *DeallocateExec) run(goCtx goctx.Context) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return nil, errors.Trace(plan.ErrStmtNotFound)
+		return errors.Trace(plan.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)
-	return nil, nil
-}
-
-// Close implements Executor Close interface.
-func (e *DeallocateExec) Close() error {
-	return nil
-}
-
-// Open implements Executor Open interface.
-func (e *DeallocateExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 

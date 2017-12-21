@@ -21,12 +21,12 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unsafe"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func truncateStr(str string, flen int) string {
@@ -311,21 +311,21 @@ func StrToFloat(sc *stmtctx.StatementContext, str string) (float64, error) {
 }
 
 // ConvertJSONToInt casts JSON into int64.
-func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.JSON, unsigned bool) (int64, error) {
+func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool) (int64, error) {
 	switch j.TypeCode {
 	case json.TypeCodeObject, json.TypeCodeArray:
 		return 0, nil
 	case json.TypeCodeLiteral:
-		switch byte(j.I64) {
+		switch j.Value[0] {
 		case json.LiteralNil, json.LiteralFalse:
 			return 0, nil
 		default:
 			return 1, nil
 		}
 	case json.TypeCodeInt64, json.TypeCodeUint64:
-		return j.I64, nil
+		return j.GetInt64(), nil
 	case json.TypeCodeFloat64:
-		f := *(*float64)(unsafe.Pointer(&j.I64))
+		f := j.GetFloat64()
 		if !unsigned {
 			lBound := SignedLowerBound[mysql.TypeLonglong]
 			uBound := SignedUpperBound[mysql.TypeLonglong]
@@ -335,33 +335,32 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.JSON, unsigned bool) 
 		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
-		return StrToInt(sc, j.Str)
+		return StrToInt(sc, hack.String(j.GetString()))
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
 
 // ConvertJSONToFloat casts JSON into float64.
-func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.JSON) (float64, error) {
+func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float64, error) {
 	switch j.TypeCode {
 	case json.TypeCodeObject, json.TypeCodeArray:
 		return 0, nil
 	case json.TypeCodeLiteral:
-		switch byte(j.I64) {
+		switch j.Value[0] {
 		case json.LiteralNil, json.LiteralFalse:
 			return 0, nil
 		default:
 			return 1, nil
 		}
 	case json.TypeCodeInt64:
-		return float64(j.I64), nil
+		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
-		u, err := ConvertIntToUint(j.I64, UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		u, err := ConvertIntToUint(j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		return float64(u), errors.Trace(err)
 	case json.TypeCodeFloat64:
-		f := *(*float64)(unsafe.Pointer(&j.I64))
-		return f, nil
+		return j.GetFloat64(), nil
 	case json.TypeCodeString:
-		return StrToFloat(sc, j.Str)
+		return StrToFloat(sc, hack.String(j.GetString()))
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
