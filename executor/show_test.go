@@ -175,6 +175,31 @@ func (s *testSuite) TestShow(c *C) {
 			"  `id` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
 	))
+	// for issue https://github.com/pingcap/tidb/issues/4678
+	tk.MustExec("insert into show_auto_increment values(10)")
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=5004",
+	))
+	tk.MustExec(`drop table show_auto_increment`)
+	tk.MustExec(`create table show_auto_increment (id int primary key auto_increment)`)
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+	tk.MustExec("insert into show_auto_increment values(10)")
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=5011",
+	))
 
 	// Test show table with column's comment contain escape character
 	// for issue https://github.com/pingcap/tidb/issues/4411
