@@ -57,22 +57,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalHashSemiJoin:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		idxs = idxs[:last]
-		if x.WithAux {
-			str = "SemiJoinWithAux{" + strings.Join(children, "->") + "}"
-		} else {
-			str = "SemiJoin{" + strings.Join(children, "->") + "}"
-		}
-		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
-			str += fmt.Sprintf("(%s,%s)", l, r)
-		}
 	case *PhysicalMergeJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
