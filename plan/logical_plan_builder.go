@@ -589,7 +589,7 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 	unionSchema := u.children[0].Schema().Clone()
 
-	// infer union type
+	// Infer union result types by its children's schema.
 	for i, col := range unionSchema.Columns {
 		var resultTp *types.FieldType
 		for j, child := range u.children {
@@ -603,7 +603,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		col.RetType = resultTp
 		col.DBName = model.NewCIStr("")
 	}
-
+	// If the types of some child don't match the types of union, we add a projection with cast function.
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		needProjection := false
