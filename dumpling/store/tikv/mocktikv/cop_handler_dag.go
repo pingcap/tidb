@@ -95,7 +95,12 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks = appendRow(chunks, data, rowCnt)
 		rowCnt++
 	}
-	return buildResp(chunks, err)
+	counts := make([]int64, len(dagReq.Executors))
+	for offset := len(dagReq.Executors) - 1; e != nil; e, offset = e.GetSrcExec(), offset-1 {
+		// Because the last call to `executor.Next` always returns a `nil`, so the actual count should be `Count - 1`
+		counts[offset] = e.Count() - 1
+	}
+	return buildResp(chunks, counts, err)
 }
 
 func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
@@ -332,11 +337,12 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	return sc
 }
 
-func buildResp(chunks []tipb.Chunk, err error) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
-		Error:  toPBError(err),
-		Chunks: chunks,
+		Error:        toPBError(err),
+		Chunks:       chunks,
+		OutputCounts: counts,
 	}
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
