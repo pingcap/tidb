@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -110,8 +111,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildHashJoin(v)
 	case *plan.PhysicalMergeJoin:
 		return b.buildMergeJoin(v)
-	case *plan.PhysicalHashSemiJoin:
-		return b.buildSemiJoin(v)
 	case *plan.PhysicalIndexJoin:
 		return b.buildIndexLookUpJoin(v)
 	case *plan.PhysicalSelection:
@@ -383,8 +382,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-
-	return &LoadData{
+	loadDataExec := &LoadData{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
@@ -398,6 +396,9 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 			columns:    columns,
 		},
 	}
+
+	loadDataExec.supportChk = true
+	return loadDataExec
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
@@ -640,31 +641,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJoinExec {
-	leftHashKey := make([]*expression.Column, 0, len(v.EqualConditions))
-	rightHashKey := make([]*expression.Column, 0, len(v.EqualConditions))
-	for _, eqCond := range v.EqualConditions {
-		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
-		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
-		leftHashKey = append(leftHashKey, ln)
-		rightHashKey = append(rightHashKey, rn)
-	}
-	e := &HashSemiJoinExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		otherFilter:  v.OtherConditions,
-		bigFilter:    v.LeftConditions,
-		smallFilter:  v.RightConditions,
-		bigExec:      b.build(v.Children()[0]),
-		smallExec:    b.build(v.Children()[1]),
-		prepared:     false,
-		bigHashKey:   leftHashKey,
-		smallHashKey: rightHashKey,
-		auxMode:      v.WithAux,
-		anti:         v.Anti,
-	}
-	return e
-}
-
 func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -788,63 +764,52 @@ func (b *executorBuilder) buildTopN(v *plan.PhysicalTopN) Executor {
 	}
 }
 
-func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
-	for _, cond := range v.EqualConditions {
-		cond.GetArgs()[0].(*expression.Column).ResolveIndices(v.Schema())
-		cond.GetArgs()[1].(*expression.Column).ResolveIndices(v.Schema())
-	}
-	defaultValues := v.DefaultValues
-	if v.SmallChildIdx == 1 {
-		if defaultValues == nil {
-			defaultValues = make([]types.Datum, v.Children()[1].Schema().Len())
-		}
-		return &NestedLoopJoinExec{
-			baseExecutor:  newBaseExecutor(v.Schema(), b.ctx),
-			SmallExec:     b.build(v.Children()[1]),
-			BigExec:       b.build(v.Children()[0]),
-			BigFilter:     v.LeftConditions,
-			SmallFilter:   v.RightConditions,
-			OtherFilter:   append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...),
-			outer:         v.JoinType != plan.InnerJoin,
-			defaultValues: defaultValues,
-		}
-	}
-	if defaultValues == nil {
-		defaultValues = make([]types.Datum, v.Children()[0].Schema().Len())
-	}
-	return &NestedLoopJoinExec{
-		baseExecutor:  newBaseExecutor(v.Schema(), b.ctx),
-		SmallExec:     b.build(v.Children()[0]),
-		BigExec:       b.build(v.Children()[1]),
-		leftSmall:     true,
-		BigFilter:     v.RightConditions,
-		SmallFilter:   v.LeftConditions,
-		OtherFilter:   append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...),
-		outer:         v.JoinType != plan.InnerJoin,
-		defaultValues: defaultValues,
-	}
-}
-
-func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
-	var join joinExec
-	switch x := v.PhysicalJoin.(type) {
-	case *plan.PhysicalHashSemiJoin:
-		join = b.buildSemiJoin(x)
-	case *plan.PhysicalHashJoin:
-		if x.JoinType == plan.InnerJoin || x.JoinType == plan.LeftOuterJoin || x.JoinType == plan.RightOuterJoin {
-			join = b.buildNestedLoopJoin(x)
-		} else {
-			b.err = errors.Errorf("Unsupported join type %v in nested loop join", x.JoinType)
-		}
-	default:
+func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApplyExec {
+	v, ok := apply.PhysicalJoin.(*plan.PhysicalHashJoin)
+	if !ok {
 		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
+		return nil
 	}
-	apply := &ApplyJoinExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		join:         join,
-		outerSchema:  v.OuterSchema,
+	leftChild := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
-	return apply
+	rightChild := b.build(v.Children()[1])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+	joinSchema := expression.MergeSchema(leftChild.Schema(), rightChild.Schema())
+	for _, cond := range v.EqualConditions {
+		col0 := cond.GetArgs()[0].(*expression.Column)
+		col0.ResolveIndices(joinSchema)
+		col1 := cond.GetArgs()[1].(*expression.Column)
+		col1.ResolveIndices(joinSchema)
+	}
+	otherConditions := append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
+	}
+	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
+		defaultValues, otherConditions, nil, nil)
+	bigExec, smallExec := leftChild, rightChild
+	bigFilter, smallFilter := v.LeftConditions, v.RightConditions
+	if v.SmallChildIdx == 0 {
+		bigExec, smallExec = rightChild, leftChild
+		bigFilter, smallFilter = v.RightConditions, v.LeftConditions
+	}
+	return &NestedLoopApplyExec{
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx),
+		SmallExec:       smallExec,
+		BigExec:         bigExec,
+		BigFilter:       bigFilter,
+		SmallFilter:     smallFilter,
+		outer:           v.JoinType != plan.InnerJoin,
+		resultGenerator: generator,
+		outerSchema:     apply.OuterSchema,
+	}
 }
 
 func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
@@ -1124,6 +1089,17 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 	return e
 }
 
+// containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
+// so the feedback may not be accurate.
+func containsLimit(execs []*tipb.Executor) bool {
+	for _, exec := range execs {
+		if exec.Limit != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
 	dagReq, err := b.constructDAGReq(v.TablePlans)
 	if err != nil {
@@ -1131,6 +1107,12 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
+	pkID := int64(-1)
+	if ts.Table.PKIsHandle {
+		if pk := ts.Table.GetPkColInfo(); pk != nil {
+			pkID = pk.ID
+		}
+	}
 	e := &TableReaderExecutor{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 		dagPB:        dagReq,
@@ -1140,6 +1122,11 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		desc:         ts.Desc,
 		columns:      ts.Columns,
 		priority:     b.priority,
+	}
+	if containsLimit(dagReq.Executors) {
+		e.feedback = statistics.NewQueryFeedback(0, 0, false, 0, 0)
+	} else {
+		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, pkID, false, ts.HistVersion, ts.StatsInfo().Count())
 	}
 	e.baseExecutor.supportChk = true
 
@@ -1179,6 +1166,11 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		desc:         is.Desc,
 		columns:      is.Columns,
 		priority:     b.priority,
+	}
+	if containsLimit(dagReq.Executors) {
+		e.feedback = statistics.NewQueryFeedback(0, 0, false, 0, 0)
+	} else {
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Index.ID, true, is.HistVersion, is.StatsInfo().Count())
 	}
 	e.supportChk = true
 
@@ -1230,6 +1222,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		columns:           is.Columns,
 		priority:          b.priority,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
+	}
+	if containsLimit(indexReq.Executors) {
+		e.feedback = statistics.NewQueryFeedback(0, 0, false, 0, 0)
+	} else {
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Index.ID, true, is.HistVersion, is.StatsInfo().Count())
 	}
 	e.supportChk = true
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
