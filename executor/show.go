@@ -596,7 +596,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 
-	if tb.Meta().AutoIncID > 0 || hasAutoIncID {
+	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
 		if err != nil {
 			return errors.Trace(err)

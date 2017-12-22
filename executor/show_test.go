@@ -168,20 +168,22 @@ func (s *testSuite) TestShow(c *C) {
 	// Test show create table with AUTO_INCREMENT option
 	// for issue https://github.com/pingcap/tidb/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
-	tk.MustExec(`create table show_auto_increment (id int) auto_increment=4`)
+	tk.MustExec(`create table show_auto_increment (id int key auto_increment) auto_increment=4`)
 	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
-			"  `id` int(11) DEFAULT NULL\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
 	))
 	// for issue https://github.com/pingcap/tidb/issues/4678
-	tk.MustExec("insert into show_auto_increment values(10)")
+	tk.MustExec("insert into show_auto_increment values(20)")
 	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
-			"  `id` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=5004",
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=5021",
 	))
 	tk.MustExec(`drop table show_auto_increment`)
 	tk.MustExec(`create table show_auto_increment (id int primary key auto_increment)`)
