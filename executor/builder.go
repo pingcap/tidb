@@ -1086,7 +1086,7 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 	return e
 }
 
-// We test if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
+// containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
 // so the feedback may not be accurate.
 func containsLimit(execs []*tipb.Executor) bool {
 	for _, exec := range execs {
