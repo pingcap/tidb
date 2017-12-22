@@ -885,6 +885,13 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = d.RenameTable(ctx, ident, newIdent)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
+		case ast.AlterTableOption:
+			for _, opt := range spec.Options {
+				if opt.Tp == ast.TableOptionAutoIncrement {
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue-1))
+					break
+				}
+			}
 		default:
 			// Nothing to do now.
 		}
@@ -895,6 +902,14 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 	}
 
 	return nil
+}
+
+func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) error {
+	t, err := d.infoHandle.Get().TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	return t.RebaseAutoID(ctx, newBase, true)
 }
 
 func checkColumnConstraint(constraints []*ast.ColumnOption) error {

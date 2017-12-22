@@ -1676,3 +1676,21 @@ func (s *testDBSuite) TestComment(c *C) {
 
 	s.tk.MustExec("drop table if exists ct, ct1")
 }
+
+func (s *testDBSuite) TestRebaseAutoID(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("drop database if exists tidb;")
+	s.tk.MustExec("create database tidb;")
+	s.tk.MustExec("use tidb;")
+	s.tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1"))
+	s.tk.MustExec("alter table tidb.test auto_increment = 10;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "10 1"))
+	s.tk.MustExec("alter table tidb.test auto_increment = 5;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "10 1", "11 1"))
+}
