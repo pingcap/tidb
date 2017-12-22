@@ -110,15 +110,11 @@ func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_Copr
 	}
 	switch req.Tp {
 	case kv.ReqTypeDAG:
-		return h.handleCopStreamDAG(req)
+		chunks, err := h.getDAGRequestChunk(req)
+		return buildStreamResponse(chunks, err)
 	case kv.ReqTypeAnalyze:
 	}
-	return nil, errors.New("not implement yet")
-}
-
-func (h *rpcHandler) handleCopStreamDAG(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
-	chunks, err := h.getDAGRequestChunk(req)
-	return buildStreamResponse(chunks, err)
+	return nil, errors.New("not implemented yet")
 }
 
 func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
