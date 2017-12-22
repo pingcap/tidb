@@ -732,7 +732,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	tb, _ := b.is.TableByID(v.Table.ID)
-	ts := &TableScanExec{
+	e := &TableScanExec{
 		baseExecutor:   newBaseExecutor(v.Schema(), b.ctx),
 		t:              tb,
 		columns:        v.Columns,
@@ -740,7 +740,8 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 		ranges:         v.Ranges,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
-	return ts
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
