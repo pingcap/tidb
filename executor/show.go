@@ -58,16 +58,18 @@ type ShowExec struct {
 
 	is infoschema.InfoSchema
 
-	fetched bool
-	rows    []Row
-	result  *chunk.Chunk
-	cursor  int
+	forChunk bool
+	fetched  bool
+	rows     []Row
+	result   *chunk.Chunk
+	cursor   int
 }
 
 // Next implements Execution Next interface.
 func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.rows == nil {
-		err := e.fetchAll(false)
+		e.forChunk = false
+		err := e.fetchAll()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -97,7 +99,8 @@ func (e *ShowExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.result == nil {
 		e.result = e.newChunk()
-		err := e.fetchAll(true)
+		e.forChunk = true
+		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -111,60 +114,60 @@ func (e *ShowExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ShowExec) fetchAll(forChunk bool) error {
+func (e *ShowExec) fetchAll() error {
 	switch e.Tp {
 	case ast.ShowCharset:
-		return e.fetchShowCharset(forChunk)
+		return e.fetchShowCharset()
 	case ast.ShowCollation:
-		return e.fetchShowCollation(forChunk)
+		return e.fetchShowCollation()
 	case ast.ShowColumns:
-		return e.fetchShowColumns(forChunk)
+		return e.fetchShowColumns()
 	case ast.ShowCreateTable:
-		return e.fetchShowCreateTable(forChunk)
+		return e.fetchShowCreateTable()
 	case ast.ShowCreateDatabase:
-		return e.fetchShowCreateDatabase(forChunk)
+		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
-		return e.fetchShowDatabases(forChunk)
+		return e.fetchShowDatabases()
 	case ast.ShowEngines:
-		return e.fetchShowEngines(forChunk)
+		return e.fetchShowEngines()
 	case ast.ShowGrants:
-		return e.fetchShowGrants(forChunk)
+		return e.fetchShowGrants()
 	case ast.ShowIndex:
-		return e.fetchShowIndex(forChunk)
+		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
-		return e.fetchShowProcedureStatus(forChunk)
+		return e.fetchShowProcedureStatus()
 	case ast.ShowStatus:
-		return e.fetchShowStatus(forChunk)
+		return e.fetchShowStatus()
 	case ast.ShowTables:
-		return e.fetchShowTables(forChunk)
+		return e.fetchShowTables()
 	case ast.ShowTableStatus:
-		return e.fetchShowTableStatus(forChunk)
+		return e.fetchShowTableStatus()
 	case ast.ShowTriggers:
-		return e.fetchShowTriggers(forChunk)
+		return e.fetchShowTriggers()
 	case ast.ShowVariables:
-		return e.fetchShowVariables(forChunk)
+		return e.fetchShowVariables()
 	case ast.ShowWarnings:
-		return e.fetchShowWarnings(forChunk)
+		return e.fetchShowWarnings()
 	case ast.ShowProcessList:
-		return e.fetchShowProcessList(forChunk)
+		return e.fetchShowProcessList()
 	case ast.ShowEvents:
 		// empty result
 	case ast.ShowStatsMeta:
-		return e.fetchShowStatsMeta(forChunk)
+		return e.fetchShowStatsMeta()
 	case ast.ShowStatsHistograms:
-		return e.fetchShowStatsHistogram(forChunk)
+		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
-		return e.fetchShowStatsBuckets(forChunk)
+		return e.fetchShowStatsBuckets()
 	case ast.ShowPlugins:
-		return e.fetchShowPlugins(forChunk)
+		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
 		// empty result
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowEngines(forChunk bool) error {
-	if forChunk {
+func (e *ShowExec) fetchShowEngines() error {
+	if e.forChunk {
 		e.result.AppendString(0, "InnoDB")
 		e.result.AppendString(1, "DEFAULT")
 		e.result.AppendString(2, "Supports transactions, row-level locking, and foreign keys")
@@ -185,7 +188,7 @@ func (e *ShowExec) fetchShowEngines(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowDatabases(forChunk bool) error {
+func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	// TODO: let information_schema be the first database
@@ -194,7 +197,7 @@ func (e *ShowExec) fetchShowDatabases(forChunk bool) error {
 		if checker != nil && !checker.DBIsVisible(d) {
 			continue
 		}
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, d)
 		} else {
 			e.rows = append(e.rows, types.MakeDatums(d))
@@ -203,7 +206,7 @@ func (e *ShowExec) fetchShowDatabases(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowProcessList(forChunk bool) error {
+func (e *ShowExec) fetchShowProcessList() error {
 	sm := e.ctx.GetSessionManager()
 	if sm == nil {
 		return nil
@@ -223,7 +226,7 @@ func (e *ShowExec) fetchShowProcessList(forChunk bool) error {
 			info = fmt.Sprintf("%.100v", pi.Info)
 		}
 
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendUint64(0, pi.ID)
 			e.result.AppendString(1, pi.User)
 			e.result.AppendString(2, pi.Host)
@@ -250,7 +253,7 @@ func (e *ShowExec) fetchShowProcessList(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowTables(forChunk bool) error {
+func (e *ShowExec) fetchShowTables() error {
 	if !e.is.SchemaExists(e.DBName) {
 		return errors.Errorf("Can not find DB: %s", e.DBName)
 	}
@@ -268,21 +271,21 @@ func (e *ShowExec) fetchShowTables(forChunk bool) error {
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
 		switch {
-		case e.Full && forChunk:
+		case e.Full && e.forChunk:
 			e.result.AppendString(0, v)
 			// TODO: support "VIEW" later if we have supported view feature.
 			// now, just use "BASE TABLE".
 			e.result.AppendString(1, "BASE TABLE")
-		case e.Full && !forChunk:
+		case e.Full && !e.forChunk:
 			// TODO: support "VIEW" later if we have supported view feature.
 			// now, just use "BASE TABLE".
 			e.rows = append(e.rows, types.MakeDatums(
 				v,
 				types.NewDatum("BASE TABLE"),
 			))
-		case !e.Full && forChunk:
+		case !e.Full && e.forChunk:
 			e.result.AppendString(0, v)
-		case !e.Full && !forChunk:
+		case !e.Full && !e.forChunk:
 			e.rows = append(e.rows, types.MakeDatums(
 				v,
 			))
@@ -291,7 +294,7 @@ func (e *ShowExec) fetchShowTables(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowTableStatus(forChunk bool) error {
+func (e *ShowExec) fetchShowTableStatus() error {
 	if !e.is.SchemaExists(e.DBName) {
 		return errors.Errorf("Can not find DB: %s", e.DBName)
 	}
@@ -302,7 +305,7 @@ func (e *ShowExec) fetchShowTableStatus(forChunk bool) error {
 
 	for _, t := range tables {
 		now := types.CurrentTime(mysql.TypeDatetime)
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, t.Meta().Name.O)
 			e.result.AppendString(1, "InnoDB")
 			e.result.AppendString(2, "10")
@@ -371,7 +374,7 @@ func (e *ShowExec) appendDefaultValue(desc *table.ColDesc, colIdx int) {
 	}
 }
 
-func (e *ShowExec) fetchShowColumns(forChunk bool) error {
+func (e *ShowExec) fetchShowColumns() error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
@@ -387,7 +390,7 @@ func (e *ShowExec) fetchShowColumns(forChunk bool) error {
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
 		switch {
-		case e.Full && forChunk:
+		case e.Full && e.forChunk:
 			e.result.AppendString(0, desc.Field)
 			e.result.AppendString(1, desc.Type)
 			e.result.AppendString(2, desc.Collation)
@@ -397,7 +400,7 @@ func (e *ShowExec) fetchShowColumns(forChunk bool) error {
 			e.result.AppendString(6, desc.Extra)
 			e.result.AppendString(7, desc.Privileges)
 			e.result.AppendString(8, desc.Comment)
-		case e.Full && !forChunk:
+		case e.Full && !e.forChunk:
 			e.rows = append(e.rows, types.MakeDatums(
 				desc.Field,
 				desc.Type,
@@ -409,14 +412,14 @@ func (e *ShowExec) fetchShowColumns(forChunk bool) error {
 				desc.Privileges,
 				desc.Comment,
 			))
-		case !e.Full && forChunk:
+		case !e.Full && e.forChunk:
 			e.result.AppendString(0, desc.Field)
 			e.result.AppendString(1, desc.Type)
 			e.result.AppendString(2, desc.Null)
 			e.result.AppendString(3, desc.Key)
 			e.appendDefaultValue(desc, 4)
 			e.result.AppendString(5, desc.Extra)
-		case !e.Full && !forChunk:
+		case !e.Full && !e.forChunk:
 			e.rows = append(e.rows, types.MakeDatums(
 				desc.Field,
 				desc.Type,
@@ -432,7 +435,7 @@ func (e *ShowExec) fetchShowColumns(forChunk bool) error {
 
 // TODO: index collation can have values A (ascending) or NULL (not sorted).
 // see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
-func (e *ShowExec) fetchShowIndex(forChunk bool) error {
+func (e *ShowExec) fetchShowIndex() error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
@@ -445,7 +448,7 @@ func (e *ShowExec) fetchShowIndex(forChunk bool) error {
 				break
 			}
 		}
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, tb.Meta().Name.O)
 			e.result.AppendInt64(1, 0)
 			e.result.AppendString(2, "PRIMARY")
@@ -487,7 +490,7 @@ func (e *ShowExec) fetchShowIndex(forChunk bool) error {
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
-			if forChunk {
+			if e.forChunk {
 				e.result.AppendString(0, tb.Meta().Name.O)
 				e.result.AppendInt64(1, int64(nonUniq))
 				e.result.AppendString(2, idx.Meta().Name.O)
@@ -529,10 +532,10 @@ func (e *ShowExec) fetchShowIndex(forChunk bool) error {
 
 // fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
-func (e *ShowExec) fetchShowCharset(forChunk bool) error {
+func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
 	for _, desc := range descs {
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, desc.Name)
 			e.result.AppendString(1, desc.Desc)
 			e.result.AppendString(2, desc.DefaultCollation)
@@ -550,7 +553,7 @@ func (e *ShowExec) fetchShowCharset(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables(forChunk bool) (err error) {
+func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
 		value         string
 		ok            bool
@@ -577,7 +580,7 @@ func (e *ShowExec) fetchShowVariables(forChunk bool) (err error) {
 			unreachedVars = append(unreachedVars, v.Name)
 			continue
 		}
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, v.Name)
 			e.result.AppendString(1, value)
 		} else {
@@ -595,7 +598,7 @@ func (e *ShowExec) fetchShowVariables(forChunk bool) (err error) {
 			if !ok {
 				varValue = variable.SysVars[varName].Value
 			}
-			if forChunk {
+			if e.forChunk {
 				e.result.AppendString(0, varName)
 				e.result.AppendString(1, varValue)
 			} else {
@@ -607,7 +610,7 @@ func (e *ShowExec) fetchShowVariables(forChunk bool) (err error) {
 	return nil
 }
 
-func (e *ShowExec) fetchShowStatus(forChunk bool) error {
+func (e *ShowExec) fetchShowStatus() error {
 	sessionVars := e.ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
@@ -625,7 +628,7 @@ func (e *ShowExec) fetchShowStatus(forChunk bool) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, status)
 			e.result.AppendString(1, value)
 		} else {
@@ -636,7 +639,7 @@ func (e *ShowExec) fetchShowStatus(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowCreateTable(forChunk bool) error {
+func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
@@ -796,7 +799,7 @@ func (e *ShowExec) fetchShowCreateTable(forChunk bool) error {
 		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}
 
-	if forChunk {
+	if e.forChunk {
 		e.result.AppendString(0, tb.Meta().Name.O)
 		e.result.AppendString(1, buf.String())
 	} else {
@@ -807,7 +810,7 @@ func (e *ShowExec) fetchShowCreateTable(forChunk bool) error {
 }
 
 // fetchShowCreateDatabase composes show create database result.
-func (e *ShowExec) fetchShowCreateDatabase(forChunk bool) error {
+func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
@@ -819,7 +822,7 @@ func (e *ShowExec) fetchShowCreateDatabase(forChunk bool) error {
 		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
 	}
 
-	if forChunk {
+	if e.forChunk {
 		e.result.AppendString(0, db.Name.O)
 		e.result.AppendString(1, buf.String())
 	} else {
@@ -829,14 +832,14 @@ func (e *ShowExec) fetchShowCreateDatabase(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowCollation(forChunk bool) error {
+func (e *ShowExec) fetchShowCollation() error {
 	collations := charset.GetCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
 			isDefault = "Yes"
 		}
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, v.Name)
 			e.result.AppendString(1, v.CharsetName)
 			e.result.AppendInt64(2, int64(v.ID))
@@ -858,7 +861,7 @@ func (e *ShowExec) fetchShowCollation(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowGrants(forChunk bool) error {
+func (e *ShowExec) fetchShowGrants() error {
 	// Get checker
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
@@ -869,7 +872,7 @@ func (e *ShowExec) fetchShowGrants(forChunk bool) error {
 		return errors.Trace(err)
 	}
 	for _, g := range gs {
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, g)
 		} else {
 			data := types.MakeDatums(g)
@@ -879,23 +882,23 @@ func (e *ShowExec) fetchShowGrants(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowTriggers(forChunk bool) error {
+func (e *ShowExec) fetchShowTriggers() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowProcedureStatus(forChunk bool) error {
+func (e *ShowExec) fetchShowProcedureStatus() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowPlugins(forChunk bool) error {
+func (e *ShowExec) fetchShowPlugins() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowWarnings(forChunk bool) error {
+func (e *ShowExec) fetchShowWarnings() error {
 	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	for _, warn := range warns {
 		warn = errors.Cause(warn)
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, "Warning")
 			switch x := warn.(type) {
 			case *terror.Error:

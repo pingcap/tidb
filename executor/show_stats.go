@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-func (e *ShowExec) fetchShowStatsMeta(forChunk bool) error {
+func (e *ShowExec) fetchShowStatsMeta() error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
@@ -33,7 +33,7 @@ func (e *ShowExec) fetchShowStatsMeta(forChunk bool) error {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
-				if forChunk {
+				if e.forChunk {
 					e.result.AppendString(0, db.Name.O)
 					e.result.AppendString(1, tbl.Name.O)
 					e.result.AppendTime(2, e.versionToTime(statsTbl.Version))
@@ -55,7 +55,7 @@ func (e *ShowExec) fetchShowStatsMeta(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowStatsHistogram(forChunk bool) error {
+func (e *ShowExec) fetchShowStatsHistogram() error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
@@ -64,10 +64,10 @@ func (e *ShowExec) fetchShowStatsHistogram(forChunk bool) error {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
-					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, forChunk)
+					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
 				}
 				for _, idx := range statsTbl.Indices {
-					e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram, forChunk)
+					e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram)
 				}
 			}
 		}
@@ -75,8 +75,8 @@ func (e *ShowExec) fetchShowStatsHistogram(forChunk bool) error {
 	return nil
 }
 
-func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram, forChunk bool) {
-	if forChunk {
+func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) {
+	if e.forChunk {
 		e.result.AppendString(0, dbName)
 		e.result.AppendString(1, tblName)
 		e.result.AppendString(2, colName)
@@ -102,7 +102,7 @@ func (e *ShowExec) versionToTime(version uint64) types.Time {
 	return types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime}
 }
 
-func (e *ShowExec) fetchShowStatsBuckets(forChunk bool) error {
+func (e *ShowExec) fetchShowStatsBuckets() error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
@@ -111,13 +111,13 @@ func (e *ShowExec) fetchShowStatsBuckets(forChunk bool) error {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
-					err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, forChunk)
+					err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
 					if err != nil {
 						return errors.Trace(err)
 					}
 				}
 				for _, idx := range statsTbl.Indices {
-					err := e.bucketsToRows(db.Name.O, tbl.Name.O, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, forChunk)
+					err := e.bucketsToRows(db.Name.O, tbl.Name.O, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -130,7 +130,7 @@ func (e *ShowExec) fetchShowStatsBuckets(forChunk bool) error {
 
 // bucketsToRows converts histogram buckets to rows. If the histogram is built from index, then numOfCols equals to number
 // of index columns, else numOfCols is 0.
-func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram, forChunk bool) error {
+func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram) error {
 	isIndex := 0
 	if numOfCols > 0 {
 		isIndex = 1
@@ -144,7 +144,7 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if forChunk {
+		if e.forChunk {
 			e.result.AppendString(0, dbName)
 			e.result.AppendString(1, tblName)
 			e.result.AppendString(2, colName)
