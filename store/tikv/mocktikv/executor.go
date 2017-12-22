@@ -35,6 +35,8 @@ import (
 
 type executor interface {
 	SetSrcExec(executor)
+	GetSrcExec() executor
+	Count() int64
 	Next(goCtx goctx.Context) ([][]byte, error)
 }
 
@@ -47,6 +49,7 @@ type tableScanExec struct {
 	mvccStore      MVCCStore
 	cursor         int
 	seekKey        []byte
+	count          int64
 
 	src executor
 }
@@ -55,7 +58,16 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
+func (e *tableScanExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *tableScanExec) Count() int64 {
+	return e.count
+}
+
 func (e *tableScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+	e.count++
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() {
@@ -168,6 +180,7 @@ type indexScanExec struct {
 	cursor         int
 	seekKey        []byte
 	pkStatus       int
+	count          int64
 
 	src executor
 }
@@ -176,11 +189,20 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
+func (e *indexScanExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *indexScanExec) Count() int64 {
+	return e.count
+}
+
 func (e *indexScanExec) isUnique() bool {
 	return e.Unique != nil && *e.Unique
 }
 
 func (e *indexScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+	e.count++
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() && e.isUnique() {
@@ -296,12 +318,20 @@ type selectionExec struct {
 	relatedColOffsets []int
 	row               []types.Datum
 	evalCtx           *evalContext
-
-	src executor
+	count             int64
+	src               executor
 }
 
 func (e *selectionExec) SetSrcExec(exec executor) {
 	e.src = exec
+}
+
+func (e *selectionExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *selectionExec) Count() int64 {
+	return e.count
 }
 
 // evalBool evaluates expression to a boolean value.
@@ -327,6 +357,7 @@ func evalBool(exprs []expression.Expression, row types.DatumRow, ctx *stmtctx.St
 }
 
 func (e *selectionExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+	e.count++
 	for {
 		value, err = e.src.Next(goCtx)
 		if err != nil {
@@ -364,12 +395,21 @@ type aggregateExec struct {
 	groupKeyRows      [][][]byte
 	executed          bool
 	currGroupIdx      int
+	count             int64
 
 	src executor
 }
 
 func (e *aggregateExec) SetSrcExec(exec executor) {
 	e.src = exec
+}
+
+func (e *aggregateExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *aggregateExec) Count() int64 {
+	return e.count
 }
 
 func (e *aggregateExec) innerNext(goCtx goctx.Context) (bool, error) {
@@ -388,6 +428,7 @@ func (e *aggregateExec) innerNext(goCtx goctx.Context) (bool, error) {
 }
 
 func (e *aggregateExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+	e.count++
 	if e.aggCtxsMap == nil {
 		e.aggCtxsMap = make(aggCtxsMapper, 0)
 	}
@@ -500,12 +541,21 @@ type topNExec struct {
 	row               types.DatumRow
 	cursor            int
 	executed          bool
+	count             int64
 
 	src executor
 }
 
 func (e *topNExec) SetSrcExec(src executor) {
 	e.src = src
+}
+
+func (e *topNExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *topNExec) Count() int64 {
+	return e.count
 }
 
 func (e *topNExec) innerNext(goCtx goctx.Context) (bool, error) {
@@ -524,6 +574,7 @@ func (e *topNExec) innerNext(goCtx goctx.Context) (bool, error) {
 }
 
 func (e *topNExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+	e.count++
 	if !e.executed {
 		for {
 			hasMore, err := e.innerNext(goCtx)
@@ -574,6 +625,7 @@ func (e *topNExec) evalTopN(value [][]byte) error {
 type limitExec struct {
 	limit  uint64
 	cursor uint64
+	count  int64
 
 	src executor
 }
@@ -582,7 +634,16 @@ func (e *limitExec) SetSrcExec(src executor) {
 	e.src = src
 }
 
+func (e *limitExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *limitExec) Count() int64 {
+	return e.count
+}
+
 func (e *limitExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+	e.count++
 	if e.cursor >= e.limit {
 		return nil, nil
 	}

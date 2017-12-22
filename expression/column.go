@@ -112,9 +112,9 @@ func (col *CorrelatedColumn) EvalDuration(row types.Row, sc *stmtctx.StatementCo
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.JSON, bool, error) {
+func (col *CorrelatedColumn) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
 	if col.Data.IsNull() {
-		return json.JSON{}, true, nil
+		return json.BinaryJSON{}, true, nil
 	}
 	return col.Data.GetMysqlJSON(), false, nil
 }
@@ -297,9 +297,9 @@ func (col *Column) EvalDuration(row types.Row, sc *stmtctx.StatementContext) (ty
 }
 
 // EvalJSON returns JSON representation of Column.
-func (col *Column) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.JSON, bool, error) {
+func (col *Column) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
 	if row.IsNull(col.Index) {
-		return json.JSON{}, true, nil
+		return json.BinaryJSON{}, true, nil
 	}
 	return row.GetJSON(col.Index), false, nil
 }
