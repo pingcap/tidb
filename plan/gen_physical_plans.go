@@ -144,20 +144,6 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	return joins
 }
 
-func (p *LogicalJoin) getHashSemiJoin() PhysicalPlan {
-	semiJoin := PhysicalHashSemiJoin{
-		EqualConditions: p.EqualConditions,
-		LeftConditions:  p.LeftConditions,
-		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
-		rightChOffset:   p.children[0].Schema().Len(),
-		WithAux:         p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
-		Anti:            p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
-	}.init(p.ctx)
-	semiJoin.SetSchema(p.schema)
-	return semiJoin
-}
-
 func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() { // hash join doesn't promise any orders
 		return nil
@@ -457,9 +443,6 @@ func (p *LogicalProjection) tryToGetChildProp(prop *requiredProp) (*requiredProp
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
 		idx := p.schema.ColumnIndex(col)
-		if idx == -1 {
-			return nil, false
-		}
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
 			newCols = append(newCols, expr)
@@ -478,7 +461,8 @@ func (p *LogicalProjection) genPhysPlansByReqProp(prop *requiredProp) []Physical
 		return nil
 	}
 	proj := PhysicalProjection{
-		Exprs: p.Exprs,
+		Exprs:            p.Exprs,
+		CalculateNoDelay: p.calculateNoDelay,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
@@ -530,15 +514,8 @@ func (p *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 	if !prop.allColsFromSchema(p.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
-	var join PhysicalPlan
-	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin ||
-		p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		join = p.getHashSemiJoin()
-	} else {
-		join = p.getHashJoin(prop, 1)
-	}
 	apply := PhysicalApply{
-		PhysicalJoin:  join,
+		PhysicalJoin:  p.getHashJoin(prop, 1),
 		OuterSchema:   p.corCols,
 		rightChOffset: p.children[0].Schema().Len(),
 	}.init(p.ctx,
@@ -652,9 +629,13 @@ func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 }
 
 func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
+	if !prop.isEmpty() {
+		return nil
+	}
 	chReqProps := make([]*requiredProp, 0, len(p.children))
 	for range p.children {
-		chReqProps = append(chReqProps, prop)
+		chReqProps = append(chReqProps, &requiredProp{expectedCnt: prop.expectedCnt})
 	}
 	ua := PhysicalUnionAll{}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	ua.SetSchema(p.schema)
