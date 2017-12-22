@@ -102,6 +102,8 @@ func (c *Chunk) SwapColumns(other *Chunk) {
 	c.numVirtualRows, other.numVirtualRows = other.numVirtualRows, c.numVirtualRows
 }
 
+// SetNumVirtualRows sets the virtual row number for a Chunk.
+// It should only be used when there exists no column in the Chunk.
 func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 	c.numVirtualRows = numVirtualRows
 }
