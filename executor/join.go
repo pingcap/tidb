@@ -529,7 +529,10 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context) (*chunk
 		if selected {
 			return &bigRow, nil
 		} else if e.outer {
-			e.resultGenerator.emitToChunk(bigRow, nil, e.resultChunk)
+			err := e.resultGenerator.emitToChunk(bigRow, nil, e.resultChunk)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 }
