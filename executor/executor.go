@@ -598,8 +598,9 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	exprs        []expression.Expression
-	vectorizable bool
+	exprs            []expression.Expression
+	vectorizable     bool
+	calculateNoDelay bool
 }
 
 // Open implements the Executor Open interface.
@@ -647,23 +648,41 @@ func (e *ProjectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 type TableDualExec struct {
 	baseExecutor
 
-	rowCount  int
-	returnCnt int
+	// numDualRows can only be 0 or 1.
+	numDualRows int
+	numReturned int
 }
 
 // Open implements the Executor Open interface.
 func (e *TableDualExec) Open(goCtx goctx.Context) error {
-	e.returnCnt = 0
+	e.numReturned = 0
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
-	if e.returnCnt >= e.rowCount {
+	if e.numReturned >= e.numDualRows {
 		return nil, nil
 	}
-	e.returnCnt++
+	e.numReturned = e.numDualRows
 	return Row{}, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableDualExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.numReturned >= e.numDualRows {
+		return nil
+	}
+	if e.Schema().Len() == 0 {
+		chk.SetNumVirtualRows(1)
+	} else {
+		for i := range e.Schema().Columns {
+			chk.AppendNull(i)
+		}
+	}
+	e.numReturned = e.numDualRows
+	return nil
 }
 
 // SelectionExec represents a filter executor.
