@@ -50,11 +50,11 @@ func (e *hashAggExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *aggregateExec) GetSrcExec() executor {
+func (e *hashAggExec) GetSrcExec() executor {
 	return e.src
 }
 
-func (e *aggregateExec) Count() int64 {
+func (e *hashAggExec) Count() int64 {
 	return e.count
 }
 
@@ -201,11 +201,11 @@ func (e *streamAggExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *aggregateExec) GetSrcExec() executor {
+func (e *streamAggExec) GetSrcExec() executor {
 	return e.src
 }
 
-func (e *aggregateExec) Count() int64 {
+func (e *streamAggExec) Count() int64 {
 	return e.count
 }
 
