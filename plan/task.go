@@ -59,9 +59,9 @@ func (t *rootTask) invalid() bool {
 
 func (t *copTask) count() float64 {
 	if t.indexPlanFinished {
-		return t.tablePlan.statsInfo().count
+		return t.tablePlan.StatsInfo().count
 	}
-	return t.indexPlan.statsInfo().count
+	return t.indexPlan.StatsInfo().count
 }
 
 func (t *copTask) addCost(cst float64) {
@@ -107,7 +107,7 @@ func (t *copTask) finishIndexPlan() {
 		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
 		if t.tablePlan != nil {
-			t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
+			t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.StatsInfo()
 			t.cst += t.count() * scanFactor
 		}
 	}
@@ -209,27 +209,6 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	}
 }
 
-func (p *PhysicalHashSemiJoin) getCost(lCnt, rCnt float64) float64 {
-	if rCnt <= 1 {
-		rCnt = 1
-	}
-	return (lCnt + rCnt) * (1 + math.Log2(rCnt))
-}
-
-func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
-	if tasks[0].invalid() || tasks[1].invalid() {
-		return invalidTask
-	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx)
-	p.SetChildren(lTask.plan(), rTask.plan())
-	task := &rootTask{
-		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
-	}
-	return task
-}
-
 // finishCopTask means we close the coprocessor task and create a root task.
 func finishCopTask(task task, ctx context.Context) task {
 	t, ok := task.(*copTask)
@@ -247,15 +226,15 @@ func finishCopTask(task task, ctx context.Context) task {
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(ctx)
-		p.stats = t.tablePlan.statsInfo()
+		p.stats = t.tablePlan.StatsInfo()
 		newTask.p = p
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
-		p.stats = t.indexPlan.statsInfo()
+		p.stats = t.indexPlan.StatsInfo()
 		newTask.p = p
 	} else {
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
-		p.stats = t.tablePlan.statsInfo()
+		p.stats = t.tablePlan.StatsInfo()
 		newTask.p = p
 	}
 	return newTask
@@ -275,7 +254,7 @@ func (t *rootTask) copy() task {
 }
 
 func (t *rootTask) count() float64 {
-	return t.p.statsInfo().count
+	return t.p.StatsInfo().count
 }
 
 func (t *rootTask) addCost(cst float64) {
@@ -523,7 +502,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	cardinality := p.statsInfo().count
+	cardinality := p.StatsInfo().count
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
