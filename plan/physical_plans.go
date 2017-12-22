@@ -45,7 +45,6 @@ var (
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
-	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 )
@@ -112,6 +111,10 @@ type PhysicalIndexScan struct {
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
 	dataSourceSchema *expression.Schema
+
+	// HistVersion is the version of the histogram when the query was issued.
+	// It is used for query feedback.
+	HistVersion uint64
 }
 
 // PhysicalMemTable reads memory table.
@@ -132,7 +135,7 @@ func needCount(af aggregation.Aggregation) bool {
 func needValue(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat ||
-		af.GetName() == ast.AggFuncBitXor || af.GetName() == ast.AggFuncBitAnd
+		af.GetName() == ast.AggFuncBitOr || af.GetName() == ast.AggFuncBitAnd || af.GetName() == ast.AggFuncBitXor
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -154,6 +157,10 @@ type PhysicalTableScan struct {
 
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
+
+	// HistVersion is the version of the histogram when the query was issued.
+	// It is used for query feedback.
+	HistVersion uint64
 }
 
 // PhysicalProjection is the physical operator of projection.
@@ -217,6 +224,11 @@ type PhysicalIndexJoin struct {
 	innerPlan       PhysicalPlan
 
 	DefaultValues []types.Datum
+
+	// Ranges stores the IndexRanges when the inner plan is index scan.
+	Ranges []*ranger.IndexRange
+	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
+	KeyOff2IdxOff []int
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
@@ -234,21 +246,6 @@ type PhysicalMergeJoin struct {
 
 	leftKeys  []*expression.Column
 	rightKeys []*expression.Column
-}
-
-// PhysicalHashSemiJoin represents hash join for semi join.
-type PhysicalHashSemiJoin struct {
-	basePhysicalPlan
-
-	WithAux bool
-	Anti    bool
-
-	EqualConditions []*expression.ScalarFunction
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
-
-	rightChOffset int
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
@@ -393,14 +390,6 @@ func buildSchema(p PhysicalPlan) {
 	case *PhysicalApply:
 		buildSchema(x.PhysicalJoin)
 		x.schema = x.PhysicalJoin.Schema()
-	case *PhysicalHashSemiJoin:
-		if x.WithAux {
-			auxCol := x.schema.Columns[x.Schema().Len()-1]
-			x.SetSchema(x.children[0].Schema().Clone())
-			x.schema.Append(auxCol)
-		} else {
-			x.SetSchema(x.children[0].Schema().Clone())
-		}
 	case *PhysicalUnionAll:
 		panic("UnionAll shouldn't rebuild schema")
 	}

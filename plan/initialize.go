@@ -50,8 +50,6 @@ const (
 	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
-	// TypeHashSemiJoin is the type of hash semi join.
-	TypeHashSemiJoin = "HashSemiJoin"
 	// TypeHashLeftJoin is the type of left hash join.
 	TypeHashLeftJoin = "HashLeftJoin"
 	// TypeHashRightJoin is the type of right hash join.
@@ -277,11 +275,6 @@ func (p PhysicalHashJoin) init(ctx context.Context, stats *statsInfo, props ...*
 	p.basePhysicalPlan = newBasePhysicalPlan(tp, ctx, &p)
 	p.childrenReqProps = props
 	p.stats = stats
-	return &p
-}
-
-func (p PhysicalHashSemiJoin) init(ctx context.Context) *PhysicalHashSemiJoin {
-	p.basePhysicalPlan = newBasePhysicalPlan(TypeHashSemiJoin, ctx, &p)
 	return &p
 }
 

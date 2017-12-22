@@ -41,12 +41,21 @@ type hashAggExec struct {
 	groupKeyRows      [][][]byte
 	executed          bool
 	currGroupIdx      int
+	count             int64
 
 	src executor
 }
 
 func (e *hashAggExec) SetSrcExec(exec executor) {
 	e.src = exec
+}
+
+func (e *aggregateExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *aggregateExec) Count() int64 {
+	return e.count
 }
 
 func (e *hashAggExec) innerNext(goCtx goctx.Context) (bool, error) {
@@ -65,6 +74,7 @@ func (e *hashAggExec) innerNext(goCtx goctx.Context) (bool, error) {
 }
 
 func (e *hashAggExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+	e.count++
 	if e.aggCtxsMap == nil {
 		e.aggCtxsMap = make(aggCtxsMapper, 0)
 	}
@@ -182,12 +192,21 @@ type streamAggExec struct {
 	currGroupByValues [][]byte
 	executed          bool
 	hasData           bool
+	count             int64
 
 	src executor
 }
 
 func (e *streamAggExec) SetSrcExec(exec executor) {
 	e.src = exec
+}
+
+func (e *aggregateExec) GetSrcExec() executor {
+	return e.src
+}
+
+func (e *aggregateExec) Count() int64 {
+	return e.count
 }
 
 func (e *streamAggExec) getPartialResult() ([][]byte, error) {
@@ -251,6 +270,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 }
 
 func (e *streamAggExec) Next(goCtx goctx.Context) (retRow [][]byte, err error) {
+	e.count++
 	if e.executed {
 		return nil, nil
 	}

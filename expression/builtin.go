@@ -179,7 +179,7 @@ func (b *baseBuiltinFunc) evalDuration(row types.Row) (types.Duration, bool, err
 	panic("baseBuiltinFunc.evalDuration() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalJSON(row types.Row) (json.JSON, bool, error) {
+func (b *baseBuiltinFunc) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
 	panic("baseBuiltinFunc.evalJSON() should never be called.")
 }
 
@@ -230,7 +230,7 @@ type builtinFunc interface {
 	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row types.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(row types.Row) (val json.JSON, isNull bool, err error)
+	evalJSON(row types.Row) (val json.BinaryJSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/util/ranger"
 	goctx "golang.org/x/net/context"
 )
 
@@ -56,6 +57,9 @@ type NewIndexLookUpJoin struct {
 	joinResultCursor int
 
 	resultGenerator joinResultGenerator
+
+	indexRanges   []*ranger.IndexRange
+	keyOff2IdxOff []int
 }
 
 type outerCtx struct {
@@ -106,6 +110,9 @@ type innerWorker struct {
 	outerCtx    outerCtx
 	ctx         context.Context
 	executorChk *chunk.Chunk
+
+	indexRanges   []*ranger.IndexRange
+	keyOff2IdxOff []int
 }
 
 // Open implements the Executor interface.
@@ -148,12 +155,19 @@ func (e *NewIndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTa
 }
 
 func (e *NewIndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
+	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
+	copiedRanges := make([]*ranger.IndexRange, 0, len(e.indexRanges))
+	for _, ran := range e.indexRanges {
+		copiedRanges = append(copiedRanges, ran.Clone())
+	}
 	iw := &innerWorker{
-		innerCtx:    e.innerCtx,
-		outerCtx:    e.outerCtx,
-		taskCh:      taskCh,
-		ctx:         e.ctx,
-		executorChk: chunk.NewChunk(e.innerCtx.rowTypes),
+		innerCtx:      e.innerCtx,
+		outerCtx:      e.outerCtx,
+		taskCh:        taskCh,
+		ctx:           e.ctx,
+		executorChk:   chunk.NewChunk(e.innerCtx.rowTypes),
+		indexRanges:   copiedRanges,
+		keyOff2IdxOff: e.keyOff2IdxOff,
 	}
 	return iw
 }
@@ -194,7 +208,10 @@ func (e *NewIndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 		row := e.joinResult.GetRow(e.joinResultCursor)
 		datumRow := make(types.DatumRow, row.Len())
 		for i := 0; i < row.Len(); i++ {
-			datumRow[i] = row.GetDatum(i, e.schema.Columns[i].RetType)
+			// Here if some datum is KindBytes/KindString and we don't copy it, the datums' data could be in the same space
+			// since row.GetDatum() and datum.SetBytes() don't alloc new space thus causing wrong result.
+			d := row.GetDatum(i, e.schema.Columns[i].RetType)
+			datumRow[i] = *d.Copy()
 		}
 		e.joinResultCursor++
 		return datumRow, nil
@@ -464,7 +481,7 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 }
 
 func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTask, dLookUpKeys [][]types.Datum) error {
-	innerExec, err := iw.readerBuilder.buildExecutorForDatums(goCtx, dLookUpKeys)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(goCtx, dLookUpKeys, iw.indexRanges, iw.keyOff2IdxOff)
 	if err != nil {
 		return errors.Trace(err)
 	}

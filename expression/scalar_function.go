@@ -249,7 +249,7 @@ func (sf *ScalarFunction) EvalDuration(row types.Row, sc *stmtctx.StatementConte
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.JSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
 }
 
