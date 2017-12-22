@@ -212,6 +212,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}
 
 	if err := e.Open(goCtx); err != nil {
+		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
 

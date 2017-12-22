@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -309,10 +310,13 @@ type TableReaderExecutor struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	priority      int
+	feedback      *statistics.QueryFeedback
 }
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
+	e.feedback.SetIntRanges(e.ranges).SetActual(e.result.ScanCount())
+	e.ctx.StoreQueryFeedback(e.feedback)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
 	e.partialResult = nil
@@ -327,6 +331,7 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 			var err error
 			e.partialResult, err = e.result.Next(goCtx)
 			if err != nil {
+				e.feedback.Invalidate()
 				return nil, errors.Trace(err)
 			}
 			if e.partialResult == nil {
@@ -337,6 +342,7 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		// Get a row from partial result.
 		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
+			e.feedback.Invalidate()
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
@@ -348,6 +354,7 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		}
 		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
+			e.feedback.Invalidate()
 			return nil, errors.Trace(err)
 		}
 		return rowData, nil
@@ -356,7 +363,11 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *TableReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	return e.result.NextChunk(goCtx, chk)
+	err := e.result.NextChunk(goCtx, chk)
+	if err != nil {
+		e.feedback.Invalidate()
+	}
+	return errors.Trace(err)
 }
 
 // Open implements the Executor Open interface.
@@ -373,10 +384,12 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
+		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
 	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
+		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
@@ -413,10 +426,13 @@ type IndexReaderExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
+	feedback *statistics.QueryFeedback
 }
 
 // Close implements the Executor Close interface.
 func (e *IndexReaderExecutor) Close() error {
+	e.feedback.SetIndexRanges(e.ranges).SetActual(e.result.ScanCount())
+	e.ctx.StoreQueryFeedback(e.feedback)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
 	e.partialResult = nil
@@ -431,6 +447,7 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 			var err error
 			e.partialResult, err = e.result.Next(goCtx)
 			if err != nil {
+				e.feedback.Invalidate()
 				return nil, errors.Trace(err)
 			}
 			if e.partialResult == nil {
@@ -441,6 +458,7 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		// Get a row from partial result.
 		rowData, err := e.partialResult.Next(goCtx)
 		if err != nil {
+			e.feedback.Invalidate()
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
@@ -452,6 +470,7 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 		}
 		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
+			e.feedback.Invalidate()
 			return nil, errors.Trace(err)
 		}
 		return rowData, nil
@@ -460,7 +479,11 @@ func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *IndexReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	return e.result.NextChunk(goCtx, chk)
+	err := e.result.NextChunk(goCtx, chk)
+	if err != nil {
+		e.feedback.Invalidate()
+	}
+	return errors.Trace(err)
 }
 
 // Open implements the Executor Open interface.
@@ -485,10 +508,12 @@ func (e *IndexReaderExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) 
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
+		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
 	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
+		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
@@ -521,6 +546,7 @@ type IndexLookUpExecutor struct {
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
+	feedback   *statistics.QueryFeedback
 }
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
@@ -568,7 +594,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 	e.idxWorkerWg.Add(1)
 	go func() {
 		goCtx1, cancel := goctx.WithCancel(goCtx)
-		worker.fetchHandles(goCtx1, result)
+		err := worker.fetchHandles(goCtx1, result)
+		scanCount := result.ScanCount()
+		if err != nil {
+			scanCount = -1
+		}
+		e.feedback.SetIndexRanges(e.ranges).SetActual(scanCount)
+		e.ctx.StoreQueryFeedback(e.feedback)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
@@ -583,7 +615,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(goCtx goctx.Context, result distsql.SelectResult) {
+func (w *indexWorker) fetchHandles(goCtx goctx.Context, result distsql.SelectResult) error {
 	chk := chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	for {
 		handles, err := w.extractTaskHandles(goCtx, chk, result)
@@ -593,17 +625,17 @@ func (w *indexWorker) fetchHandles(goCtx goctx.Context, result distsql.SelectRes
 			w.resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
-			return
+			return err
 		}
 		if len(handles) == 0 {
-			return
+			return nil
 		}
 		task := w.buildTableTask(handles)
 		select {
 		case <-goCtx.Done():
-			return
+			return nil
 		case <-w.finished:
-			return
+			return nil
 		case w.workCh <- task:
 			w.resultCh <- task
 		}
@@ -626,6 +658,7 @@ func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []in
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
 		priority:     e.priority,
+		feedback:     statistics.NewQueryFeedback(0, 0, false, 0, 0),
 	}, handles)
 	if err != nil {
 		log.Error(err)
@@ -677,9 +710,14 @@ func (w *tableWorker) pickAndExecTask(goCtx goctx.Context) {
 func (e *IndexLookUpExecutor) Open(goCtx goctx.Context) error {
 	kvRanges, err := indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
 	if err != nil {
+		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	return e.open(goCtx, kvRanges)
+	err = e.open(goCtx, kvRanges)
+	if err != nil {
+		e.feedback.Invalidate()
+	}
+	return errors.Trace(err)
 }
 
 func (e *IndexLookUpExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) error {
