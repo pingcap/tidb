@@ -47,26 +47,6 @@ func (p *PhysicalHashJoin) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalHashSemiJoin) ResolveIndices() {
-	p.basePlan.ResolveIndices()
-	lSchema := p.children[0].Schema()
-	rSchema := p.children[1].Schema()
-	for _, fun := range p.EqualConditions {
-		fun.GetArgs()[0].ResolveIndices(lSchema)
-		fun.GetArgs()[1].ResolveIndices(rSchema)
-	}
-	for _, expr := range p.LeftConditions {
-		expr.ResolveIndices(lSchema)
-	}
-	for _, expr := range p.RightConditions {
-		expr.ResolveIndices(rSchema)
-	}
-	for _, expr := range p.OtherConditions {
-		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
-	}
-}
-
-// ResolveIndices implements Plan interface.
 func (p *PhysicalMergeJoin) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	lSchema := p.children[0].Schema()

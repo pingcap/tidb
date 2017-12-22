@@ -209,27 +209,6 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	}
 }
 
-func (p *PhysicalHashSemiJoin) getCost(lCnt, rCnt float64) float64 {
-	if rCnt <= 1 {
-		rCnt = 1
-	}
-	return (lCnt + rCnt) * (1 + math.Log2(rCnt))
-}
-
-func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
-	if tasks[0].invalid() || tasks[1].invalid() {
-		return invalidTask
-	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx)
-	p.SetChildren(lTask.plan(), rTask.plan())
-	task := &rootTask{
-		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
-	}
-	return task
-}
-
 // finishCopTask means we close the coprocessor task and create a root task.
 func finishCopTask(task task, ctx context.Context) task {
 	t, ok := task.(*copTask)

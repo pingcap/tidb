@@ -45,7 +45,6 @@ var (
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
-	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 )
@@ -249,21 +248,6 @@ type PhysicalMergeJoin struct {
 	rightKeys []*expression.Column
 }
 
-// PhysicalHashSemiJoin represents hash join for semi join.
-type PhysicalHashSemiJoin struct {
-	basePhysicalPlan
-
-	WithAux bool
-	Anti    bool
-
-	EqualConditions []*expression.ScalarFunction
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
-
-	rightChOffset int
-}
-
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
 type PhysicalLock struct {
 	basePhysicalPlan
@@ -406,14 +390,6 @@ func buildSchema(p PhysicalPlan) {
 	case *PhysicalApply:
 		buildSchema(x.PhysicalJoin)
 		x.schema = x.PhysicalJoin.Schema()
-	case *PhysicalHashSemiJoin:
-		if x.WithAux {
-			auxCol := x.schema.Columns[x.Schema().Len()-1]
-			x.SetSchema(x.children[0].Schema().Clone())
-			x.schema.Append(auxCol)
-		} else {
-			x.SetSchema(x.children[0].Schema().Clone())
-		}
 	case *PhysicalUnionAll:
 		panic("UnionAll shouldn't rebuild schema")
 	}
