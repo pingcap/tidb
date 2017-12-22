@@ -50,7 +50,7 @@ func (m *MockExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-func (s *pkgTestSuite) TestNestedLoopJoin(c *C) {
+func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	goCtx := goctx.Background()
 	ctx := mock.NewContext()
 	bigExec := &MockExec{
@@ -79,7 +79,7 @@ func (s *pkgTestSuite) TestNestedLoopJoin(c *C) {
 	otherFilter := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	generator := newJoinResultGenerator(ctx, plan.InnerJoin, false,
 		make([]types.Datum, smallExec.Schema().Len()), []expression.Expression{otherFilter}, nil, nil)
-	join := &NestedLoopJoinExec{
+	join := &NestedLoopApplyExec{
 		baseExecutor:    newBaseExecutor(nil, ctx),
 		BigExec:         bigExec,
 		SmallExec:       smallExec,
