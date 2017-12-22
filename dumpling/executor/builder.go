@@ -549,14 +549,14 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		rightKeys = append(rightKeys, rightKey)
 	}
 
-	leftRowBlock := &rowBlockIterator{
+	lhsIter := &readerIterator{
 		ctx:      b.ctx,
 		reader:   leftExec,
 		filter:   v.LeftConditions,
 		joinKeys: leftKeys,
 	}
 
-	rightRowBlock := &rowBlockIterator{
+	rhsIter := &readerIterator{
 		ctx:      b.ctx,
 		reader:   rightExec,
 		filter:   v.RightConditions,
@@ -567,20 +567,24 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, rightExec.Schema().Len())
 	}
+	lhsColTypes := leftExec.Schema().GetTypes()
+	rhsColTypes := rightExec.Schema().GetTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, nil, nil),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
 		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
 		// left is the outer side by default.
+		outerIdx:  0,
 		outerKeys: leftKeys,
 		innerKeys: rightKeys,
-		outerIter: leftRowBlock,
-		innerIter: rightRowBlock,
+		outerIter: lhsIter,
+		innerIter: rhsIter,
 	}
 
 	if v.JoinType == plan.RightOuterJoin {
 		e.outerKeys, e.innerKeys = e.innerKeys, e.outerKeys
 		e.outerIter, e.innerIter = e.innerIter, e.outerIter
+		e.outerIdx = 1
 	}
 
 	if v.JoinType != plan.InnerJoin {
@@ -588,6 +592,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		e.outerIter.filter = nil
 	}
 
+	e.supportChk = true
 	return e
 }
 
