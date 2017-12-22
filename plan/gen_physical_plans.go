@@ -144,20 +144,6 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	return joins
 }
 
-func (p *LogicalJoin) getHashSemiJoin() PhysicalPlan {
-	semiJoin := PhysicalHashSemiJoin{
-		EqualConditions: p.EqualConditions,
-		LeftConditions:  p.LeftConditions,
-		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
-		rightChOffset:   p.children[0].Schema().Len(),
-		WithAux:         p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
-		Anti:            p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
-	}.init(p.ctx)
-	semiJoin.SetSchema(p.schema)
-	return semiJoin
-}
-
 func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() { // hash join doesn't promise any orders
 		return nil
@@ -530,15 +516,8 @@ func (p *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 	if !prop.allColsFromSchema(p.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
-	var join PhysicalPlan
-	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin ||
-		p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		join = p.getHashSemiJoin()
-	} else {
-		join = p.getHashJoin(prop, 1)
-	}
 	apply := PhysicalApply{
-		PhysicalJoin:  join,
+		PhysicalJoin:  p.getHashJoin(prop, 1),
 		OuterSchema:   p.corCols,
 		rightChOffset: p.children[0].Schema().Len(),
 	}.init(p.ctx,
