@@ -888,7 +888,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
 				if opt.Tp == ast.TableOptionAutoIncrement {
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue-1))
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue)-1)
 					break
 				}
 			}
