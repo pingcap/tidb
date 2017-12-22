@@ -79,37 +79,37 @@ type readerIterator struct {
 	resourceQueue  []*chunk.Chunk
 
 	// joinResultGenerator is "nil" means this iterator works on the inner table,
-	// otherwise it works on the outer table and is used to eimt the un-matched
+	// otherwise it works on the outer table and is used to emits the un-matched
 	// outer rows to "joinResult".
 	joinResultGenerator joinResultGenerator
 	joinResult          *chunk.Chunk
 }
 
-func (rb *readerIterator) init() error {
-	if rb.reader == nil || rb.joinKeys == nil || len(rb.joinKeys) == 0 || rb.ctx == nil {
+func (ri *readerIterator) init() error {
+	if ri.reader == nil || ri.joinKeys == nil || len(ri.joinKeys) == 0 || ri.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
-	rb.stmtCtx = rb.ctx.GetSessionVars().StmtCtx
+	ri.stmtCtx = ri.ctx.GetSessionVars().StmtCtx
 	var err error
-	rb.peekedRow, err = rb.nextRow()
+	ri.peekedRow, err = ri.nextRow()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rb.rowCache = make([]Row, 0, rowBufferSize)
+	ri.rowCache = make([]Row, 0, rowBufferSize)
 	return nil
 }
 
-func (rb *readerIterator) nextRow() (types.Row, error) {
+func (ri *readerIterator) nextRow() (types.Row, error) {
 	for {
-		row, err := rb.reader.Next(rb.goCtx)
+		row, err := ri.reader.Next(ri.goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
 			return nil, nil
 		}
-		if rb.filter != nil {
-			matched, err := expression.EvalBool(rb.filter, row, rb.ctx)
+		if ri.filter != nil {
+			matched, err := expression.EvalBool(ri.filter, row, ri.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -121,128 +121,128 @@ func (rb *readerIterator) nextRow() (types.Row, error) {
 	}
 }
 
-func (rb *readerIterator) nextBlock() ([]Row, error) {
-	if rb.peekedRow == nil {
+func (ri *readerIterator) nextBlock() ([]Row, error) {
+	if ri.peekedRow == nil {
 		return nil, nil
 	}
-	rowCache := rb.rowCache[0:0:rowBufferSize]
-	rowCache = append(rowCache, rb.peekedRow.(types.DatumRow))
+	rowCache := ri.rowCache[0:0:rowBufferSize]
+	rowCache = append(rowCache, ri.peekedRow.(types.DatumRow))
 	for {
-		curRow, err := rb.nextRow()
+		curRow, err := ri.nextRow()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if curRow == nil {
-			rb.peekedRow = nil
+			ri.peekedRow = nil
 			return rowCache, nil
 		}
-		compareResult, err := compareKeys(rb.stmtCtx, curRow, rb.joinKeys, rb.peekedRow, rb.joinKeys)
+		compareResult, err := compareKeys(ri.stmtCtx, curRow, ri.joinKeys, ri.peekedRow, ri.joinKeys)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if compareResult == 0 {
 			rowCache = append(rowCache, curRow.(types.DatumRow))
 		} else {
-			rb.peekedRow = curRow
+			ri.peekedRow = curRow
 			return rowCache, nil
 		}
 	}
 }
 
-func (rb *readerIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
-	if rb.reader == nil || rb.joinKeys == nil || len(rb.joinKeys) == 0 || rb.ctx == nil {
+func (ri *readerIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
+	if ri.reader == nil || ri.joinKeys == nil || len(ri.joinKeys) == 0 || ri.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
-	rb.stmtCtx = rb.ctx.GetSessionVars().StmtCtx
-	rb.curResult = chk4Reader
-	rb.curSelected = make([]bool, 0, rb.ctx.GetSessionVars().MaxChunkSize)
-	rb.curRow = chk4Reader.End()
-	rb.curResultInUse = false
-	rb.resultQueue = append(rb.resultQueue, chk4Reader)
-	rb.firstRow4Key, err = rb.nextSelectedRow()
+	ri.stmtCtx = ri.ctx.GetSessionVars().StmtCtx
+	ri.curResult = chk4Reader
+	ri.curSelected = make([]bool, 0, ri.ctx.GetSessionVars().MaxChunkSize)
+	ri.curRow = chk4Reader.End()
+	ri.curResultInUse = false
+	ri.resultQueue = append(ri.resultQueue, chk4Reader)
+	ri.firstRow4Key, err = ri.nextSelectedRow()
 	return errors.Trace(err)
 }
 
-func (rb *readerIterator) rowsWithSameKey() (rows []chunk.Row, err error) {
-	lastResultIdx := len(rb.resultQueue) - 1
-	rb.resourceQueue = append(rb.resourceQueue, rb.resultQueue[0:lastResultIdx]...)
-	rb.resultQueue = rb.resultQueue[lastResultIdx:]
+func (ri *readerIterator) rowsWithSameKey() (rows []chunk.Row, err error) {
+	lastResultIdx := len(ri.resultQueue) - 1
+	ri.resourceQueue = append(ri.resourceQueue, ri.resultQueue[0:lastResultIdx]...)
+	ri.resultQueue = ri.resultQueue[lastResultIdx:]
 	// no more data.
-	if rb.firstRow4Key == rb.curResult.End() {
+	if ri.firstRow4Key == ri.curResult.End() {
 		return nil, nil
 	}
-	rows = append(rows, rb.firstRow4Key)
+	rows = append(rows, ri.firstRow4Key)
 	for {
-		selectedRow, err := rb.nextSelectedRow()
+		selectedRow, err := ri.nextSelectedRow()
 		// error happens or no more data.
-		if err != nil || selectedRow == rb.curResult.End() {
-			rb.firstRow4Key = rb.curResult.End()
+		if err != nil || selectedRow == ri.curResult.End() {
+			ri.firstRow4Key = ri.curResult.End()
 			return rows, errors.Trace(err)
 		}
-		compareResult, err := compareKeys(rb.stmtCtx, selectedRow, rb.joinKeys, rb.firstRow4Key, rb.joinKeys)
+		compareResult, err := compareKeys(ri.stmtCtx, selectedRow, ri.joinKeys, ri.firstRow4Key, ri.joinKeys)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if compareResult == 0 {
 			rows = append(rows, selectedRow)
 		} else {
-			rb.firstRow4Key = selectedRow
+			ri.firstRow4Key = selectedRow
 			return rows, nil
 		}
 	}
 }
 
-func (rb *readerIterator) nextSelectedRow() (chunk.Row, error) {
+func (ri *readerIterator) nextSelectedRow() (chunk.Row, error) {
 	for {
-		for ; rb.curRow != rb.curResult.End(); rb.curRow = rb.curRow.Next() {
-			if rb.curSelected[rb.curRow.Idx()] {
-				result := rb.curRow
-				rb.curResultInUse = true
-				rb.curRow = rb.curRow.Next()
+		for ; ri.curRow != ri.curResult.End(); ri.curRow = ri.curRow.Next() {
+			if ri.curSelected[ri.curRow.Idx()] {
+				result := ri.curRow
+				ri.curResultInUse = true
+				ri.curRow = ri.curRow.Next()
 				return result, nil
-			} else if rb.joinResultGenerator != nil {
+			} else if ri.joinResultGenerator != nil {
 				// If this iterator works on the outer table, we should emit the un-matched outer row to result Chunk.
-				err := rb.joinResultGenerator.emitToChunk(rb.curRow, nil, rb.joinResult)
+				err := ri.joinResultGenerator.emitToChunk(ri.curRow, nil, ri.joinResult)
 				if err != nil {
-					return rb.curResult.End(), errors.Trace(err)
+					return ri.curResult.End(), errors.Trace(err)
 				}
 			}
 		}
-		rb.reallocReaderResult()
-		rb.curRow = rb.curResult.Begin()
-		err := rb.reader.NextChunk(rb.goCtx, rb.curResult)
+		ri.reallocReaderResult()
+		ri.curRow = ri.curResult.Begin()
+		err := ri.reader.NextChunk(ri.goCtx, ri.curResult)
 		// error happens or no more data.
-		if err != nil || rb.curResult.NumRows() == 0 {
-			return rb.curResult.End(), errors.Trace(err)
+		if err != nil || ri.curResult.NumRows() == 0 {
+			return ri.curResult.End(), errors.Trace(err)
 		}
-		rb.curSelected, err = expression.VectorizedFilter(rb.ctx, rb.filter, rb.curResult, rb.curSelected)
+		ri.curSelected, err = expression.VectorizedFilter(ri.ctx, ri.filter, ri.curResult, ri.curSelected)
 		if err != nil {
-			return rb.curResult.End(), errors.Trace(err)
+			return ri.curResult.End(), errors.Trace(err)
 		}
 	}
 }
 
-// reallocReaderResult resets "rb.curResult" to an empty Chunk to buffer the result of "rb.reader".
-// It pops a Chunk from "rb.resourceQueue" and push it into "rb.resultQueue" immediately.
-func (rb *readerIterator) reallocReaderResult() {
-	if !rb.curResultInUse {
-		// If "rb.curResult" is not in use, we can just reuse it.
-		rb.curResult.Reset()
+// reallocReaderResult resets "ri.curResult" to an empty Chunk to buffer the result of "ri.reader".
+// It pops a Chunk from "ri.resourceQueue" and push it into "ri.resultQueue" immediately.
+func (ri *readerIterator) reallocReaderResult() {
+	if !ri.curResultInUse {
+		// If "ri.curResult" is not in use, we can just reuse it.
+		ri.curResult.Reset()
 		return
 	}
 
 	// Create a new Chunk and append it to "resourceQueue" if there is no more
 	// available chunk in "resourceQueue".
-	if len(rb.resourceQueue) == 0 {
-		rb.resourceQueue = append(rb.resourceQueue, rb.reader.newChunk())
+	if len(ri.resourceQueue) == 0 {
+		ri.resourceQueue = append(ri.resourceQueue, ri.reader.newChunk())
 	}
 
-	// NOTE: "rb.curResult" is always the last element of "resultQueue".
-	rb.curResult = rb.resourceQueue[0]
-	rb.resourceQueue = rb.resourceQueue[1:]
-	rb.resultQueue = append(rb.resultQueue, rb.curResult)
-	rb.curResult.Reset()
-	rb.curResultInUse = false
+	// NOTE: "ri.curResult" is always the last element of "resultQueue".
+	ri.curResult = ri.resourceQueue[0]
+	ri.resourceQueue = ri.resourceQueue[1:]
+	ri.resultQueue = append(ri.resultQueue, ri.curResult)
+	ri.curResult.Reset()
+	ri.curResultInUse = false
 }
 
 // Close implements the Executor Close interface.
@@ -454,18 +454,18 @@ func (e *MergeJoinExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		}
 	}
 	for {
-		numRequiredRows := e.ctx.GetSessionVars().MaxChunkSize - chk.NumRows()
+		numRequiredRows := e.maxChunkSize - chk.NumRows()
 		numRetainedRows := e.resultChunk.NumRows()
 		numAppendedRows := mathutil.Min(numRequiredRows, numRetainedRows)
 
 		chk.Append(e.resultChunk, e.resultChunk.NumRows()-numAppendedRows, e.resultChunk.NumRows())
 		e.resultChunk.TruncateTo(e.resultChunk.NumRows() - numAppendedRows)
 
-		if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+		if chk.NumRows() == e.maxChunkSize {
 			return nil
 		}
 
-		// reach here means there no more data in "e.resultChunk"
+		// reach here means there is no more data in "e.resultChunk"
 		hasMore, err := e.joinToResultChunk()
 		if err != nil || !hasMore {
 			return errors.Trace(err)
