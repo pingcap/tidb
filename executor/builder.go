@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -805,15 +806,15 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
 	}
 	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-		defaultValues, otherConditions, nil, nil)
+		defaultValues, otherConditions, leftChild.Schema().GetTypes(), rightChild.Schema().GetTypes())
 	bigExec, smallExec := leftChild, rightChild
 	bigFilter, smallFilter := v.LeftConditions, v.RightConditions
 	if v.SmallChildIdx == 0 {
 		bigExec, smallExec = rightChild, leftChild
 		bigFilter, smallFilter = v.RightConditions, v.LeftConditions
 	}
-	return &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx),
+	e := &NestedLoopApplyExec{
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, bigExec, smallExec),
 		SmallExec:       smallExec,
 		BigExec:         bigExec,
 		BigFilter:       bigFilter,
@@ -821,7 +822,11 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
+		bigChunk:        bigExec.newChunk(),
+		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
