@@ -109,15 +109,34 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 
 func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
 	if len(req.Ranges) == 0 {
-		return nil, errors.Errorf("empty request range")
+		return nil, errors.New("request range is null")
 	}
-	switch req.Tp {
-	case kv.ReqTypeDAG:
-		// chunks, err := h.getDAGRequestChunk(req)
-		// return buildStreamResponse(chunks, err)
-	case kv.ReqTypeAnalyze:
+	if req.GetTp() != kv.ReqTypeDAG {
+		return nil, errors.Errorf("unsupport request type %d", req.GetTp())
 	}
-	return nil, errors.New("not implemented yet")
+
+	dagReq := new(tipb.DAGRequest)
+	err := proto.Unmarshal(req.Data, dagReq)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sc := flagsToStatementContext(dagReq.Flags)
+	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	ctx := &dagContext{
+		dagReq:    dagReq,
+		keyRanges: req.Ranges,
+		evalCtx:   &evalContext{sc: sc, timeZone: timeZone},
+	}
+	e, err := h.buildDAG(ctx, dagReq.Executors)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &mockCoprocessorStreamClient{
+		exec:  e,
+		req:   dagReq,
+		goCtx: goctx.TODO(),
+	}, nil
 }
 
 func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
@@ -354,13 +373,6 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	return sc
 }
 
-func buildStreamResponse(chunks []tipb.Chunk, err error) (tikvpb.Tikv_CoprocessorStreamClient, error) {
-	return &mockCoprocessorStreamClient{
-		chunks: chunks,
-		err:    err,
-	}, nil
-}
-
 type mockClientStream struct{}
 
 func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
@@ -372,10 +384,10 @@ func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
 
 type mockCoprocessorStreamClient struct {
 	mockClientStream
-
-	chunks []tipb.Chunk
-	idx    int
-	err    error
+	req      *tipb.DAGRequest
+	exec     executor
+	goCtx    goctx.Context
+	finished bool
 }
 
 type streamRegionError struct {
@@ -390,9 +402,14 @@ func (e *streamRegionError) Recv() (*coprocessor.Response, error) {
 }
 
 func (mock *mockCoprocessorStreamClient) Recv() (*coprocessor.Response, error) {
+	if mock.finished {
+		return nil, io.EOF
+	}
+
 	var resp coprocessor.Response
-	if mock.err != nil {
-		if locked, ok := errors.Cause(mock.err).(*ErrLocked); ok {
+	chunk, finish, err := readBlockFromExecutor(mock.goCtx, mock.exec, mock.req.OutputOffsets)
+	if err != nil {
+		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
 				Key:         locked.Key,
 				PrimaryLock: locked.Primary,
@@ -400,16 +417,16 @@ func (mock *mockCoprocessorStreamClient) Recv() (*coprocessor.Response, error) {
 				LockTtl:     locked.TTL,
 			}
 		} else {
-			resp.OtherError = mock.err.Error()
+			resp.OtherError = err.Error()
 		}
 		return &resp, nil
 	}
-
-	if mock.idx >= len(mock.chunks) {
-		// Note here, use io.EOF indicates the stream finish.
-		return nil, io.EOF
+	if finish {
+		// Just mark it, need to handle the last chunk.
+		mock.finished = true
 	}
-	data, err := mock.chunks[mock.idx].Marshal()
+
+	data, err := chunk.Marshal()
 	if err != nil {
 		resp.OtherError = err.Error()
 		return &resp, nil
@@ -425,8 +442,27 @@ func (mock *mockCoprocessorStreamClient) Recv() (*coprocessor.Response, error) {
 		return &resp, nil
 	}
 	resp.Data = data1
-	mock.idx++
 	return &resp, nil
+}
+
+func readBlockFromExecutor(goCtx goctx.Context, e executor, rowCols []uint32) (tipb.Chunk, bool, error) {
+	var err error
+	var count int
+	var chunk tipb.Chunk
+	for count = 0; count < rowsPerChunk; count++ {
+		var row [][]byte
+		row, err = e.Next(goCtx)
+		if err != nil {
+			return chunk, false, errors.Trace(err)
+		}
+		if row == nil {
+			return chunk, true, nil
+		}
+		for _, offset := range rowCols {
+			chunk.RowsData = append(chunk.RowsData, row[offset]...)
+		}
+	}
+	return chunk, false, nil
 }
 
 func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {

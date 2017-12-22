@@ -622,7 +622,6 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
-		// NOTE: it should process both DAG and Analyze
 		copStream, err := handler.handleCopStream(r)
 		if err != nil {
 			return nil, errors.Trace(err)
