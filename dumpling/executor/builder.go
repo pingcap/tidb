@@ -764,7 +764,12 @@ func (b *executorBuilder) buildTopN(v *plan.PhysicalTopN) Executor {
 	}
 }
 
-func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
+func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApplyExec {
+	v, ok := apply.PhysicalJoin.(*plan.PhysicalHashJoin)
+	if !ok {
+		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
+		return nil
+	}
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -795,7 +800,7 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		bigExec, smallExec = rightChild, leftChild
 		bigFilter, smallFilter = v.RightConditions, v.LeftConditions
 	}
-	return &NestedLoopJoinExec{
+	return &NestedLoopApplyExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx),
 		SmallExec:       smallExec,
 		BigExec:         bigExec,
@@ -803,23 +808,8 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		SmallFilter:     smallFilter,
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
+		outerSchema:     apply.OuterSchema,
 	}
-}
-
-func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
-	var join joinExec
-	switch x := v.PhysicalJoin.(type) {
-	case *plan.PhysicalHashJoin:
-		join = b.buildNestedLoopJoin(x)
-	default:
-		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
-	}
-	apply := &ApplyJoinExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		join:         join,
-		outerSchema:  v.OuterSchema,
-	}
-	return apply
 }
 
 func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
