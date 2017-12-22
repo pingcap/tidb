@@ -245,7 +245,6 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	}
 	p.SetChildren(dual)
 	p.self = p
-	p.SetSchema(expression.NewSchema())
 	p.SetSchema(schema)
 	p.calculateNoDelay = true
 	return p
