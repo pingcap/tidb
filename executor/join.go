@@ -464,7 +464,9 @@ type NestedLoopApplyExec struct {
 
 	bigChunk       *chunk.Chunk
 	bigChunkCursor int
+	bigSelected    []bool
 	innerChunkRows []chunk.Row
+	innerSelected  []bool
 	resultChunk    *chunk.Chunk
 }
 
@@ -505,28 +507,29 @@ func (e *NestedLoopApplyExec) fetchBigRow(goCtx goctx.Context) (Row, bool, error
 	}
 }
 
-func (e *NestedLoopApplyExec) fetchBigChunkRow(goCtx goctx.Context) (*chunk.Row, bool, error) {
+func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context) (*chunk.Row, error) {
 	for {
 		if e.bigChunkCursor >= e.bigChunk.NumRows() {
 			err := e.BigExec.NextChunk(goCtx, e.bigChunk)
 			if err != nil {
-				return nil, false, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			if e.bigChunk.NumRows() == 0 {
-				return nil, false, nil
+				return nil, nil
+			}
+			e.bigSelected, err = expression.VectorizedFilter(e.ctx, e.BigFilter, e.bigChunk, e.bigSelected)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 			e.bigChunkCursor = 0
 		}
 		bigRow := e.bigChunk.GetRow(e.bigChunkCursor)
+		selected := e.bigSelected[e.bigChunkCursor]
 		e.bigChunkCursor++
-		matched, err := expression.EvalBool(e.BigFilter, bigRow, e.ctx)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if matched {
-			return &bigRow, true, nil
+		if selected {
+			return &bigRow, nil
 		} else if e.outer {
-			return &bigRow, false, nil
+			e.resultGenerator.emitToChunk(bigRow, nil, e.resultChunk)
 		}
 	}
 }
@@ -558,14 +561,13 @@ func (e *NestedLoopApplyExec) prepare(goCtx goctx.Context) error {
 	}
 }
 
-// prepare4Chunk reads all data from the small table and stores them in a slice.
-func (e *NestedLoopApplyExec) prepare4Chunk(goCtx goctx.Context) error {
-	err := e.SmallExec.Open(goctx.TODO())
+// fetchAllInners reads all data from the small table and stores them in a slice.
+func (e *NestedLoopApplyExec) fetchAllInners(goCtx goctx.Context) error {
+	err := e.SmallExec.Open(goCtx)
+	defer terror.Call(e.SmallExec.Close)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer terror.Call(e.SmallExec.Close)
-	var selected []bool
 	e.innerChunkRows = e.innerChunkRows[:0]
 	for {
 		chk := e.SmallExec.newChunk()
@@ -576,12 +578,12 @@ func (e *NestedLoopApplyExec) prepare4Chunk(goCtx goctx.Context) error {
 		if chk.NumRows() == 0 {
 			return nil
 		}
-		selected, err = expression.VectorizedFilter(e.ctx, e.SmallFilter, chk, selected)
+		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.SmallFilter, chk, e.innerSelected)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for row := chk.Begin(); row != chk.End(); row = row.Next() {
-			if selected[row.Idx()] {
+			if e.innerSelected[row.Idx()] {
 				e.innerChunkRows = append(e.innerChunkRows, row)
 			}
 		}
@@ -605,11 +607,8 @@ func (e *NestedLoopApplyExec) doJoin(bigRow Row, match bool) ([]Row, error) {
 	return e.resultRows, nil
 }
 
-func (e *NestedLoopApplyExec) doChunkJoin(bigRow chunk.Row, match bool, output *chunk.Chunk) error {
+func (e *NestedLoopApplyExec) doChunkJoin(bigRow chunk.Row, output *chunk.Chunk) error {
 	output.Reset()
-	if !match && e.outer {
-		return e.resultGenerator.emitToChunk(bigRow, nil, output)
-	}
 	return e.resultGenerator.emitToChunk(bigRow, e.innerChunkRows, output)
 }
 
@@ -648,23 +647,23 @@ func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 		if appendSize > 0 {
 			chk.Append(e.resultChunk, e.cursor, e.cursor+appendSize)
 			e.cursor += appendSize
+			if chk.NumRows() == e.maxChunkSize {
+				return nil
+			}
 		}
-		if chk.NumRows() == e.maxChunkSize {
-			return nil
-		}
-		bigRow, match, err := e.fetchBigChunkRow(goCtx)
+		bigRow, err := e.fetchSelectedOuterRow(goCtx)
 		if bigRow == nil || err != nil {
 			return errors.Trace(err)
 		}
 		for _, col := range e.outerSchema {
 			*col.Data = bigRow.GetDatum(col.Index, col.RetType)
 		}
-		err = e.prepare4Chunk(goCtx)
+		err = e.fetchAllInners(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		e.resultChunk.Reset()
-		err = e.doChunkJoin(*bigRow, match, e.resultChunk)
+		err = e.resultGenerator.emitToChunk(*bigRow, e.innerChunkRows, e.resultChunk)
 		if err != nil {
 			return errors.Trace(err)
 		}
