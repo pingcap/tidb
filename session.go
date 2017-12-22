@@ -203,6 +203,10 @@ func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
 }
 
+func (s *session) StoreQueryFeedback(feedback interface{}) {
+	s.statsCollector.StoreQueryFeedback(feedback)
+}
+
 type schemaLeaseChecker struct {
 	domain.SchemaValidator
 	schemaVer       int64

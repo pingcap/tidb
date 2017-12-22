@@ -59,15 +59,11 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		return resp
 	}
 
-	chunks, err := h.getDAGRequestChunk(req)
-	return buildResp(chunks, err)
-}
-
-func (h *rpcHandler) getDAGRequestChunk(req *coprocessor.Request) ([]tipb.Chunk, error) {
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		return nil, errors.Trace(err)
+		resp.OtherError = err.Error()
+		return resp
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
 	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
@@ -78,7 +74,9 @@ func (h *rpcHandler) getDAGRequestChunk(req *coprocessor.Request) ([]tipb.Chunk,
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return &coprocessor.Response{
+			OtherError: err.Error(),
+		}
 	}
 	var (
 		chunks []tipb.Chunk
@@ -101,7 +99,12 @@ func (h *rpcHandler) getDAGRequestChunk(req *coprocessor.Request) ([]tipb.Chunk,
 		chunks = appendRow(chunks, data, rowCnt)
 		rowCnt++
 	}
-	return chunks, errors.Trace(err)
+	counts := make([]int64, len(dagReq.Executors))
+	for offset := len(dagReq.Executors) - 1; e != nil; e, offset = e.GetSrcExec(), offset-1 {
+		// Because the last call to `executor.Next` always returns a `nil`, so the actual count should be `Count - 1`
+		counts[offset] = e.Count() - 1
+	}
+	return buildResp(chunks, counts, err)
 }
 
 func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
@@ -110,8 +113,8 @@ func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_Copr
 	}
 	switch req.Tp {
 	case kv.ReqTypeDAG:
-		chunks, err := h.getDAGRequestChunk(req)
-		return buildStreamResponse(chunks, err)
+		// chunks, err := h.getDAGRequestChunk(req)
+		// return buildStreamResponse(chunks, err)
 	case kv.ReqTypeAnalyze:
 	}
 	return nil, errors.New("not implemented yet")
@@ -426,11 +429,12 @@ func (mock *mockCoprocessorStreamClient) Recv() (*coprocessor.Response, error) {
 	return &resp, nil
 }
 
-func buildResp(chunks []tipb.Chunk, err error) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
-		Error:  toPBError(err),
-		Chunks: chunks,
+		Error:        toPBError(err),
+		Chunks:       chunks,
+		OutputCounts: counts,
 	}
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {

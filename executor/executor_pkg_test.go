@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
 	goctx "golang.org/x/net/context"
 )
 
@@ -147,4 +148,48 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 		schema.Append(col)
 	}
 	return schema
+}
+
+func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
+	indexRanges := make([]*ranger.IndexRange, 0, 6)
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 2))
+	indexRanges = append(indexRanges, generateIndexRange(1, 1, 3, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
+	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
+
+	joinKeyRows := make([][]types.Datum, 0, 5)
+	joinKeyRows = append(joinKeyRows, generateDatumSlice(1, 1))
+	joinKeyRows = append(joinKeyRows, generateDatumSlice(1, 2))
+	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 1))
+	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 2))
+	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 3))
+
+	keyOff2IdxOff := []int{1, 3}
+
+	kvRanges, err := buildKvRangesForIndexJoin(0, 0, joinKeyRows, indexRanges, keyOff2IdxOff)
+	c.Assert(err, IsNil)
+	// Check the kvRanges is in order.
+	for i, kvRange := range kvRanges {
+		c.Assert(kvRange.StartKey.Cmp(kvRange.EndKey) < 0, IsTrue)
+		if i > 0 {
+			c.Assert(kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0, IsTrue)
+		}
+	}
+}
+
+func generateIndexRange(vals ...int64) *ranger.IndexRange {
+	lowDatums := generateDatumSlice(vals...)
+	highDatums := make([]types.Datum, len(vals))
+	copy(highDatums, lowDatums)
+	return &ranger.IndexRange{LowVal: lowDatums, HighVal: highDatums}
+}
+
+func generateDatumSlice(vals ...int64) []types.Datum {
+	datums := make([]types.Datum, len(vals))
+	for i, val := range vals {
+		datums[i].SetInt64(val)
+	}
+	return datums
 }
