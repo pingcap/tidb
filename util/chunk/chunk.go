@@ -186,7 +186,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 			dst.length++
 		}
 	}
-	c.numVirtualRows += other.numVirtualRows
+	c.numVirtualRows += end - begin
 }
 
 // TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
