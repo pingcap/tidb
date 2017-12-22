@@ -646,7 +646,7 @@ func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 	for {
 		appendSize := mathutil.Min(e.resultChunk.NumRows()-e.cursor, e.maxChunkSize)
 		if appendSize > 0 {
-			chk.Append(e.resultChunk, e.cursor, e.resultChunk.NumRows())
+			chk.Append(e.resultChunk, e.cursor, e.cursor+appendSize)
 			e.cursor += appendSize
 		}
 		if chk.NumRows() == e.maxChunkSize {
