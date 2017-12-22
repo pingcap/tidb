@@ -441,6 +441,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
 	var pkCol *table.Column
 	for i, col := range tb.Cols() {
+		if col.State != model.StatePublic {
+			continue
+		}
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if col.IsGenerated() {
 			// It's a generated column.
@@ -505,6 +508,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	for i, idx := range tb.Indices() {
 		idxInfo := idx.Meta()
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
