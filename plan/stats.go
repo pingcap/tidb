@@ -31,6 +31,10 @@ func (s *statsInfo) String() string {
 	return fmt.Sprintf("count %v, cardinality %v", s.count, s.cardinality)
 }
 
+func (s *statsInfo) Count() int64 {
+	return int64(s.count)
+}
+
 // collapse receives a selectivity and multiple it with count and cardinality.
 func (s *statsInfo) scale(factor float64) *statsInfo {
 	profile := &statsInfo{
@@ -54,7 +58,7 @@ func (s *statsInfo) scaleByExpectCnt(expectCnt float64) *statsInfo {
 	return s
 }
 
-func (p *basePhysicalPlan) statsInfo() *statsInfo {
+func (p *basePhysicalPlan) StatsInfo() *statsInfo {
 	return p.stats
 }
 
