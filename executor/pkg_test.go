@@ -7,6 +7,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	goctx "golang.org/x/net/context"
@@ -49,7 +50,7 @@ func (m *MockExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-func (s *pkgTestSuite) TestNestedLoopJoin(c *C) {
+func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	goCtx := goctx.Background()
 	ctx := mock.NewContext()
 	bigExec := &MockExec{
@@ -76,13 +77,15 @@ func (s *pkgTestSuite) TestNestedLoopJoin(c *C) {
 	bigFilter := expression.NewFunctionInternal(ctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
 	smallFilter := bigFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	join := &NestedLoopJoinExec{
-		baseExecutor: newBaseExecutor(nil, ctx),
-		BigExec:      bigExec,
-		SmallExec:    smallExec,
-		BigFilter:    []expression.Expression{bigFilter},
-		SmallFilter:  []expression.Expression{smallFilter},
-		OtherFilter:  []expression.Expression{otherFilter},
+	generator := newJoinResultGenerator(ctx, plan.InnerJoin, false,
+		make([]types.Datum, smallExec.Schema().Len()), []expression.Expression{otherFilter}, nil, nil)
+	join := &NestedLoopApplyExec{
+		baseExecutor:    newBaseExecutor(nil, ctx),
+		BigExec:         bigExec,
+		SmallExec:       smallExec,
+		BigFilter:       []expression.Expression{bigFilter},
+		SmallFilter:     []expression.Expression{smallFilter},
+		resultGenerator: generator,
 	}
 	row, err := join.Next(goCtx)
 	c.Check(err, IsNil)
