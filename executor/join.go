@@ -29,9 +29,8 @@ import (
 )
 
 var (
-	_ joinExec = &NestedLoopJoinExec{}
 	_ Executor = &HashJoinExec{}
-	_ Executor = &ApplyJoinExec{}
+	_ Executor = &NestedLoopApplyExec{}
 )
 
 // HashJoinExec implements the hash join algorithm.
@@ -444,21 +443,8 @@ func (e *HashJoinExec) Next(goCtx goctx.Context) (Row, error) {
 	return result, nil
 }
 
-// joinExec is the common interface of join algorithm except for hash join.
-type joinExec interface {
-	Executor
-
-	// fetchBigRow fetches a valid row from big Exec and returns a bool value that means if it is matched.
-	fetchBigRow(goCtx goctx.Context) (Row, bool, error)
-	// prepare reads all records from small Exec and stores them.
-	prepare(goCtx goctx.Context) error
-	// doJoin fetches a row from big exec and a bool value that means if it's matched with big filter,
-	// then get all the rows matches the on condition.
-	doJoin(Row, bool) ([]Row, error)
-}
-
-// NestedLoopJoinExec implements nested-loop algorithm for join.
-type NestedLoopJoinExec struct {
+// NestedLoopApplyExec is the executor for apply.
+type NestedLoopApplyExec struct {
 	baseExecutor
 
 	innerRows   []Row
@@ -472,17 +458,19 @@ type NestedLoopJoinExec struct {
 	outer       bool
 
 	resultGenerator joinResultGenerator
+
+	outerSchema []*expression.CorrelatedColumn
 }
 
-// Close implements Executor interface.
-func (e *NestedLoopJoinExec) Close() error {
+// Close implements the Executor interface.
+func (e *NestedLoopApplyExec) Close() error {
 	e.resultRows = nil
 	e.innerRows = nil
 	return errors.Trace(e.BigExec.Close())
 }
 
-// Open implements Executor Open interface.
-func (e *NestedLoopJoinExec) Open(goCtx goctx.Context) error {
+// Open implements the Executor interface.
+func (e *NestedLoopApplyExec) Open(goCtx goctx.Context) error {
 	e.cursor = 0
 	e.prepared = false
 	e.resultRows = e.resultRows[:0]
@@ -490,7 +478,7 @@ func (e *NestedLoopJoinExec) Open(goCtx goctx.Context) error {
 	return errors.Trace(e.BigExec.Open(goCtx))
 }
 
-func (e *NestedLoopJoinExec) fetchBigRow(goCtx goctx.Context) (Row, bool, error) {
+func (e *NestedLoopApplyExec) fetchBigRow(goCtx goctx.Context) (Row, bool, error) {
 	for {
 		bigRow, err := e.BigExec.Next(goCtx)
 		if err != nil {
@@ -514,7 +502,7 @@ func (e *NestedLoopJoinExec) fetchBigRow(goCtx goctx.Context) (Row, bool, error)
 
 // prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
-func (e *NestedLoopJoinExec) prepare(goCtx goctx.Context) error {
+func (e *NestedLoopApplyExec) prepare(goCtx goctx.Context) error {
 	err := e.SmallExec.Open(goctx.TODO())
 	if err != nil {
 		return errors.Trace(err)
@@ -541,7 +529,7 @@ func (e *NestedLoopJoinExec) prepare(goCtx goctx.Context) error {
 	}
 }
 
-func (e *NestedLoopJoinExec) doJoin(bigRow Row, match bool) ([]Row, error) {
+func (e *NestedLoopApplyExec) doJoin(bigRow Row, match bool) ([]Row, error) {
 	e.resultRows = e.resultRows[0:0]
 	var err error
 	if !match && e.outer {
@@ -559,73 +547,25 @@ func (e *NestedLoopJoinExec) doJoin(bigRow Row, match bool) ([]Row, error) {
 }
 
 // Next implements the Executor interface.
-func (e *NestedLoopJoinExec) Next(goCtx goctx.Context) (Row, error) {
-	if !e.prepared {
-		if err := e.prepare(goCtx); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	for {
-		if e.cursor < len(e.resultRows) {
-			retRow := e.resultRows[e.cursor]
-			e.cursor++
-			return retRow, nil
-		}
-		bigRow, match, err := e.fetchBigRow(goCtx)
-		if bigRow == nil || err != nil {
-			return bigRow, errors.Trace(err)
-		}
-		e.resultRows, err = e.doJoin(bigRow, match)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.cursor = 0
-	}
-}
-
-// ApplyJoinExec is the new logic of apply.
-type ApplyJoinExec struct {
-	baseExecutor
-
-	join        joinExec
-	outerSchema []*expression.CorrelatedColumn
-	cursor      int
-	resultRows  []Row
-}
-
-// Close implements the Executor interface.
-func (e *ApplyJoinExec) Close() error {
-	return e.join.Close()
-}
-
-// Open implements the Executor interface.
-func (e *ApplyJoinExec) Open(goCtx goctx.Context) error {
-	e.cursor = 0
-	e.resultRows = nil
-	return errors.Trace(e.join.Open(goCtx))
-}
-
-// Next implements the Executor interface.
-func (e *ApplyJoinExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *NestedLoopApplyExec) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		if e.cursor < len(e.resultRows) {
 			row := e.resultRows[e.cursor]
 			e.cursor++
 			return row, nil
 		}
-		bigRow, match, err := e.join.fetchBigRow(goCtx)
+		bigRow, match, err := e.fetchBigRow(goCtx)
 		if bigRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
 		for _, col := range e.outerSchema {
 			*col.Data = bigRow[col.Index]
 		}
-		err = e.join.prepare(goCtx)
+		err = e.prepare(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.resultRows, err = e.join.doJoin(bigRow, match)
+		e.resultRows, err = e.doJoin(bigRow, match)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -443,9 +443,6 @@ func (p *LogicalProjection) tryToGetChildProp(prop *requiredProp) (*requiredProp
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
 		idx := p.schema.ColumnIndex(col)
-		if idx == -1 {
-			return nil, false
-		}
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
 			newCols = append(newCols, expr)
@@ -631,9 +628,13 @@ func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 }
 
 func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
+	if !prop.isEmpty() {
+		return nil
+	}
 	chReqProps := make([]*requiredProp, 0, len(p.children))
 	for range p.children {
-		chReqProps = append(chReqProps, prop)
+		chReqProps = append(chReqProps, &requiredProp{expectedCnt: prop.expectedCnt})
 	}
 	ua := PhysicalUnionAll{}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	ua.SetSchema(p.schema)
