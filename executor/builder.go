@@ -807,22 +807,22 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 	}
 	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
 		defaultValues, otherConditions, leftChild.Schema().GetTypes(), rightChild.Schema().GetTypes())
-	bigExec, smallExec := leftChild, rightChild
-	bigFilter, smallFilter := v.LeftConditions, v.RightConditions
+	outerExec, innerExec := leftChild, rightChild
+	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.SmallChildIdx == 0 {
-		bigExec, smallExec = rightChild, leftChild
-		bigFilter, smallFilter = v.RightConditions, v.LeftConditions
+		outerExec, innerExec = rightChild, leftChild
+		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
 	e := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, bigExec, smallExec),
-		SmallExec:       smallExec,
-		BigExec:         bigExec,
-		BigFilter:       bigFilter,
-		SmallFilter:     smallFilter,
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, outerExec, innerExec),
+		innerExec:       innerExec,
+		outerExec:       outerExec,
+		outerFilter:     outerFilter,
+		innerFilter:     innerFilter,
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
-		bigChunk:        bigExec.newChunk(),
+		outerChunk:      outerExec.newChunk(),
 		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
 	e.supportChk = true
