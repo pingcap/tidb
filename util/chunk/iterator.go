@@ -41,7 +41,7 @@ type sliceIterator struct {
 
 func (it *sliceIterator) Begin() Row {
 	if len(it.rows) == 0 {
-		return Row{}
+		return it.End()
 	}
 	it.cursor = 1
 	return it.rows[0]
@@ -49,7 +49,7 @@ func (it *sliceIterator) Begin() Row {
 
 func (it *sliceIterator) Next() Row {
 	if it.cursor == len(it.rows) {
-		return Row{}
+		return it.End()
 	}
 	row := it.rows[it.cursor]
 	it.cursor++
@@ -72,7 +72,7 @@ type chunkIterator struct {
 
 func (it *chunkIterator) Begin() Row {
 	if it.chk.NumRows() == 0 {
-		return Row{}
+		return it.End()
 	}
 	it.cursor = 1
 	return it.chk.GetRow(0)
@@ -80,7 +80,7 @@ func (it *chunkIterator) Begin() Row {
 
 func (it *chunkIterator) Next() Row {
 	if it.cursor == it.chk.NumRows() {
-		return Row{}
+		return it.End()
 	}
 	row := it.chk.GetRow(it.cursor)
 	it.cursor++
@@ -104,7 +104,7 @@ type listIterator struct {
 
 func (it *listIterator) Begin() Row {
 	if it.chkCursor == it.li.NumChunks() {
-		return Row{}
+		return it.End()
 	}
 	chk := it.li.GetChunk(0)
 	row := chk.GetRow(0)
@@ -120,7 +120,7 @@ func (it *listIterator) Begin() Row {
 
 func (it *listIterator) Next() Row {
 	if it.chkCursor == it.li.NumChunks() {
-		return Row{}
+		return it.End()
 	}
 	chk := it.li.GetChunk(it.chkCursor)
 	row := chk.GetRow(it.rowCursor)
@@ -149,7 +149,7 @@ type rowPtrIterator struct {
 
 func (it *rowPtrIterator) Begin() Row {
 	if len(it.ptrs) == 0 {
-		return Row{}
+		return it.End()
 	}
 	it.cursor = 1
 	return it.li.GetRow(it.ptrs[0])
@@ -157,7 +157,7 @@ func (it *rowPtrIterator) Begin() Row {
 
 func (it *rowPtrIterator) Next() Row {
 	if it.cursor == len(it.ptrs) {
-		return Row{}
+		return it.End()
 	}
 	row := it.li.GetRow(it.ptrs[it.cursor])
 	it.cursor++
