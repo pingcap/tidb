@@ -225,21 +225,28 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 }
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
-	exprs := make([]expression.Expression, 0, len(v.Exprs))
 	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
+	dual.SetSchema(expression.NewSchema())
+
+	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		exprs = append(exprs, expr)
+		p.Exprs = append(p.Exprs, expr)
+		schema.Append(&expression.Column{
+			FromID:   p.id,
+			Position: schema.Len() + 1,
+			RetType:  expr.GetType(),
+		})
 	}
-	dual.SetSchema(expression.NewSchema())
-	p := LogicalProjection{Exprs: exprs}.init(b.ctx)
-	setParentAndChildren(p, dual)
+	p.SetChildren(dual)
 	p.self = p
-	p.SetSchema(expression.NewSchema())
+	p.SetSchema(schema)
+	p.calculateNoDelay = true
 	return p
 }
 
@@ -381,7 +388,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
-	setParentAndChildren(selectLock, src)
+	selectLock.SetChildren(src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
@@ -1069,7 +1076,6 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			return nil
 		}
 	}
-	setParents4FinalPlan(pp)
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
@@ -1080,7 +1086,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		}
 		p.SetSchema(schema)
 		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan), "")
 	case ast.ExplainFormatDOT:
 		retFields := []string{"dot contents"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)

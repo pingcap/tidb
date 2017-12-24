@@ -72,8 +72,7 @@ func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, er
 	if !prop.isEmpty() {
 		return invalidTask, nil
 	}
-	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx)
-	dual.profile = p.profile
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx, p.stats)
 	dual.SetSchema(p.schema)
 	return &rootTask{p: dual}, nil
 }
@@ -136,15 +135,14 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 	}.init(p.ctx)
 	memTable.SetSchema(p.schema)
 	memTable.Ranges = ranger.FullIntRange()
-	memTable.profile = p.profile
+	memTable.stats = p.stats
 	var retPlan PhysicalPlan = memTable
 	if len(p.pushedDownConds) > 0 {
 		sel := PhysicalSelection{
 			Conditions: p.pushedDownConds,
-		}.init(p.ctx)
+		}.init(p.ctx, p.stats)
 		sel.SetSchema(p.schema)
 		sel.SetChildren(memTable)
-		sel.profile = p.profile
 		retPlan = sel
 	}
 	task = &rootTask{p: retPlan}
@@ -160,9 +158,8 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 				return nil, errors.Trace(err)
 			}
 			if !result {
-				dual := PhysicalTableDual{}.init(p.ctx)
+				dual := PhysicalTableDual{}.init(p.ctx, p.stats)
 				dual.SetSchema(p.schema)
-				dual.profile = p.profile
 				return &rootTask{
 					p: dual,
 				}, nil
@@ -246,7 +243,7 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 	return true
 }
 
-func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
+func (p *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []expression.Expression) PhysicalPlan {
 	is := PhysicalIndexScan{
 		Table:            p.tableInfo,
 		TableAsName:      p.TableAsName,
@@ -257,8 +254,8 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		Ranges:           ranger.FullIndexRange(),
 		OutOfOrder:       true,
 	}.init(p.ctx)
-	is.filterCondition = p.pushedDownConds
-	is.profile = p.profile
+	is.filterCondition = remainedConds
+	is.stats = p.stats
 	cop := &copTask{
 		indexPlan: is,
 	}
@@ -296,6 +293,9 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		dataSourceSchema: p.schema,
 	}.init(p.ctx)
 	statsTbl := p.statisticTable
+	if statsTbl.Indices[idx.ID] != nil {
+		is.HistVersion = statsTbl.Indices[idx.ID].LastUpdateVersion
+	}
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
@@ -317,8 +317,6 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.filterCondition = p.pushedDownConds
 		}
 	}
-	is.profile = p.profile
-
 	cop := &copTask{
 		indexPlan: is,
 	}
@@ -358,7 +356,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
-	is.expectedCnt = rowCount
+	is.stats = p.stats.scaleByExpectCnt(rowCount)
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
@@ -421,22 +419,18 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			indexConds = is.filterCondition
 		}
 		if indexConds != nil {
-			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx)
+			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
+				p.getStatsByFilter(append(is.AccessCondition, indexConds...)).scaleByExpectCnt(expectedCnt))
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
-			indexSel.profile = p.getStatsProfileByFilter(append(is.AccessCondition, indexConds...))
-			// FIXME: It is not precise.
-			indexSel.expectedCnt = expectedCnt
 			copTask.indexPlan = indexSel
 			copTask.cst += copTask.count() * cpuFactor
 		}
 		if tableConds != nil {
 			copTask.finishIndexPlan()
-			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx)
+			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
 			tableSel.SetSchema(copTask.tablePlan.Schema())
 			tableSel.SetChildren(copTask.tablePlan)
-			tableSel.profile = p.profile
-			tableSel.expectedCnt = expectedCnt
 			copTask.tablePlan = tableSel
 			copTask.cst += copTask.count() * cpuFactor
 		}
@@ -507,13 +501,13 @@ func (p *DataSource) forceToTableScan() PhysicalPlan {
 		Ranges:      ranger.FullIntRange(),
 	}.init(p.ctx)
 	ts.SetSchema(p.schema)
-	ts.profile = p.profile
+	ts.stats = p.stats
 	ts.filterCondition = p.pushedDownConds
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 	}
-	ts.addPushedDownSelection(copTask, p.profile, math.MaxFloat64)
+	ts.addPushedDownSelection(copTask, p.stats)
 	t := finishCopTask(copTask, p.ctx)
 	return t.plan()
 }
@@ -536,6 +530,9 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+			if p.statisticTable.Columns[pkColInfo.ID] != nil {
+				ts.HistVersion = p.statisticTable.Columns[pkColInfo.ID].LastUpdateVersion
+			}
 		}
 	}
 	if len(p.pushedDownConds) > 0 {
@@ -551,11 +548,10 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			ts.filterCondition = p.pushedDownConds
 		}
 	}
-	ts.profile = p.profile
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
 	if pkCol != nil {
-		// TODO: We can use p.getStatsProfileByFilter(accessConditions).
+		// TODO: We can use p.getStatsByFilter(accessConditions).
 		rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkCol.ID, ts.Ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -575,7 +571,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
-	ts.expectedCnt = rowCount
+	ts.stats = p.stats.scaleByExpectCnt(rowCount)
 	copTask.cst = rowCount * scanFactor
 	if matchProperty {
 		if prop.desc {
@@ -584,7 +580,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, p.profile, prop.expectedCnt)
+		ts.addPushedDownSelection(copTask, p.stats.scaleByExpectCnt(prop.expectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -592,7 +588,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, p.profile, expectedCnt)
+		ts.addPushedDownSelection(copTask, p.stats.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx)
@@ -602,14 +598,12 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	return task, nil
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *statsProfile, expectedCnt float64) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *statsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.init(ts.ctx)
+		sel := PhysicalSelection{Conditions: ts.filterCondition}.init(ts.ctx, stats)
 		sel.SetSchema(ts.schema)
 		sel.SetChildren(ts)
-		sel.profile = profile
-		sel.expectedCnt = expectedCnt
 		copTask.tablePlan = sel
 		// FIXME: It seems wrong...
 		copTask.cst += copTask.count() * cpuFactor

@@ -108,7 +108,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		agg.AggFuncs = append(agg.AggFuncs, newFunc)
 		schema.Append(col.Clone().(*expression.Column))
 	}
-	setParentAndChildren(agg, p)
+	agg.SetChildren(p)
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
@@ -242,7 +242,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 	joinPlan := LogicalJoin{}.init(b.ctx)
-	setParentAndChildren(joinPlan, leftPlan, rightPlan)
+	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(newSchema)
 
 	// Merge sub join's redundantSchema into this join plan. When handle query like
@@ -444,7 +444,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	selection.Conditions = expressions
 	selection.SetSchema(p.Schema().Clone())
-	setParentAndChildren(selection, p)
+	selection.SetChildren(p)
 	return selection
 }
 
@@ -554,7 +554,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		}
 	}
 	proj.SetSchema(schema)
-	setParentAndChildren(proj, p)
+	proj.SetChildren(p)
 	return proj, oldLen
 }
 
@@ -569,7 +569,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	for _, col := range child.Schema().Columns {
 		agg.AggFuncs = append(agg.AggFuncs, aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
 	}
-	setParentAndChildren(agg, child)
+	agg.SetChildren(child)
 	agg.SetSchema(child.Schema().Clone())
 	return agg
 }
@@ -587,65 +587,10 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
-	schema4Union := u.schema
-	for childID, child := range u.children {
-		exprs := make([]expression.Expression, len(child.Schema().Columns))
-		needProjection := false
-		for i, srcCol := range child.Schema().Columns {
-			dstType := schema4Union.Columns[i].RetType
-			srcType := srcCol.RetType
-			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
-				needProjection = true
-			} else {
-				exprs[i] = srcCol.Clone()
-			}
-		}
-		if needProjection {
-			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
-			proj.schema = schema4Union.Clone()
-			for _, col := range proj.schema.Columns {
-				col.FromID = proj.ID()
-			}
-			setParentAndChildren(proj, u.children[childID])
-			u.children[childID] = proj
-		}
-	}
-	setParentAndChildren(u, u.children...)
-}
+	unionSchema := u.children[0].Schema().Clone()
 
-func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := LogicalUnionAll{}.init(b.ctx)
-	u.children = make([]Plan, len(union.SelectList.Selects))
-	for i, sel := range union.SelectList.Selects {
-		u.children[i] = b.buildSelect(sel)
-		if b.err != nil {
-			return nil
-		}
-	}
-	firstSchema := u.children[0].Schema().Clone()
-	for i, sel := range u.children {
-		if firstSchema.Len() != sel.Schema().Len() {
-			b.err = errors.New("The used SELECT statements have a different number of columns")
-			return nil
-		}
-		if _, ok := sel.(*LogicalProjection); !ok {
-			b.optFlag |= flagEliminateProjection
-			proj := LogicalProjection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.ctx)
-			schema := sel.Schema().Clone()
-			for _, col := range schema.Columns {
-				col.FromID = proj.ID()
-			}
-			proj.SetSchema(schema)
-			setParentAndChildren(proj, sel)
-			sel = proj
-			u.children[i] = proj
-		}
-		sel.SetParents(u)
-	}
-
-	// infer union type
-	for i, col := range firstSchema.Columns {
+	// Infer union result types by its children's schema.
+	for i, col := range unionSchema.Columns {
 		var resultTp *types.FieldType
 		for j, child := range u.children {
 			childTp := child.Schema().Columns[i].RetType
@@ -656,13 +601,52 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			}
 		}
 		col.RetType = resultTp
+		col.DBName = model.NewCIStr("")
+	}
+	// If the types of some child don't match the types of union, we add a projection with cast function.
+	for childID, child := range u.children {
+		exprs := make([]expression.Expression, len(child.Schema().Columns))
+		needProjection := false
+		for i, srcCol := range child.Schema().Columns {
+			dstType := unionSchema.Columns[i].RetType
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				needProjection = true
+			} else {
+				exprs[i] = srcCol.Clone()
+			}
+		}
+		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
+			b.optFlag |= flagEliminateProjection
+			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
+			if childID == 0 {
+				for _, col := range unionSchema.Columns {
+					col.FromID = proj.ID()
+				}
+			}
+			proj.SetChildren(child)
+			u.children[childID] = proj
+		}
+		u.children[childID].SetSchema(unionSchema.Clone())
+	}
+	u.SetSchema(unionSchema)
+}
+
+func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
+	u := LogicalUnionAll{}.init(b.ctx)
+	u.children = make([]Plan, len(union.SelectList.Selects))
+	for i, sel := range union.SelectList.Selects {
+		u.children[i] = b.buildSelect(sel)
+		if b.err != nil {
+			return nil
+		}
+		if u.children[i].Schema().Len() != u.children[0].Schema().Len() {
+			b.err = errors.New("The used SELECT statements have a different number of columns")
+			return nil
+		}
 	}
 
-	for _, v := range firstSchema.Columns {
-		v.FromID = u.id
-		v.DBName = model.NewCIStr("")
-	}
-	u.SetSchema(firstSchema)
 	b.buildProjection4Union(u)
 	var p LogicalPlan = u
 	if union.Distinct {
@@ -710,7 +694,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 		exprs = append(exprs, &ByItems{Expr: it, Desc: item.Desc})
 	}
 	sort.ByItems = exprs
-	setParentAndChildren(sort, p)
+	sort.SetChildren(p)
 	sort.SetSchema(p.Schema().Clone())
 	return sort
 }
@@ -761,7 +745,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 		Offset: offset,
 		Count:  count,
 	}.init(b.ctx)
-	setParentAndChildren(li, src)
+	li.SetChildren(src)
 	li.SetSchema(src.Schema().Clone())
 	return li
 }
@@ -1551,7 +1535,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
-		setParentAndChildren(proj, p)
+		proj.SetChildren(p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
 			col.FromID = proj.ID()
@@ -1641,23 +1625,29 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		}
 	}
 	ds.SetSchema(schema)
-	if handleCol == nil {
+	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
+	// We append an extra handle column to the schema when "ds" is not a memory
+	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
+	// column is not the primary key of "ds".
+	if !isMemDB && handleCol == nil {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
 	}
-	schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+	if handleCol != nil {
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+	}
 	// make plan as DS -> US -> Proj
 	var result LogicalPlan = ds
 	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
 		us := LogicalUnionScan{}.init(b.ctx)
 		us.SetSchema(ds.Schema().Clone())
-		setParentAndChildren(us, result)
+		us.SetChildren(result)
 		result = us
 	}
 	proj := b.projectVirtualColumns(ds, columns)
 	if proj != nil {
-		setParentAndChildren(proj, result)
+		proj.SetChildren(result)
 		result = proj
 	}
 	return result
@@ -1715,7 +1705,7 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.ctx)
-	setParentAndChildren(ap, outerPlan, innerPlan)
+	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.schema.Columns[i].IsAggOrSubq = true
@@ -1732,8 +1722,6 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = TypeApply
 	ap.self = ap
-	ap.children[0].SetParents(ap)
-	ap.children[1].SetParents(ap)
 	return ap
 }
 
@@ -1745,20 +1733,18 @@ out:
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *LogicalProjection, *LogicalSort:
 			p = p.Children()[0].(LogicalPlan)
-			p.SetParents()
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
 				p = b.buildTableDual()
 				break out
 			}
 			p = p.Children()[0].(LogicalPlan)
-			p.SetParents()
 		default:
 			break out
 		}
 	}
 	exists := LogicalExists{}.init(b.ctx)
-	setParentAndChildren(exists, p)
+	exists.SetChildren(p)
 	newCol := &expression.Column{
 		FromID:  exists.id,
 		RetType: types.NewFieldType(mysql.TypeTiny),
@@ -1769,7 +1755,7 @@ out:
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow := LogicalMaxOneRow{}.init(b.ctx)
-	setParentAndChildren(maxOneRow, p)
+	maxOneRow.SetChildren(p)
 	maxOneRow.SetSchema(p.Schema().Clone())
 	return maxOneRow
 }
@@ -1779,7 +1765,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
-	setParentAndChildren(joinPlan, outerPlan, innerPlan)
+	joinPlan.SetChildren(outerPlan, innerPlan)
 	joinPlan.attachOnConds(onCondition)
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()

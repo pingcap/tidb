@@ -28,8 +28,6 @@ import (
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
-	// Get all the parents.
-	Parents() []Plan
 	// Get all the children.
 	Children() []Plan
 	// Set the schema.
@@ -40,8 +38,6 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() string
-	// SetParents sets the parents for the plan.
-	SetParents(...Plan)
 	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
 	// replaceExprColumns replace all the column reference in the plan's expression node.
@@ -177,8 +173,8 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
-	// prepareStatsProfile will prepare the stats for this plan.
-	prepareStatsProfile() *statsProfile
+	// deriveStats derives statistic info between plans.
+	deriveStats() *statsInfo
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -207,8 +203,8 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
 
-	// statsProfile will return the stats for this plan.
-	statsProfile() *statsProfile
+	// StatsInfo will return the statsInfo for this plan.
+	StatsInfo() *statsInfo
 }
 
 type baseLogicalPlan struct {
@@ -308,16 +304,13 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	parents  []Plan
 	children []Plan
 
-	schema  *expression.Schema
-	tp      string
-	id      int
-	ctx     context.Context
-	profile *statsProfile
-	// expectedCnt means this operator may be closed after fetching expectedCnt records.
-	expectedCnt float64
+	schema *expression.Schema
+	tp     string
+	id     int
+	ctx    context.Context
+	stats  *statsInfo
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
@@ -342,19 +335,9 @@ func (p *basePlan) Schema() *expression.Schema {
 	return p.schema
 }
 
-// Parents implements Plan Parents interface.
-func (p *basePlan) Parents() []Plan {
-	return p.parents
-}
-
 // Children implements Plan Children interface.
 func (p *basePlan) Children() []Plan {
 	return p.children
-}
-
-// SetParents implements Plan SetParents interface.
-func (p *basePlan) SetParents(pars ...Plan) {
-	p.parents = pars
 }
 
 // SetChildren implements Plan SetChildren interface.
