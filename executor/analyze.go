@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -30,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -52,21 +53,20 @@ const (
 	defaultCMSketchWidth = 2048
 )
 
-// Open implements the Executor Open interface.
-func (e *AnalyzeExec) Open(goctx.Context) error {
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *AnalyzeExec) Close() error {
-	return nil
-}
-
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
+	return nil, errors.Trace(e.run(goCtx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *AnalyzeExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *AnalyzeExec) run(goCtx goctx.Context) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultCh := make(chan statistics.AnalyzeResult, len(e.tasks))
@@ -92,7 +92,7 @@ func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
 		}
 		// We sleep two lease to make sure other tidb node has updated this node.
 		time.Sleep(lease * 2)
-		return nil, errors.Trace(err1)
+		return errors.Trace(err1)
 	}
 	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
 	var err1 error
@@ -106,21 +106,21 @@ func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
 		results = append(results, result)
 	}
 	if err1 != nil {
-		return nil, errors.Trace(err1)
+		return errors.Trace(err1)
 	}
 	for _, result := range results {
 		for i, hg := range result.Hist {
 			err = statistics.SaveStatsToStorage(e.ctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i])
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 	}
 	err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return nil, nil
+	return nil
 }
 
 func getBuildStatsConcurrency(ctx context.Context) (int, error) {

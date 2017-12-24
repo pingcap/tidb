@@ -41,7 +41,6 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
-	log "github.com/Sirupsen/logrus"
 	proxyprotocol "github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -115,6 +115,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
+		status:       connStatusDispatching,
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
@@ -320,7 +321,7 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
-		if client.killed {
+		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
 		rs = append(rs, client.ctx.ShowProcess())
@@ -339,9 +340,53 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	conn.ctx.Cancel()
+	conn.mu.RLock()
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
+
 	if !query {
-		conn.killed = true
+		// Mark the client connection status as WaitShutdown, when the goroutine detect
+		// this, it will end the dispatch loop and exit.
+		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+	}
+}
+
+// GracefulDown waits all clients to close.
+func (s *Server) GracefulDown() {
+	log.Info("graceful shutdown.")
+
+	count := s.ConnectionCount()
+	for i := 0; count > 0; i++ {
+		time.Sleep(time.Second)
+		s.kickIdleConnection()
+
+		count = s.ConnectionCount()
+		// Print information for every 30s.
+		if i%30 == 0 {
+			log.Infof("graceful shutdown...connection count %d\n", count)
+		}
+	}
+}
+
+func (s *Server) kickIdleConnection() {
+	var conns []*clientConn
+	s.rwlock.RLock()
+	for _, cc := range s.clients {
+		if cc.ShutdownOrNotify() {
+			// Shutdowned conn will be closed by us, and notified conn will exist themselves.
+			conns = append(conns, cc)
+		}
+	}
+	s.rwlock.RUnlock()
+
+	for _, cc := range conns {
+		err := cc.Close()
+		if err != nil {
+			log.Error("close connection error:", err)
+		}
 	}
 }
 

@@ -25,32 +25,32 @@ import (
 
 var (
 	_ PhysicalPlan = &PhysicalSelection{}
-	_ PhysicalPlan = &Projection{}
-	_ PhysicalPlan = &Exists{}
-	_ PhysicalPlan = &MaxOneRow{}
-	_ PhysicalPlan = &TableDual{}
-	_ PhysicalPlan = &Union{}
-	_ PhysicalPlan = &Sort{}
-	_ PhysicalPlan = &SelectLock{}
-	_ PhysicalPlan = &Limit{}
-	_ PhysicalPlan = &Show{}
+	_ PhysicalPlan = &PhysicalProjection{}
+	_ PhysicalPlan = &PhysicalTopN{}
+	_ PhysicalPlan = &PhysicalExists{}
+	_ PhysicalPlan = &PhysicalMaxOneRow{}
+	_ PhysicalPlan = &PhysicalTableDual{}
+	_ PhysicalPlan = &PhysicalUnionAll{}
+	_ PhysicalPlan = &PhysicalSort{}
+	_ PhysicalPlan = &NominalSort{}
+	_ PhysicalPlan = &PhysicalLock{}
+	_ PhysicalPlan = &PhysicalLimit{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalTableReader{}
 	_ PhysicalPlan = &PhysicalIndexReader{}
 	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
-	_ PhysicalPlan = &PhysicalAggregation{}
+	_ PhysicalPlan = &PhysicalHashAgg{}
+	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
-	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
-	*basePlan
 	basePhysicalPlan
 
 	// TablePlans flats the tablePlan to construct executor pb.
@@ -58,17 +58,8 @@ type PhysicalTableReader struct {
 	tablePlan  PhysicalPlan
 }
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalTableReader) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
-	*basePlan
 	basePhysicalPlan
 
 	// IndexPlans flats the indexPlan to construct executor pb.
@@ -79,17 +70,8 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 }
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalIndexReader) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
-	*basePlan
 	basePhysicalPlan
 
 	// IndexPlans flats the indexPlan to construct executor pb.
@@ -100,17 +82,8 @@ type PhysicalIndexLookUpReader struct {
 	tablePlan  PhysicalPlan
 }
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	*basePlan
 	basePhysicalPlan
 
 	// AccessCondition is used to calculate range.
@@ -138,11 +111,14 @@ type PhysicalIndexScan struct {
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
 	dataSourceSchema *expression.Schema
+
+	// HistVersion is the version of the histogram when the query was issued.
+	// It is used for query feedback.
+	HistVersion uint64
 }
 
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
-	*basePlan
 	basePhysicalPlan
 
 	DBName      model.CIStr
@@ -152,14 +128,6 @@ type PhysicalMemTable struct {
 	TableAsName *model.CIStr
 }
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalMemTable) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
 func needCount(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
 }
@@ -167,12 +135,11 @@ func needCount(af aggregation.Aggregation) bool {
 func needValue(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat ||
-		af.GetName() == ast.AggFuncBitAnd
+		af.GetName() == ast.AggFuncBitOr || af.GetName() == ast.AggFuncBitAnd || af.GetName() == ast.AggFuncBitXor
 }
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	*basePlan
 	basePhysicalPlan
 
 	// AccessCondition is used to calculate range.
@@ -190,11 +157,34 @@ type PhysicalTableScan struct {
 
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
+
+	// HistVersion is the version of the histogram when the query was issued.
+	// It is used for query feedback.
+	HistVersion uint64
+}
+
+// PhysicalProjection is the physical operator of projection.
+type PhysicalProjection struct {
+	basePhysicalPlan
+
+	Exprs            []expression.Expression
+	CalculateNoDelay bool
+}
+
+// PhysicalTopN is the physical operator of topN.
+type PhysicalTopN struct {
+	basePhysicalPlan
+
+	ByItems []*ByItems
+	Offset  uint64
+	Count   uint64
+
+	// partial is true if this topn is generated by push-down optimization.
+	partial bool
 }
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	*basePlan
 	basePhysicalPlan
 
 	PhysicalJoin PhysicalPlan
@@ -205,7 +195,6 @@ type PhysicalApply struct {
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
 type PhysicalHashJoin struct {
-	*basePlan
 	basePhysicalPlan
 
 	JoinType JoinType
@@ -222,7 +211,6 @@ type PhysicalHashJoin struct {
 
 // PhysicalIndexJoin represents the plan of index look up join.
 type PhysicalIndexJoin struct {
-	*basePlan
 	basePhysicalPlan
 
 	JoinType        JoinType
@@ -237,11 +225,15 @@ type PhysicalIndexJoin struct {
 	innerPlan       PhysicalPlan
 
 	DefaultValues []types.Datum
+
+	// Ranges stores the IndexRanges when the inner plan is index scan.
+	Ranges []*ranger.IndexRange
+	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
+	KeyOff2IdxOff []int
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
 type PhysicalMergeJoin struct {
-	*basePlan
 	basePhysicalPlan
 
 	JoinType JoinType
@@ -257,20 +249,27 @@ type PhysicalMergeJoin struct {
 	rightKeys []*expression.Column
 }
 
-// PhysicalHashSemiJoin represents hash join for semi join.
-type PhysicalHashSemiJoin struct {
-	*basePlan
+// PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
+type PhysicalLock struct {
 	basePhysicalPlan
 
-	WithAux bool
-	Anti    bool
+	Lock ast.SelectLockType
+}
 
-	EqualConditions []*expression.ScalarFunction
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
+// PhysicalLimit is the physical operator of Limit.
+type PhysicalLimit struct {
+	basePhysicalPlan
 
-	rightChOffset int
+	Offset uint64
+	Count  uint64
+
+	// partial is true if this topn is generated by push-down optimization.
+	partial bool
+}
+
+// PhysicalUnionAll is the physical operator of UnionAll.
+type PhysicalUnionAll struct {
+	basePhysicalPlan
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -298,33 +297,41 @@ func (at AggregationType) String() string {
 	return "unsupported aggregation type"
 }
 
-// PhysicalAggregation is Aggregation's physical plan.
-type PhysicalAggregation struct {
-	*basePlan
+type basePhysicalAgg struct {
 	basePhysicalPlan
 
-	AggType      AggregationType
 	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
+}
 
-	propKeys   []*expression.Column
-	inputCount float64 // inputCount is the input count of this plan.
+// PhysicalHashAgg is hash operator of aggregate.
+type PhysicalHashAgg struct {
+	basePhysicalAgg
+}
+
+// PhysicalStreamAgg is stream operator of aggregate.
+type PhysicalStreamAgg struct {
+	basePhysicalAgg
+}
+
+// PhysicalSort is the physical operator of sort, which implements a memory sort.
+type PhysicalSort struct {
+	basePhysicalPlan
+
+	ByItems []*ByItems
+}
+
+// NominalSort asks sort properties for its child. It is a fake operator that will not
+// appear in final physical operator tree.
+type NominalSort struct {
+	basePhysicalPlan
 }
 
 // PhysicalUnionScan represents a union scan operator.
 type PhysicalUnionScan struct {
-	*basePlan
 	basePhysicalPlan
 
 	Conditions []expression.Expression
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalIndexScan) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
@@ -335,174 +342,28 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) 
 		p.Ranges[0].IsPoint(sc)
 }
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalTableScan) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalApply) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalHashJoin) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalIndexJoin) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
 // PhysicalSelection represents a filter.
 type PhysicalSelection struct {
-	*basePlan
 	basePhysicalPlan
 
 	Conditions []expression.Expression
 }
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalSelection) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
+// PhysicalExists is the physical operator of Exists.
+type PhysicalExists struct {
+	basePhysicalPlan
 }
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Projection) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
+// PhysicalMaxOneRow is the physical operator of maxOneRow.
+type PhysicalMaxOneRow struct {
+	basePhysicalPlan
 }
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Exists) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
+// PhysicalTableDual is the physical operator of dual.
+type PhysicalTableDual struct {
+	basePhysicalPlan
 
-// Copy implements the PhysicalPlan Copy interface.
-func (p *MaxOneRow) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Limit) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Union) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Sort) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *TopN) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *TableDual) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *SelectLock) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalAggregation) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Show) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalUnionScan) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
+	RowCount int
 }
 
 func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
@@ -519,7 +380,7 @@ func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
 
 func buildSchema(p PhysicalPlan) {
 	switch x := p.(type) {
-	case *Limit, *TopN, *Sort, *PhysicalSelection, *MaxOneRow, *SelectLock:
+	case *PhysicalLimit, *PhysicalTopN, *PhysicalSort, *PhysicalSelection, *PhysicalMaxOneRow, *PhysicalLock:
 		p.SetSchema(p.Children()[0].Schema())
 	case *PhysicalIndexJoin:
 		p.SetSchema(buildJoinSchema(x.JoinType, p))
@@ -530,16 +391,8 @@ func buildSchema(p PhysicalPlan) {
 	case *PhysicalApply:
 		buildSchema(x.PhysicalJoin)
 		x.schema = x.PhysicalJoin.Schema()
-	case *PhysicalHashSemiJoin:
-		if x.WithAux {
-			auxCol := x.schema.Columns[x.Schema().Len()-1]
-			x.SetSchema(x.children[0].Schema().Clone())
-			x.schema.Append(auxCol)
-		} else {
-			x.SetSchema(x.children[0].Schema().Clone())
-		}
-	case *Union:
-		panic("Union shouldn't rebuild schema")
+	case *PhysicalUnionAll:
+		panic("UnionAll shouldn't rebuild schema")
 	}
 }
 
@@ -549,17 +402,18 @@ func buildSchema(p PhysicalPlan) {
 func rebuildSchema(p PhysicalPlan) bool {
 	needRebuild := false
 	for _, ch := range p.Children() {
-		needRebuild = needRebuild || rebuildSchema(ch.(PhysicalPlan))
-	}
-	if needRebuild {
-		buildSchema(p)
+		childRebuilt := rebuildSchema(ch.(PhysicalPlan))
+		needRebuild = needRebuild || childRebuilt
 	}
 	switch p.(type) {
 	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexLookUpReader:
 		needRebuild = true
-	// If there is projection or aggregation, the index of column will be resolved so no need to rebuild the schema.
-	case *Projection, *PhysicalAggregation:
+		// If there is projection or aggregation, the index of column will be resolved so no need to rebuild the schema.
+	case *PhysicalProjection, *PhysicalHashAgg, *PhysicalStreamAgg:
 		needRebuild = false
+	}
+	if needRebuild {
+		buildSchema(p)
 	}
 	return needRebuild
 }

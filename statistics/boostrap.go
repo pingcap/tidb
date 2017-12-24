@@ -14,7 +14,6 @@
 package statistics
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -57,7 +57,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	tables := statsCache{}
 	chk := rc[0].NewChunk()
 	for {
-		err := rc[0].NextChunk(chk)
+		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -123,7 +123,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 	}
 	chk := rc[0].NewChunk()
 	for {
-		err := rc[0].NextChunk(chk)
+		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -207,7 +207,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 	}
 	chk := rc[0].NewChunk()
 	for {
-		err := rc[0].NextChunk(chk)
+		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

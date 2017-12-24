@@ -148,6 +148,10 @@ func (s *testSuite) TestJoin(c *C) {
 	// Test that two conflict hints will return error.
 	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
+	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("select /*+ TIDB_SMJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
+	c.Assert(err, NotNil)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -272,6 +276,14 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("insert into t2 values('abc')")
 	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
 	result.Sort().Check(testkit.Rows("abc abc"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10), index idx(a))")
+	tk.MustExec("insert into t values('1'), ('2'), ('3')")
+	tk.MustExec("set @@tidb_max_chunk_size=1")
+	result = tk.MustQuery("select a from (select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
+	result.Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("set @@tidb_max_chunk_size=1024")
 }
 
 func (s *testSuite) TestUsing(c *C) {
@@ -593,6 +605,13 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("INSERT INTO t1 values(1)")
 	result = tk.MustQuery("SELECT 1 FROM test.t1, test.t2 WHERE 1 = (SELECT test.t2.d FROM test.t2 WHERE test.t1.a >= 1) and test.t2.d = 1;")
 	result.Check(testkit.Rows())
+
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1(a int, b int default 0)")
+	tk.MustExec("create index k1 on t1(a)")
+	tk.MustExec("INSERT INTO t1 (a) values(1), (2), (3), (4), (5)")
+	result = tk.MustQuery("select (select /*+ TIDB_INLJ(x1) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
+	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
@@ -723,4 +742,14 @@ func (s *testSuite) TestIssue5255(c *C) {
 	tk.MustExec("insert into t1 values(1, '2017-11-29', 2.2)")
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a=t2.a").Check(testkit.Rows("1 2017-11-29 2.2 1"))
+}
+
+func (s *testSuite) TestIssue5278(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tt(a varchar(10), b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustQuery("select * from t left join tt on t.a=tt.a left join t ttt on t.a=ttt.a").Check(testkit.Rows("1 1 <nil> <nil> 1 1"))
 }

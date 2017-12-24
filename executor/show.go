@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -370,22 +371,49 @@ func (e *ShowExec) fetchShowCharset() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() error {
-	sessionVars := e.ctx.GetSessionVars()
+func (e *ShowExec) fetchShowVariables() (err error) {
+	var (
+		value         string
+		ok            bool
+		sessionVars   = e.ctx.GetSessionVars()
+		unreachedVars = make([]string, 0, len(variable.SysVars))
+	)
 	for _, v := range variable.SysVars {
-		var err error
-		var value string
 		if !e.GlobalScope {
-			// Try to get Session Scope variable value first.
-			value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
+			// For a session scope variable,
+			// 1. try to fetch value from SessionVars.Systems;
+			// 2. if this variable is session-only, fetch value from SysVars
+			//		otherwise, fetch the value from table `mysql.Global_Variables`.
+			value, ok, err = varsutil.GetSessionOnlySysVars(sessionVars, v.Name)
 		} else {
-			value, err = varsutil.GetGlobalSystemVar(sessionVars, v.Name)
+			// If the scope of a system variable is ScopeNone,
+			// it's a read-only variable, so we return the default value of it.
+			// Otherwise, we have to fetch the values from table `mysql.Global_Variables` for global variable names.
+			value, ok, err = varsutil.GetScopeNoneSystemVar(v.Name)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if !ok {
+			unreachedVars = append(unreachedVars, v.Name)
+			continue
+		}
 		row := types.MakeDatums(v.Name, value)
 		e.rows = append(e.rows, row)
+	}
+	if len(unreachedVars) != 0 {
+		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, varName := range unreachedVars {
+			varValue, ok := systemVars[varName]
+			if !ok {
+				varValue = variable.SysVars[varName].Value
+			}
+			row := types.MakeDatums(varName, varValue)
+			e.rows = append(e.rows, row)
+		}
 	}
 	return nil
 }
@@ -424,6 +452,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
 	var pkCol *table.Column
+	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
 		if col.State != model.StatePublic {
 			continue
@@ -439,6 +468,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
+			hasAutoIncID = true
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
 		} else {
 			if mysql.HasNotNullFlag(col.Flag) {
@@ -505,9 +535,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 		cols := make([]string, 0, len(idxInfo.Columns))
 		for _, c := range idxInfo.Columns {
-			cols = append(cols, c.Name.O)
+			colInfo := fmt.Sprintf("`%s`", c.Name.String())
+			if c.Length != types.UnspecifiedLength {
+				colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
+			}
+			cols = append(cols, colInfo)
 		}
-		buf.WriteString(fmt.Sprintf("(`%s`)", strings.Join(cols, "`,`")))
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, ",")))
 		if i != len(tb.Indices())-1 {
 			buf.WriteString(",\n")
 		}
@@ -562,8 +596,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 
-	if tb.Meta().AutoIncID > 0 {
-		buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", tb.Meta().AutoIncID))
+	if hasAutoIncID {
+		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// It's campatible with MySQL.
+		if autoIncID > 1 {
+			buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", autoIncID))
+		}
 	}
 
 	if len(tb.Meta().Comment) > 0 {

@@ -1347,6 +1347,11 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT c FROM test_gc_read_cast_1`)
 	result.Check(testkit.Rows(`yellow`))
 
+	tk.MustExec(`CREATE TABLE test_gc_read_cast_2( a JSON, b JSON AS (a->>'$.a'))`)
+	tk.MustExec(`INSERT INTO test_gc_read_cast_2(a) VALUES ('{"a": "{    \\\"key\\\": \\\"\\u6d4b\\\"    }"}')`)
+	result = tk.MustQuery(`SELECT b FROM test_gc_read_cast_2`)
+	result.Check(testkit.Rows(`{"key":"测"}`))
+
 	_, err := tk.Exec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "invalid"}', '$.a')`)
 	c.Assert(err, NotNil)
 
@@ -2039,8 +2044,15 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("create table t1 (id int, v int, unique index i_id (id))")
 	defer tk.MustExec("drop table t")
+	defer tk.MustExec("drop table t1")
 	tk.MustExec("insert into t values (1)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
 
 	cli := s.cli
 	cli.mu.Lock()
@@ -2048,6 +2060,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")

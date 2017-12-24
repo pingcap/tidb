@@ -18,7 +18,6 @@ import (
 	"math"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -92,8 +92,8 @@ func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 	return row, nil
 }
 
-func (a *recordSet) NextChunk(chk *chunk.Chunk) error {
-	err := a.executor.NextChunk(chk)
+func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	err := a.executor.NextChunk(goCtx, chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
@@ -212,6 +212,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}
 
 	if err := e.Open(goCtx); err != nil {
+		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
 
@@ -228,8 +229,13 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql)
 	}
-	// Fields or Schema are only used for statements that return result set.
+	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
+		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
+	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
+		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+		// the Projection has two expressions and two columns in the schema, but we should
+		// not return the result of the two expressions.
 		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
 	}
 
@@ -264,20 +270,30 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 		}
 		a.logSlowQuery(txnTS, err == nil)
 	}()
-	for {
-		var row Row
-		row, err = e.Next(goCtx)
+
+	if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
+		err = e.NextChunk(goCtx, e.newChunk())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Even though there isn't any result set, the row is still used to indicate if there is
-		// more work to do.
-		// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
-		// There is no more rows to update.
-		if row == nil {
-			return nil, nil
+	} else {
+		for {
+			var row Row
+			row, err = e.Next(goCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// Even though there isn't any result set, the row is still used to indicate if there is
+			// more work to do.
+			// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
+			// There is no more rows to update.
+			if row == nil {
+				return nil, nil
+			}
 		}
 	}
+
+	return nil, nil
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
@@ -374,7 +390,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 	}
 
 	// check plan
-	if proj, ok := p.(*plan.Projection); ok {
+	if proj, ok := p.(*plan.PhysicalProjection); ok {
 		if len(proj.Children()) != 1 {
 			return false
 		}
@@ -382,16 +398,12 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 	}
 
 	switch v := p.(type) {
-	case *plan.PhysicalIndexScan:
-		return v.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	case *plan.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	case *plan.PhysicalIndexLookUpReader:
 		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
-	case *plan.PhysicalTableScan:
-		return len(v.Ranges) == 1 && v.Ranges[0].IsPoint()
 	case *plan.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()

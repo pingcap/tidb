@@ -44,9 +44,10 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/context"
@@ -57,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -77,8 +79,21 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	killed       bool
+	status       int32             // dispatching/reading/shutdown/waitshutdown
+
+	// mu is used for cancelling the execution of current transaction.
+	mu struct {
+		sync.RWMutex
+		cancelFunc goctx.CancelFunc
+	}
 }
+
+const (
+	connStatusDispatching int32 = iota
+	connStatusReading
+	connStatusShutdown     // Closed by server.
+	connStatusWaitShutdown // Notified by server to close.
+)
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
@@ -217,7 +232,7 @@ func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (par
 	return offset, nil
 }
 
-// Parse the HandshakeResponse (except the common header part).
+// parseHandshakeResponseBody parse the HandshakeResponse (except the common header part).
 func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset int) (err error) {
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
@@ -374,6 +389,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		}
 	}
 	cc.ctx.SetSessionManager(cc.server)
+	if cc.server.cfg.EnableChunk {
+		cc.ctx.EnableChunk()
+	}
 	return nil
 }
 
@@ -382,6 +400,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run() {
 	const size = 4096
+	closedOutside := false
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -390,20 +409,41 @@ func (cc *clientConn) Run() {
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
-		err := cc.Close()
-		terror.Log(errors.Trace(err))
+		if !closedOutside {
+			err := cc.Close()
+			terror.Log(errors.Trace(err))
+		}
 	}()
 
-	for !cc.killed {
+	// Usually, client connection status changes between [dispatching] <=> [reading].
+	// When some event happens, server may notify this client connection by setting
+	// the status to special values, for example: kill or graceful shutdown.
+	// The client connection would detect the events when it fails to change status
+	// by CAS operation, it would then take some actions accordingly.
+	for {
+		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
+			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
+				closedOutside = true
+			}
+			return
+		}
+
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
-		if err != nil || cc.killed {
+		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Errorf("[%d] read packet error, close this connection %s",
-					cc.connectionID, errors.ErrorStack(err))
+				errStack := errors.ErrorStack(err)
+				if !strings.Contains(errStack, "use of closed network connection") {
+					log.Errorf("[%d] read packet error, close this connection %s",
+						cc.connectionID, errStack)
+				}
 			}
-			if cc.killed {
-				log.Warnf("[%d] session is killed.", cc.connectionID)
+			return
+		}
+
+		if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) == false {
+			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
+				closedOutside = true
 			}
 			return
 		}
@@ -435,6 +475,22 @@ func (cc *clientConn) Run() {
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
 	}
+}
+
+// ShutdownOrNotify will Shutdown this client connection, or do its best to notify.
+func (cc *clientConn) ShutdownOrNotify() bool {
+	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
+		return false
+	}
+	// If the client connection status is reading, it's safe to shutdown it.
+	if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusShutdown) {
+		return true
+	}
+	// If the client connection status is dispatching, we can't shutdown it immediately,
+	// so set the status to WaitShutdown as a notification, the client will detect it
+	// and then exit.
+	atomic.StoreInt32(&cc.status, connStatusWaitShutdown)
+	return false
 }
 
 func queryStrForLog(query string) string {
@@ -502,6 +558,12 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 func (cc *clientConn) dispatch(data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
 	goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
+
+	goCtx1, cancelFunc := goctx.WithCancel(goCtx)
+	cc.mu.Lock()
+	cc.mu.cancelFunc = cancelFunc
+	cc.mu.Unlock()
+
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
@@ -527,11 +589,11 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		return cc.handleQuery(goCtx, hack.String(data))
+		return cc.handleQuery(goCtx1, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(goCtx, hack.String(data)); err != nil {
+		if err := cc.useDB(goCtx1, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
@@ -540,7 +602,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
-		return cc.handleStmtExecute(goCtx, data)
+		return cc.handleStmtExecute(goCtx1, data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -796,7 +858,7 @@ func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary b
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = cc.writeChunks(rs, binary, more)
+		err = cc.writeChunks(goCtx, rs, binary, more)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -867,11 +929,11 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	return nil
 }
 
-func (cc *clientConn) writeChunks(rs ResultSet, binary bool, more bool) error {
+func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	for {
-		err := rs.NextChunk(chk)
+		err := rs.NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

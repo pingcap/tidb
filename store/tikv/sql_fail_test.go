@@ -34,7 +34,7 @@ func (s *testSQLSuite) SetUpSuite(c *C) {
 	s.store, _ = tikv.NewTestTiKVStorage(false, "")
 }
 
-func (s *testSQLSuite) TestBusyServerCop(c *C) {
+func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 

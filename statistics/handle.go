@@ -18,12 +18,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 )
 
 type statsCache map[int64]*Table
@@ -49,6 +49,8 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
+	// feedback is used to store query feedback info.
+	feedback []*QueryFeedback
 
 	Lease time.Duration
 }
@@ -69,6 +71,9 @@ func (h *Handle) Clear() {
 	h.globalMap = make(tableDeltaMap)
 }
 
+// For now, we do not use the query feedback, so just set it to 1.
+const maxQueryFeedBackCount = 1
+
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	handle := &Handle{
@@ -78,9 +83,18 @@ func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
+		feedback:        make([]*QueryFeedback, 0, maxQueryFeedBackCount),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
+}
+
+// GetQueryFeedback gets the query feedback. It is only use in test.
+func (h *Handle) GetQueryFeedback() []*QueryFeedback {
+	defer func() {
+		h.feedback = h.feedback[:0]
+	}()
+	return h.feedback
 }
 
 // AnalyzeResultCh returns analyze result channel in handle.

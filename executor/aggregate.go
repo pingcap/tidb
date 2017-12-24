@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -35,7 +34,6 @@ type HashAggExec struct {
 	baseExecutor
 
 	executed      bool
-	aggType       plan.AggregationType
 	sc            *stmtctx.StatementContext
 	AggFuncs      []aggregation.Aggregation
 	aggCtxsMap    aggCtxsMapper
@@ -70,10 +68,10 @@ func (e *HashAggExec) Open(goCtx goctx.Context) error {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *HashAggExec) NextChunk(chk *chunk.Chunk) error {
+func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
-		err := e.innerNextChunk()
+		err := e.innerNextChunk(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -103,7 +101,7 @@ func (e *HashAggExec) NextChunk(chk *chunk.Chunk) error {
 }
 
 // innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
-func (e *HashAggExec) innerNextChunk() (err error) {
+func (e *HashAggExec) innerNextChunk(goCtx goctx.Context) (err error) {
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
 			groupKey, err := e.getGroupKey(e.inputRow)
@@ -121,7 +119,7 @@ func (e *HashAggExec) innerNextChunk() (err error) {
 				}
 			}
 		}
-		err := e.children[0].NextChunk(e.childrenResults[0])
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -231,15 +229,14 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 type StreamAggExec struct {
 	baseExecutor
 
-	executed           bool
-	hasData            bool
-	StmtCtx            *stmtctx.StatementContext
-	AggFuncs           []aggregation.Aggregation
-	aggCtxs            []*aggregation.AggEvaluateContext
-	GroupByItems       []expression.Expression
-	curGroupEncodedKey []byte
-	curGroupKey        []types.Datum
-	tmpGroupKey        []types.Datum
+	executed     bool
+	hasData      bool
+	StmtCtx      *stmtctx.StatementContext
+	AggFuncs     []aggregation.Aggregation
+	aggCtxs      []*aggregation.AggEvaluateContext
+	GroupByItems []expression.Expression
+	curGroupKey  []types.Datum
+	tmpGroupKey  []types.Datum
 }
 
 // Open implements the Executor Open interface.
@@ -334,10 +331,5 @@ func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
 		return false, nil
 	}
 	e.curGroupKey = e.tmpGroupKey
-	var err error
-	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.curGroupKey...)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
 	return !firstGroup, nil
 }
