@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -33,9 +34,9 @@ import (
 type DDLExec struct {
 	baseExecutor
 
-	Statement ast.StmtNode
-	is        infoschema.InfoSchema
-	done      bool
+	stmt ast.StmtNode
+	is   infoschema.InfoSchema
+	done bool
 }
 
 // Next implements Execution Next interface.
@@ -43,8 +44,23 @@ func (e *DDLExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
-	var err error
-	switch x := e.Statement.(type) {
+	err := e.run(goCtx)
+	e.done = true
+	return nil, errors.Trace(err)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *DDLExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	err := e.run(goCtx)
+	e.done = true
+	return errors.Trace(err)
+}
+
+func (e *DDLExec) run(goCtx goctx.Context) (err error) {
+	switch x := e.stmt.(type) {
 	case *ast.TruncateTableStmt:
 		err = e.executeTruncateTable(x)
 	case *ast.CreateDatabaseStmt:
@@ -65,7 +81,7 @@ func (e *DDLExec) Next(goCtx goctx.Context) (Row, error) {
 		err = e.executeRenameTable(x)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	dom := domain.GetDomain(e.ctx)
@@ -76,17 +92,6 @@ func (e *DDLExec) Next(goCtx goctx.Context) (Row, error) {
 	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
-	e.done = true
-	return nil, nil
-}
-
-// Close implements the Executor Close interface.
-func (e *DDLExec) Close() error {
-	return nil
-}
-
-// Open implements the Executor Open interface.
-func (e *DDLExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 

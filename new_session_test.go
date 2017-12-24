@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -180,7 +180,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
 func (s *testSessionSuite) TestRowLock(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -286,6 +286,27 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
+
+	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables  where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	tk.MustExec("set session sql_select_limit=100000000000;")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
+	result = tk.MustQuery("show session variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 100000000000"))
+
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("ON"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.autocommit = 0;")
+	result = tk.MustQuery("select @@global.autocommit;")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select @@autocommit;")
+	result.Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.autocommit=1")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -672,11 +693,12 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("create table t(id TEXT)")
 	tk.MustExec(`INSERT INTO t VALUES ("id");`)
 	id, ps, _, err := tk.Se.PrepareStmt("select id+? from t")
+	goCtx := goctx.Background()
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)
-	_, err = tk.Se.ExecutePreparedStmt(id, "1")
+	_, err = tk.Se.ExecutePreparedStmt(goCtx, id, "1")
 	c.Assert(err, IsNil)
 	err = tk.Se.DropPreparedStmt(id)
 	c.Assert(err, IsNil)
@@ -697,10 +719,10 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
 	c.Assert(err, IsNil)
-	rs, err := tk.Se.ExecutePreparedStmt(id, 1)
+	rs, err := tk.Se.ExecutePreparedStmt(goCtx, id, 1)
 	c.Assert(err, IsNil)
 	rs.Close()
-	rs, err = tk.Se.ExecutePreparedStmt(id, 2)
+	rs, err = tk.Se.ExecutePreparedStmt(goCtx, id, 2)
 	rs.Close()
 	c.Assert(err, IsNil)
 }
@@ -1283,7 +1305,7 @@ func (s *testSessionSuite) TestCaseInsensitive(c *C) {
 	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
 }
 
-// Testcase for delete panic
+// for delete panic
 func (s *testSessionSuite) TestDeletePanic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")
@@ -1532,7 +1554,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	var count int
 	var numChunks int
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1545,7 +1567,120 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 		numChunks++
 	}
 	c.Assert(count, Equals, 100)
-	c.Assert(numChunks, Equals, 10)
+	c.Assert(numChunks, Equals, 50)
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("update chk set a = a + 100 where a = %d", i))
+	}
+
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+	var idx int
+	for {
+		chk := rs.NewChunk()
+		err = rs.NextChunk(goctx.TODO(), chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			row := chk.GetRow(rowIdx)
+			c.Assert(row.GetInt64(0), Equals, int64(idx+100))
+			idx++
+		}
+	}
+
+	c.Assert(idx, Equals, 100)
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk(a int)")
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+
+	for i := 0; i < 99; i++ {
+		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
+	}
+
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+
+	chk := rs.NewChunk()
+	err = rs.NextChunk(goctx.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 1)
+
+	row := chk.GetRow(0)
+	c.Assert(row.GetInt64(0), Equals, int64(99))
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk1(a int)")
+	tk.MustExec("create table chk2(a int)")
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk1 values (%d)", i))
+	}
+
+	for i := 0; i < 50; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk2 values (%d)", i))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+
+	tk.MustExec("delete chk1, chk2 from chk1 inner join chk2 where chk1.a = chk2.a")
+
+	rs, err := tk.Exec("select * from chk1")
+	c.Assert(err, IsNil)
+
+	var idx int
+	for {
+		chk := rs.NewChunk()
+		err = rs.NextChunk(goctx.TODO(), chk)
+		c.Assert(err, IsNil)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for i := 0; i < chk.NumRows(); i++ {
+			row := chk.GetRow(i)
+			c.Assert(row.GetInt64(0), Equals, int64(idx+50))
+			idx++
+		}
+	}
+	c.Assert(idx, Equals, 50)
+	rs.Close()
+
+	rs, err = tk.Exec("select * from chk2")
+	c.Assert(err, IsNil)
+
+	chk := rs.NewChunk()
+	err = rs.NextChunk(goctx.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 0)
 	rs.Close()
 }
 
@@ -1568,7 +1703,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk := rs.NewChunk()
 	var count int
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1588,7 +1723,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk = rs.NewChunk()
 	count = 0
 	for {
-		err = rs.NextChunk(chk)
+		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {

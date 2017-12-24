@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -264,24 +264,25 @@ func (c *Constant) EvalDuration(_ types.Row, sc *stmtctx.StatementContext) (val 
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(_ types.Row, sc *stmtctx.StatementContext) (json.JSON, bool, error) {
+func (c *Constant) EvalJSON(_ types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return json.JSON{}, true, errors.Trace(err)
+			return json.BinaryJSON{}, true, errors.Trace(err)
 		}
 		if dt.IsNull() {
-			return json.JSON{}, true, nil
+			return json.BinaryJSON{}, true, nil
 		}
 		val, err := dt.ConvertTo(sc, types.NewFieldType(mysql.TypeJSON))
 		if err != nil {
-			return json.JSON{}, true, errors.Trace(err)
+			return json.BinaryJSON{}, true, errors.Trace(err)
 		}
+		fmt.Println("const eval json", val.GetMysqlJSON().String())
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
 		c.GetType().Tp = mysql.TypeJSON
 	} else {
 		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return json.JSON{}, true, nil
+			return json.BinaryJSON{}, true, nil
 		}
 	}
 	return c.Value.GetMysqlJSON(), false, nil

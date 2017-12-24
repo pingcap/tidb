@@ -14,12 +14,13 @@
 package plan
 
 import (
+	"math/bits"
 	"sort"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	log "github.com/sirupsen/logrus"
 )
 
 // tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
@@ -27,9 +28,8 @@ func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
 	// Ignore reorder if:
 	// 1. already reordered
 	// 2. not inner join
-	// 3. forced merge join
-	// 4. forced index nested loop join
-	if j.reordered || !j.cartesianJoin || j.preferMergeJoin || j.preferINLJ > 0 {
+	// 3. forced to choose join type
+	if j.reordered || !j.cartesianJoin || bits.OnesCount(j.preferJoinType) > 0 {
 		return nil, false
 	}
 	lChild := j.children[0].(LogicalPlan)
@@ -190,7 +190,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 		reordered: true,
 	}.init(e.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-	setParentAndChildren(join, lChild, rChild)
+	join.SetChildren(lChild, rChild)
 	return join
 }
 

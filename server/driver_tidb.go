@@ -64,8 +64,8 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) {
-	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ts.id, args...)
+func (ts *TiDBStatement) Execute(goCtx goctx.Context, args ...interface{}) (rs ResultSet, err error) {
+	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(goCtx, ts.id, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -144,6 +144,11 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 		stmts:     make(map[int]*TiDBStatement),
 	}
 	return tc, nil
+}
+
+// EnableChunk enables TiDBContext to use chunk.
+func (tc *TiDBContext) EnableChunk() {
+	tc.session.GetSessionVars().EnableChunk = true
 }
 
 // Status implements QueryCtx Status method.
@@ -280,11 +285,6 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
-// Cancel implements QueryCtx Cancel method.
-func (tc *TiDBContext) Cancel() {
-	tc.session.Cancel()
-}
-
 type tidbResultSet struct {
 	recordSet ast.RecordSet
 	columns   []*ColumnInfo
@@ -298,8 +298,8 @@ func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
 
-func (trs *tidbResultSet) NextChunk(chk *chunk.Chunk) error {
-	return trs.recordSet.NextChunk(chk)
+func (trs *tidbResultSet) NextChunk(ctx goctx.Context, chk *chunk.Chunk) error {
+	return trs.recordSet.NextChunk(ctx, chk)
 }
 
 func (trs *tidbResultSet) SupportChunk() bool {
@@ -336,18 +336,27 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	} else {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
-	// Fix issue #4540.
-	// The flen is a hint, not a precise value, so most client will not use the value.
-	// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
-	// the `show create table` result. To fix this case, we must use a large enough flen to prevent
-	// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
-	// For examples:
-	// * latin, the multiple is 1
-	// * gb2312, the multiple is 2
-	// * Utf-8, the multiple is 3
-	// * utf8mb4, the multiple is 4
-	// So the large enough multiple is 4 in here.
-	ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+	if fld.Column.Tp == mysql.TypeNewDecimal {
+		// Consider the negative sign.
+		ci.ColumnLength++
+		if fld.Column.Decimal > types.DefaultFsp {
+			// Consider the decimal point.
+			ci.ColumnLength++
+		}
+	} else if fld.Column.Tp != mysql.TypeBit {
+		// Fix issue #4540.
+		// The flen is a hint, not a precise value, so most client will not use the value.
+		// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
+		// the `show create table` result. To fix this case, we must use a large enough flen to prevent
+		// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
+		// For examples:
+		// * latin, the multiple is 1
+		// * gb2312, the multiple is 2
+		// * Utf-8, the multiple is 3
+		// * utf8mb4, the multiple is 4
+		// So the large enough multiple is 4 in here.
+		ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+	}
 
 	if fld.Column.Decimal == types.UnspecifiedLength {
 		ci.Decimal = mysql.NotFixedDec

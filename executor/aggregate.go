@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -34,8 +33,6 @@ type HashAggExec struct {
 	baseExecutor
 
 	executed      bool
-	hasGby        bool
-	aggType       plan.AggregationType
 	sc            *stmtctx.StatementContext
 	AggFuncs      []aggregation.Aggregation
 	aggCtxsMap    aggCtxsMapper
@@ -74,7 +71,7 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 				break
 			}
 		}
-		if (e.groupMap.Len() == 0) && !e.hasGby {
+		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
@@ -96,9 +93,6 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
-	if !e.hasGby {
-		return []byte{}, nil
-	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
@@ -161,15 +155,14 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 type StreamAggExec struct {
 	baseExecutor
 
-	executed           bool
-	hasData            bool
-	StmtCtx            *stmtctx.StatementContext
-	AggFuncs           []aggregation.Aggregation
-	aggCtxs            []*aggregation.AggEvaluateContext
-	GroupByItems       []expression.Expression
-	curGroupEncodedKey []byte
-	curGroupKey        []types.Datum
-	tmpGroupKey        []types.Datum
+	executed     bool
+	hasData      bool
+	StmtCtx      *stmtctx.StatementContext
+	AggFuncs     []aggregation.Aggregation
+	aggCtxs      []*aggregation.AggEvaluateContext
+	GroupByItems []expression.Expression
+	curGroupKey  []types.Datum
+	tmpGroupKey  []types.Datum
 }
 
 // Open implements the Executor Open interface.
@@ -261,10 +254,5 @@ func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
 		return false, nil
 	}
 	e.curGroupKey = e.tmpGroupKey
-	var err error
-	e.curGroupEncodedKey, err = codec.EncodeValue(e.curGroupEncodedKey[0:0:cap(e.curGroupEncodedKey)], e.curGroupKey...)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
 	return !firstGroup, nil
 }

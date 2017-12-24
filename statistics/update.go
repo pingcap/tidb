@@ -18,13 +18,14 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -37,22 +38,25 @@ func (m tableDeltaMap) update(id int64, delta int64, count int64) {
 	m[id] = item
 }
 
-func (m tableDeltaMap) merge(handle *SessionStatsCollector) {
-	handle.Lock()
-	defer handle.Unlock()
-	for id, item := range handle.mapper {
-		m.update(id, item.Delta, item.Count)
+func (h *Handle) merge(s *SessionStatsCollector) {
+	s.Lock()
+	defer s.Unlock()
+	for id, item := range s.mapper {
+		h.globalMap.update(id, item.Delta, item.Count)
 	}
-	handle.mapper = make(tableDeltaMap)
+	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
+	s.mapper = make(tableDeltaMap)
+	s.feedback = s.feedback[:0]
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
 	sync.Mutex
 
-	mapper tableDeltaMap
-	prev   *SessionStatsCollector
-	next   *SessionStatsCollector
+	mapper   tableDeltaMap
+	feedback []*QueryFeedback
+	prev     *SessionStatsCollector
+	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
@@ -69,6 +73,31 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64) {
 	s.Lock()
 	defer s.Unlock()
 	s.mapper.update(id, delta, count)
+}
+
+func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedback {
+	for _, q := range rq {
+		if len(lq) >= maxQueryFeedBackCount {
+			break
+		}
+		lq = append(lq, q)
+	}
+	return lq
+}
+
+// StoreQueryFeedback will merges the feedback into stats collector.
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
+	q := feedback.(*QueryFeedback)
+	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
+	if q.histVersion == 0 || q.actual < 0 || !q.valid {
+		return
+	}
+	s.Lock()
+	defer s.Unlock()
+	if len(s.feedback) >= maxQueryFeedBackCount {
+		return
+	}
+	s.feedback = append(s.feedback, q)
 }
 
 // tryToRemoveFromList will remove this collector from the list if it's deleted flag is set.
@@ -107,7 +136,7 @@ func (h *Handle) DumpStatsDeltaToKV() {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
-		h.globalMap.merge(collector)
+		h.merge(collector)
 	}
 	h.listHead.Unlock()
 	for id, item := range h.globalMap {
@@ -143,6 +172,60 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	return errors.Trace(err)
 }
 
+// QueryFeedback is used to represent the query feedback info. It contains the expected scan row count and
+// the actual scan row count, so that we could use these info to adjust the statistics.
+type QueryFeedback struct {
+	tableID     int64
+	colID       int64
+	isIndex     bool
+	idxRanges   []*ranger.IndexRange
+	intRanges   []ranger.IntColumnRange
+	histVersion uint64 // histVersion is the version of the histogram when we issue the query.
+	expected    int64
+	actual      int64
+	valid       bool
+}
+
+// NewQueryFeedback returns a new query feedback.
+func NewQueryFeedback(tableID int64, colID int64, isIndex bool, histVer uint64, expected int64) *QueryFeedback {
+	return &QueryFeedback{
+		tableID:     tableID,
+		colID:       colID,
+		isIndex:     isIndex,
+		histVersion: histVer,
+		expected:    expected,
+		valid:       true,
+	}
+}
+
+// SetIndexRanges sets the index ranges.
+func (q *QueryFeedback) SetIndexRanges(ranges []*ranger.IndexRange) *QueryFeedback {
+	q.idxRanges = ranges
+	return q
+}
+
+// SetIntRanges sets the int column ranges.
+func (q *QueryFeedback) SetIntRanges(ranges []ranger.IntColumnRange) *QueryFeedback {
+	q.intRanges = ranges
+	return q
+}
+
+// SetActual sets the actual count.
+func (q *QueryFeedback) SetActual(count int64) *QueryFeedback {
+	q.actual = count
+	return q
+}
+
+// Invalidate is used to invalidate the query feedback.
+func (q *QueryFeedback) Invalidate() {
+	q.valid = false
+}
+
+// Actual gets the actual row count.
+func (q *QueryFeedback) Actual() int64 {
+	return q.actual
+}
+
 const (
 	// StatsOwnerKey is the stats owner path that is saved to etcd.
 	StatsOwnerKey = "/tidb/stats/owner"
@@ -159,7 +242,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 		return false
 	}
 	for _, col := range tbl.Columns {
-		if len(col.Buckets) > 0 {
+		if col.Count > 0 {
 			return false
 		}
 	}

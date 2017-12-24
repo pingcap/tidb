@@ -23,10 +23,10 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -35,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 type domainMap struct {
@@ -61,7 +63,13 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d, err1 = domain.NewDomain(store, ddlLease, statisticLease, factory, sysFactory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
+		err1 = d.Init(ddlLease, sysFactory)
+		if err1 != nil {
+			// If we don't clean it, there are some dirty data when retrying the function of Init.
+			d.Close()
+			log.Errorf("[ddl] init domain failed %v", errors.ErrorStack(errors.Trace(err1)))
+		}
 		return true, errors.Trace(err1)
 	})
 	if err != nil {
@@ -138,7 +146,7 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
-	compiler := executor.Compiler{ctx}
+	compiler := executor.Compiler{Ctx: ctx}
 	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }
@@ -179,27 +187,25 @@ func GetHistory(ctx context.Context) *StmtHistory {
 	return hist
 }
 
-// GetRows gets all the rows from a RecordSet, only used for test.
-func GetRows(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
+// GetRows4Test gets all the rows from a RecordSet, only used for test.
+func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
 	var rows []types.Row
-	defer terror.Call(rs.Close)
 	if rs.SupportChunk() {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()
-			err := rs.NextChunk(chk)
+			err := rs.NextChunk(goCtx, chk)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			rowCnt := chk.NumRows()
-			if rowCnt == 0 {
+			if chk.NumRows() == 0 {
 				break
 			}
-			for i := 0; i < rowCnt; i++ {
-				rows = append(rows, chk.GetRow(i))
+			for row := chk.Begin(); row != chk.End(); row = row.Next() {
+				rows = append(rows, row)
 			}
 		}
 	} else {
@@ -271,7 +277,17 @@ func DialPumpClientWithRetry(binlogSocket string, maxRetries int, dialerOpt grpc
 	err := util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		log.Infof("setup binlog client")
 		var err error
-		clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
+		tlsConfig, err := config.GetGlobalConfig().Security.ToTLSConfig()
+		if err != nil {
+			log.Infof("error happen when setting binlog client: %s", errors.ErrorStack(err))
+		}
+
+		if tlsConfig != nil {
+			clientCon, err = grpc.Dial(binlogSocket, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), dialerOpt)
+		} else {
+			clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
+		}
+
 		if err != nil {
 			log.Infof("error happen when setting binlog client: %s", errors.ErrorStack(err))
 		}

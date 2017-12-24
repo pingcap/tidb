@@ -84,6 +84,9 @@ var distFuncs = map[tipb.ExprType]string{
 	tipb.ExprType_JsonRemove:  ast.JSONRemove,
 	tipb.ExprType_JsonArray:   ast.JSONArray,
 	tipb.ExprType_JsonObject:  ast.JSONObject,
+
+	// date functions.
+	tipb.ExprType_DateFormat: ast.DateFormat,
 }
 
 func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
@@ -500,6 +503,9 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 	case tipb.ScalarFuncSig_InJson:
 		f = &builtinInJSONSig{base}
 
+	case tipb.ScalarFuncSig_DateFormatSig:
+		f = &builtinDateFormatSig{base}
+
 	default:
 		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)
 		return nil, errors.Trace(e)
@@ -521,7 +527,7 @@ func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFu
 	}, nil
 }
 
-// newDistSQLFunction only creates function for mock-tikv.
+// newDistSQLFunction only creates function for mocktikv.
 func newDistSQLFunction(sc *stmtctx.StatementContext, exprType tipb.ExprType, args []Expression) (Expression, error) {
 	name, ok := distFuncs[exprType]
 	if !ok {

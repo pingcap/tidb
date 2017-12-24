@@ -186,6 +186,10 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(100))
+	// issue 4287.
+	v, err = Convert(math.Pow(2, 63)-1, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(math.MaxInt64))
 	ft = NewFieldType(mysql.TypeLonglong)
 	ft.Flag |= mysql.UnsignedFlag
 	v, err = Convert("100", ft)
@@ -763,7 +767,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 
 		casted, _ := ConvertJSONToInt(new(stmtctx.StatementContext), j, false)
@@ -789,7 +793,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)

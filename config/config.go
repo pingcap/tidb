@@ -14,6 +14,9 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"io/ioutil"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -34,6 +37,7 @@ type Config struct {
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
 	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
+	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -44,6 +48,7 @@ type Config struct {
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 }
 
 // Log is the log section of config.
@@ -68,6 +73,44 @@ type Security struct {
 	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
 	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
 	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+}
+
+// ToTLSConfig generates tls's config based on security section of the config.
+func (s *Security) ToTLSConfig() (*tls.Config, error) {
+	var tlsConfig *tls.Config
+	if len(s.ClusterSSLCA) != 0 {
+		certificates := []tls.Certificate{}
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
+			// Load the client certificates from disk
+			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
+			if err != nil {
+				return nil, errors.Errorf("could not load client key pair: %s", err)
+			}
+			certificates = append(certificates, certificate)
+		}
+
+		// Create a certificate pool from the certificate authority
+		certPool := x509.NewCertPool()
+		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
+		if err != nil {
+			return nil, errors.Errorf("could not read ca certificate: %s", err)
+		}
+
+		// Append the certificates from the CA
+		if !certPool.AppendCertsFromPEM(ca) {
+			return nil, errors.New("failed to append ca certs")
+		}
+
+		tlsConfig = &tls.Config{
+			Certificates: certificates,
+			RootCAs:      certPool,
+		}
+	}
+
+	return tlsConfig, nil
 }
 
 // Status is the status section of the config.
@@ -146,14 +189,23 @@ type ProxyProtocol struct {
 	HeaderTimeout int `toml:"header-timeout" json:"header-timeout"`
 }
 
+// TiKVClient is the config for tikv client.
+type TiKVClient struct {
+	// GrpcConnectionCount is the max gRPC connections that will be established
+	// with each tikv-server.
+	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
+}
+
 var defaultConf = Config{
-	Host:       "0.0.0.0",
-	Port:       4000,
-	Store:      "mocktikv",
-	Path:       "/tmp/tidb",
-	RunDDL:     true,
-	Lease:      "10s",
-	TokenLimit: 1000,
+	Host:        "0.0.0.0",
+	Port:        4000,
+	Store:       "mocktikv",
+	Path:        "/tmp/tidb",
+	RunDDL:      true,
+	SplitTable:  true,
+	Lease:       "10s",
+	TokenLimit:  1000,
+	EnableChunk: true,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
@@ -200,6 +252,9 @@ var defaultConf = Config{
 			Param: 1.0,
 		},
 		Reporter: OpenTracingReporter{},
+	},
+	TiKVClient: TiKVClient{
+		GrpcConnectionCount: 16,
 	},
 }
 

@@ -17,12 +17,12 @@ import (
 	"fmt"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -238,7 +238,7 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 	switch x := p.(type) {
 	case *plan.PhysicalApply:
 		pa.hasApply = true
-	case *plan.PhysicalAggregation:
+	case *plan.PhysicalHashAgg, *plan.PhysicalStreamAgg:
 		pa.hasAggregate = true
 	case *plan.PhysicalHashJoin:
 		pa.hasJoin = true
@@ -254,8 +254,14 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 			pa.hasRange = true
 		}
 		pa.setIsSystemTable(x.DBName)
-	case *plan.PhysicalHashSemiJoin:
-		pa.hasJoin = true
+	case *plan.Insert:
+		if x.SelectPlan != nil {
+			pa.fromPlan(x.SelectPlan)
+		}
+	case *plan.Delete:
+		pa.fromPlan(x.SelectPlan)
+	case *plan.Update:
+		pa.fromPlan(x.SelectPlan)
 	case *plan.PhysicalTableReader:
 		for _, child := range x.TablePlans {
 			pa.fromPlan(child)

@@ -21,7 +21,6 @@ import (
 	"math"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-binlog"
+	log "github.com/sirupsen/logrus"
 )
 
 // Table implements table.Table interface.
@@ -316,7 +316,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 		}
 	}
 	if !hasRecordID {
-		recordID, err = t.alloc.Alloc(t.ID)
+		recordID, err = t.AllocAutoID(ctx)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -697,18 +697,24 @@ func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []ty
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.
-func (t *Table) AllocAutoID() (int64, error) {
-	return t.alloc.Alloc(t.ID)
+func (t *Table) AllocAutoID(ctx context.Context) (int64, error) {
+	return t.Allocator(ctx).Alloc(t.ID)
 }
 
 // Allocator implements table.Table Allocator interface.
-func (t *Table) Allocator() autoid.Allocator {
+func (t *Table) Allocator(ctx context.Context) autoid.Allocator {
+	if ctx != nil {
+		sessAlloc := ctx.GetSessionVars().IDAllocator
+		if sessAlloc != nil {
+			return sessAlloc
+		}
+	}
 	return t.alloc
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
-	return t.alloc.Rebase(t.ID, newBase, isSetStep)
+func (t *Table) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
+	return t.Allocator(ctx).Rebase(t.ID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.

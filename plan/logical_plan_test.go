@@ -476,7 +476,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
-			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Projection",
+			best: "UnionAll{DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection->DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection->DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t where t.a = k.a) from t k",
@@ -544,6 +544,86 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestSubquery(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			// This will be resolved as in sub query.
+			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
+		},
+		{
+			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
+			best: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Projection->Projection",
+		},
+		{
+			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
+			best: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
+		},
+		{
+			// Semi-join with agg cannot decorrelate.
+			sql:  "select t.c in (select count(s.b) from t s where s.a = t.a) from t",
+			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection",
+		},
+		{
+			// Theta-join with agg cannot decorrelate.
+			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
+			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection->Projection",
+		},
+		{
+			// Relation without keys cannot decorrelate.
+			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
+			best: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Sel([eq(s.a, t1.a)])->Aggr(count(s.b))}->Projection->Projection",
+		},
+		{
+			// Aggregate function like count(1) cannot decorrelate.
+			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(1))}->Projection->Projection",
+		},
+		{
+			sql:  "select a from t where a in (select a from t s group by t.b)",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,s.a)->Projection",
+		},
+		{
+			// This will be resolved as in sub query.
+			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
+		},
+		{
+			// This will be resolved as in function.
+			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Sel([in(10, s.b, 10)])->Projection",
+		},
+		{
+			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}->Projection",
+		},
+		{
+			// Test Nested sub query.
+			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
+			best: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
+		},
+	}
+
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		Preprocess(s.ctx, stmt, s.is, false)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		if lp, ok := p.(LogicalPlan); ok {
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, s.ctx)
+			c.Assert(err, IsNil)
+		}
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+}
+
 func (s *testPlanSuite) TestPlanBuilder(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
@@ -551,72 +631,16 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		plan string
 	}{
 		{
-			// This will be resolved as in sub query.
-			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
-		},
-		{
-			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
-			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Projection->Projection",
-		},
-		{
-			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
-		},
-		{
-			// Semi-join with agg cannot decorrelate.
-			sql:  "select t.c in (select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection",
-		},
-		{
-			// Theta-join with agg cannot decorrelate.
-			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
-			plan: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection->Projection",
-		},
-		{
-			// Relation without keys cannot decorrelate.
-			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
-			plan: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Sel([eq(s.a, t1.a)])->Aggr(count(s.b))}->Projection->Projection",
-		},
-		{
-			// Aggregate function like count(1) cannot decorrelate.
-			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-			plan: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(1))}->Projection->Projection",
-		},
-		{
-			sql:  "select a from t where a in (select a from t s group by t.b)",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,s.a)->Projection",
-		},
-		{
-			// This will be resolved as in sub query.
-			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
-		},
-		{
-			// This will be resolved as in function.
-			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Sel([in(10, s.b, 10)])->Projection",
-		},
-		{
-			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}->Projection",
-		},
-		{
-			// Test Nested sub query.
-			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
-		},
-		{
 			sql:  "select * from t for update",
 			plan: "DataScan(t)->Lock->Projection",
 		},
 		{
 			sql:  "update t set t.a = t.a * 1.5 where t.a >= 1000 order by t.a desc limit 10",
-			plan: "DataScan(t)->Sel([ge(test.t.a, 1000)])->Sort->Limit->*plan.Update",
+			plan: "TableReader(Table(t)->Limit)->Limit->Update",
 		},
 		{
 			sql:  "delete from t where t.a >= 1000 order by t.a desc limit 10",
-			plan: "DataScan(t)->Sel([ge(test.t.a, 1000)])->Sort->Limit->*plan.Delete",
+			plan: "TableReader(Table(t)->Limit)->Limit->Delete",
 		},
 		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
@@ -624,11 +648,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "insert into t select * from t",
-			plan: "DataScan(t)->Projection->*plan.Insert",
+			plan: "TableReader(Table(t))->Insert",
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "*plan.Show->Sel([eq(cast(key), 0)])",
+			plan: "Show([eq(cast(key), 0)])",
 		},
 		{
 			sql:  "do sleep(5)",
@@ -652,7 +676,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, s.ctx)
+			p, err = logicalOptimize(flagPrunColumns, lp, s.ctx)
 			c.Assert(err, IsNil)
 		}
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
@@ -767,7 +791,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		},
 		{
 			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
-			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Projection->Aggr(sum(cast(a.c1)),firstrow(cast(a.c2)))->DataScan(b)->Projection->Aggr(sum(cast(b.c1)),firstrow(cast(b.c2)))->DataScan(c)->Projection->Aggr(sum(cast(c.c1)),firstrow(c.c2))}->Aggr(sum(join_agg_0))->Projection",
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
@@ -779,7 +803,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		},
 		{
 			sql:  "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
-			best: "UnionAll{DataScan(a)->Projection->Projection->DataScan(b)->Projection->Projection}->Aggr(max(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Projection->Aggr(max(cast(a.b)),firstrow(cast(a.a)))->DataScan(b)->Projection->Aggr(max(cast(b.b)),firstrow(cast(b.a)))}->Aggr(max(join_agg_0))->Projection",
 		},
 		{
 			sql:  "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
@@ -1524,12 +1548,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
-			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([s.a s.b],0,5)->Projection}->TopN([t.a t.b],0,5)",
+			best: "UnionAll{DataScan(t)->TopN([cast(test.t.a) cast(test.t.b)],0,5)->Projection->DataScan(s)->TopN([cast(s.a) cast(s.b)],0,5)->Projection}->TopN([t.a t.b],0,5)",
 		},
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5, 5",
-			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([s.a s.b],0,10)->Projection}->TopN([t.a t.b],5,5)",
+			best: "UnionAll{DataScan(t)->TopN([cast(test.t.a) cast(test.t.b)],0,10)->Projection->DataScan(s)->TopN([cast(s.a) cast(s.b)],0,10)->Projection}->TopN([t.a t.b],5,5)",
 		},
 		// Test Limit + UA + Proj + Sort.
 		{

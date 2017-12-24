@@ -406,6 +406,7 @@ var tokenMap = map[string]int{
 	"SERIALIZABLE":             serializable,
 	"SESSION":                  session,
 	"SET":                      set,
+	"SEPARATOR":                separator,
 	"SHARE":                    share,
 	"SHARED":                   shared,
 	"SHOW":                     show,
@@ -442,6 +443,7 @@ var tokenMap = map[string]int{
 	"THAN":                     than,
 	"THEN":                     then,
 	"TIDB":                     tidb,
+	"TIDB_HJ":                  tidbHJ,
 	"TIDB_INLJ":                tidbINLJ,
 	"TIDB_SMJ":                 tidbSMJ,
 	"TIME":                     timeType,
@@ -493,6 +495,42 @@ var tokenMap = map[string]int{
 	"ZEROFILL":                 zerofill,
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details
+var btFuncTokenMap = map[string]int{
+	"ADDDATE":      builtinAddDate,
+	"BIT_AND":      builtinBitAnd,
+	"BIT_OR":       builtinBitOr,
+	"BIT_XOR":      builtinBitXor,
+	"CAST":         builtinCast,
+	"COUNT":        builtinCount,
+	"CURDATE":      builtinCurDate,
+	"CURTIME":      builtinCurTime,
+	"DATE_ADD":     builtinDateAdd,
+	"DATE_SUB":     builtinDateSub,
+	"EXTRACT":      builtinExtract,
+	"GROUP_CONCAT": builtinGroupConcat,
+	"MAX":          builtinMax,
+	"MID":          builtinSubstring,
+	"MIN":          builtinMin,
+	"NOW":          builtinNow,
+	"POSITION":     builtinPosition,
+	"SESSION_USER": builtinUser,
+	"STD":          builtinStddevPop,
+	"STDDEV":       builtinStddevPop,
+	"STDDEV_POP":   builtinStddevPop,
+	"STDDEV_SAMP":  builtinVarSamp,
+	"SUBDATE":      builtinSubDate,
+	"SUBSTR":       builtinSubstring,
+	"SUBSTRING":    builtinSubstring,
+	"SUM":          builtinSum,
+	"SYSDATE":      builtinSysDate,
+	"SYSTEM_USER":  builtinUser,
+	"TRIM":         builtinTrim,
+	"VARIANCE":     builtinVarPop,
+	"VAR_POP":      builtinVarPop,
+	"VAR_SAMP":     builtinVarSamp,
+}
+
 // aliases are strings directly map to another string and use the same token.
 var aliases = map[string]string{
 	"SCHEMA":  "DATABASE",
@@ -521,7 +559,22 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 			data[i] = lit[i]
 		}
 	}
-	tok := tokenMap[hack.String(data)]
+
+	checkBtFuncToken, tokenStr := false, hack.String(data)
+	if s.r.peek() == '(' {
+		checkBtFuncToken = true
+	} else if s.sqlMode.HasIgnoreSpaceMode() {
+		s.skipWhitespace()
+		if s.r.peek() == '(' {
+			checkBtFuncToken = true
+		}
+	}
+	if checkBtFuncToken {
+		if tok := btFuncTokenMap[tokenStr]; tok != 0 {
+			return tok
+		}
+	}
+	tok := tokenMap[tokenStr]
 	return tok
 }
 

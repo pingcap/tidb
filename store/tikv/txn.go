@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -65,7 +65,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	}, nil
 }
 
-// Implement transaction interface.
+// Get implements transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	txnCmdCounter.WithLabelValues("get").Inc()
 	start := time.Now()
@@ -181,7 +181,12 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	log.Infof("[kv] Rollback txn %d", txn.StartTS())
+	logMsg := fmt.Sprintf("[kv] Rollback txn %d", txn.StartTS())
+	if txn.store.mock {
+		log.Debug(logMsg)
+	} else {
+		log.Info(logMsg)
+	}
 	txnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil
@@ -213,4 +218,8 @@ func (txn *tikvTxn) Len() int {
 
 func (txn *tikvTxn) Size() int {
 	return txn.us.Size()
+}
+
+func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
+	return txn.us.GetMemBuffer()
 }

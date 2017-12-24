@@ -80,7 +80,7 @@ func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	return types.DatumRow{r.data[r.cursor-1]}, nil
 }
 
-func (r *recordSet) NextChunk(chk *chunk.Chunk) error {
+func (r *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -631,12 +631,12 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	ran[0].HighVal[0] = types.NewIntDatum(2000)
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 999)
+	c.Assert(int(count), Equals, 1000)
 	ran[0].LowVal[0] = types.NewIntDatum(1001)
 	ran[0].HighVal[0] = types.NewIntDatum(1990)
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 988)
+	c.Assert(int(count), Equals, 989)
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].HighVal[0] = types.NewIntDatum(1000)
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)

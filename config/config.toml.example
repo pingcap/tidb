@@ -24,11 +24,15 @@ run-ddl = true
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "10s"
 
-# When create table, split a separated region for it.
-# split-table = false
+# When create table, split a separated region for it. It is recommended to
+# turn off this option if there will be a large number of tables created.
+split-table = true
 
 # The limit of concurrent executed sessions.
 # token-limit = 1000
+
+# Enable chunk executors.
+enable-chunk = true
 
 [log]
 # Log level: info, debug, warn, error, fatal.
@@ -67,14 +71,23 @@ filename = ""
 log-rotate = true
 
 [security]
-# Path of file that contains list of trusted SSL CAs.
+# Path of file that contains list of trusted SSL CAs for connection with mysql client.
 ssl-ca = ""
 
-# Path of file that contains X509 certificate in PEM format.
+# Path of file that contains X509 certificate in PEM format for connection with mysql client.
 ssl-cert = ""
 
-# Path of file that contains X509 key in PEM format.
+# Path of file that contains X509 key in PEM format for connection with mysql client.
 ssl-key = ""
+
+# Path of file that contains list of trusted SSL CAs for connection with cluster components.
+cluster-ssl-ca = ""
+
+# Path of file that contains X509 certificate in PEM format for connection with cluster components.
+cluster-ssl-cert = ""
+
+# Path of file that contains X509 key in PEM format for connection with cluster components.
+cluster-ssl-key = ""
 
 [status]
 # If enable status report HTTP service.
@@ -188,3 +201,7 @@ log-spans = false
 
 #  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
 local-agent-host-port = ""
+
+[tikv-client]
+# Max gRPC connections that will be established with each tikv-server.
+grpc-connection-count = 16

@@ -124,17 +124,3 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		c.Assert(match, Equals, v.match, Commentf("%v", v))
 	}
 }
-
-func (s *testStringUtilSuite) TestRemoveBlanks(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		input  string
-		output string
-	}{
-		{"a\nb\rc d\te", "abcde"},
-		{"hello, 世界\npeace", "hello,世界peace"},
-	}
-	for _, tt := range tests {
-		c.Assert(RemoveBlanks(tt.input), Equals, tt.output)
-	}
-}

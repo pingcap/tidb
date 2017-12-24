@@ -18,6 +18,7 @@
 package ddl
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -318,7 +318,9 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionGenerated:
-				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
+				var buf = bytes.NewBuffer([]byte{})
+				v.Expr.Format(buf)
+				col.GeneratedExprString = buf.String()
 				col.GeneratedStored = v.Stored
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
@@ -798,7 +800,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
-	alloc := autoid.NewAllocator(d.store, tbInfo.OldSchemaID, schemaID)
+	alloc := autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID))
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(alloc, tbInfo)
 	if err != nil {
@@ -807,7 +809,7 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
 	// Its behavior is consistent with MySQL.
-	if err = tb.RebaseAutoID(tbInfo.AutoIncID-1, false); err != nil {
+	if err = tb.RebaseAutoID(nil, tbInfo.AutoIncID-1, false); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1135,7 +1137,9 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
-			col.GeneratedExprString = stringutil.RemoveBlanks(opt.Expr.Text())
+			var buf = bytes.NewBuffer([]byte{})
+			opt.Expr.Format(buf)
+			col.GeneratedExprString = buf.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {
