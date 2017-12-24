@@ -42,7 +42,15 @@ func (af *avgFunction) GetType() *types.FieldType {
 		ft.Decimal = af.Args[0].GetType().Decimal
 	} else {
 		ft = types.NewFieldType(mysql.TypeNewDecimal)
-		ft.Decimal = af.Args[0].GetType().Decimal + types.DivFracIncr
+		if af.GetMode() == FinalMode {
+			ft.Decimal = af.Args[1].GetType().Decimal
+		} else {
+			ft.Decimal = af.Args[0].GetType().Decimal
+			if ft.Decimal < 0 {
+				ft.Decimal = 0
+			}
+			ft.Decimal += types.DivFracIncr
+		}
 	}
 	ft.Flen = mysql.MaxRealWidth
 	types.SetBinChsClnFlag(ft)
@@ -104,7 +112,11 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	to := new(types.MyDecimal)
 	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 	terror.Log(errors.Trace(err))
-	err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
+	frac := af.GetType().Decimal
+	if frac == -1 {
+		frac = types.MaxFraction
+	}
+	err = to.Round(to, frac, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))
 	if ctx.Value.Kind() == types.KindFloat64 {
 		f, err := to.ToFloat64()
