@@ -243,15 +243,27 @@ func VectorizedFilter(ctx context.Context, filters []Expression, input *chunk.Ch
 		selected = append(selected, true)
 	}
 	for _, filter := range filters {
+		isIntType := true
+		if filter.GetType().EvalType() != types.ETInt {
+			isIntType = false
+		}
 		for row := input.Begin(); row != input.End(); row = row.Next() {
 			if !selected[row.Idx()] {
 				continue
 			}
-			filterResult, isNull, err := filter.EvalInt(row, ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				return nil, errors.Trace(err)
+			if isIntType {
+				filterResult, isNull, err := filter.EvalInt(row, ctx.GetSessionVars().StmtCtx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
+			} else {
+				bVal, err := EvalBool([]Expression{filter}, row, ctx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				selected[row.Idx()] = selected[row.Idx()] && bVal
 			}
-			selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
 		}
 	}
 	return selected, nil
