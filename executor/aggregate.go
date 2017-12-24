@@ -237,6 +237,7 @@ type StreamAggExec struct {
 	GroupByItems []expression.Expression
 	curGroupKey  []types.Datum
 	tmpGroupKey  []types.Datum
+	inputRow     chunk.Row
 }
 
 // Open implements the Executor Open interface.
@@ -247,6 +248,7 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 	e.executed = false
 	e.hasData = false
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
+	e.inputRow = e.childrenResults[0].End()
 	return nil
 }
 
@@ -304,7 +306,7 @@ func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
-func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
+func (e *StreamAggExec) meetNewGroup(row types.Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}
@@ -332,4 +334,67 @@ func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
 	}
 	e.curGroupKey = e.tmpGroupKey
 	return !firstGroup, nil
+}
+
+func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (err error) {
+	if e.executed {
+		return nil
+	}
+	if len(e.aggCtxs) == 0 {
+		for _, agg := range e.AggFuncs {
+			e.aggCtxs = append(e.aggCtxs, agg.CreateContext())
+		}
+	}
+	chk.Reset()
+	for {
+		if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+			return nil
+		}
+		for {
+			if e.inputRow == e.childrenResults[0].End() {
+				err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.inputRow = e.childrenResults[0].Begin()
+			} else {
+				e.inputRow = e.inputRow.Next()
+			}
+			var newGroup bool
+			// no more data.
+			if e.childrenResults[0].NumRows() == 0 {
+				newGroup = true
+				e.executed = true
+				return nil
+			} else {
+				e.hasData = true
+				newGroup, err = e.meetNewGroup(e.inputRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			if newGroup {
+				for i, af := range e.AggFuncs {
+					af.SetResultInChunk(chk, i, e.aggCtxs[i])
+					// Clear stream results after grabbing them.
+					e.aggCtxs[i] = af.CreateContext()
+				}
+			}
+			if e.executed {
+				break
+			}
+			for i, af := range e.AggFuncs {
+				err = af.Update(e.aggCtxs[i], e.StmtCtx, e.inputRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			if newGroup {
+				break
+			}
+		}
+		if !e.hasData && len(e.GroupByItems) > 0 {
+			return nil
+		}
+	}
 }

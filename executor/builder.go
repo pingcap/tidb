@@ -659,7 +659,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		GroupByItems: v.GroupByItems,
 	}
 	e.supportChk = true
-    return e
+	return e
 }
 
 func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
@@ -668,12 +668,14 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &StreamAggExec{
+	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
