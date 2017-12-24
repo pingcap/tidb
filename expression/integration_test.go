@@ -2488,7 +2488,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
 	c.Assert(terror.ErrorEqual(err, expression.ErrDivisionByZero), IsTrue)
 
-	tk.MustQuery("select sum(1.2e2) * 0.1").Check(testkit.Rows("12.0"))
+	tk.MustQuery("select sum(1.2e2) * 0.1").Check(testkit.Rows("12"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a double)")
 	tk.MustExec("insert into t value(1.2)")

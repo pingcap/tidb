@@ -460,7 +460,8 @@ func (s *testSuite) TestHaving(c *C) {
 	tk.MustQuery("select c1 as a from t group by c3 having sum(a) + a = 2;").Check(testkit.Rows("1"))
 	tk.MustQuery("select a.c1 as c, a.c1 as d from t as a, t as b having c1 = 1 limit 1;").Check(testkit.Rows("1 1"))
 
-	tk.MustQuery("select sum(c1) from t group by c1 having sum(c1)").Check(testkit.Rows("1", "2", "3"))
+	// FIXME: See issue: https://github.com/pingcap/tidb/issues/5293
+	//tk.MustQuery("select sum(c1) from t group by c1 having sum(c1)").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select sum(c1) - 1 from t group by c1 having sum(c1) - 1").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
 }

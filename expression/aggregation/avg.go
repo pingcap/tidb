@@ -37,17 +37,24 @@ func (af *avgFunction) Clone() Aggregation {
 
 // GetType implements Aggregation interface.
 func (af *avgFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeNewDecimal)
-	types.SetBinChsClnFlag(ft)
-	ft.Flen = mysql.MaxRealWidth
-	if af.GetMode() == FinalMode {
-		ft.Decimal = af.Args[1].GetType().Decimal
-	} else {
+	var ft *types.FieldType
+	if types.IsTypeFloat(af.Args[0].GetType().Tp) {
+		ft = types.NewFieldType(mysql.TypeDouble)
 		ft.Decimal = af.Args[0].GetType().Decimal
+	} else {
+		ft = types.NewFieldType(mysql.TypeNewDecimal)
+		if af.GetMode() == FinalMode {
+			ft.Decimal = af.Args[1].GetType().Decimal
+		} else {
+			ft.Decimal = af.Args[0].GetType().Decimal
+			if ft.Decimal < 0 {
+				ft.Decimal = 0
+			}
+			ft.Decimal += types.DivFracIncr
+		}
 	}
-	if ft.Decimal == -1 {
-		ft.Decimal = 0
-	}
+	ft.Flen = mysql.MaxRealWidth
+	types.SetBinChsClnFlag(ft)
 	return ft
 }
 
@@ -106,8 +113,18 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	to := new(types.MyDecimal)
 	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 	terror.Log(errors.Trace(err))
-	err = to.Round(to, af.GetType().Decimal+types.DivFracIncr, types.ModeHalfEven)
+	frac := af.GetType().Decimal
+	if frac == -1 {
+		frac = types.MaxFraction
+	}
+	err = to.Round(to, frac, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))
+	if ctx.Value.Kind() == types.KindFloat64 {
+		f, err := to.ToFloat64()
+		terror.Log(errors.Trace(err))
+		d.SetFloat64(f)
+		return
+	}
 	d.SetMysqlDecimal(to)
 	return
 }
@@ -129,8 +146,18 @@ func (af *avgFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *Agg
 	to := new(types.MyDecimal)
 	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 	terror.Log(errors.Trace(err))
-	err = to.Round(to, af.GetType().Decimal+types.DivFracIncr, types.ModeHalfEven)
+	frac := af.GetType().Decimal
+	if frac == -1 {
+		frac = types.MaxFraction
+	}
+	err = to.Round(to, frac, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))
+	if ctx.Value.Kind() == types.KindFloat64 {
+		f, err := to.ToFloat64()
+		terror.Log(errors.Trace(err))
+		chunk.AppendFloat64(colIdx, f)
+		return
+	}
 	chunk.AppendMyDecimal(colIdx, to)
 	return
 }

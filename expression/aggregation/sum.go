@@ -14,12 +14,10 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -45,23 +43,13 @@ func (sf *sumFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCont
 
 // GetResult implements Aggregation interface.
 func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	if ctx.Value.Kind() == types.KindFloat64 {
-		dec := new(types.MyDecimal)
-		err := dec.FromFloat64(ctx.Value.GetFloat64())
-		terror.Log(errors.Trace(err))
-		d.SetMysqlDecimal(dec)
-		return
-	}
 	return ctx.Value
 }
 
 //  SetResultInChunk implements Aggregation interface.
 func (sf *sumFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
 	if ctx.Value.Kind() == types.KindFloat64 {
-		dec := new(types.MyDecimal)
-		err := dec.FromFloat64(ctx.Value.GetFloat64())
-		terror.Log(errors.Trace(err))
-		chunk.AppendMyDecimal(colIdx, dec)
+		chunk.AppendFloat64(colIdx, ctx.Value.GetFloat64())
 		return
 	}
 	chunk.AppendMyDecimal(colIdx, ctx.Value.GetMysqlDecimal())
@@ -89,9 +77,13 @@ func (sf *sumFunction) CalculateDefaultValue(schema *expression.Schema, ctx cont
 
 // GetType implements Aggregation interface.
 func (sf *sumFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	var ft *types.FieldType
+	if types.IsTypeFloat(sf.Args[0].GetType().Tp) {
+		ft = types.NewFieldType(mysql.TypeDouble)
+	} else {
+		ft = types.NewFieldType(mysql.TypeNewDecimal)
+	}
 	types.SetBinChsClnFlag(ft)
-	ft.Flen = mysql.MaxRealWidth
-	ft.Decimal = sf.Args[0].GetType().Decimal
+	ft.Flen, ft.Decimal = mysql.MaxRealWidth, sf.Args[0].GetType().Decimal
 	return ft
 }
