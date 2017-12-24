@@ -39,7 +39,15 @@ func (af *avgFunction) Clone() Aggregation {
 func (af *avgFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
 	types.SetBinChsClnFlag(ft)
-	ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
+	ft.Flen = mysql.MaxRealWidth
+	if af.GetMode() == FinalMode {
+		ft.Decimal = af.Args[1].GetType().Decimal
+	} else {
+		ft.Decimal = af.Args[0].GetType().Decimal
+	}
+	if ft.Decimal == -1 {
+		ft.Decimal = 0
+	}
 	return ft
 }
 
@@ -98,7 +106,7 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	to := new(types.MyDecimal)
 	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 	terror.Log(errors.Trace(err))
-	err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
+	err = to.Round(to, af.GetType().Decimal+types.DivFracIncr, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))
 	d.SetMysqlDecimal(to)
 	return
@@ -121,7 +129,7 @@ func (af *avgFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *Agg
 	to := new(types.MyDecimal)
 	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 	terror.Log(errors.Trace(err))
-	err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
+	err = to.Round(to, af.GetType().Decimal+types.DivFracIncr, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))
 	chunk.AppendMyDecimal(colIdx, to)
 	return

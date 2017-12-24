@@ -239,8 +239,6 @@ func (d *Datum) GetMysqlDecimal() *MyDecimal {
 func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 	d.k = KindMysqlDecimal
 	d.x = b
-	precision, frac := b.PrecisionAndFrac()
-	d.decimal, d.length = uint16(frac), uint32(precision)
 }
 
 // GetMysqlDuration gets Duration value
