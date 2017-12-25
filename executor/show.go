@@ -271,47 +271,6 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	return nil
 }
 
-func (e *ShowExec) appendDefaultValue(desc *table.ColDesc, colIdx int) {
-	if desc.DefaultValue == nil {
-		e.result.AppendNull(colIdx)
-	} else {
-		switch x := desc.DefaultValue.(type) {
-		case nil:
-			e.result.AppendNull(colIdx)
-		case int:
-			e.result.AppendInt64(colIdx, int64(x))
-		case int64:
-			e.result.AppendInt64(colIdx, x)
-		case uint64:
-			e.result.AppendUint64(colIdx, x)
-		case float64:
-			e.result.AppendFloat64(colIdx, x)
-		case float32:
-			e.result.AppendFloat32(colIdx, x)
-		case string:
-			e.result.AppendString(colIdx, x)
-		case []byte:
-			e.result.AppendBytes(colIdx, x)
-		case types.BinaryLiteral:
-			e.result.AppendBytes(colIdx, x)
-		case *types.MyDecimal:
-			e.result.AppendMyDecimal(colIdx, x)
-		case types.Time:
-			e.result.AppendTime(colIdx, x)
-		case json.BinaryJSON:
-			e.result.AppendJSON(colIdx, x)
-		case types.Duration:
-			e.result.AppendDuration(colIdx, x)
-		case types.Enum:
-			e.result.AppendEnum(colIdx, x)
-		case types.Set:
-			e.result.AppendSet(colIdx, x)
-		default:
-			e.result.AppendNull(colIdx)
-		}
-	}
-}
-
 func (e *ShowExec) fetchShowColumns() error {
 	tb, err := e.getTable()
 	if err != nil {
