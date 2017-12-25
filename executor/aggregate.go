@@ -14,11 +14,14 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	goctx "golang.org/x/net/context"
@@ -163,25 +166,29 @@ type StreamAggExec struct {
 	GroupByItems []expression.Expression
 	curGroupKey  []types.Datum
 	tmpGroupKey  []types.Datum
+
+	// for chunk execution.
+	childCursor int
 }
 
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.executed = false
 	e.hasData = false
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
-	return errors.Trace(e.children[0].Open(goCtx))
+	for _, agg := range e.AggFuncs {
+		e.aggCtxs = append(e.aggCtxs, agg.CreateContext())
+	}
+	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.executed {
 		return nil, nil
-	}
-	if len(e.aggCtxs) == 0 {
-		for _, agg := range e.AggFuncs {
-			e.aggCtxs = append(e.aggCtxs, agg.CreateContext())
-		}
 	}
 	retRow := make([]types.Datum, 0, len(e.AggFuncs))
 	for {
@@ -226,8 +233,86 @@ func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 	return retRow, nil
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+
+	if e.executed {
+		return nil
+	}
+
+	mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
+	retRow := make([]types.Datum, 0, e.Schema().Len())
+
+	for {
+		if e.childCursor < e.childrenResults[0].NumRows() {
+			for row := e.childrenResults[0].GetRow(e.childCursor); row != e.childrenResults[0].End(); row = row.Next() {
+				meetNewGroup, err := e.meetNewGroup(row)
+				if err != nil {
+					e.executed = true
+					return errors.Trace(err)
+				}
+				if meetNewGroup {
+					retRow = retRow[:0]
+					for i, af := range e.AggFuncs {
+						retRow = append(retRow, af.GetResult(e.aggCtxs[i]))
+						e.aggCtxs[i] = af.CreateContext()
+					}
+					mutableRow.SetDatums(retRow...)
+					if chk.NumCols() == 0 {
+						chk.SetNumVirtualRows(chk.NumRows() + 1)
+					} else {
+						chk.AppendRow(0, mutableRow.ToRow())
+					}
+				}
+				for i, af := range e.AggFuncs {
+					err := af.Update(e.aggCtxs[i], e.StmtCtx, row)
+					if err != nil {
+						e.executed = true
+						return errors.Trace(err)
+					}
+				}
+				if meetNewGroup && chk.NumRows() >= e.maxChunkSize {
+					e.childCursor = row.Idx() + 1
+					return nil
+				}
+			}
+		}
+
+		// Get resource rows from child.
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+		if err != nil {
+			e.executed = true
+			return errors.Trace(err)
+		}
+		e.childCursor = 0
+
+		// No more data.
+		if e.childrenResults[0].NumRows() == 0 {
+			e.executed = true
+			if !e.hasData && len(e.GroupByItems) != 0 {
+				return nil
+			}
+			retRow = retRow[:0]
+			for i, af := range e.AggFuncs {
+				retRow = append(retRow, af.GetResult(e.aggCtxs[i]))
+				e.aggCtxs[i] = af.CreateContext()
+			}
+			fmt.Printf("e.Schema().Len()=%v, len(retRow)=%v, len(e.AggFuncs)=%v\n", e.Schema().Len(), len(retRow), len(e.AggFuncs))
+			mutableRow.SetDatums(retRow...)
+			if chk.NumCols() == 0 {
+				chk.SetNumVirtualRows(chk.NumRows() + 1)
+			} else {
+				chk.AppendRow(0, mutableRow.ToRow())
+			}
+			return nil
+		}
+		e.hasData = true
+	}
+}
+
 // meetNewGroup returns a value that represents if the new group is different from last group.
-func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
+func (e *StreamAggExec) meetNewGroup(row types.Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}
