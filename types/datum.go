@@ -1812,5 +1812,12 @@ func CopyDatum(datum Datum) Datum {
 		ret.b = make([]byte, len(datum.b))
 		copy(ret.b, datum.b)
 	}
+	switch ret.Kind() {
+	case KindMysqlDecimal:
+		d := *datum.GetMysqlDecimal()
+		ret.SetMysqlDecimal(&d)
+	case KindMysqlTime:
+		ret.SetMysqlTime(datum.GetMysqlTime())
+	}
 	return ret
 }

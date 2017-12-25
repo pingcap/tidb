@@ -52,25 +52,7 @@ func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.Statemen
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.Value = value
-	switch ctx.Value.Kind() {
-	case types.KindNull:
-	case types.KindFloat32:
-	case types.KindFloat64:
-	case types.KindInt64:
-	case types.KindUint64:
-	case types.KindMysqlDecimal:
-		ctx.Value = types.Datum{}
-		ctx.Value.SetMysqlDecimal(&(*value.GetMysqlDecimal()))
-	case types.KindMysqlTime:
-	case types.KindMysqlDuration:
-	case types.KindMysqlJSON:
-	default:
-		ctx.Value = types.Datum{}
-		b := make([]byte, len(value.GetString()))
-		copy(b, value.GetString())
-		ctx.Value.SetString(string(b))
-	}
+	ctx.Value = types.CopyDatum(value)
 	ctx.GotFirstRow = true
 	return nil
 }
