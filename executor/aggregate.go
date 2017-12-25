@@ -14,8 +14,6 @@
 package executor
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -298,7 +296,6 @@ func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 				retRow = append(retRow, af.GetResult(e.aggCtxs[i]))
 				e.aggCtxs[i] = af.CreateContext()
 			}
-			fmt.Printf("e.Schema().Len()=%v, len(retRow)=%v, len(e.AggFuncs)=%v\n", e.Schema().Len(), len(retRow), len(e.AggFuncs))
 			mutableRow.SetDatums(retRow...)
 			if chk.NumCols() == 0 {
 				chk.SetNumVirtualRows(chk.NumRows() + 1)
