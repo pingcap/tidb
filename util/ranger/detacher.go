@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -200,42 +199,24 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return filterConds
 }
 
-// DetachCondsForSelectivity detaches the conditions used for range calculation from other useless conditions.
+// DetachCondsForSelectivity detaches the access conditions used for range calculation.
 func DetachCondsForSelectivity(conds []expression.Expression, rangeType int, cols []*expression.Column,
-	lengths []int) (accessConditions, otherConditions []expression.Expression) {
+	lengths []int) []expression.Expression {
 	if rangeType == IntRangeType || rangeType == ColumnRangeType {
-		return detachColumnConditions(conds, cols[0].ColName)
+		if cols[0].ColName.L == "" {
+			return nil
+		}
+		checker := conditionChecker{
+			colName: cols[0].ColName,
+			length:  types.UnspecifiedLength,
+		}
+		accessConds := make([]expression.Expression, 0, 8)
+		return expression.Filter(accessConds, conds, checker.check)
 	} else if rangeType == IndexRangeType {
-		return DetachIndexConditions(conds, cols, lengths)
+		accessConds, _ := DetachIndexConditions(conds, cols, lengths)
+		return accessConds
 	}
-	return nil, conds
-}
-
-// detachColumnConditions distinguishes between access conditions and filter conditions from conditions.
-func detachColumnConditions(conditions []expression.Expression, colName model.CIStr) ([]expression.Expression, []expression.Expression) {
-	if colName.L == "" {
-		return nil, conditions
-	}
-
-	var accessConditions, filterConditions []expression.Expression
-	checker := conditionChecker{
-		colName: colName,
-		length:  types.UnspecifiedLength,
-	}
-	for _, cond := range conditions {
-		if !checker.check(cond) {
-			filterConditions = append(filterConditions, cond)
-			continue
-		}
-		accessConditions = append(accessConditions, cond)
-		// TODO: it will lead to repeated computation cost.
-		if checker.shouldReserve {
-			filterConditions = append(filterConditions, cond)
-			checker.shouldReserve = checker.length != types.UnspecifiedLength
-		}
-	}
-
-	return accessConditions, filterConditions
+	return nil
 }
 
 // DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for
