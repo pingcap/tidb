@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -130,32 +129,31 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "testTZ"
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	goCtx := goctx.Background()
 
 	se0 := newSession(c, s.store, dbName)
 	mustExecSQL(c, se0, "set time_zone = '+08:00'")
 	rs0 := mustExecSQL(c, se0, "show variables like 'time_zone'")
-	row0, err := rs0.Next(goCtx)
+	row0, err := rs0.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row0, NotNil)
-	c.Assert(row0.Len(), Equals, 2)
-	c.Assert(row0.GetBytes(1), BytesEquals, []byte("+08:00"))
+	c.Assert(len(row0.Data), Equals, 2)
+	c.Assert(row0.Data[1].GetBytes(), BytesEquals, []byte("+08:00"))
 
 	mustExecSQL(c, se0, "set global time_zone = '+00:00'")
 
 	rs0 = mustExecSQL(c, se0, "show variables like 'time_zone'")
 	c.Assert(err, IsNil)
 	c.Assert(row0, NotNil)
-	c.Assert(row0.Len(), Equals, 2)
-	c.Assert(row0.GetBytes(1), BytesEquals, []byte("+08:00"))
+	c.Assert(len(row0.Data), Equals, 2)
+	c.Assert(row0.Data[1].GetBytes(), BytesEquals, []byte("+08:00"))
 
 	se1 := newSession(c, s.store, dbName)
 	rs1 := mustExecSQL(c, se1, "show variables like 'time_zone'")
-	row1, err := rs1.Next(goCtx)
+	row1, err := rs1.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row1, NotNil)
-	c.Assert(row1.Len(), Equals, 2)
-	c.Assert(row1.GetBytes(1), BytesEquals, []byte("+00:00"))
+	c.Assert(len(row0.Data), Equals, 2)
+	c.Assert(row0.Data[1].GetBytes(), BytesEquals, []byte("+00:00"))
 
 	mustExecSQL(c, se0, dropDBSQL)
 }
