@@ -107,6 +107,15 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 // innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
 	for {
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.inputRow = e.childrenResults[0].Begin()
+		// no more data.
+		if e.childrenResults[0].NumRows() == 0 {
+			return nil
+		}
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
 			groupKey, err := e.getGroupKey(e.inputRow)
 			if err != nil {
@@ -122,15 +131,6 @@ func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
 					return errors.Trace(err)
 				}
 			}
-		}
-		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.inputRow = e.childrenResults[0].Begin()
-		// no more data.
-		if e.childrenResults[0].NumRows() == 0 {
-			return nil
 		}
 	}
 }
