@@ -293,6 +293,9 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		dataSourceSchema: p.schema,
 	}.init(p.ctx)
 	statsTbl := p.statisticTable
+	if statsTbl.Indices[idx.ID] != nil {
+		is.HistVersion = statsTbl.Indices[idx.ID].LastUpdateVersion
+	}
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
@@ -527,6 +530,9 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+			if p.statisticTable.Columns[pkColInfo.ID] != nil {
+				ts.HistVersion = p.statisticTable.Columns[pkColInfo.ID].LastUpdateVersion
+			}
 		}
 	}
 	if len(p.pushedDownConds) > 0 {

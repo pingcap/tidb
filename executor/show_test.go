@@ -14,10 +14,12 @@
 package executor_test
 
 import (
+	"strconv"
 	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -168,12 +170,42 @@ func (s *testSuite) TestShow(c *C) {
 	// Test show create table with AUTO_INCREMENT option
 	// for issue https://github.com/pingcap/tidb/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
-	tk.MustExec(`create table show_auto_increment (id int) auto_increment=4`)
+	tk.MustExec(`create table show_auto_increment (id int key auto_increment) auto_increment=4`)
 	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
-			"  `id` int(11) DEFAULT NULL\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
+	))
+	// for issue https://github.com/pingcap/tidb/issues/4678
+	autoIDStep := autoid.GetStep()
+	tk.MustExec("insert into show_auto_increment values(20)")
+	autoID := autoIDStep + 21
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
+	))
+	tk.MustExec(`drop table show_auto_increment`)
+	tk.MustExec(`create table show_auto_increment (id int primary key auto_increment)`)
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+	tk.MustExec("insert into show_auto_increment values(10)")
+	autoID = autoIDStep + 11
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 
 	// Test show table with column's comment contain escape character

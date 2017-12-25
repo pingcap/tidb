@@ -59,9 +59,9 @@ func (t *rootTask) invalid() bool {
 
 func (t *copTask) count() float64 {
 	if t.indexPlanFinished {
-		return t.tablePlan.statsInfo().count
+		return t.tablePlan.StatsInfo().count
 	}
-	return t.indexPlan.statsInfo().count
+	return t.indexPlan.StatsInfo().count
 }
 
 func (t *copTask) addCost(cst float64) {
@@ -107,7 +107,7 @@ func (t *copTask) finishIndexPlan() {
 		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
 		if t.tablePlan != nil {
-			t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
+			t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.StatsInfo()
 			t.cst += t.count() * scanFactor
 		}
 	}
@@ -209,27 +209,6 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	}
 }
 
-func (p *PhysicalHashSemiJoin) getCost(lCnt, rCnt float64) float64 {
-	if rCnt <= 1 {
-		rCnt = 1
-	}
-	return (lCnt + rCnt) * (1 + math.Log2(rCnt))
-}
-
-func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
-	if tasks[0].invalid() || tasks[1].invalid() {
-		return invalidTask
-	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx)
-	p.SetChildren(lTask.plan(), rTask.plan())
-	task := &rootTask{
-		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
-	}
-	return task
-}
-
 // finishCopTask means we close the coprocessor task and create a root task.
 func finishCopTask(task task, ctx context.Context) task {
 	t, ok := task.(*copTask)
@@ -247,15 +226,15 @@ func finishCopTask(task task, ctx context.Context) task {
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(ctx)
-		p.stats = t.tablePlan.statsInfo()
+		p.stats = t.tablePlan.StatsInfo()
 		newTask.p = p
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
-		p.stats = t.indexPlan.statsInfo()
+		p.stats = t.indexPlan.StatsInfo()
 		newTask.p = p
 	} else {
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
-		p.stats = t.tablePlan.statsInfo()
+		p.stats = t.tablePlan.StatsInfo()
 		newTask.p = p
 	}
 	return newTask
@@ -275,7 +254,7 @@ func (t *rootTask) copy() task {
 }
 
 func (t *rootTask) count() float64 {
-	return t.p.statsInfo().count
+	return t.p.StatsInfo().count
 }
 
 func (t *rootTask) addCost(cst float64) {
@@ -446,21 +425,21 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalHashAgg) {
+func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			return nil, p
+			return nil, p.self
 		}
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
-		return nil, p
+		return nil, p.self
 	}
-	partialAgg = p
+	partialAgg = p.self
 	originalSchema := p.schema
 	// TODO: Refactor the way of constructing aggregation functions.
 	partialSchema := expression.NewSchema()
@@ -476,13 +455,13 @@ func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalH
 			ft.Flen = 21
 			ft.Charset = charset.CharsetBin
 			ft.Collate = charset.CollationBin
-			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{FromID: partialAgg.ID(), Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
 			cursor++
 		}
 		if needValue(fun) {
 			ft := originalSchema.Columns[i].GetType()
-			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{FromID: partialAgg.ID(), Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
 			cursor++
 		}
@@ -490,20 +469,30 @@ func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalH
 		fun.SetMode(aggregation.FinalMode)
 		finalAggFuncs[i] = fun
 	}
-	finalAgg = basePhysicalAgg{
-		AggFuncs: finalAggFuncs,
-	}.initForHash(p.ctx, p.stats)
-	finalAgg.SetSchema(originalSchema)
+	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
 	// add group by columns
 	for i, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
-			FromID:   partialAgg.id,
+			FromID:   partialAgg.ID(),
 			Position: cursor + i,
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
-		finalAgg.GroupByItems = append(finalAgg.GroupByItems, gbyCol.Clone())
+		groupByItems = append(groupByItems, gbyCol.Clone())
 	}
+
+	if p.tp == TypeStreamAgg {
+		finalAgg = basePhysicalAgg{
+			AggFuncs:     finalAggFuncs,
+			GroupByItems: groupByItems,
+		}.initForStream(p.ctx, p.stats)
+	} else {
+		finalAgg = basePhysicalAgg{
+			AggFuncs:     finalAggFuncs,
+			GroupByItems: groupByItems,
+		}.initForHash(p.ctx, p.stats)
+	}
+	finalAgg.SetSchema(originalSchema)
 	return
 }
 
@@ -513,8 +502,24 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		return invalidTask
 	}
 	t := tasks[0].copy()
-	attachPlan2Task(p, t)
-	t.addCost(t.count() * cpuFactor)
+	if cop, ok := t.(*copTask); ok {
+		partialAgg, finalAgg := p.newPartialAggregate()
+		if partialAgg != nil {
+			if cop.tablePlan != nil {
+				partialAgg.SetChildren(cop.tablePlan)
+				cop.tablePlan = partialAgg
+			} else {
+				partialAgg.SetChildren(cop.indexPlan)
+				cop.indexPlan = partialAgg
+			}
+		}
+		t = finishCopTask(cop, p.ctx)
+		attachPlan2Task(finalAgg, t)
+		t.addCost(t.count() * cpuFactor)
+	} else {
+		attachPlan2Task(p, t)
+		t.addCost(t.count() * cpuFactor)
+	}
 	return t
 }
 
@@ -523,7 +528,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	cardinality := p.statsInfo().count
+	cardinality := p.StatsInfo().count
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
