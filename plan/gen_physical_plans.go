@@ -551,7 +551,7 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			continue
 		}
 		for _, tp := range wholeTaskTypes {
-			// Table scan can't meet the stream aggregation's require prop.
+			// Second read in the double can't meet the stream aggregation's require prop.
 			if tp == copDoubleReadTaskType {
 				continue
 			}
