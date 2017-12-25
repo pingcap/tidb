@@ -3142,6 +3142,12 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
 		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
+
+	// for issue #5293
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert t values (1)")
+	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
