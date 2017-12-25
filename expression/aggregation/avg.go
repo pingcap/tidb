@@ -129,8 +129,8 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	return
 }
 
-//  SetResultInChunk implements Aggregation interface.
-func (af *avgFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+//  AppendResultToChunk implements Aggregation interface.
+func (af *avgFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
 	var x *types.MyDecimal
 	switch ctx.Value.Kind() {
 	case types.KindFloat64:

@@ -56,8 +56,8 @@ func (mmf *maxMinFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	return ctx.Value
 }
 
-//  SetResultInChunk implements Aggregation interface.
-func (mmf *maxMinFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+//  AppendResultToChunk implements Aggregation interface.
+func (mmf *maxMinFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
 	if ctx.Value.IsNull() {
 		chunk.AppendNull(colIdx)
 		return

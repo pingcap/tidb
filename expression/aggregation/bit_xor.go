@@ -79,8 +79,8 @@ func (bf *bitXorFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
 	return ctx.Value
 }
 
-//  SetResultInChunk implements Aggregation interface.
-func (bf *bitXorFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+//  AppendResultToChunk implements Aggregation interface.
+func (bf *bitXorFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
 	chunk.AppendUint64(colIdx, ctx.Value.GetUint64())
 }
 

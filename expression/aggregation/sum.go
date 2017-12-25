@@ -46,8 +46,8 @@ func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	return ctx.Value
 }
 
-//  SetResultInChunk implements Aggregation interface.
-func (sf *sumFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+//  AppendResultToChunk implements Aggregation interface.
+func (sf *sumFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
 	if ctx.Value.Kind() == types.KindNull {
 		chunk.AppendNull(colIdx)
 		return

@@ -101,8 +101,8 @@ func (cf *countFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	return d
 }
 
-//  SetResultInChunk implements Aggregation interface.
-func (cf *countFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+//  AppendResultToChunk implements Aggregation interface.
+func (cf *countFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
 	chunk.AppendInt64(colIdx, ctx.Count)
 }
 

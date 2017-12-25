@@ -71,7 +71,7 @@ func (e *HashAggExec) Open(goCtx goctx.Context) error {
 func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
-		err := e.innerNextChunk(goCtx)
+		err := e.execute(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -86,9 +86,6 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 	chk.Reset()
 	for {
-		if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
-			return nil
-		}
 		groupKey, _ := e.groupIterator.Next()
 		if groupKey == nil {
 			return nil
@@ -96,16 +93,19 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		aggCtxs := e.getContexts(groupKey)
 		if len(e.AggFuncs) == 0 {
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
-			continue
+		} else {
+			for i, af := range e.AggFuncs {
+				af.AppendResultToChunk(chk, i, aggCtxs[i])
+			}
 		}
-		for i, af := range e.AggFuncs {
-			af.SetResultInChunk(chk, i, aggCtxs[i])
+		if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
+			return nil
 		}
 	}
 }
 
 // innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
-func (e *HashAggExec) innerNextChunk(goCtx goctx.Context) (err error) {
+func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
 	for {
 		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
 			groupKey, err := e.getGroupKey(e.inputRow)

@@ -80,8 +80,8 @@ func (ff *firstRowFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
 	return ctx.Value
 }
 
-//  SetResultInChunk implements Aggregation interface.
-func (ff *firstRowFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
+//  AppendResultToChunk implements Aggregation interface.
+func (ff *firstRowFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
 	if ctx.Value.IsNull() {
 		chunk.AppendNull(colIdx)
 		return
