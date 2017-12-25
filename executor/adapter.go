@@ -181,6 +181,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}
 
 	if err := e.Open(); err != nil {
+		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
 
