@@ -246,6 +246,8 @@ func (e *ShowExec) fetchShowTables() error {
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
+			// TODO: support "VIEW" later if we have supported view feature.
+			// now, just use "BASE TABLE".
 			e.appendRow([]interface{}{v, "BASE TABLE"})
 		} else {
 			e.appendRow([]interface{}{v})
