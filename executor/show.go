@@ -440,6 +440,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
 	var pkCol *table.Column
+	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
 		if col.State != model.StatePublic {
 			continue
@@ -455,6 +456,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
+			hasAutoIncID = true
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
 		} else {
 			if mysql.HasNotNullFlag(col.Flag) {
@@ -582,8 +584,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 
-	if tb.Meta().AutoIncID > 0 {
-		buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", tb.Meta().AutoIncID))
+	if hasAutoIncID {
+		autoIncID, err := tb.Allocator().NextGlobalAutoID(tb.Meta().ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// It's campatible with MySQL.
+		if autoIncID > 1 {
+			buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", autoIncID))
+		}
 	}
 
 	if len(tb.Meta().Comment) > 0 {
