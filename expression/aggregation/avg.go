@@ -140,6 +140,7 @@ func (af *avgFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *Agg
 	case types.KindMysqlDecimal:
 		x = ctx.Value.GetMysqlDecimal()
 	default:
+		chunk.AppendNull(colIdx)
 		return
 	}
 	y := types.NewDecFromInt(ctx.Count)

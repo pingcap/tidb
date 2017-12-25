@@ -119,7 +119,11 @@ func (cf *concatFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 
 //  SetResultInChunk implements Aggregation interface.
 func (cf *concatFunction) SetResultInChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
-	chunk.AppendString(colIdx, ctx.Buffer.String())
+	if ctx.Buffer != nil {
+		chunk.AppendString(colIdx, ctx.Buffer.String())
+	} else {
+		chunk.AppendNull(colIdx)
+	}
 }
 
 // GetPartialResult implements Aggregation interface.
