@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -914,6 +915,11 @@ func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) 
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
 	}
+	autoIncID, err := t.Allocator(ctx).NextGlobalAutoID(t.Meta().ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newBase = mathutil.MaxInt64(newBase, autoIncID)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,

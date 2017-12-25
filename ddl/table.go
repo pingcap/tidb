@@ -233,9 +233,7 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if newBase > tblInfo.AutoIncID {
-		tblInfo.AutoIncID = newBase
-	}
+	tblInfo.AutoIncID = newBase
 	tbl, err := d.getTable(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
