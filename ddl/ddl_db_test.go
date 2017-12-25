@@ -1687,10 +1687,10 @@ func (s *testDBSuite) TestRebaseAutoID(c *C) {
 	s.tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
 	s.tk.MustExec("insert tidb.test values (null, 1);")
 	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1"))
-	s.tk.MustExec("alter table tidb.test auto_increment = 10;")
+	s.tk.MustExec("alter table tidb.test auto_increment = 6000;")
 	s.tk.MustExec("insert tidb.test values (null, 1);")
-	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "10 1"))
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1"))
 	s.tk.MustExec("alter table tidb.test auto_increment = 5;")
 	s.tk.MustExec("insert tidb.test values (null, 1);")
-	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "10 1", "11 1"))
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1"))
 }

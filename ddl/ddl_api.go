@@ -923,17 +923,7 @@ func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) 
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// The operation of the minus 1 to make sure that the current value doesn't be used,
-	// the next Alloc operation will get this value.
-	// Its behavior is consistent with MySQL.
-	err = t.RebaseAutoID(ctx, newBase-1, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 func checkColumnConstraint(constraints []*ast.ColumnOption) error {
