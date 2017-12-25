@@ -560,7 +560,7 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			// TODO: Remove it after TiKV supports stream aggregation.
 			if tp == copSingleReadTaskType {
 				client := p.ctx.GetClient()
-				if client.IsRequestTypeSupported(kv.ReqSubTypeStreamAgg, 0) {
+				if !client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeStreamAgg) {
 					continue
 				}
 			}
