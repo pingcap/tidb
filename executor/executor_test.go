@@ -1519,6 +1519,8 @@ func (s *testSuite) TestTableScan(c *C) {
 	result.Check(testkit.Rows(rowStr1))
 	result = tk.MustQuery("select * from schemata where schema_name like 'my%'")
 	result.Check(testkit.Rows(rowStr1, rowStr2))
+	result = tk.MustQuery("select 1 from tables limit 1")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
