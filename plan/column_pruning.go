@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	log "github.com/sirupsen/logrus"
 )
@@ -164,7 +165,7 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
-	if p.schema.Len() == 0 {
+	if p.schema.Len() == 0 && !infoschema.IsMemoryDB(p.DBName.L) {
 		p.Columns = append(p.Columns, model.NewExtraHandleColInfo())
 		p.schema.Append(p.newExtraHandleSchemaCol())
 	}

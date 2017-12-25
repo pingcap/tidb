@@ -549,14 +549,14 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		rightKeys = append(rightKeys, rightKey)
 	}
 
-	leftRowBlock := &rowBlockIterator{
+	lhsIter := &readerIterator{
 		ctx:      b.ctx,
 		reader:   leftExec,
 		filter:   v.LeftConditions,
 		joinKeys: leftKeys,
 	}
 
-	rightRowBlock := &rowBlockIterator{
+	rhsIter := &readerIterator{
 		ctx:      b.ctx,
 		reader:   rightExec,
 		filter:   v.RightConditions,
@@ -567,20 +567,24 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, rightExec.Schema().Len())
 	}
+	lhsColTypes := leftExec.Schema().GetTypes()
+	rhsColTypes := rightExec.Schema().GetTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, nil, nil),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
 		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
 		// left is the outer side by default.
+		outerIdx:  0,
 		outerKeys: leftKeys,
 		innerKeys: rightKeys,
-		outerIter: leftRowBlock,
-		innerIter: rightRowBlock,
+		outerIter: lhsIter,
+		innerIter: rhsIter,
 	}
 
 	if v.JoinType == plan.RightOuterJoin {
 		e.outerKeys, e.innerKeys = e.innerKeys, e.outerKeys
 		e.outerIter, e.innerIter = e.innerIter, e.outerIter
+		e.outerIdx = 1
 	}
 
 	if v.JoinType != plan.InnerJoin {
@@ -588,6 +592,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		e.outerIter.filter = nil
 	}
 
+	e.supportChk = true
 	return e
 }
 
@@ -690,18 +695,25 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 		return nil
 	}
 	e := &ProjectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
-		exprs:        v.Exprs,
+		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, childExec),
+		exprs:            v.Exprs,
+		calculateNoDelay: v.CalculateNoDelay,
 	}
 	e.baseExecutor.supportChk = true
 	return e
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
-	return &TableDualExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		rowCount:     v.RowCount,
+	if v.RowCount != 0 && v.RowCount != 1 {
+		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
+		return nil
 	}
+	e := &TableDualExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		numDualRows:  v.RowCount,
+	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
@@ -720,7 +732,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	tb, _ := b.is.TableByID(v.Table.ID)
-	ts := &TableScanExec{
+	e := &TableScanExec{
 		baseExecutor:   newBaseExecutor(v.Schema(), b.ctx),
 		t:              tb,
 		columns:        v.Columns,
@@ -728,7 +740,8 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 		ranges:         v.Ranges,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
-	return ts
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
