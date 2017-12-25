@@ -152,8 +152,8 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 	row1, err := rs1.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row1, NotNil)
-	c.Assert(len(row0.Data), Equals, 2)
-	c.Assert(row0.Data[1].GetBytes(), BytesEquals, []byte("+00:00"))
+	c.Assert(len(row1.Data), Equals, 2)
+	c.Assert(row1.Data[1].GetBytes(), BytesEquals, []byte("+00:00"))
 
 	mustExecSQL(c, se0, dropDBSQL)
 }
