@@ -303,10 +303,6 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 
-	s.tk.Se.NewTxn()
-	jobs, err := inspectkv.GetHistoryDDLJobs(s.tk.Se.Txn())
-	c.Assert(err, IsNil)
-	jobIDs := []int64{jobs[len(jobs)-1].ID}
 	var checkErr error
 	hook := &ddl.TestDDLCallback{}
 	first := true
@@ -333,6 +329,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 			checkErr = errors.Trace(err)
 			return
 		}
+		jobIDs := []int64{job.ID}
 		errs, err := inspectkv.CancelJobs(hookCtx.Txn(), jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
