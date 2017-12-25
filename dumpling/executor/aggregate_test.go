@@ -271,6 +271,26 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 }
 
+func (s *testSuite) TestStreamAggPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("alter table t add index idx(a, b, c)")
+	// test for empty table
+	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
+	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
+	// test for one row
+	tk.MustExec("insert t values(0,0,0)")
+	tk.MustQuery("select distinct b from t group by a").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
+	// test for rows
+	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
+	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
+}
+
 func (s *testSuite) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
