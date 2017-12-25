@@ -33,22 +33,13 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
-				if e.forChunk {
-					e.result.AppendString(0, db.Name.O)
-					e.result.AppendString(1, tbl.Name.O)
-					e.result.AppendTime(2, e.versionToTime(statsTbl.Version))
-					e.result.AppendInt64(3, statsTbl.ModifyCount)
-					e.result.AppendInt64(4, statsTbl.Count)
-				} else {
-					row := types.MakeDatums(
-						db.Name.O,
-						tbl.Name.O,
-						e.versionToTime(statsTbl.Version),
-						statsTbl.ModifyCount,
-						statsTbl.Count,
-					)
-					e.rows = append(e.rows, row)
-				}
+				e.appendRow([]interface{}{
+					db.Name.O,
+					tbl.Name.O,
+					e.versionToTime(statsTbl.Version),
+					statsTbl.ModifyCount,
+					statsTbl.Count,
+				})
 			}
 		}
 	}
@@ -76,17 +67,7 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 }
 
 func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) {
-	if e.forChunk {
-		e.result.AppendString(0, dbName)
-		e.result.AppendString(1, tblName)
-		e.result.AppendString(2, colName)
-		e.result.AppendInt64(3, int64(isIndex))
-		e.result.AppendTime(4, e.versionToTime(hist.LastUpdateVersion))
-		e.result.AppendInt64(5, hist.NDV)
-		e.result.AppendInt64(6, hist.NullCount)
-		return
-	}
-	e.rows = append(e.rows, types.MakeDatums(
+	e.appendRow([]interface{}{
 		dbName,
 		tblName,
 		colName,
@@ -94,7 +75,7 @@ func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string,
 		e.versionToTime(hist.LastUpdateVersion),
 		hist.NDV,
 		hist.NullCount,
-	))
+	})
 }
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
@@ -144,29 +125,17 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if e.forChunk {
-			e.result.AppendString(0, dbName)
-			e.result.AppendString(1, tblName)
-			e.result.AppendString(2, colName)
-			e.result.AppendInt64(3, int64(isIndex))
-			e.result.AppendInt64(4, int64(i))
-			e.result.AppendInt64(5, bkt.Count)
-			e.result.AppendInt64(6, bkt.Repeats)
-			e.result.AppendString(7, lowerBoundStr)
-			e.result.AppendString(8, upperBoundStr)
-		} else {
-			e.rows = append(e.rows, types.MakeDatums(
-				dbName,
-				tblName,
-				colName,
-				isIndex,
-				i,
-				bkt.Count,
-				bkt.Repeats,
-				lowerBoundStr,
-				upperBoundStr,
-			))
-		}
+		e.appendRow([]interface{}{
+			dbName,
+			tblName,
+			colName,
+			isIndex,
+			i,
+			bkt.Count,
+			bkt.Repeats,
+			lowerBoundStr,
+			upperBoundStr,
+		})
 	}
 	return nil
 }
