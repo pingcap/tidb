@@ -94,6 +94,10 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 		aggCtxs := e.getContexts(groupKey)
+		if len(e.AggFuncs) == 0 {
+			chk.SetNumVirtualRows(chk.NumRows() + 1)
+			continue
+		}
 		for i, af := range e.AggFuncs {
 			af.SetResultInChunk(chk, i, aggCtxs[i])
 		}
