@@ -2918,6 +2918,25 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+
+	// issue #5478
+	_, err = tk.Exec("set session transaction read write;")
+	_, err = tk.Exec("set global transaction read write;")
+	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
+	r.Check(testkit.Rows("0 0 0 0"))
+
+	_, err = tk.Exec("set session transaction read only;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
+	r.Check(testkit.Rows("1 0 1 0"))
+	_, err = tk.Exec("set global transaction read only;")
+	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
+	r.Check(testkit.Rows("1 1 1 1"))
+
+	_, err = tk.Exec("set session transaction read write;")
+	_, err = tk.Exec("set global transaction read write;")
+	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
+	r.Check(testkit.Rows("0 0 0 0"))
 }
 
 func (s *testIntegrationSuite) TestIssue4954(c *C) {
