@@ -394,11 +394,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test join key with cast.
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->StreamAgg)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
-			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection->Sort",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->StreamAgg)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection->Sort",
 		},
 		// FIXME: Report error by resolver.
 		//{
@@ -737,7 +737,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test stream agg + index single.
 		{
 			sql:  "select sum(e), avg(e + c) from t where c = 1 group by c",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]])->StreamAgg",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->StreamAgg)->StreamAgg",
 		},
 		// Test hash agg + index single.
 		{
@@ -779,25 +779,33 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->StreamAgg->Projection",
 		},
 		{
+			sql:  "select sum(e+1) from t group by e,d,c order by c",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Projection",
+		},
+		{
 			sql:  "select sum(to_base64(e)) from t group by e,d,c order by c,e",
 			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->StreamAgg->Sort->Projection",
+		},
+		{
+			sql:  "select sum(e+1) from t group by e,d,c order by c,e",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Sort->Projection",
 		},
 		// Test stream agg + limit or sort
 		{
 			sql:  "select count(*) from t group by g order by g limit 10",
-			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit->Projection",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Limit->Projection",
 		},
 		{
 			sql:  "select count(*) from t group by g limit 10",
-			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Limit",
 		},
 		{
 			sql:  "select count(*) from t group by g order by g",
-			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Projection",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Projection",
 		},
 		{
 			sql:  "select count(*) from t group by g order by g desc limit 1",
-			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit->Projection",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Limit->Projection",
 		},
 		// Test hash agg + limit or sort
 		{
