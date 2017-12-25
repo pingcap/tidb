@@ -888,7 +888,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
 				if opt.Tp == ast.TableOptionAutoIncrement {
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue)-1)
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
 					break
 				}
 			}
@@ -905,11 +905,35 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 }
 
 func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) error {
-	t, err := d.infoHandle.Get().TableByName(ident.Schema, ident.Name)
+	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
 	}
-	return t.RebaseAutoID(ctx, newBase, true)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionRebaseAutoID,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newBase},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The operation of the minus 1 to make sure that the current value doesn't be used,
+	// the next Alloc operation will get this value.
+	// Its behavior is consistent with MySQL.
+	err = t.RebaseAutoID(ctx, newBase-1, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func checkColumnConstraint(constraints []*ast.ColumnOption) error {
