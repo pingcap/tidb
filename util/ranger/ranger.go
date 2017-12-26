@@ -215,8 +215,8 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point) ([]In
 	return tableRanges, nil
 }
 
-// buildTableRange will build range of pk for PhysicalTableScan
-func buildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext) ([]IntColumnRange, error) {
+// BuildTableRange will build range of pk for PhysicalTableScan
+func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext) ([]IntColumnRange, error) {
 	if len(accessConditions) == 0 {
 		return FullIntRange(), nil
 	}
@@ -236,8 +236,8 @@ func buildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 	return ranges, nil
 }
 
-// buildColumnRange builds the range for sampling histogram to calculate the row count.
-func buildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*NewRange, error) {
+// BuildColumnRange builds the range for sampling histogram to calculate the row count.
+func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*NewRange, error) {
 	if len(conds) == 0 {
 		return []*NewRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
 	}
@@ -257,7 +257,8 @@ func buildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	return ranges, nil
 }
 
-func buildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
+// BuildIndexRange builds the range for index.
+func BuildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
 	accessCondition []expression.Expression) ([]*NewRange, error) {
 	rb := builder{sc: sc}
 	var (
@@ -351,56 +352,4 @@ func fixRangeDatum(v *types.Datum, length int) {
 	if length != types.UnspecifiedLength && length < len(v.GetBytes()) {
 		v.SetBytes(v.GetBytes()[:length])
 	}
-}
-
-// BuildRange is a method which can calculate range for int column, normal column or index.
-func BuildRange(sc *stmtctx.StatementContext, conds []expression.Expression, rangeType RangeType, cols []*expression.Column,
-	lengths []int) (retRanges []Range, _ error) {
-	if rangeType == IntRangeType {
-		ranges, err := buildTableRange(conds, sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		retRanges = make([]Range, 0, len(ranges))
-		for _, ran := range ranges {
-			retRanges = append(retRanges, ran)
-		}
-	} else if rangeType == ColumnRangeType {
-		ranges, err := buildColumnRange(conds, sc, cols[0].RetType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		retRanges = make([]Range, 0, len(ranges))
-		for _, ran := range ranges {
-			retRanges = append(retRanges, ran)
-		}
-	} else if rangeType == IndexRangeType {
-		ranges, err := buildIndexRange(sc, cols, lengths, conds)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		retRanges = make([]Range, 0, len(ranges))
-		for _, ran := range ranges {
-			retRanges = append(retRanges, ran)
-		}
-	}
-	return
-}
-
-// Ranges2IntRanges changes []Range to []IntColumnRange
-func Ranges2IntRanges(ranges []Range) []IntColumnRange {
-	retRanges := make([]IntColumnRange, 0, len(ranges))
-	for _, ran := range ranges {
-		retRanges = append(retRanges, ran.Convert2IntRange())
-	}
-	return retRanges
-}
-
-// Ranges2NewRanges changes []Range to []*NewRange
-func Ranges2NewRanges(ranges []Range) []*NewRange {
-	retRanges := make([]*NewRange, 0, len(ranges))
-	for _, ran := range ranges {
-		retRanges = append(retRanges, ran.Convert2NewRange())
-	}
-	return retRanges
 }

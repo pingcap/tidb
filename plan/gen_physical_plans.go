@@ -313,12 +313,12 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
+	ranges, err := ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, idxCols, colLengths, accesses)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
 	}
-	indexRanges = ranger.Ranges2NewRanges(ranges)
+	indexRanges = ranges
 	return indexRanges, remained, keyOff2IdxOff
 }
 

@@ -15,6 +15,8 @@ package statistics_test
 
 import (
 	"math"
+	"os"
+	"runtime/pprof"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -212,6 +214,10 @@ func BenchmarkSelectivity(b *testing.B) {
 	p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
+	file, _ := os.Create("cpu.profile")
+	defer file.Close()
+	pprof.StartCPUProfile(file)
+
 	b.Run("selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -220,4 +226,5 @@ func BenchmarkSelectivity(b *testing.B) {
 		}
 		b.ReportAllocs()
 	})
+	pprof.StopCPUProfile()
 }
