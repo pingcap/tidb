@@ -826,8 +826,10 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
 		outerChunk:      outerExec.newChunk(),
+		innerChunk:      innerExec.newChunk(),
 		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
+	e.innerList = chunk.NewList(innerExec.Schema().GetTypes(), e.maxChunkSize)
 	e.supportChk = true
 	return e
 }
