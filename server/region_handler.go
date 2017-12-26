@@ -253,7 +253,7 @@ func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, er
 func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	schema, err := rh.schema()
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
@@ -267,10 +267,10 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			cTableName := model.NewCIStr(tableName)
 			data, err := schema.TableByName(cDBName, cTableName)
 			if err != nil {
-				rh.writeError(w, err)
+				writeError(w, err)
 				return
 			}
-			rh.writeData(w, data.Meta())
+			writeData(w, data.Meta())
 			return
 		}
 		// all table schemas in a specified database
@@ -280,10 +280,10 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			for i := range tbsInfo {
 				tbsInfo[i] = tbs[i].Meta()
 			}
-			rh.writeData(w, tbsInfo)
+			writeData(w, tbsInfo)
 			return
 		}
-		rh.writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+		writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
 		return
 	}
 
@@ -291,23 +291,23 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// table schema of a specified tableID
 		tid, err := strconv.Atoi(tableID)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
 		if tid < 0 {
-			rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
 			return
 		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
-			rh.writeData(w, data.Meta())
+			writeData(w, data.Meta())
 			return
 		}
-		rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
 		return
 	}
 
 	// all databases' schemas
-	rh.writeData(w, schema.AllSchemas())
+	writeData(w, schema.AllSchemas())
 	return
 }
 
@@ -319,13 +319,13 @@ func (rh tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	tableName := params[pTableName]
 	schema, err := rh.schema()
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	// get table's schema.
 	table, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
@@ -335,7 +335,7 @@ func (rh tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case opTableDiskUsage:
 		rh.handleDiskUsageRequest(schema, table, w, req)
 	default:
-		rh.writeError(w, errors.New("method not found"))
+		writeError(w, errors.New("method not found"))
 	}
 }
 
@@ -345,12 +345,12 @@ func (rh tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tab
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
 	recordRegionIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
@@ -363,12 +363,12 @@ func (rh tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tab
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(tableID, indexID)
 		rIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
 		indices[i].Regions, err = rh.getRegionsMeta(rIDs)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
 	}
@@ -380,7 +380,7 @@ func (rh tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tab
 		RecordRegions: recordRegions,
 	}
 
-	rh.writeData(w, tableRegions)
+	writeData(w, tableRegions)
 }
 
 // pdRegionStats is the json response from PD.
@@ -399,11 +399,11 @@ func (rh tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl 
 	var pdAddrs []string
 	etcd, ok := rh.store.(domain.EtcdBackend)
 	if !ok {
-		rh.writeError(w, errors.New("not implemented"))
+		writeError(w, errors.New("not implemented"))
 	}
 	pdAddrs = etcd.EtcdAddrs()
 	if len(pdAddrs) < 0 {
-		rh.writeError(w, errors.New("pd unavailable"))
+		writeError(w, errors.New("pd unavailable"))
 	}
 
 	// Include table and index data, because their range located in tableID_i tableID_r
@@ -419,7 +419,7 @@ func (rh tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl 
 
 	resp, err := http.Get(statURL)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	defer func() {
@@ -431,10 +431,10 @@ func (rh tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl 
 	var stats pdRegionStats
 	dec := json.NewDecoder(resp.Body)
 	if err := dec.Decode(&stats); err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
-	rh.writeData(w, stats.StorageSize)
+	writeData(w, stats.StorageSize)
 }
 
 // ServeHTTP handles request of get region by ID.
@@ -447,22 +447,22 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		recordRegionIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
 
 		recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
-		rh.writeData(w, recordRegions)
+		writeData(w, recordRegions)
 		return
 	}
 
 	regionIDInt, err := strconv.ParseInt(params[pRegionID], 0, 64)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	regionID := uint64(regionIDInt)
@@ -470,13 +470,13 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// locate region
 	region, err := rh.regionCache.LocateRegionByID(rh.bo, regionID)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
 	frameRange, err := NewRegionFrameRange(region)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
@@ -488,7 +488,7 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	schema, err := rh.schema()
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	// Since we need a database's name for each frame, and a table's database name can not
@@ -501,19 +501,19 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			regionDetail.addTableInRange(db.Name.String(), table, start, end)
 		}
 	}
-	rh.writeData(w, regionDetail)
+	writeData(w, regionDetail)
 }
 
-func (rh *regionHandler) writeError(w http.ResponseWriter, err error) {
+func writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_, err = w.Write([]byte(err.Error()))
 	terror.Log(errors.Trace(err))
 }
 
-func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
+func writeData(w http.ResponseWriter, data interface{}) {
 	js, err := json.Marshal(data)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	log.Info(string(js))
@@ -723,9 +723,9 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		err = errors.NotSupportedf("Operation not supported.")
 	}
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 	} else {
-		rh.writeData(w, data)
+		writeData(w, data)
 	}
 }
 
