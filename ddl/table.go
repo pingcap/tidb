@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	log "github.com/sirupsen/logrus"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -59,7 +60,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if EnableSplitTableRegion {
 			err = d.splitTableRegion(tbInfo.ID)
 			if err != nil {
-				return ver, errors.Trace(err)
+				log.Warnf("[ddl] split table region failed %v", err)
 			}
 		}
 		// Finish this job.
