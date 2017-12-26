@@ -1173,7 +1173,9 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 			break
 		}
 
-		for innerChunkRow := chk.Begin(); innerChunkRow != chk.End(); innerChunkRow = innerChunkRow.Next() {
+		for idx := 0; idx < chk.NumRows(); idx++ {
+			//for innerChunkRow := chk.Begin(); innerChunkRow != chk.End(); innerChunkRow = innerChunkRow.Next() {
+			innerChunkRow := chk.GetRow(idx)
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.currRow = int64(len(rows))
 			row, err := e.fillRowData(cols, innerRow, ignoreErr)
