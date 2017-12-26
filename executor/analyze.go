@@ -186,9 +186,9 @@ type AnalyzeIndexExec struct {
 }
 
 func (e *AnalyzeIndexExec) open() error {
-	idxRange := &ranger.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
+	idxRange := &ranger.NewRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	var builder requestBuilder
-	kvReq, err := builder.SetIndexRanges(e.tblInfo.ID, e.idxInfo.ID, []*ranger.IndexRange{idxRange}).
+	kvReq, err := builder.SetIndexRanges(e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		SetPriority(e.priority).
