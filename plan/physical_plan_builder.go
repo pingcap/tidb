@@ -251,7 +251,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []expr
 		Columns:          p.Columns,
 		Index:            idx,
 		dataSourceSchema: p.schema,
-		Ranges:           ranger.FullIndexRange(),
+		Ranges:           ranger.FullNewRange(),
 		OutOfOrder:       true,
 	}.init(p.ctx)
 	is.filterCondition = remainedConds
@@ -299,7 +299,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
-	is.Ranges = ranger.FullIndexRange()
+	is.Ranges = ranger.FullNewRange()
 	if len(p.pushedDownConds) > 0 {
 		if len(idxCols) > 0 {
 			var ranges []ranger.Range
@@ -308,7 +308,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			is.Ranges = ranger.Ranges2IndexRanges(ranges)
+			is.Ranges = ranger.Ranges2NewRanges(ranges)
 			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
