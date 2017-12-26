@@ -38,6 +38,8 @@ func (af *avgFunction) Clone() Aggregation {
 func (af *avgFunction) GetType() *types.FieldType {
 	var ft *types.FieldType
 	switch af.Args[0].GetType().Tp {
+	// For child returns integer or decimal type, "avg" should returns a "decimal",
+	// otherwise it returns a "double".
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
 		ft = types.NewFieldType(mysql.TypeNewDecimal)
 		if af.GetMode() == FinalMode {
