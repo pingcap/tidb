@@ -995,6 +995,35 @@ func (e *NestedLoopApplyExec) Next(goCtx goctx.Context) (Row, error) {
 	}
 }
 
+// buildHashTableForList builds hash table from `list`.
+// key of hash table: hash value of key columns
+// value of hash table: RowPtr of the corresponded row
+func (e *HashJoinExec) buildHashTableForList() error {
+	e.hashTable = mvmap.NewMVMap()
+	var (
+		hasNull bool
+		err     error
+		keyBuf  = make([]byte, 0, 64)
+		valBuf  = make([]byte, 8)
+	)
+	for i := 0; i < e.innerResult.NumChunks(); i++ {
+		chk := e.innerResult.GetChunk(i)
+		for j := 0; j < chk.NumRows(); j++ {
+			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(e.innerKeys, chk.GetRow(j), keyBuf)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if hasNull {
+				continue
+			}
+			rowPtr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
+			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
+			e.hashTable.Put(keyBuf, valBuf)
+		}
+	}
+	return nil
+}
+
 // NextChunk implements the Executor interface.
 func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -1025,34 +1054,6 @@ func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 			return errors.Trace(err)
 		}
 		e.cursor = 0
-	}
-}
-
-// buildHashTableForList builds hash table from `list`.
-// key of hash table: hash value of key columns
-// value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList() error {
-	e.hashTable = mvmap.NewMVMap()
-	var (
-		hasNull bool
-		err     error
-		keyBuf  = make([]byte, 0, 64)
-		valBuf  = make([]byte, 8)
-	)
-	for i := 0; i < e.innerResult.NumChunks(); i++ {
-		chk := e.innerResult.GetChunk(i)
-		for j := 0; j < chk.NumRows(); j++ {
-			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(e.innerKeys, chk.GetRow(j), keyBuf)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if hasNull {
-				continue
-			}
-			rowPtr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
-			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			e.hashTable.Put(keyBuf, valBuf)
-		}
 	}
 	return nil
 }
