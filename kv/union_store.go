@@ -97,7 +97,7 @@ func (it invalidIterator) Value() []byte {
 
 func (it invalidIterator) Close() {}
 
-// lazyMemBuffer wraps a MemBuffer which is only inited when we modify it.
+// lazyMemBuffer wraps a MemBuffer which is to be initialized when it is modified.
 type lazyMemBuffer struct {
 	mb MemBuffer
 }
