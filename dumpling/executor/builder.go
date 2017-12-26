@@ -1278,7 +1278,7 @@ type dataReaderBuilder struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context, datums [][]types.Datum,
-	IndexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	IndexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(goCtx, v, datums)
@@ -1324,7 +1324,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexReader,
-	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1338,7 +1338,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Conte
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader,
-	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1352,7 +1352,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
+func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
 	for _, val := range keyDatums {
 		for _, ran := range indexRanges {

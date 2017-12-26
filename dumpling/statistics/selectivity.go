@@ -132,12 +132,11 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 			rowCount float64
 			err      error
 		)
+		ranges := ranger.Ranges2NewRanges(set.ranges)
 		switch set.tp {
 		case pkType, colType:
-			ranges := ranger.Ranges2ColumnRanges(set.ranges)
 			rowCount, err = t.GetRowCountByColumnRanges(sc, set.ID, ranges)
 		case indexType:
-			ranges := ranger.Ranges2IndexRanges(set.ranges)
 			rowCount, err = t.GetRowCountByIndexRanges(sc, set.ID, ranges)
 		}
 		if err != nil {

@@ -511,19 +511,19 @@ func (c *Column) getIntColumnRowCount(sc *stmtctx.StatementContext, intRanges []
 	return rowCount, nil
 }
 
-// getColumnRowCount estimates the row count by a slice of ColumnRange.
-func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.ColumnRange) (float64, error) {
+// getColumnRowCount estimates the row count by a slice of NewRange.
+func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.NewRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
-		cmp, err := rg.Low.CompareDatum(sc, &rg.High)
+		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		if cmp == 0 {
 			// the point case.
-			if !rg.LowExcl && !rg.HighExcl {
+			if !rg.LowExclude && !rg.HighExclude {
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, rg.Low)
+				cnt, err = c.equalRowCount(sc, rg.LowVal[0])
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -532,19 +532,19 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			continue
 		}
 		// the interval case.
-		cnt, err := c.betweenRowCount(sc, rg.Low, rg.High)
+		cnt, err := c.betweenRowCount(sc, rg.LowVal[0], rg.HighVal[0])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if rg.LowExcl {
-			lowCnt, err := c.equalRowCount(sc, rg.Low)
+		if rg.LowExclude {
+			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0])
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
 		}
-		if !rg.HighExcl {
-			highCnt, err := c.equalRowCount(sc, rg.High)
+		if !rg.HighExclude {
+			highCnt, err := c.equalRowCount(sc, rg.HighVal[0])
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -579,7 +579,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) (float64
 	return count, errors.Trace(err)
 }
 
-func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.IndexRange) (float64, error) {
+func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
