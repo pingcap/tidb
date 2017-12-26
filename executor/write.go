@@ -928,7 +928,7 @@ func (e *InsertExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 
 	var rows [][]types.Datum
 	if len(e.children) > 0 && e.children[0] != nil {
-		rows, err = e.getRowsSelect(goCtx, cols, e.IgnoreErr)
+		rows, err = e.getRowsSelectChunk(goCtx, cols, e.IgnoreErr)
 	} else {
 		rows, err = e.getRows(cols, e.IgnoreErr)
 	}

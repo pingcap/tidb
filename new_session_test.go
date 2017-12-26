@@ -1571,6 +1571,40 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	rs.Close()
 }
 
+func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table test1(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert test1 values (%d)", i))
+	}
+	tk.MustExec("create table test2(a int)")
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+	tk.MustExec("insert into test2(a) select a from test1;")
+
+	rs, err := tk.Exec("select * from test2")
+	c.Assert(err, IsNil)
+	var idx int
+	for {
+		chk := rs.NewChunk()
+		err = rs.NextChunk(goctx.TODO(), chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			row := chk.GetRow(rowIdx)
+			c.Assert(row.GetInt64(0), Equals, int64(idx))
+			idx++
+		}
+	}
+
+	c.Assert(idx, Equals, 100)
+	rs.Close()
+}
+
 func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table chk(a int)")
