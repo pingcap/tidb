@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -28,7 +29,7 @@ import (
 )
 
 func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, prop)
+	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, p.stats, prop)
 	us.SetSchema(p.schema)
 	return []PhysicalPlan{us}
 }
@@ -544,26 +545,41 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 	if len(p.groupByCols) != len(p.GroupByItems) {
 		return nil
 	}
-	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties)*2)
 	for _, cols := range p.possibleProperties {
 		_, keys := getPermutation(cols, p.groupByCols)
 		if len(keys) != len(p.groupByCols) {
 			continue
 		}
-		childProp := &requiredProp{
-			cols:        keys,
-			desc:        prop.desc,
-			expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
+		for _, tp := range wholeTaskTypes {
+			// Second read in the double can't meet the stream aggregation's require prop.
+			if tp == copDoubleReadTaskType {
+				continue
+			}
+			// Now we only support pushing down stream aggregation on mocktikv.
+			// TODO: Remove it after TiKV supports stream aggregation.
+			if tp == copSingleReadTaskType {
+				client := p.ctx.GetClient()
+				if !client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeStreamAgg) {
+					continue
+				}
+			}
+			childProp := &requiredProp{
+				taskTp:      tp,
+				cols:        keys,
+				desc:        prop.desc,
+				expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
+			}
+			if !prop.isPrefix(childProp) {
+				continue
+			}
+			agg := basePhysicalAgg{
+				GroupByItems: p.GroupByItems,
+				AggFuncs:     p.AggFuncs,
+			}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
+			agg.SetSchema(p.schema.Clone())
+			streamAggs = append(streamAggs, agg)
 		}
-		if !prop.isPrefix(childProp) {
-			continue
-		}
-		agg := basePhysicalAgg{
-			GroupByItems: p.GroupByItems,
-			AggFuncs:     p.AggFuncs,
-		}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
-		agg.SetSchema(p.schema.Clone())
-		streamAggs = append(streamAggs, agg)
 	}
 	return streamAggs
 }
