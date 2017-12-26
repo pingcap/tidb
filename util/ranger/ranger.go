@@ -353,7 +353,7 @@ func fixRangeDatum(v *types.Datum, length int) {
 	}
 }
 
-// BuildRange is a method which can calculate IntColumnRange, ColumnRange, NewRange.
+// BuildRange is a method which can calculate range for int column, normal column or index.
 func BuildRange(sc *stmtctx.StatementContext, conds []expression.Expression, rangeType int, cols []*expression.Column,
 	lengths []int) (retRanges []Range, _ error) {
 	if rangeType == IntRangeType {

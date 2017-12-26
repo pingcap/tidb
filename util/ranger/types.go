@@ -67,7 +67,7 @@ func (tr IntColumnRange) Convert2NewRange() *NewRange {
 	panic("you shouldn't call this method.")
 }
 
-// NewRange represents a range for an index.
+// NewRange represents a range generated in physical plan building phase.
 type NewRange struct {
 	LowVal  []types.Datum
 	HighVal []types.Datum
@@ -93,7 +93,7 @@ func (ran *NewRange) Clone() *NewRange {
 	return newRange
 }
 
-// IsPoint returns if the index range is a point.
+// IsPoint returns if the range is a point.
 func (ran *NewRange) IsPoint(sc *stmtctx.StatementContext) bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false

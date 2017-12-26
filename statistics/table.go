@@ -310,7 +310,7 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
 }
 
-// GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
+// GetRowCountByColumnRanges estimates the row count by a slice of NewRange.
 func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.NewRange) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)

@@ -511,7 +511,7 @@ func (c *Column) getIntColumnRowCount(sc *stmtctx.StatementContext, intRanges []
 	return rowCount, nil
 }
 
-// getColumnRowCount estimates the row count by a slice of ColumnRange.
+// getColumnRowCount estimates the row count by a slice of NewRange.
 func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.NewRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
