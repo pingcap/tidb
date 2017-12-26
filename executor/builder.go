@@ -620,9 +620,11 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
+		innerIdx:     v.SmallChildIdx,
 	}
 
 	defaultValues := v.DefaultValues
+	lhsTypes, rhsTypes := leftExec.Schema().GetTypes(), rightExec.Schema().GetTypes()
 	if v.SmallChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
@@ -633,8 +635,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
-		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
-			v.OtherConditions, nil, nil)
 	} else {
 		e.innerExec = rightExec
 		e.outerExec = leftExec
@@ -645,10 +645,13 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
-		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-			defaultValues, v.OtherConditions, nil, nil)
 	}
-
+	e.resultGenerator = make([]joinResultGenerator, e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		e.resultGenerator[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
+			v.OtherConditions, lhsTypes, rhsTypes)
+	}
+	e.supportChk = true
 	return e
 }
 
@@ -1035,7 +1038,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		return nil
 	}
 	if outerExec.supportChunk() {
-		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReadfer),
+		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReader),
 		// we only need to check outer.
 		return b.buildNewIndexLookUpJoin(v, outerExec)
 	}
