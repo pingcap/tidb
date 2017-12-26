@@ -132,19 +132,19 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}{
 		{
 			sql:  "select count(*) from t group by e",
-			best: "IndexReader(Index(t.e)[[<nil>,+inf]])->StreamAgg",
+			best: "IndexReader(Index(t.e)[[<nil>,+inf]]->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e <= 10 group by e",
-			best: "IndexReader(Index(t.e)[[-inf,10]])->StreamAgg",
+			best: "IndexReader(Index(t.e)[[-inf,10]]->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e <= 50",
-			best: "IndexReader(Index(t.e)[[-inf,50]]->HashAgg)->HashAgg",
+			best: "IndexReader(Index(t.e)[[-inf,50]]->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
+			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
@@ -168,7 +168,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 50",
-			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->HashAgg)->HashAgg",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select * from t where t.b <= 40",
