@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
@@ -108,6 +108,31 @@ type UnionScanExec struct {
 
 // Next implements Execution Next interface.
 func (us *UnionScanExec) Next(goCtx goctx.Context) (Row, error) {
+	row, err := us.getOneRow(goCtx)
+	return row, errors.Trace(err)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	mutableRow := chunk.MutRowFromTypes(us.Schema().GetTypes())
+	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
+		row, err := us.getOneRow(goCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// no more data.
+		if row == nil {
+			return nil
+		}
+		mutableRow.SetDatums(row...)
+		chk.AppendRow(0, mutableRow.ToRow())
+	}
+	return nil
+}
+
+// getOneRow gets one result row from dirty table or child.
+func (us *UnionScanExec) getOneRow(goCtx goctx.Context) (Row, error) {
 	for {
 		snapshotRow, err := us.getSnapshotRow(goCtx)
 		if err != nil {
@@ -229,7 +254,7 @@ func (us *UnionScanExec) compare(a, b Row) (int, error) {
 	return cmp, nil
 }
 
-func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
+func (us *UnionScanExec) buildAndSortAddedRows() error {
 	us.addedRows = make([]Row, 0, len(us.dirty.addedRows))
 	for h, data := range us.dirty.addedRows {
 		newData := make(types.DatumRow, 0, us.schema.Len())
@@ -247,9 +272,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 		if !matched {
 			continue
 		}
-
-		row := newData
-		us.addedRows = append(us.addedRows, row)
+		us.addedRows = append(us.addedRows, newData)
 	}
 	if us.desc {
 		sort.Sort(sort.Reverse(us))
