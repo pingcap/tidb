@@ -152,9 +152,9 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	return ret, nil
 }
 
-func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType int,
+func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cols ...*expression.Column) (int64, []ranger.Range, error) {
-	accessConds := ranger.DetachCondsForSelectivity(exprs, rangeType, cols, lengths)
+	accessConds := ranger.ExtractAccessConditions(exprs, rangeType, cols, lengths)
 	ranges, err := ranger.BuildRange(ctx.GetSessionVars().StmtCtx, accessConds, rangeType, cols, lengths)
 	if err != nil {
 		return 0, nil, errors.Trace(err)

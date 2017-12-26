@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -199,24 +200,29 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return filterConds
 }
 
-// DetachCondsForSelectivity detaches the access conditions used for range calculation.
-func DetachCondsForSelectivity(conds []expression.Expression, rangeType int, cols []*expression.Column,
+// ExtractAccessConditions detaches the access conditions used for range calculation.
+func ExtractAccessConditions(conds []expression.Expression, rangeType RangeType, cols []*expression.Column,
 	lengths []int) []expression.Expression {
-	if rangeType == IntRangeType || rangeType == ColumnRangeType {
-		if cols[0].ColName.L == "" {
-			return nil
-		}
-		checker := conditionChecker{
-			colName: cols[0].ColName,
-			length:  types.UnspecifiedLength,
-		}
-		accessConds := make([]expression.Expression, 0, 8)
-		return expression.Filter(accessConds, conds, checker.check)
-	} else if rangeType == IndexRangeType {
+	switch rangeType {
+	case IntRangeType, ColumnRangeType:
+		return extractColumnConditions(conds, cols[0].ColName)
+	case IndexRangeType:
 		accessConds, _ := DetachIndexConditions(conds, cols, lengths)
 		return accessConds
 	}
 	return nil
+}
+
+func extractColumnConditions(conds []expression.Expression, colName model.CIStr) []expression.Expression {
+	if colName.L == "" {
+		return nil
+	}
+	checker := conditionChecker{
+		colName: colName,
+		length:  types.UnspecifiedLength,
+	}
+	accessConds := make([]expression.Expression, 0, 8)
+	return expression.Filter(accessConds, conds, checker.check)
 }
 
 // DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for
