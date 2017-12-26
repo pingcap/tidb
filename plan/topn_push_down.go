@@ -88,8 +88,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		if topN != nil {
 			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, partial: true}.init(p.ctx)
 			for _, by := range topN.ByItems {
-				newExpr := expression.ColumnSubstitute(by.Expr, p.schema, expression.Column2Exprs(child.Schema().Columns))
-				newTopN.ByItems = append(newTopN.ByItems, &ByItems{newExpr, by.Desc})
+				newTopN.ByItems = append(newTopN.ByItems, &ByItems{by.Expr.Clone(), by.Desc})
 			}
 		}
 		p.children[i] = child.(LogicalPlan).pushDownTopN(newTopN)

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -287,6 +288,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		GlobalScope:  v.GlobalScope,
 		is:           b.is,
 	}
+	e.supportChk = true
 	if e.Tp == ast.ShowGrants && e.User == nil {
 		e.User = e.ctx.GetSessionVars().User
 	}
@@ -297,6 +299,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, e),
 		filters:      v.Conditions,
 	}
+	sel.supportChk = true
 	return sel
 }
 
@@ -552,14 +555,14 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		rightKeys = append(rightKeys, rightKey)
 	}
 
-	leftRowBlock := &rowBlockIterator{
+	lhsIter := &readerIterator{
 		ctx:      b.ctx,
 		reader:   leftExec,
 		filter:   v.LeftConditions,
 		joinKeys: leftKeys,
 	}
 
-	rightRowBlock := &rowBlockIterator{
+	rhsIter := &readerIterator{
 		ctx:      b.ctx,
 		reader:   rightExec,
 		filter:   v.RightConditions,
@@ -570,20 +573,24 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, rightExec.Schema().Len())
 	}
+	lhsColTypes := leftExec.Schema().GetTypes()
+	rhsColTypes := rightExec.Schema().GetTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, nil, nil),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
 		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
 		// left is the outer side by default.
+		outerIdx:  0,
 		outerKeys: leftKeys,
 		innerKeys: rightKeys,
-		outerIter: leftRowBlock,
-		innerIter: rightRowBlock,
+		outerIter: lhsIter,
+		innerIter: rhsIter,
 	}
 
 	if v.JoinType == plan.RightOuterJoin {
 		e.outerKeys, e.innerKeys = e.innerKeys, e.outerKeys
 		e.outerIter, e.innerIter = e.innerIter, e.outerIter
+		e.outerIdx = 1
 	}
 
 	if v.JoinType != plan.InnerJoin {
@@ -591,6 +598,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		e.outerIter.filter = nil
 	}
 
+	e.supportChk = true
 	return e
 }
 
@@ -693,18 +701,25 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 		return nil
 	}
 	e := &ProjectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
-		exprs:        v.Exprs,
+		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, childExec),
+		exprs:            v.Exprs,
+		calculateNoDelay: v.CalculateNoDelay,
 	}
 	e.baseExecutor.supportChk = true
 	return e
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
-	return &TableDualExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		rowCount:     v.RowCount,
+	if v.RowCount != 0 && v.RowCount != 1 {
+		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
+		return nil
 	}
+	e := &TableDualExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		numDualRows:  v.RowCount,
+	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
@@ -723,7 +738,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	tb, _ := b.is.TableByID(v.Table.ID)
-	ts := &TableScanExec{
+	e := &TableScanExec{
 		baseExecutor:   newBaseExecutor(v.Schema(), b.ctx),
 		t:              tb,
 		columns:        v.Columns,
@@ -731,7 +746,8 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 		ranges:         v.Ranges,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
-	return ts
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
@@ -767,7 +783,12 @@ func (b *executorBuilder) buildTopN(v *plan.PhysicalTopN) Executor {
 	}
 }
 
-func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
+func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApplyExec {
+	v, ok := apply.PhysicalJoin.(*plan.PhysicalHashJoin)
+	if !ok {
+		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
+		return nil
+	}
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -791,38 +812,27 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
 	}
 	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-		defaultValues, otherConditions, nil, nil)
-	bigExec, smallExec := leftChild, rightChild
-	bigFilter, smallFilter := v.LeftConditions, v.RightConditions
+		defaultValues, otherConditions, leftChild.Schema().GetTypes(), rightChild.Schema().GetTypes())
+	outerExec, innerExec := leftChild, rightChild
+	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.SmallChildIdx == 0 {
-		bigExec, smallExec = rightChild, leftChild
-		bigFilter, smallFilter = v.RightConditions, v.LeftConditions
+		outerExec, innerExec = rightChild, leftChild
+		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
-	return &NestedLoopJoinExec{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx),
-		SmallExec:       smallExec,
-		BigExec:         bigExec,
-		BigFilter:       bigFilter,
-		SmallFilter:     smallFilter,
+	e := &NestedLoopApplyExec{
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, outerExec, innerExec),
+		innerExec:       innerExec,
+		outerExec:       outerExec,
+		outerFilter:     outerFilter,
+		innerFilter:     innerFilter,
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
+		outerSchema:     apply.OuterSchema,
+		outerChunk:      outerExec.newChunk(),
+		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
-}
-
-func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
-	var join joinExec
-	switch x := v.PhysicalJoin.(type) {
-	case *plan.PhysicalHashJoin:
-		join = b.buildNestedLoopJoin(x)
-	default:
-		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
-	}
-	apply := &ApplyJoinExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		join:         join,
-		outerSchema:  v.OuterSchema,
-	}
-	return apply
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
@@ -1271,7 +1281,7 @@ type dataReaderBuilder struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context, datums [][]types.Datum,
-	IndexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	IndexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(goCtx, v, datums)
@@ -1317,7 +1327,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexReader,
-	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1331,7 +1341,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Conte
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader,
-	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1345,7 +1355,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
+func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
 	for _, val := range keyDatums {
 		for _, ran := range indexRanges {

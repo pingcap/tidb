@@ -284,6 +284,12 @@ func (p PhysicalMergeJoin) init(ctx context.Context, stats *statsInfo) *Physical
 	return &p
 }
 
+func (base basePhysicalAgg) init(ctx context.Context, stats *statsInfo) *basePhysicalAgg {
+	base.basePhysicalPlan = newBasePhysicalPlan(TypeHashAgg, ctx, &base)
+	base.stats = stats
+	return &base
+}
+
 func (base basePhysicalAgg) initForHash(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalHashAgg {
 	p := &PhysicalHashAgg{base}
 	p.basePhysicalPlan = newBasePhysicalPlan(TypeHashAgg, ctx, p)
@@ -307,9 +313,10 @@ func (p PhysicalApply) init(ctx context.Context, stats *statsInfo, props ...*req
 	return &p
 }
 
-func (p PhysicalUnionScan) init(ctx context.Context, props ...*requiredProp) *PhysicalUnionScan {
+func (p PhysicalUnionScan) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalUnionScan {
 	p.basePhysicalPlan = newBasePhysicalPlan(TypeUnionScan, ctx, &p)
 	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
@@ -331,9 +338,10 @@ func (p PhysicalTableReader) init(ctx context.Context) *PhysicalTableReader {
 func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(TypeIndexReader, ctx, &p)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	if _, ok := p.indexPlan.(*PhysicalHashAgg); ok {
+	switch p.indexPlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
 		p.schema = p.indexPlan.Schema()
-	} else {
+	default:
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
 		p.schema = is.dataSourceSchema
 	}
