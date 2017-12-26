@@ -36,9 +36,12 @@ const (
 	CodeUnsupportedType terror.ErrCode = 1
 )
 
-// Range type.
+// RangeType is alias for int.
+type RangeType int
+
+// RangeType constants.
 const (
-	IntRangeType = iota
+	IntRangeType RangeType = iota
 	ColumnRangeType
 	IndexRangeType
 )
