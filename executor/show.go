@@ -529,7 +529,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 			cols = append(cols, colInfo)
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, "`,`")))
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, ",")))
 		if i != len(tb.Indices())-1 {
 			buf.WriteString(",\n")
 		}
