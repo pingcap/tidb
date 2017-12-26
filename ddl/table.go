@@ -59,6 +59,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 		if EnableSplitTableRegion {
 			err = d.splitTableRegion(tbInfo.ID)
+			// It will be automatically splitting by TiKV later.
 			if err != nil {
 				log.Warnf("[ddl] split table region failed %v", err)
 			}
