@@ -147,7 +147,7 @@ func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRa
 	return krs, nil
 }
 
-func indexRangesToKVRanges(tid, idxID int64, ranges []*ranger.IndexRange) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(tid, idxID int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		low, err := codec.EncodeKey(nil, ran.LowVal...)
@@ -417,7 +417,7 @@ type IndexReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.IndexRange
+	ranges    []*ranger.NewRange
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -529,7 +529,7 @@ type IndexLookUpExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.IndexRange
+	ranges    []*ranger.NewRange
 	dagPB     *tipb.DAGRequest
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
@@ -879,7 +879,7 @@ func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []ranger.In
 	return builder
 }
 
-func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*ranger.IndexRange) *requestBuilder {
+func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*ranger.NewRange) *requestBuilder {
 	if builder.err != nil {
 		return builder
 	}
