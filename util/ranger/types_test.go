@@ -29,18 +29,18 @@ type testRangeSuite struct {
 
 func (s *testRangeSuite) TestRange(c *C) {
 	simpleTests := []struct {
-		ran ranger.IndexRange
+		ran ranger.NewRange
 		str string
 	}{
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:  []types.Datum{types.NewIntDatum(1)},
 				HighVal: []types.Datum{types.NewIntDatum(1)},
 			},
 			str: "[1,1]",
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:      []types.Datum{types.NewIntDatum(1)},
 				HighVal:     []types.Datum{types.NewIntDatum(1)},
 				HighExclude: true,
@@ -48,7 +48,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 			str: "[1,1)",
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:      []types.Datum{types.NewIntDatum(1)},
 				HighVal:     []types.Datum{types.NewIntDatum(2)},
 				LowExclude:  true,
@@ -57,7 +57,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 			str: "(1,2)",
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:      []types.Datum{types.NewFloat64Datum(1.1)},
 				HighVal:     []types.Datum{types.NewFloat64Datum(1.9)},
 				HighExclude: true,
@@ -65,7 +65,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 			str: "[1.1,1.9)",
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:      []types.Datum{types.MinNotNullDatum()},
 				HighVal:     []types.Datum{types.NewIntDatum(1)},
 				HighExclude: true,
@@ -78,32 +78,32 @@ func (s *testRangeSuite) TestRange(c *C) {
 	}
 
 	isPointTests := []struct {
-		ran     ranger.IndexRange
+		ran     ranger.NewRange
 		isPoint bool
 	}{
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:  []types.Datum{types.NewIntDatum(1)},
 				HighVal: []types.Datum{types.NewIntDatum(1)},
 			},
 			isPoint: true,
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:  []types.Datum{types.NewStringDatum("abc")},
 				HighVal: []types.Datum{types.NewStringDatum("abc")},
 			},
 			isPoint: true,
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:  []types.Datum{types.NewIntDatum(1)},
 				HighVal: []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1)},
 			},
 			isPoint: false,
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:     []types.Datum{types.NewIntDatum(1)},
 				HighVal:    []types.Datum{types.NewIntDatum(1)},
 				LowExclude: true,
@@ -111,7 +111,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 			isPoint: false,
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:      []types.Datum{types.NewIntDatum(1)},
 				HighVal:     []types.Datum{types.NewIntDatum(1)},
 				HighExclude: true,
@@ -119,7 +119,7 @@ func (s *testRangeSuite) TestRange(c *C) {
 			isPoint: false,
 		},
 		{
-			ran: ranger.IndexRange{
+			ran: ranger.NewRange{
 				LowVal:  []types.Datum{types.NewIntDatum(1)},
 				HighVal: []types.Datum{types.NewIntDatum(2)},
 			},
@@ -150,40 +150,6 @@ func (s *testRangeSuite) TestIntColumnRangeString(c *C) {
 				HighVal: math.MaxInt64,
 			},
 			ans: "[3,+inf)",
-		},
-	}
-	for _, t := range tests {
-		c.Assert(t.ran.String(), Equals, t.ans)
-	}
-}
-
-func (s *testRangeSuite) TestColumnRangeString(c *C) {
-	tests := []struct {
-		ran ranger.ColumnRange
-		ans string
-	}{
-		{
-			ran: ranger.ColumnRange{
-				Low:      types.NewStringDatum("a"),
-				High:     types.MaxValueDatum(),
-				HighExcl: true,
-			},
-			ans: "[a,+inf)",
-		},
-		{
-			ran: ranger.ColumnRange{
-				Low:     types.NewFloat64Datum(3.2),
-				LowExcl: true,
-				High:    types.NewFloat64Datum(6.4),
-			},
-			ans: "(3.2,6.4]",
-		},
-		{
-			ran: ranger.ColumnRange{
-				Low:  types.Datum{},
-				High: types.Datum{},
-			},
-			ans: "[<nil>,<nil>]",
 		},
 	}
 	for _, t := range tests {
