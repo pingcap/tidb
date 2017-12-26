@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/tidb/meta/autoid"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -213,10 +215,10 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
 
 	schemaSQL = `create table t2(
-		id int auto_increment, 
-		a char(10), 
-		b datetime default NULL, 
-		primary key(id), 
+		id int auto_increment,
+		a char(10),
+		b datetime default NULL,
+		primary key(id),
 		key a_idx(a),
 		unique b_idx(b))
 		`
@@ -232,6 +234,65 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 		{"insert into t2 values(3, 'test', '2017-11-28 23:59:59')", 0, 3, 1},
 	}
 	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
+}
+
+type prepareTestCase struct {
+	sql       string
+	formatSQL string
+	param     []interface{}
+}
+
+func makePrepareTestCase(sql, formatSQL string, param ...interface{}) prepareTestCase {
+	return prepareTestCase{sql, formatSQL, param}
+}
+
+func (s *testKvEncoderSuite) TestPrepareEncode(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	defer dom.Close()
+
+	alloc := NewAllocator()
+	encoder, err := New("test", alloc)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	schemaSQL := "create table t(id int auto_increment, a char(10), primary key(id))"
+	err = encoder.ExecDDLSQL(schemaSQL)
+	c.Assert(err, IsNil)
+
+	cases := []prepareTestCase{
+		makePrepareTestCase("insert into t values(1, 'test')", "insert into t values(?, ?)", 1, "test"),
+		makePrepareTestCase("insert into t(a) values('test')", "insert into t(a) values(?)", "test"),
+		makePrepareTestCase("insert into t(a) values('test'), ('test1')", "insert into t(a) values(?), (?)", "test", "test1"),
+		makePrepareTestCase("insert into t(id, a) values(3, 'test')", "insert into t(id, a) values(?, ?)", 3, "test"),
+	}
+	tableID := int64(1)
+
+	for _, ca := range cases {
+		s.comparePrepareAndNormalEncode(c, alloc, tableID, encoder, ca.sql, ca.formatSQL, ca.param...)
+	}
+}
+
+func (s *testKvEncoderSuite) comparePrepareAndNormalEncode(c *C, alloc autoid.Allocator, tableID int64, encoder KvEncoder, sql, prepareFormat string, param ...interface{}) {
+	comment := fmt.Sprintf("sql:%v", sql)
+	baseID := alloc.Base()
+	kvPairsExpect, affectedRowsExpect, err := encoder.Encode(sql, tableID)
+	c.Assert(err, IsNil, Commentf(comment))
+
+	stmtID, err := encoder.PrepareStmt(prepareFormat)
+	c.Assert(err, IsNil, Commentf(comment))
+	alloc.Rebase(tableID, baseID, false)
+	kvPairs, affectedRows, err := encoder.EncodePrepareStmt(tableID, stmtID, param...)
+	c.Assert(err, IsNil, Commentf(comment))
+	c.Assert(affectedRows, Equals, affectedRowsExpect, Commentf(comment))
+	c.Assert(len(kvPairs), Equals, len(kvPairsExpect), Commentf(comment))
+
+	for i, kvPair := range kvPairs {
+		kvPairExpect := kvPairsExpect[i]
+		c.Assert(bytes.Compare(kvPair.Key, kvPairExpect.Key), Equals, 0, Commentf(comment))
+		c.Assert(bytes.Compare(kvPair.Val, kvPairExpect.Val), Equals, 0, Commentf(comment))
+	}
 }
 
 func (s *testKvEncoderSuite) TestInsertPkIsNotHandle(c *C) {
@@ -365,10 +426,10 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	defer encoder.Close()
 
 	schemaSQL := `create table t(
-		id int auto_increment, 
-		a char(10), 
-		b char(10) default NULL, 
-		primary key(id), 
+		id int auto_increment,
+		a char(10),
+		b char(10) default NULL,
+		primary key(id),
 		key a_idx(a))
 		`
 	encoder.ExecDDLSQL(schemaSQL)
@@ -406,9 +467,9 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 
 	// unique index key
 	schemaSQL = `create table t1(
-		id int auto_increment, 
-		a char(10), 
-		primary key(id), 
+		id int auto_increment,
+		a char(10),
+		primary key(id),
 		unique a_idx(a))
 		`
 	encoder.ExecDDLSQL(schemaSQL)
