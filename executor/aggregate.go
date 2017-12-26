@@ -251,17 +251,7 @@ func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 					return errors.Trace(err)
 				}
 				if meetNewGroup {
-					retRow = retRow[:0]
-					for i, af := range e.AggFuncs {
-						retRow = append(retRow, af.GetResult(e.aggCtxs[i]))
-						e.aggCtxs[i] = af.CreateContext()
-					}
-					mutableRow.SetDatums(retRow...)
-					if chk.NumCols() == 0 {
-						chk.SetNumVirtualRows(chk.NumRows() + 1)
-					} else {
-						chk.AppendRow(0, mutableRow.ToRow())
-					}
+					e.appendResult2Chunk(chk, retRow, mutableRow)
 				}
 				for i, af := range e.AggFuncs {
 					err := af.Update(e.aggCtxs[i], e.StmtCtx, row)
@@ -288,23 +278,28 @@ func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		// No more data.
 		if e.childrenResults[0].NumRows() == 0 {
 			e.executed = true
-			if !e.hasData && len(e.GroupByItems) != 0 {
-				return nil
-			}
-			retRow = retRow[:0]
-			for i, af := range e.AggFuncs {
-				retRow = append(retRow, af.GetResult(e.aggCtxs[i]))
-				e.aggCtxs[i] = af.CreateContext()
-			}
-			mutableRow.SetDatums(retRow...)
-			if chk.NumCols() == 0 {
-				chk.SetNumVirtualRows(chk.NumRows() + 1)
-			} else {
-				chk.AppendRow(0, mutableRow.ToRow())
+			if e.hasData || len(e.GroupByItems) == 0 {
+				e.appendResult2Chunk(chk, retRow, mutableRow)
 			}
 			return nil
 		}
 		e.hasData = true
+	}
+}
+
+// appendResult2Chunk appends result of all the aggregation functions to the
+// result chunk, and realloc the evaluation context for each aggregation.
+func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk, buffer []types.Datum, mutableRow chunk.MutRow) {
+	buffer = buffer[:0]
+	for i, af := range e.AggFuncs {
+		buffer = append(buffer, af.GetResult(e.aggCtxs[i]))
+		e.aggCtxs[i] = af.CreateContext()
+	}
+	mutableRow.SetDatums(buffer...)
+	if chk.NumCols() == 0 {
+		chk.SetNumVirtualRows(chk.NumRows() + 1)
+	} else {
+		chk.AppendRow(0, mutableRow.ToRow())
 	}
 }
 
