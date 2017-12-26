@@ -138,7 +138,7 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 	memTable.SetSchema(p.schema)
 	memTable.Ranges = ranger.FullIntRange()
 
-	// Cancel push down these conditions.
+	// Stop to push down these conditions.
 	var retPlan PhysicalPlan = memTable
 	if len(p.pushedDownConds) > 0 {
 		sel := PhysicalSelection{
@@ -174,9 +174,9 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 // convert2NewPhysicalPlan implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	// If p is a inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
+	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
-	// TODO: Add an special prop to handle IndexJoin's inner plan.
+	// TODO: Add a special prop to handle IndexJoin's inner plan.
 	// Then we can remove forceToTableScan and forceToIndexScan.
 	if prop == nil {
 		return nil, nil
