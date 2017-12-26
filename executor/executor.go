@@ -749,7 +749,10 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			if chk.NumRows() == e.maxChunkSize {
 				return nil
 			}
-			chk.AppendRow(e.inputRow)
+			chk.AppendPartialRow(0, e.inputRow)
+			if chk.NumCols() == 0 {
+				chk.SetNumVirtualRows(chk.NumRows() + 1)
+			}
 		}
 		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {

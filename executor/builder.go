@@ -572,6 +572,9 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, rightExec.Schema().Len())
+		if v.JoinType == plan.RightOuterJoin {
+			defaultValues = make([]types.Datum, leftExec.Schema().Len())
+		}
 	}
 	lhsColTypes := leftExec.Schema().GetTypes()
 	rhsColTypes := rightExec.Schema().GetTypes()
