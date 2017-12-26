@@ -39,7 +39,6 @@ type Schema struct {
 	Keys    []KeyInfo
 	// TblID2Handle stores the tables' handle column information if we need handle in execution phase.
 	TblID2Handle map[int64][]*Column
-	MaxOneRow    bool
 }
 
 // String implements fmt.Stringer interface.
