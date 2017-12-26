@@ -846,34 +846,40 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 
 	txn := e.ctx.Txn()
 	rowCount := 0
+	if batchInsert && rowCount >= batchSize {
+		if err := e.ctx.NewTxn(); err != nil {
+			// We should return a special error for batch insert.
+			return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+		}
+		txn = e.ctx.Txn()
+		rowCount = 0
+	}
+	if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
+		txn.SetOption(kv.PresumeKeyNotExists, nil)
+	}
+
+	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+	if e.IgnoreErr && !e.ctx.GetSessionVars().SkipConstraintCheck {
+		dupOffsets, err := e.duplicateRows(rows)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, index := range dupOffsets {
+			rows = removeRow(rows, index)
+		}
+		e.IgnoreErr = false
+	}
+
 	for _, row := range rows {
-		if batchInsert && rowCount >= batchSize {
-			if err := e.ctx.NewTxn(); err != nil {
-				// We should return a special error for batch insert.
-				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
-			}
-			txn = e.ctx.Txn()
-			rowCount = 0
-		}
-		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
-			txn.SetOption(kv.PresumeKeyNotExists, nil)
-		}
-		h, err := e.Table.AddRecord(e.ctx, row, false)
-		txn.DelOption(kv.PresumeKeyNotExists)
+		h, err := e.Table.AddRecord(e.ctx, row, true)
 		if err == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
 			rowCount++
 			continue
 		}
-
 		if kv.ErrKeyExists.Equal(err) {
-			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
-			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
-			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-			if e.IgnoreErr {
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				continue
-			}
 			if len(e.OnDuplicate) > 0 {
 				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
@@ -882,14 +888,75 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 				continue
 			}
 		}
+		// Clean up option before we return an error.
+		txn.DelOption(kv.PresumeKeyNotExists)
 		return nil, errors.Trace(err)
 	}
+	txn.DelOption(kv.PresumeKeyNotExists)
 
 	if e.lastInsertID != 0 {
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil, nil
+}
+
+func removeRow(rows [][]types.Datum, index int) [][]types.Datum {
+	return append(rows[:index], rows[index+1:]...)
+}
+
+func (e *InsertExec) duplicateRows(rows [][]types.Datum) ([]int, error) {
+	offsets := make([]int, 0)
+	for i, row := range rows {
+		var hasRecordID bool
+		var recordID int64
+		var err error
+		for _, col := range e.Table.Cols() {
+			if col.IsPKHandleColumn(e.Table.Meta()) {
+				recordID = row[col.Offset].GetInt64()
+				hasRecordID = true
+				break
+			}
+		}
+		if !hasRecordID {
+			recordID, err = e.Table.AllocAutoID(e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		txn := e.ctx.Txn()
+		bs := kv.NewBufferStore(txn)
+
+		if e.Table.Meta().PKIsHandle {
+			if err = tables.CheckHandleExists(e.ctx, e.Table, recordID); kv.ErrKeyExists.Equal(err) {
+				// Key exists
+				offsets = append(offsets, i)
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			} else if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		for _, v := range e.Table.WritableIndices() {
+			colVals, err2 := v.FetchValues(row)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
+			}
+			if v.Meta().Unique || v.Meta().Primary {
+				exist, _, err := v.Exist(bs, colVals, recordID)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if exist {
+					// Key exists
+					offsets = append(offsets, i)
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(kv.ErrKeyExists)
+				}
+			}
+		}
+	}
+	return offsets, nil
 }
 
 // Next implements the Executor Next interface.
