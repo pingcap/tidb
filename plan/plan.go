@@ -213,8 +213,8 @@ type PhysicalPlan interface {
 type baseLogicalPlan struct {
 	basePlan
 
-	taskMap map[string]task
-	self    LogicalPlan
+	taskMap   map[string]task
+	self      LogicalPlan
 	maxOneRow bool
 }
 
@@ -253,17 +253,17 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 		child.(LogicalPlan).buildKeyInfo()
 	}
 	switch p.self.(type) {
-		case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
-			p.maxOneRow = p.children[0].(LogicalPlan).MaxOneRow()
-		case *LogicalMaxOneRow, *LogicalExists:
-			p.maxOneRow = true
+	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
+		p.maxOneRow = p.children[0].(LogicalPlan).MaxOneRow()
+	case *LogicalMaxOneRow, *LogicalExists:
+		p.maxOneRow = true
 	}
 	if len(p.children) == 1 {
 		switch p.self.(type) {
 		case *LogicalExists, *LogicalAggregation, *LogicalProjection:
-			p.basePlan.schema.Keys = nil
+			p.schema.Keys = nil
 		case *LogicalLock:
-			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
+			p.schema.Keys = p.basePlan.children[0].Schema().Keys
 		default:
 			p.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
 		}

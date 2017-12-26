@@ -603,7 +603,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		},
 		{
 			// Test MaxOneRow for limit.
-			sql: "select (select * from (select b from t limit 1) x where x.b = t1.b) from t t1",
+			sql:  "select (select * from (select b from t limit 1) x where x.b = t1.b) from t t1",
 			best: "Join{DataScan(t1)->DataScan(t)->Projection->Limit}(t1.b,x.b)->Projection->Projection",
 		},
 		{
