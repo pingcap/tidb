@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -103,42 +102,9 @@ type baseJoinResultGenerator struct {
 }
 
 func (outputer *baseJoinResultGenerator) initDefaultChunkInner(innerTypes []*types.FieldType) {
-	shadowChunk := chunk.NewChunk(innerTypes)
-	for i, colType := range innerTypes {
-		if outputer.defaultInner[i].IsNull() {
-			shadowChunk.AppendNull(i)
-			continue
-		}
-		switch colType.Tp {
-		case mysql.TypeNull:
-			shadowChunk.AppendNull(i)
-		case mysql.TypeFloat:
-			shadowChunk.AppendFloat32(i, outputer.defaultInner[i].GetFloat32())
-		case mysql.TypeDouble:
-			shadowChunk.AppendFloat64(i, outputer.defaultInner[i].GetFloat64())
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			shadowChunk.AppendInt64(i, outputer.defaultInner[i].GetInt64())
-		case mysql.TypeDuration:
-			shadowChunk.AppendDuration(i, outputer.defaultInner[i].GetMysqlDuration())
-		case mysql.TypeNewDecimal:
-			shadowChunk.AppendMyDecimal(i, outputer.defaultInner[i].GetMysqlDecimal())
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			shadowChunk.AppendTime(i, outputer.defaultInner[i].GetMysqlTime())
-		case mysql.TypeJSON:
-			shadowChunk.AppendJSON(i, outputer.defaultInner[i].GetMysqlJSON())
-		case mysql.TypeBit:
-			shadowChunk.AppendBytes(i, outputer.defaultInner[i].GetMysqlBit())
-		case mysql.TypeEnum:
-			shadowChunk.AppendEnum(i, outputer.defaultInner[i].GetMysqlEnum())
-		case mysql.TypeSet:
-			shadowChunk.AppendSet(i, outputer.defaultInner[i].GetMysqlSet())
-		case mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry:
-			shadowChunk.AppendBytes(i, outputer.defaultInner[i].GetBytes())
-		default:
-			shadowChunk.AppendNull(i)
-		}
-	}
-	outputer.defaultChunkInner = shadowChunk.Begin()
+	mutableRow := chunk.MutRowFromTypes(innerTypes)
+	mutableRow.SetDatums(outputer.defaultInner[:len(innerTypes)]...)
+	outputer.defaultChunkInner = mutableRow.ToRow()
 }
 
 // makeJoinRowToBuffer concatenates "lhs" and "rhs" to "buffer" and return that buffer.
