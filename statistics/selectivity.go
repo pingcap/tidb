@@ -94,7 +94,9 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	}
 	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx
-	extractedCols := expression.ExtractColumns(expression.ComposeCNFCondition(ctx, exprs...))
+
+	extractedCols := make([]*expression.Column, 0, len(t.Columns))
+	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, exprs, nil)
 	for _, colInfo := range t.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		// This column should have histogram.
@@ -150,9 +152,9 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	return ret, nil
 }
 
-func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType int,
+func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cols ...*expression.Column) (int64, []ranger.Range, error) {
-	accessConds, _ := ranger.DetachCondsForSelectivity(exprs, rangeType, cols, lengths)
+	accessConds := ranger.ExtractAccessConditions(exprs, rangeType, cols, lengths)
 	ranges, err := ranger.BuildRange(ctx.GetSessionVars().StmtCtx, accessConds, rangeType, cols, lengths)
 	if err != nil {
 		return 0, nil, errors.Trace(err)

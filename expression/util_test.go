@@ -72,6 +72,24 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	c.Assert(ret.Equal(orFunc2, ctx), check.IsTrue)
 }
 
+func (s *testUtilSuite) TestFilter(c *check.C) {
+	conditions := []Expression{
+		newFunction(ast.EQ, newColumn(0), newColumn(1)),
+		newFunction(ast.EQ, newColumn(1), newColumn(2)),
+		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+	}
+	result := make([]Expression, 0, 5)
+	result = Filter(result, conditions, isLogicOrFunction)
+	c.Assert(result, check.HasLen, 1)
+}
+
+func isLogicOrFunction(e Expression) bool {
+	if f, ok := e.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.LogicOr
+	}
+	return false
+}
+
 func BenchmarkExtractColumns(b *testing.B) {
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
