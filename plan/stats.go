@@ -35,7 +35,7 @@ func (s *statsInfo) Count() int64 {
 	return int64(s.count)
 }
 
-// collapse receives a selectivity and multiple it with count and cardinality.
+// scale receives a selectivity and multiplies it with count and cardinality.
 func (s *statsInfo) scale(factor float64) *statsInfo {
 	profile := &statsInfo{
 		count:       s.count * factor,
