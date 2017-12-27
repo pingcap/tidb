@@ -164,7 +164,7 @@ func (e *PrepareExec) DoPrepare() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, ok := stmt.(ast.ResultSetNode); ok {
+	if _, ok := stmt.(*ast.SelectStmt); ok {
 		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
 	}
 	if e.ID == 0 {
