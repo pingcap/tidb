@@ -302,13 +302,11 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	is.Ranges = ranger.FullNewRange()
 	if len(p.pushedDownConds) > 0 {
 		if len(idxCols) > 0 {
-			var ranges []*ranger.NewRange
 			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(p.pushedDownConds, idxCols, colLengths)
-			ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			is.Ranges = ranges
 			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -537,13 +535,11 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	if len(p.pushedDownConds) > 0 {
 		if pkCol != nil {
-			var ranges []ranger.IntColumnRange
 			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, p.pushedDownConds, pkCol)
-			ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			ts.Ranges = ranges
 		} else {
 			ts.filterCondition = p.pushedDownConds
 		}
