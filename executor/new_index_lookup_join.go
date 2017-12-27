@@ -58,7 +58,7 @@ type NewIndexLookUpJoin struct {
 
 	resultGenerator joinResultGenerator
 
-	indexRanges   []*ranger.IndexRange
+	indexRanges   []*ranger.NewRange
 	keyOff2IdxOff []int
 }
 
@@ -111,7 +111,7 @@ type innerWorker struct {
 	ctx         context.Context
 	executorChk *chunk.Chunk
 
-	indexRanges   []*ranger.IndexRange
+	indexRanges   []*ranger.NewRange
 	keyOff2IdxOff []int
 }
 
@@ -156,7 +156,7 @@ func (e *NewIndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTa
 
 func (e *NewIndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
-	copiedRanges := make([]*ranger.IndexRange, 0, len(e.indexRanges))
+	copiedRanges := make([]*ranger.NewRange, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
@@ -236,7 +236,7 @@ func (e *NewIndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
 			e.lookUpMatchedInners(task, task.cursor)
 			outerRow := task.outerResult.GetRow(task.cursor)
 			task.cursor++
-			err = e.resultGenerator.emitToChunk(outerRow, task.matchedInners, e.joinResult)
+			err = e.resultGenerator.emitToChunk(outerRow, chunk.NewSliceIterator(task.matchedInners), e.joinResult)
 			if err != nil {
 				return errors.Trace(err)
 			}

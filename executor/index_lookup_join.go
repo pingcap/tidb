@@ -107,7 +107,7 @@ type IndexLookUpJoin struct {
 	curBatchSize int
 	exhausted    bool // exhausted means whether all data has been extracted.
 
-	indexRanges   []*ranger.IndexRange
+	indexRanges   []*ranger.NewRange
 	keyOff2IdxOff []int
 }
 
