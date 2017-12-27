@@ -375,6 +375,7 @@ var tokenMap = map[string]int{
 	"QUARTER":                  quarter,
 	"QUERY":                    query,
 	"QUICK":                    quick,
+	"SHARD_ROW_ID":             shardRowID,
 	"RANGE":                    rangeKwd,
 	"READ":                     read,
 	"REAL":                     realType,

@@ -181,6 +181,7 @@ import (
 	precisionType		"PRECISION"
 	primary			"PRIMARY"
 	procedure		"PROCEDURE"
+	shardRowID		"SHARD_ROW_ID"
 	rangeKwd		"RANGE"
 	read			"READ"
 	realType		"REAL"
@@ -5271,6 +5272,10 @@ TableOption:
 |	"STATS_PERSISTENT" EqOpt StatsPersistentVal
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
+	}
+|	"SHARD_ROW_ID" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionShardRowID, UintValue: $3.(uint64)}
 	}
 
 StatsPersistentVal:

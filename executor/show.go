@@ -623,6 +623,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
+	if tb.Meta().ShardRowID {
+		buf.WriteString(" SHARD_ROW_ID=1")
+	}
+
 	if len(tb.Meta().Comment) > 0 {
 		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}

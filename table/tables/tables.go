@@ -698,7 +698,14 @@ func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []ty
 
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *Table) AllocAutoID(ctx context.Context) (int64, error) {
-	return t.Allocator(ctx).Alloc(t.ID)
+	rowID, err := t.Allocator(ctx).Alloc(t.ID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if t.meta.ShardRowID {
+		rowID |= (rowID & 0x7fff) << 48
+	}
+	return rowID, nil
 }
 
 // Allocator implements table.Table Allocator interface.
