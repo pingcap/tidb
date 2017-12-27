@@ -14,12 +14,10 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	log "github.com/sirupsen/logrus"
 )
@@ -44,13 +42,6 @@ func (sf *sumFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCont
 
 // GetResult implements Aggregation interface.
 func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	if ctx.Value.Kind() == types.KindFloat64 {
-		dec := new(types.MyDecimal)
-		err := dec.FromFloat64(ctx.Value.GetFloat64())
-		terror.Log(errors.Trace(err))
-		d.SetMysqlDecimal(dec)
-		return
-	}
 	return ctx.Value
 }
 
@@ -76,9 +67,16 @@ func (sf *sumFunction) CalculateDefaultValue(schema *expression.Schema, ctx cont
 
 // GetType implements Aggregation interface.
 func (sf *sumFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	var ft *types.FieldType
+	// For child returns integer or decimal type, "sum" should returns a "decimal",
+	// otherwise it returns a "double".
+	switch sf.Args[0].GetType().Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
+		ft = types.NewFieldType(mysql.TypeNewDecimal)
+	default:
+		ft = types.NewFieldType(mysql.TypeDouble)
+	}
+	ft.Flen, ft.Decimal = mysql.MaxRealWidth, sf.Args[0].GetType().Decimal
 	types.SetBinChsClnFlag(ft)
-	ft.Flen = mysql.MaxRealWidth
-	ft.Decimal = sf.Args[0].GetType().Decimal
 	return ft
 }

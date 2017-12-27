@@ -17,12 +17,14 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	goctx "golang.org/x/net/context"
@@ -450,68 +452,102 @@ type NestedLoopApplyExec struct {
 	innerRows   []Row
 	cursor      int
 	resultRows  []Row
-	SmallExec   Executor
-	BigExec     Executor
-	prepared    bool
-	SmallFilter expression.CNFExprs
-	BigFilter   expression.CNFExprs
+	innerExec   Executor
+	outerExec   Executor
+	innerFilter expression.CNFExprs
+	outerFilter expression.CNFExprs
 	outer       bool
 
 	resultGenerator joinResultGenerator
 
 	outerSchema []*expression.CorrelatedColumn
+
+	outerChunk       *chunk.Chunk
+	outerChunkCursor int
+	outerSelected    []bool
+	innerList        *chunk.List
+	innerChunk       *chunk.Chunk
+	innerSelected    []bool
+	resultChunk      *chunk.Chunk
 }
 
 // Close implements the Executor interface.
 func (e *NestedLoopApplyExec) Close() error {
 	e.resultRows = nil
 	e.innerRows = nil
-	return errors.Trace(e.BigExec.Close())
+	return errors.Trace(e.outerExec.Close())
 }
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(goCtx goctx.Context) error {
 	e.cursor = 0
-	e.prepared = false
 	e.resultRows = e.resultRows[:0]
 	e.innerRows = e.innerRows[:0]
-	return errors.Trace(e.BigExec.Open(goCtx))
+	return errors.Trace(e.outerExec.Open(goCtx))
 }
 
-func (e *NestedLoopApplyExec) fetchBigRow(goCtx goctx.Context) (Row, bool, error) {
+func (e *NestedLoopApplyExec) fetchOuterRow(goCtx goctx.Context) (Row, bool, error) {
 	for {
-		bigRow, err := e.BigExec.Next(goCtx)
+		outerRow, err := e.outerExec.Next(goCtx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		if bigRow == nil {
+		if outerRow == nil {
 			return nil, false, nil
 		}
 
-		matched, err := expression.EvalBool(e.BigFilter, bigRow, e.ctx)
+		matched, err := expression.EvalBool(e.outerFilter, outerRow, e.ctx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
 		if matched {
-			return bigRow, true, nil
+			return outerRow, true, nil
 		} else if e.outer {
-			return bigRow, false, nil
+			return outerRow, false, nil
 		}
 	}
 }
 
-// prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
-// them in a slice.
+func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context) (*chunk.Row, error) {
+	for {
+		if e.outerChunkCursor >= e.outerChunk.NumRows() {
+			err := e.outerExec.NextChunk(goCtx, e.outerChunk)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if e.outerChunk.NumRows() == 0 {
+				return nil, nil
+			}
+			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, e.outerChunk, e.outerSelected)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			e.outerChunkCursor = 0
+		}
+		outerRow := e.outerChunk.GetRow(e.outerChunkCursor)
+		selected := e.outerSelected[e.outerChunkCursor]
+		e.outerChunkCursor++
+		if selected {
+			return &outerRow, nil
+		} else if e.outer {
+			err := e.resultGenerator.emitToChunk(outerRow, nil, e.resultChunk)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+}
+
+// prepare reads all data from the inner table and stores them in a slice.
 func (e *NestedLoopApplyExec) prepare(goCtx goctx.Context) error {
-	err := e.SmallExec.Open(goctx.TODO())
+	err := e.innerExec.Open(goctx.TODO())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer terror.Call(e.SmallExec.Close)
+	defer terror.Call(e.innerExec.Close)
 	e.innerRows = e.innerRows[:0]
-	e.prepared = true
 	for {
-		row, err := e.SmallExec.Next(goCtx)
+		row, err := e.innerExec.Next(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -519,7 +555,7 @@ func (e *NestedLoopApplyExec) prepare(goCtx goctx.Context) error {
 			return nil
 		}
 
-		matched, err := expression.EvalBool(e.SmallFilter, row, e.ctx)
+		matched, err := expression.EvalBool(e.innerFilter, row, e.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -529,17 +565,45 @@ func (e *NestedLoopApplyExec) prepare(goCtx goctx.Context) error {
 	}
 }
 
-func (e *NestedLoopApplyExec) doJoin(bigRow Row, match bool) ([]Row, error) {
+// fetchAllInners reads all data from the inner table and stores them in a List.
+func (e *NestedLoopApplyExec) fetchAllInners(goCtx goctx.Context) error {
+	err := e.innerExec.Open(goCtx)
+	defer terror.Call(e.innerExec.Close)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.innerList.Reset()
+	for {
+		err := e.innerExec.NextChunk(goCtx, e.innerChunk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if e.innerChunk.NumRows() == 0 {
+			return nil
+		}
+		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, e.innerChunk, e.innerSelected)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for row := e.innerChunk.Begin(); row != e.innerChunk.End(); row = row.Next() {
+			if e.innerSelected[row.Idx()] {
+				e.innerList.AppendRow(row)
+			}
+		}
+	}
+}
+
+func (e *NestedLoopApplyExec) doJoin(outerRow Row, match bool) ([]Row, error) {
 	e.resultRows = e.resultRows[0:0]
 	var err error
 	if !match && e.outer {
-		e.resultRows, err = e.resultGenerator.emit(bigRow, nil, e.resultRows)
+		e.resultRows, err = e.resultGenerator.emit(outerRow, nil, e.resultRows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		return e.resultRows, nil
 	}
-	e.resultRows, err = e.resultGenerator.emit(bigRow, e.innerRows, e.resultRows)
+	e.resultRows, err = e.resultGenerator.emit(outerRow, e.innerRows, e.resultRows)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -554,20 +618,53 @@ func (e *NestedLoopApplyExec) Next(goCtx goctx.Context) (Row, error) {
 			e.cursor++
 			return row, nil
 		}
-		bigRow, match, err := e.fetchBigRow(goCtx)
-		if bigRow == nil || err != nil {
+		outerRow, match, err := e.fetchOuterRow(goCtx)
+		if outerRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
 		for _, col := range e.outerSchema {
-			*col.Data = bigRow[col.Index]
+			*col.Data = outerRow[col.Index]
 		}
 		err = e.prepare(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.resultRows, err = e.doJoin(bigRow, match)
+		e.resultRows, err = e.doJoin(outerRow, match)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		e.cursor = 0
+	}
+}
+
+// NextChunk implements the Executor interface.
+func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	for {
+		appendSize := mathutil.Min(e.resultChunk.NumRows()-e.cursor, e.maxChunkSize)
+		if appendSize > 0 {
+			chk.Append(e.resultChunk, e.cursor, e.cursor+appendSize)
+			e.cursor += appendSize
+			if chk.NumRows() == e.maxChunkSize {
+				return nil
+			}
+		}
+		outerRow, err := e.fetchSelectedOuterRow(goCtx)
+		if outerRow == nil || err != nil {
+			return errors.Trace(err)
+		}
+		for _, col := range e.outerSchema {
+			*col.Data = outerRow.GetDatum(col.Index, col.RetType)
+		}
+		err = e.fetchAllInners(goCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.resultChunk.Reset()
+		iter := chunk.NewListIterator(e.innerList)
+		err = e.resultGenerator.emitToChunk(*outerRow, iter, e.resultChunk)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		e.cursor = 0
 	}
