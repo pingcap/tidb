@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-// memDBBuffer implements MemBuffer interface.
+// memDBBuffer implements the MemBuffer interface.
 type memDbBuffer struct {
 	db              *memdb.DB
 	entrySizeLimit  int
