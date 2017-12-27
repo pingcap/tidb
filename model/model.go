@@ -113,6 +113,8 @@ type TableInfo struct {
 	// TODO: Remove it.
 	// Now it only uses for compatibility with the old version that already uses this field.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+
+	RandomScatter int64 `json:"random_scatter"`
 }
 
 // GetDBID returns the schema ID that is used to create an allocator.

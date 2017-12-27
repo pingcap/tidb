@@ -417,6 +417,7 @@ import (
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
+	randomScatter	"RANDOM_SCATTER"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -5271,6 +5272,10 @@ TableOption:
 |	"STATS_PERSISTENT" EqOpt StatsPersistentVal
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
+	}
+|	"RANDOM_SCATTER" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionRandomScatter, UintValue: $3.(uint64)}
 	}
 
 StatsPersistentVal:

@@ -623,6 +623,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
+	if tb.Meta().RandomScatter > 0 {
+		buf.WriteString(fmt.Sprintf(" RANDOM_SCATTER=%d", tb.Meta().RandomScatter))
+	}
+
 	if len(tb.Meta().Comment) > 0 {
 		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}

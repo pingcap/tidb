@@ -828,6 +828,9 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
 			tbInfo.Collate = op.StrValue
+		case ast.TableOptionRandomScatter:
+			// TODO: It should be smaller than 64.
+			tbInfo.RandomScatter = int64(op.UintValue)
 		}
 	}
 }
