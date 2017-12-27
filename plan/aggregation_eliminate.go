@@ -15,30 +15,52 @@ package plan
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 )
 
-// aggEliminater tries to elimiate max/min aggregate function.
-// For SQL like `select max(c) from t;`, we could optimize it to `select c from t order by c desc limit 1;`.
-// For SQL like `select min(c) from t;`, we could optimize it to `select c from t order by c limit 1;`.
-type aggEliminater struct {
+// aggEliminator tries to eliminate max/min aggregate function.
+// For SQL like `select max(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id desc limit 1 where id is not null) t;`.
+// For SQL like `select min(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id limit 1 where id is not null) t;`.
+type aggEliminator struct {
 	ctx context.Context
 }
 
-func (a *aggEliminater) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
+func (a *aggEliminator) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
 	a.ctx = ctx
-	return a.eliminateAgg(p), nil
+	a.eliminateAgg(p)
+	return p, nil
 }
 
 // Try to convert max/min to Limit+Sort operators.
-func (a *aggEliminater) eliminateAgg(p LogicalPlan) LogicalPlan {
+func (a *aggEliminator) eliminateAgg(p LogicalPlan) {
+	// We don't need to guarantee that the child of it is a data source. This transformation won't be worse than previous.
 	if agg, ok := p.(*LogicalAggregation); ok {
 		// We only consider case with single max/min function.
 		if len(agg.AggFuncs) != 1 || len(agg.GroupByItems) != 0 {
-			return p
+			return
 		}
 		f := agg.AggFuncs[0]
 		if f.GetName() != ast.AggFuncMax && f.GetName() != ast.AggFuncMin {
-			return p
+			return
+		}
+		// e.g. select min(-a) from t. We cannot rewrite it easily.
+		if _, ok := f.GetArgs()[0].(*expression.Column); !ok {
+			return
+		}
+
+		child := p.Children()[0]
+		// If it can be NULL, we need to filter NULL out first.
+		if !mysql.HasNotNullFlag(f.GetArgs()[0].GetType().Flag) {
+			sel := LogicalSelection{}.init(a.ctx)
+			sel.SetSchema(p.Children()[0].Schema().Clone())
+			colIdx := sel.schema.ColumnIndex(f.GetArgs()[0].(*expression.Column))
+			isNullFunc := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), sel.schema.Columns[colIdx])
+			notNullFunc := expression.NewFunctionInternal(a.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			sel.Conditions = []expression.Expression{notNullFunc}
+			sel.SetChildren(p.Children()[0])
+			child = sel
 		}
 
 		// Add Sort and Limit operators.
@@ -47,30 +69,20 @@ func (a *aggEliminater) eliminateAgg(p LogicalPlan) LogicalPlan {
 		// Compose Sort operator.
 		sort := LogicalSort{}.init(a.ctx)
 		sort.ByItems = append(sort.ByItems, &ByItems{f.GetArgs()[0], desc})
-		sort.SetSchema(p.Children()[0].Schema().Clone())
-		sort.SetChildren(p.Children()...)
+		sort.SetSchema(child.Schema().Clone())
+		sort.SetChildren(child)
 		// Compose Limit operator.
 		li := LogicalLimit{Count: 1}.init(a.ctx)
 		li.SetSchema(sort.Schema().Clone())
 		li.SetChildren(sort)
 
-		// Add a projection operator here.
-		// During topn_push_down, the sort/limit operator will be converted to a topn operator and the schema of sort/limit will be ignored.
-		// So the schema of the LogicalAggregation will be lost. We add this projection operator to keep the schema unlost.
-		// For SQL like `select * from t where v=(select min(t1.v) from t t1, t t2, t t3 where t1.id=t2.id and t2.id=t3.id and t1.id=t.id);`,
-		// the min(t1.v) will be refered in the outer selection. So we should keep the schema from LogicalAggragation.
-		proj := LogicalProjection{}.init(a.ctx)
-		proj.Exprs = append(proj.Exprs, f.GetArgs()[0])
-		proj.SetSchema(p.Schema().Clone())
-		proj.SetChildren(li)
-		return proj
+		// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
+		// Since now it's almost one row returned, a agg operator is okay to do this.
+		p.SetChildren(li)
+		return
 	}
 
-	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild := a.eliminateAgg(child.(LogicalPlan))
-		newChildren = append(newChildren, newChild)
+		a.eliminateAgg(child.(LogicalPlan))
 	}
-	p.SetChildren(newChildren...)
-	return p
 }

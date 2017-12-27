@@ -31,23 +31,23 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagAggEliminate
 	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
 	flagAggregationOptimize
-	flagAggEliminate // Keep AggEliminater before PushDownTopN, for it will add a TopN operator.
 	flagPushDownTopN
 )
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&aggEliminator{},
 	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
-	&aggEliminater{},
 	&pushDownTopNOptimizer{},
 }
 

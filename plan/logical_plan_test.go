@@ -258,7 +258,7 @@ func MockTable() *model.TableInfo {
 		ID:        10,
 	}
 
-	pkColumn.Flag = mysql.PriKeyFlag
+	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
 	col1.Flag = mysql.NotNullFlag
@@ -1634,17 +1634,27 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// Max to Limit + Sort-Desc.
 		{
 			sql:  "select max(a) from t;",
-			best: "DataScan(t)->TopN([test.t.a true],0,1)->Projection->Projection",
+			best: "DataScan(t)->TopN([test.t.a true],0,1)->Aggr(max(test.t.a))->Projection",
 		},
 		// Min to Limit + Sort.
 		{
 			sql:  "select min(a) from t;",
-			best: "DataScan(t)->TopN([test.t.a],0,1)->Projection->Projection",
+			best: "DataScan(t)->TopN([test.t.a],0,1)->Aggr(min(test.t.a))->Projection",
+		},
+		// Min to Limit + Sort, and isnull() should be added.
+		{
+			sql:  "select min(c_str) from t;",
+			best: "DataScan(t)->Sel([not(isnull(test.t.c_str))])->TopN([test.t.c_str],0,1)->Aggr(min(test.t.c_str))->Projection",
 		},
 		// Do nothing to max + firstrow.
 		{
 			sql:  "select max(a), b from t;",
 			best: "DataScan(t)->Aggr(max(test.t.a),firstrow(test.t.b))->Projection",
+		},
+		// Do nothing to if max/min contains scalar function.
+		{
+			sql:  "select max(a+1) from t;",
+			best: "DataScan(t)->Aggr(max(plus(test.t.a, 1)))->Projection",
 		},
 		// Do nothing to max+min.
 		{
@@ -1655,6 +1665,11 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		{
 			sql:  "select max(a) from t group by b;",
 			best: "DataScan(t)->Aggr(max(test.t.a))->Projection",
+		},
+		// If inner is not a data source, we can still do transformation.
+		{
+			sql:  "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.a)->TopN([t1.a true],0,1)->Aggr(max(t1.a))->Projection",
 		},
 	}
 
