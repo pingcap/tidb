@@ -237,15 +237,15 @@ func (pr *partialResult) Next(goCtx goctx.Context) (data []types.Datum, err erro
 	return readRowFromChunk(chunk, pr.rowLen)
 }
 
-func readRowFromChunk(chunk *tipb.Chunk, rowLen int) (data []types.Datum, err error) {
-	data = make([]types.Datum, rowLen)
-	for i := 0; i < rowLen; i++ {
-		var l []byte
-		l, chunk.RowsData, err = codec.CutOne(chunk.RowsData)
+func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err error) {
+	row = make([]types.Datum, numCols)
+	for i := 0; i < numCols; i++ {
+		var raw []byte
+		raw, chunk.RowsData, err = codec.CutOne(chunk.RowsData)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		data[i].SetRaw(l)
+		row[i].SetRaw(raw)
 	}
 	return
 }

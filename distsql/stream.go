@@ -31,16 +31,16 @@ type streamResult struct {
 	fieldTypes []*types.FieldType
 	ctx        context.Context
 
-	// NOTE: chunk == nil means finish, while len(chunk.RowsData) == 0 doesn't.
-	chunk *tipb.Chunk
+	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.
+	curr *tipb.Chunk
 }
 
 func (r *streamResult) Fetch(goctx.Context) {}
 
 func (r *streamResult) Next(goctx.Context) (PartialResult, error) {
-	var ret tipbChunk
+	var ret streamPartialResult
 	ret.rowLen = r.rowLen
-	finish, err := readChunkFromResponse(r.resp, &ret.Chunk)
+	finish, err := readDataFromResponse(r.resp, &ret.Chunk)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -57,11 +57,11 @@ func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if r.chunk == nil {
+		if r.curr == nil {
 			return nil
 		}
 
-		err = r.readRowsData(chk)
+		err = r.flushToChunk(chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -69,8 +69,8 @@ func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// readDefaultFromResponse read the data to chunk. Returns true means the resp is finished.
-func readChunkFromResponse(resp kv.Response, chunk *tipb.Chunk) (bool, error) {
+// readDataFromResponse read the data to result. Returns true means the resp is finished.
+func readDataFromResponse(resp kv.Response, result *tipb.Chunk) (bool, error) {
 	data, err := resp.Next()
 	if err != nil {
 		return false, errors.Trace(err)
@@ -88,53 +88,49 @@ func readChunkFromResponse(resp kv.Response, chunk *tipb.Chunk) (bool, error) {
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
 	}
 
-	switch stream.GetEncodeType() {
-	case tipb.EncodeType_TypeDefault:
-	case tipb.EncodeType_TypeArrow:
-		return false, errors.New("not implement yet")
-	}
+	// TODO: Check stream.GetEncodeType() here if we support tipb.EncodeType_TypeArrow some day.
 
-	err = chunk.Unmarshal(stream.Data)
+	err = result.Unmarshal(stream.Data)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return false, nil
 }
 
-// takeData ensure there're data is in current chunk. if no more data, return false.
+// takeData ensures there're data is in current chunk. If no more data, return false.
 func (r *streamResult) takeData() error {
-	if r.chunk != nil && len(r.chunk.RowsData) > 0 {
+	if r.curr != nil && len(r.curr.RowsData) > 0 {
 		return nil
 	}
 
 	tmp := new(tipb.Chunk)
-	finish, err := readChunkFromResponse(r.resp, tmp)
+	finish, err := readDataFromResponse(r.resp, tmp)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if finish {
-		r.chunk = nil
+		r.curr = nil
 		return nil
 	}
-	r.chunk = tmp
+	r.curr = tmp
 	return nil
 }
 
-func (r *streamResult) readRowsData(chk *chunk.Chunk) (err error) {
-	rowsData := r.chunk.RowsData
+func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
+	remainRowsData := r.curr.RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	timeZone := r.ctx.GetSessionVars().GetTimeZone()
-	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
+	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], timeZone)
+			remainRowsData, err = codec.DecodeOneToChunk(remainRowsData, chk, i, r.fieldTypes[i], timeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
-	r.chunk.RowsData = rowsData
-	if len(rowsData) == 0 {
-		r.chunk = nil // Current chunk is finished.
+	r.curr.RowsData = remainRowsData
+	if len(remainRowsData) == 0 {
+		r.curr = nil // Current chunk is finished.
 	}
 	return nil
 }
@@ -147,19 +143,19 @@ func (r *streamResult) Close() error {
 	return nil
 }
 
-// tipbChunk implements PartialResult.
-type tipbChunk struct {
+// streamPartialResult implements PartialResult.
+type streamPartialResult struct {
 	tipb.Chunk
 	rowLen int
 }
 
-func (pr *tipbChunk) Next(goCtx goctx.Context) (data []types.Datum, err error) {
+func (pr *streamPartialResult) Next(goCtx goctx.Context) (data []types.Datum, err error) {
 	if len(pr.Chunk.RowsData) == 0 {
 		return nil, nil // partial result finished.
 	}
 	return readRowFromChunk(&pr.Chunk, pr.rowLen)
 }
 
-func (pr *tipbChunk) Close() error {
+func (pr *streamPartialResult) Close() error {
 	return nil
 }
