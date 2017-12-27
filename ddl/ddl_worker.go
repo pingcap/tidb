@@ -299,6 +299,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 		ver, err = d.onDropForeignKey(t, job)
 	case model.ActionTruncateTable:
 		ver, err = d.onTruncateTable(t, job)
+	case model.ActionRebaseAutoID:
+		ver, err = d.onRebaseAutoID(t, job)
 	case model.ActionRenameTable:
 		ver, err = d.onRenameTable(t, job)
 	case model.ActionSetDefaultValue:

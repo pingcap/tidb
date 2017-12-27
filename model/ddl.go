@@ -40,6 +40,7 @@ const (
 	ActionDropForeignKey
 	ActionTruncateTable
 	ActionModifyColumn
+	ActionRebaseAutoID
 	ActionRenameTable
 	ActionSetDefaultValue
 )
@@ -70,6 +71,8 @@ func (action ActionType) String() string {
 		return "truncate table"
 	case ActionModifyColumn:
 		return "modify column"
+	case ActionRebaseAutoID:
+		return "rebase auto_increment ID"
 	case ActionRenameTable:
 		return "rename table"
 	case ActionSetDefaultValue:
