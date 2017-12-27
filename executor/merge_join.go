@@ -510,7 +510,7 @@ func (e *MergeJoinExec) joinToResultChunk() (bool, error) {
 			}
 		} else {
 			for _, outer := range e.outerChunkRows {
-				err = e.resultGenerator.emitToChunk(outer, e.innerChunkRows, e.resultChunk)
+				err = e.resultGenerator.emitToChunk(outer, chunk.NewSliceIterator(e.innerChunkRows), e.resultChunk)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
