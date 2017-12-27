@@ -222,6 +222,43 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, nil
 }
 
+func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	var newBase int64
+	err := job.DecodeArgs(&newBase)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo.AutoIncID = newBase
+	tbl, err := d.getTable(schemaID, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	// The operation of the minus 1 to make sure that the current value doesn't be used,
+	// the next Alloc operation will get this value.
+	// Its behavior is consistent with MySQL.
+	err = tbl.RebaseAutoID(nil, tblInfo.AutoIncID-1, false)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateDone
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	ver, err = updateTableInfo(t, job, tblInfo, tblInfo.State)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	return ver, nil
+}
+
 func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var oldSchemaID int64
 	var tableName model.CIStr
