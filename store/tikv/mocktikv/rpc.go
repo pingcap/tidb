@@ -617,7 +617,7 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	case tikvrpc.CmdCopStream:
 		r := req.Cop
 		if err := handler.checkRequestContext(reqCtx); err != nil {
-			resp.CopStream = &streamRegionError{Error: err}
+			resp.CopStream = &mockCopStreamErrClient{Error: err}
 			return resp, nil
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()

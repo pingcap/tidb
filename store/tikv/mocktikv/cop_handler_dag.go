@@ -112,7 +112,7 @@ func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_Copr
 		return nil, errors.New("request range is null")
 	}
 	if req.GetTp() != kv.ReqTypeDAG {
-		return nil, errors.Errorf("unsupport request type %d", req.GetTp())
+		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
 
 	dagReq := new(tipb.DAGRequest)
@@ -132,7 +132,7 @@ func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_Copr
 		return nil, errors.Trace(err)
 	}
 
-	return &mockCoprocessorStreamClient{
+	return &mockCopStreamClient{
 		exec:  e,
 		req:   dagReq,
 		goCtx: goctx.TODO(),
@@ -373,6 +373,7 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	return sc
 }
 
+// mockClientStream implements grpc ClientStream interface, its methods are never called.
 type mockClientStream struct{}
 
 func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
@@ -382,32 +383,34 @@ func (mockClientStream) Context() goctx.Context       { return nil }
 func (mockClientStream) SendMsg(m interface{}) error  { return nil }
 func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
 
-type mockCoprocessorStreamClient struct {
+type mockCopStreamClient struct {
 	mockClientStream
+
 	req      *tipb.DAGRequest
 	exec     executor
 	goCtx    goctx.Context
 	finished bool
 }
 
-type streamRegionError struct {
+type mockCopStreamErrClient struct {
 	mockClientStream
+
 	*errorpb.Error
 }
 
-func (e *streamRegionError) Recv() (*coprocessor.Response, error) {
+func (mock *mockCopStreamErrClient) Recv() (*coprocessor.Response, error) {
 	return &coprocessor.Response{
-		RegionError: e.Error,
+		RegionError: mock.Error,
 	}, nil
 }
 
-func (mock *mockCoprocessorStreamClient) Recv() (*coprocessor.Response, error) {
+func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	if mock.finished {
 		return nil, io.EOF
 	}
 
 	var resp coprocessor.Response
-	chunk, finish, err := readBlockFromExecutor(mock.goCtx, mock.exec, mock.req.OutputOffsets)
+	chunk, finish, err := mock.readBlockFromExecutor()
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
@@ -445,20 +448,17 @@ func (mock *mockCoprocessorStreamClient) Recv() (*coprocessor.Response, error) {
 	return &resp, nil
 }
 
-func readBlockFromExecutor(goCtx goctx.Context, e executor, rowCols []uint32) (tipb.Chunk, bool, error) {
-	var err error
-	var count int
+func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, error) {
 	var chunk tipb.Chunk
-	for count = 0; count < rowsPerChunk; count++ {
-		var row [][]byte
-		row, err = e.Next(goCtx)
+	for count := 0; count < rowsPerChunk; count++ {
+		row, err := mock.exec.Next(mock.goCtx)
 		if err != nil {
 			return chunk, false, errors.Trace(err)
 		}
 		if row == nil {
 			return chunk, true, nil
 		}
-		for _, offset := range rowCols {
+		for _, offset := range mock.req.OutputOffsets {
 			chunk.RowsData = append(chunk.RowsData, row[offset]...)
 		}
 	}
