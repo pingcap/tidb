@@ -36,9 +36,12 @@ const (
 	CodeUnsupportedType terror.ErrCode = 1
 )
 
-// Range type.
+// RangeType is alias for int.
+type RangeType int
+
+// RangeType constants.
 const (
-	IntRangeType = iota
+	IntRangeType RangeType = iota
 	ColumnRangeType
 	IndexRangeType
 )
@@ -125,9 +128,9 @@ func FullIntRange() []IntColumnRange {
 	return []IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 }
 
-// FullIndexRange is (-∞, +∞) for IndexRange.
-func FullIndexRange() []*IndexRange {
-	return []*IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+// FullNewRange is (-∞, +∞) for NewRange.
+func FullNewRange() []*NewRange {
+	return []*NewRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
 }
 
 // builder is the range builder struct.

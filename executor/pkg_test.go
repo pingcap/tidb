@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	goctx "golang.org/x/net/context"
 )
@@ -87,6 +88,8 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		innerFilter:     []expression.Expression{innerFilter},
 		resultGenerator: generator,
 	}
+	join.innerList = chunk.NewList(innerExec.Schema().GetTypes(), innerExec.maxChunkSize)
+	join.innerChunk = innerExec.newChunk()
 	row, err := join.Next(goCtx)
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)

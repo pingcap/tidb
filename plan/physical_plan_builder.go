@@ -259,7 +259,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []expr
 		Columns:          p.Columns,
 		Index:            idx,
 		dataSourceSchema: p.schema,
-		Ranges:           ranger.FullIndexRange(),
+		Ranges:           ranger.FullNewRange(),
 		OutOfOrder:       true,
 	}.init(p.ctx)
 	is.filterCondition = remainedConds
@@ -307,16 +307,14 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
-	is.Ranges = ranger.FullIndexRange()
+	is.Ranges = ranger.FullNewRange()
 	if len(p.pushedDownConds) > 0 {
 		if len(idxCols) > 0 {
-			var ranges []ranger.Range
 			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(p.pushedDownConds, idxCols, colLengths)
-			ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
+			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			is.Ranges = ranger.Ranges2IndexRanges(ranges)
 			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -547,10 +545,8 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	rowCount := float64(statsTbl.Count)
 	if len(p.pushedDownConds) > 0 {
 		if pkCol != nil {
-			var ranges []ranger.Range
 			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, p.pushedDownConds, pkCol)
-			ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
-			ts.Ranges = ranger.Ranges2IntRanges(ranges)
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -298,6 +298,7 @@ func (s *testSuite) TestAggPrune(c *C) {
 	tk.MustExec("create table t(id int primary key, b varchar(50), c int)")
 	tk.MustExec("insert into t values(1, '1ff', NULL), (2, '234.02', 1)")
 	tk.MustQuery("select id, sum(b) from t group by id").Check(testkit.Rows("1 1", "2 234.02"))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("235.02"))
 	tk.MustQuery("select id, count(c) from t group by id").Check(testkit.Rows("1 0", "2 1"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, b float, c float)")

@@ -36,7 +36,7 @@ const (
 	batchGetSize  = 5120
 )
 
-// tikvSnapshot implements MvccSnapshot interface.
+// tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
 	store          *tikvStore
 	version        kv.Version
