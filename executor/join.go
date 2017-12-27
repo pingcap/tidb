@@ -83,6 +83,8 @@ func (e *HashJoinExec) Close() error {
 		return errors.Trace(err)
 	}
 
+	close(e.closeCh)
+	<-e.closeCh
 	if e.prepared {
 		if e.resultBufferCh != nil {
 			for range e.resultBufferCh {
@@ -109,8 +111,6 @@ func (e *HashJoinExec) Close() error {
 			e.outerChkResource = nil
 			e.joinChkResource = nil
 		}
-		close(e.closeCh)
-		<-e.closeCh
 	}
 
 	e.resultBuffer = nil
@@ -279,6 +279,10 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 		}
 
 		select {
+		case _, ok := <-e.closeCh:
+			if !ok {
+				return
+			}
 		case outerResult.chk = <-e.outerChkResource:
 		}
 		err := e.outerExec.NextChunk(goCtx, outerResult.chk)
@@ -559,6 +563,10 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 			break
 		}
 		select {
+		case _, ok = <-e.closeCh:
+			if !ok {
+				return
+			}
 		case outerResult, ok = <-e.outerResultChs[workerID]:
 		}
 		if !ok {
@@ -654,7 +662,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 		innerRows = append(innerRows, matchedInner)
 	}
 
-	err = e.resultGenerator[workerID].emitToChunk(outerRow, innerRows, joinResult.chk)
+	err = e.resultGenerator[workerID].emitToChunk(outerRow, chunk.NewSliceIterator(innerRows), joinResult.chk)
 	if err != nil {
 		joinResult.err = errors.Trace(err)
 		return false
@@ -671,10 +679,11 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 	}
 	if joinResult.chk == nil {
 		select {
+		case _, ok = <-e.closeCh:
 		case joinResult.chk, ok = <-e.joinChkResource[workerID]:
-			if !ok {
-				return false, joinResult
-			}
+		}
+		if !ok {
+			return false, joinResult
 		}
 	}
 	for i, matched := range selected {
@@ -696,10 +705,11 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 				src: e.joinChkResource[workerID],
 			}
 			select {
+			case _, ok = <-e.closeCh:
 			case joinResult.chk, ok = <-e.joinChkResource[workerID]:
-				if !ok {
-					return false, joinResult
-				}
+			}
+			if !ok {
+				return false, joinResult
 			}
 		}
 	}
