@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
@@ -126,15 +127,21 @@ type Job struct {
 	SchemaState SchemaState     `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
-	// LastUpdateTS now uses unix nano seconds
-	// TODO: Use timestamp allocated by TSO.
-	LastUpdateTS int64 `json:"last_update_ts"`
+	// StartTS uses timestamp allocated by TSO.
+	// Now it's the TS when we put the job to TiKV queue.
+	StartTS uint64 `json:"start_ts"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
 
 	// Version indicates the DDL job version. For old jobs, it will be 0.
 	Version int64 `json:"version"`
+}
+
+// startTime gets the job generation time.
+func (job *Job) startTime() time.Time {
+	t := int64(job.StartTS >> 18) // 18 is for the logical time.
+	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -191,6 +198,13 @@ func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args))
+}
+
+// StringWithStartTime returns a job's information with start time.
+// Getting start time tasks time, which impacts the performance.
+// So it's only used to show DDL information.
+func (job *Job) StringWithStartTime() string {
+	return fmt.Sprintf("%s, start time: %v", job, job.startTime())
 }
 
 // IsFinished returns whether job is finished or not.

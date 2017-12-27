@@ -93,6 +93,7 @@ func (d *ddl) addDDLJob(ctx context.Context, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		job.StartTS = txn.StartTS()
 		err = t.EnQueueDDLJob(job)
 		return errors.Trace(err)
 	})
@@ -124,7 +125,6 @@ func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) erro
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
 func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64) error {
-	job.LastUpdateTS = int64(updateTS)
 	err := t.UpdateDDLJob(0, job)
 	return errors.Trace(err)
 }
