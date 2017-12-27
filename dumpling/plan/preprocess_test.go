@@ -75,9 +75,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[schema:1068]Multiple primary key defined")},
 		{"create table t(c1 int not null, c2 int not null, primary key(c1), primary key(c2))", true,
 			errors.New("[schema:1068]Multiple primary key defined")},
-		{"alter table t auto_increment=1", true, errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
-		{"alter table t add column c int auto_increment key, auto_increment=10", true,
-			errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
+		{"alter table t auto_increment=1", true, nil},
+		{"alter table t add column c int auto_increment key, auto_increment=10", true, nil},
 		{"alter table t add column c int auto_increment key", true, nil},
 		{"alter table t add column char4294967295 char(255)", true, nil},
 		{"create table t (c float(53))", true, nil},
@@ -184,6 +183,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		err = plan.Preprocess(ctx, stmt, is, tt.inPrepare)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
+		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("sql: %s", tt.sql))
 	}
 }
