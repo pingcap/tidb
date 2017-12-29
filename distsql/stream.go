@@ -32,7 +32,12 @@ type streamResult struct {
 	ctx        context.Context
 
 	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.
-	curr *tipb.Chunk
+	curr      *tipb.Chunk
+	scanCount int64
+}
+
+func (r *streamResult) ScanCount() int64 {
+	return r.scanCount
 }
 
 func (r *streamResult) Fetch(goctx.Context) {}
@@ -40,7 +45,7 @@ func (r *streamResult) Fetch(goctx.Context) {}
 func (r *streamResult) Next(goctx.Context) (PartialResult, error) {
 	var ret streamPartialResult
 	ret.rowLen = r.rowLen
-	finish, err := readDataFromResponse(r.resp, &ret.Chunk)
+	finish, err := r.readDataFromResponse(r.resp, &ret.Chunk)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -70,7 +75,7 @@ func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 // readDataFromResponse read the data to result. Returns true means the resp is finished.
-func readDataFromResponse(resp kv.Response, result *tipb.Chunk) (bool, error) {
+func (r *streamResult) readDataFromResponse(resp kv.Response, result *tipb.Chunk) (bool, error) {
 	data, err := resp.Next()
 	if err != nil {
 		return false, errors.Trace(err)
@@ -94,6 +99,9 @@ func readDataFromResponse(resp kv.Response, result *tipb.Chunk) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	if len(stream.OutputCounts) > 0 {
+		r.scanCount += stream.OutputCounts[0]
+	}
 	return false, nil
 }
 
@@ -104,7 +112,7 @@ func (r *streamResult) takeData() error {
 	}
 
 	tmp := new(tipb.Chunk)
-	finish, err := readDataFromResponse(r.resp, tmp)
+	finish, err := r.readDataFromResponse(r.resp, tmp)
 	if err != nil {
 		return errors.Trace(err)
 	}
