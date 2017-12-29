@@ -73,10 +73,11 @@ func (sf *sumFunction) GetType() *types.FieldType {
 	switch sf.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
 		ft = types.NewFieldType(mysql.TypeNewDecimal)
+		ft.Flen, ft.Decimal = mysql.MaxRealWidth, sf.Args[0].GetType().Decimal
 	default:
 		ft = types.NewFieldType(mysql.TypeDouble)
+		ft.Flen, ft.Decimal = mysql.MaxDecimalWidth, mysql.MaxDecimalScale
 	}
-	ft.Flen, ft.Decimal = mysql.MaxRealWidth, sf.Args[0].GetType().Decimal
 	types.SetBinChsClnFlag(ft)
 	return ft
 }

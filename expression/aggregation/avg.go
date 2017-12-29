@@ -117,7 +117,7 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	terror.Log(errors.Trace(err))
 	frac := af.GetType().Decimal
 	if frac == -1 {
-		frac = types.MaxFraction
+		frac = mysql.MaxDecimalScale
 	}
 	err = to.Round(to, frac, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))
