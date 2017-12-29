@@ -40,35 +40,14 @@ func calcFraction(lower, upper, value float64) float64 {
 	return frac
 }
 
-// preCalculateDatumScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also
-// calculate their common prefix length, because when a value falls between lower and upper, the common prefix
-// of lower and upper equals to the common prefix of the lower, upper and the value.
-func preCalculateDatumScalar(lower, upper *types.Datum) (float64, float64, int) {
-	common := 0
-	if lower.Kind() == types.KindString || lower.Kind() == types.KindBytes {
-		common = commonPrefixLength(lower.GetBytes(), upper.GetBytes())
-	}
-	return convertDatumToScalar(lower, common), convertDatumToScalar(upper, common), common
-}
-
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
-	case types.KindFloat32:
-		return float64(value.GetFloat32())
-	case types.KindFloat64:
-		return value.GetFloat64()
-	case types.KindInt64:
-		return float64(value.GetInt64())
-	case types.KindUint64:
-		return float64(value.GetUint64())
 	case types.KindMysqlDecimal:
 		scalar, err := value.GetMysqlDecimal().ToFloat64()
 		if err != nil {
 			return 0
 		}
 		return scalar
-	case types.KindMysqlDuration:
-		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlTime:
 		valueTime := value.GetMysqlTime()
 		var minTime types.Time
@@ -103,6 +82,59 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		// do not know how to convert
 		return 0
 	}
+}
+
+// PreCalculateScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also
+// calculate their common prefix length, because when a value falls between lower and upper, the common prefix
+// of lower and upper equals to the common prefix of the lower, upper and the value. For some simple types like `Int64`,
+// we do not convert it because we can directly infer the scalar value.
+func (hg *Histogram) PreCalculateScalar() {
+	len := hg.NumBuckets()
+	if len == 0 {
+		return
+	}
+	switch hg.GetLower(0).Kind() {
+	case types.KindFloat32, types.KindFloat64, types.KindInt64, types.KindUint64, types.KindMysqlDuration:
+		return
+	case types.KindMysqlDecimal, types.KindMysqlTime:
+		hg.lowerScalar = make([]float64, len)
+		hg.upperScalar = make([]float64, len)
+		for i := 0; i < len; i++ {
+			hg.lowerScalar[i] = convertDatumToScalar(hg.GetLower(i), 0)
+			hg.upperScalar[i] = convertDatumToScalar(hg.GetUpper(i), 0)
+		}
+	case types.KindBytes, types.KindString:
+		hg.lowerScalar = make([]float64, len)
+		hg.upperScalar = make([]float64, len)
+		hg.commonPfxLen = make([]int, len)
+		for i := 0; i < len; i++ {
+			lower, upper := hg.GetLower(i), hg.GetUpper(i)
+			hg.commonPfxLen[i] = commonPrefixLength(lower.GetBytes(), upper.GetBytes())
+			hg.lowerScalar[i] = convertDatumToScalar(lower, hg.commonPfxLen[i])
+			hg.upperScalar[i] = convertDatumToScalar(upper, hg.commonPfxLen[i])
+		}
+	}
+}
+
+func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
+	row := hg.Bounds.GetRow(index)
+	switch value.Kind() {
+	case types.KindFloat32:
+		return calcFraction(float64(row.GetFloat32(0)), float64(row.GetFloat32(1)), float64(value.GetFloat32()))
+	case types.KindFloat64:
+		return calcFraction(row.GetFloat64(0), row.GetFloat64(1), value.GetFloat64())
+	case types.KindInt64:
+		return calcFraction(float64(row.GetInt64(0)), float64(row.GetInt64(1)), float64(value.GetInt64()))
+	case types.KindUint64:
+		return calcFraction(float64(row.GetUint64(0)), float64(row.GetUint64(1)), float64(value.GetUint64()))
+	case types.KindMysqlDuration:
+		return calcFraction(float64(row.GetDuration(0).Duration), float64(row.GetDuration(1).Duration), float64(value.GetMysqlDuration().Duration))
+	case types.KindMysqlDecimal, types.KindMysqlTime:
+		return calcFraction(hg.lowerScalar[index], hg.upperScalar[index], convertDatumToScalar(value, 0))
+	case types.KindBytes, types.KindString:
+		return calcFraction(hg.lowerScalar[index], hg.upperScalar[index], convertDatumToScalar(value, hg.commonPfxLen[index]))
+	}
+	return 0.5
 }
 
 func commonPrefixLength(lower, upper []byte) int {

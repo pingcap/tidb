@@ -116,12 +116,12 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 	if numOfCols > 0 {
 		isIndex = 1
 	}
-	for i, bkt := range hist.Buckets {
-		lowerBoundStr, err := e.valueToString(bkt.LowerBound, numOfCols)
+	for i := 0; i < hist.NumBuckets(); i++ {
+		lowerBoundStr, err := e.valueToString(hist.GetLower(i), numOfCols)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := e.valueToString(bkt.UpperBound, numOfCols)
+		upperBoundStr, err := e.valueToString(hist.GetUpper(i), numOfCols)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -131,8 +131,8 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 			colName,
 			isIndex,
 			i,
-			bkt.Count,
-			bkt.Repeats,
+			hist.Counts[i],
+			hist.Repeats[i],
 			lowerBoundStr,
 			upperBoundStr,
 		})
@@ -142,7 +142,7 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 
 // valueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // size equals to number of origin values, else size is 0.
-func (e *ShowExec) valueToString(value types.Datum, size int) (string, error) {
+func (e *ShowExec) valueToString(value *types.Datum, size int) (string, error) {
 	if size == 0 {
 		return value.ToString()
 	}
