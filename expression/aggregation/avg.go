@@ -14,6 +14,7 @@
 package aggregation
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -43,19 +44,19 @@ func (af *avgFunction) GetType() *types.FieldType {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
 		ft = types.NewFieldType(mysql.TypeNewDecimal)
 		if af.GetMode() == FinalMode {
-			ft.Decimal = af.Args[1].GetType().Decimal
+			ft.Flen, ft.Decimal = af.Args[1].GetType().Flen, af.Args[1].GetType().Decimal
 		} else {
-			ft.Decimal = af.Args[0].GetType().Decimal
-			if ft.Decimal < 0 {
-				ft.Decimal = 0
+			if af.Args[0].GetType().Decimal < 0 {
+				ft.Decimal = mysql.MaxDecimalScale
+			} else {
+				ft.Decimal = mathutil.Min(af.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 			}
-			ft.Decimal += types.DivFracIncr
+			ft.Flen = mysql.MaxDecimalWidth
 		}
 	default:
 		ft = types.NewFieldType(mysql.TypeDouble)
-		ft.Decimal = af.Args[0].GetType().Decimal
+		ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
 	}
-	ft.Flen = mysql.MaxRealWidth
 	types.SetBinChsClnFlag(ft)
 	return ft
 }
