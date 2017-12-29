@@ -51,7 +51,7 @@ func (p *LogicalAggregation) buildKeyInfo() {
 		}
 	}
 	if len(p.GroupByItems) == 0 {
-		p.schema.MaxOneRow = true
+		p.maxOneRow = true
 	}
 }
 
@@ -75,14 +75,20 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 
 func (p *LogicalSelection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
 			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0]) {
-				p.schema.MaxOneRow = true
+				p.maxOneRow = true
 				break
 			}
 		}
+	}
+}
+
+func (p *LogicalLimit) buildKeyInfo() {
+	p.baseLogicalPlan.buildKeyInfo()
+	if p.Count == 1 {
+		p.maxOneRow = true
 	}
 }
 
@@ -104,7 +110,6 @@ func (p *LogicalProjection) buildSchemaByExprs() *expression.Schema {
 
 func (p *LogicalProjection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.Children()[0].Schema().Keys {
 		indices := schema.ColumnsIndices(key)
@@ -121,7 +126,7 @@ func (p *LogicalProjection) buildKeyInfo() {
 
 func (p *LogicalJoin) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow && p.children[1].Schema().MaxOneRow
+	p.maxOneRow = p.children[0].(LogicalPlan).MaxOneRow() && p.children[1].(LogicalPlan).MaxOneRow()
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
 		p.schema.Keys = p.children[0].Schema().Clone().Keys
