@@ -203,8 +203,8 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
 
-	// statsInfo will return the statsInfo for this plan.
-	statsInfo() *statsInfo
+	// StatsInfo will return the statsInfo for this plan.
+	StatsInfo() *statsInfo
 }
 
 type baseLogicalPlan struct {

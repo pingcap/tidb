@@ -209,7 +209,7 @@ func (e *CancelDDLJobsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) err
 	if e.cursor >= len(e.jobIDs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, len(e.jobIDs)-e.cursor)
+	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendInt64(0, e.jobIDs[i])
 		if e.errs[i] != nil {
@@ -319,7 +319,7 @@ func (e *ShowDDLJobsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 	if e.cursor >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, len(e.jobs)-e.cursor)
+	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendString(0, e.jobs[i].String())
 		chk.AppendString(1, e.jobs[i].State.String())
@@ -598,8 +598,9 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	exprs        []expression.Expression
-	vectorizable bool
+	exprs            []expression.Expression
+	vectorizable     bool
+	calculateNoDelay bool
 }
 
 // Open implements the Executor Open interface.
@@ -647,23 +648,41 @@ func (e *ProjectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 type TableDualExec struct {
 	baseExecutor
 
-	rowCount  int
-	returnCnt int
+	// numDualRows can only be 0 or 1.
+	numDualRows int
+	numReturned int
 }
 
 // Open implements the Executor Open interface.
 func (e *TableDualExec) Open(goCtx goctx.Context) error {
-	e.returnCnt = 0
+	e.numReturned = 0
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(goCtx goctx.Context) (Row, error) {
-	if e.returnCnt >= e.rowCount {
+	if e.numReturned >= e.numDualRows {
 		return nil, nil
 	}
-	e.returnCnt++
+	e.numReturned = e.numDualRows
 	return Row{}, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableDualExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.numReturned >= e.numDualRows {
+		return nil
+	}
+	if e.Schema().Len() == 0 {
+		chk.SetNumVirtualRows(1)
+	} else {
+		for i := range e.Schema().Columns {
+			chk.AppendNull(i)
+		}
+	}
+	e.numReturned = e.numDualRows
+	return nil
 }
 
 // SelectionExec represents a filter executor.
@@ -795,6 +814,10 @@ type TableScanExec struct {
 	isVirtualTable     bool
 	virtualTableRows   [][]types.Datum
 	virtualTableCursor int
+
+	// for chunk execution
+	virtualTableChunkList *chunk.List
+	virtualTableChunkIdx  int
 }
 
 // Next implements the Executor interface.
@@ -802,43 +825,13 @@ func (e *TableScanExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.isVirtualTable {
 		return e.nextForInfoSchema()
 	}
-	for {
-		if e.cursor >= len(e.ranges) {
-			return nil, nil
-		}
-		ran := e.ranges[e.cursor]
-		if e.seekHandle < ran.LowVal {
-			e.seekHandle = ran.LowVal
-		}
-		if e.seekHandle > ran.HighVal {
-			e.cursor++
-			continue
-		}
-		handle, found, err := e.t.Seek(e.ctx, e.seekHandle)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !found {
-			return nil, nil
-		}
-		if handle > ran.HighVal {
-			// The handle is out of the current range, but may be in following ranges.
-			// We seek to the range that may contains the handle, so we
-			// don't need to seek key again.
-			inRange := e.seekRange(handle)
-			if !inRange {
-				// The handle may be less than the current range low value, can not
-				// return directly.
-				continue
-			}
-		}
-		row, err := e.getRow(handle)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.seekHandle = handle + 1
-		return row, nil
+	handle, found, err := e.nextHandle()
+	if err != nil || !found {
+		return nil, errors.Trace(err)
 	}
+	row, err := e.getRow(handle)
+	e.seekHandle = handle + 1
+	return row, errors.Trace(err)
 }
 
 func (e *TableScanExec) nextForInfoSchema() (Row, error) {
@@ -861,6 +854,91 @@ func (e *TableScanExec) nextForInfoSchema() (Row, error) {
 	row := e.virtualTableRows[e.virtualTableCursor]
 	e.virtualTableCursor++
 	return row, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.isVirtualTable {
+		return errors.Trace(e.nextChunk4InfoSchema(goCtx, chk))
+	}
+	handle, found, err := e.nextHandle()
+	if err != nil || !found {
+		return errors.Trace(err)
+	}
+
+	mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
+	for chk.NumRows() < e.maxChunkSize {
+		row, err := e.getRow(handle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.seekHandle = handle + 1
+		mutableRow.SetDatums(row...)
+		chk.AppendRow(0, mutableRow.ToRow())
+	}
+	return nil
+}
+
+func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.virtualTableChunkList == nil {
+		e.virtualTableChunkList = chunk.NewList(e.Schema().GetTypes(), e.maxChunkSize)
+		columns := make([]*table.Column, e.schema.Len())
+		for i, colInfo := range e.columns {
+			columns[i] = table.ToColumn(colInfo)
+		}
+		mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
+		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+			mutableRow.SetDatums(rec...)
+			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
+			return true, nil
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// no more data.
+	if e.virtualTableChunkIdx >= e.virtualTableChunkList.NumChunks() {
+		return nil
+	}
+	virtualTableChunk := e.virtualTableChunkList.GetChunk(e.virtualTableChunkIdx)
+	e.virtualTableChunkIdx++
+	chk.SwapColumns(virtualTableChunk)
+	return nil
+}
+
+// nextHandle gets the unique handle for next row.
+func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
+	for {
+		if e.cursor >= len(e.ranges) {
+			return 0, false, nil
+		}
+		ran := e.ranges[e.cursor]
+		if e.seekHandle < ran.LowVal {
+			e.seekHandle = ran.LowVal
+		}
+		if e.seekHandle > ran.HighVal {
+			e.cursor++
+			continue
+		}
+		handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
+		if err != nil || !found {
+			return 0, false, errors.Trace(err)
+		}
+		if handle > ran.HighVal {
+			// The handle is out of the current range, but may be in following ranges.
+			// We seek to the range that may contains the handle, so we
+			// don't need to seek key again.
+			inRange := e.seekRange(handle)
+			if !inRange {
+				// The handle may be less than the current range low value, can not
+				// return directly.
+				continue
+			}
+		}
+		return handle, true, nil
+	}
 }
 
 // seekRange increments the range cursor to the range
@@ -898,12 +976,10 @@ func (e *TableScanExec) getRow(handle int64) (Row, error) {
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(goCtx goctx.Context) error {
 	e.iter = nil
+	e.virtualTableRows = nil
+	e.virtualTableChunkList = nil
 	e.cursor = 0
 	return nil
-}
-
-func (e *TableScanExec) supportChunk() bool {
-	return false
 }
 
 // ExistsExec represents exists executor.

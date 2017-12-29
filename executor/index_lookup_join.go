@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	goctx "golang.org/x/net/context"
 )
 
@@ -105,6 +106,9 @@ type IndexLookUpJoin struct {
 	maxBatchSize int
 	curBatchSize int
 	exhausted    bool // exhausted means whether all data has been extracted.
+
+	indexRanges   []*ranger.NewRange
+	keyOff2IdxOff []int
 }
 
 // Open implements the Executor Open interface.
@@ -262,7 +266,7 @@ func (e *IndexLookUpJoin) deDuplicateRequestRows(requestRows [][]types.Datum, re
 // fetchSortedInners will join the outer rows and inner rows and store them to resultBuffer.
 func (e *IndexLookUpJoin) fetchSortedInners(requestRows [][]types.Datum) error {
 	goCtx := goctx.TODO()
-	innerExec, err := e.innerExecBuilder.buildExecutorForDatums(goCtx, requestRows)
+	innerExec, err := e.innerExecBuilder.buildExecutorForIndexJoin(goCtx, requestRows, e.indexRanges, e.keyOff2IdxOff)
 	if err != nil {
 		return errors.Trace(err)
 	}

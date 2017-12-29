@@ -52,6 +52,11 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
+		// Now we only support pushing down stream aggregation on mocktikv.
+		// TODO: Remove it after TiKV supports stream aggregation.
+		if subType == kv.ReqSubTypeStreamAgg {
+			return c.store.mock
+		}
 		return c.supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeAnalyze:
 		return true
@@ -521,7 +526,6 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask, ch chan copRespo
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copResponse) ([]*copTask, error) {
 	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
-	task.storeAddr = sender.storeAddr
 	req := &tikvrpc.Request{
 		Type: task.cmdType,
 		Cop: &coprocessor.Request{
@@ -551,6 +555,9 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Set task.storeAddr field so its task.String() method have the store address information.
+	task.storeAddr = sender.storeAddr
+
 	if task.cmdType == tikvrpc.CmdCopStream {
 		return it.handleCopStreamResult(bo, resp.CopStream, task, ch)
 	}

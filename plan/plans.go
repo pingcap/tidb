@@ -167,11 +167,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		newRanges := ranger.FullIntRange()
 		if pkCol != nil {
-			ranges, err := ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+			ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newRanges = ranger.Ranges2IntRanges(ranges)
+			newRanges = ranges
 		}
 		ts.Ranges = newRanges
 	case *PhysicalIndexReader:
@@ -200,16 +200,16 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *PhysicalIndexScan) ([]*ranger.IndexRange, error) {
+func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *PhysicalIndexScan) ([]*ranger.NewRange, error) {
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
-	newRanges := ranger.FullIndexRange()
+	newRanges := ranger.FullNewRange()
 	if len(idxCols) > 0 {
-		ranges, err := ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
+		ranges, err := ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newRanges = ranger.Ranges2IndexRanges(ranges)
+		newRanges = ranges
 	}
 	return newRanges, nil
 }
@@ -364,7 +364,7 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, pa
 	}
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().count, 'f', -1, 64))
+	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', -1, 64))
 	row := []string{p.ExplainID(), parentID, childrenInfo, taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }

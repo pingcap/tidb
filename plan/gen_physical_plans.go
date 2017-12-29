@@ -16,14 +16,20 @@ package plan
 import (
 	"math"
 
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, prop)
+	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, p.stats, prop)
 	us.SetSchema(p.schema)
 	return []PhysicalPlan{us}
 }
@@ -139,20 +145,6 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	return joins
 }
 
-func (p *LogicalJoin) getHashSemiJoin() PhysicalPlan {
-	semiJoin := PhysicalHashSemiJoin{
-		EqualConditions: p.EqualConditions,
-		LeftConditions:  p.LeftConditions,
-		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
-		rightChOffset:   p.children[0].Schema().Len(),
-		WithAux:         p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
-		Anti:            p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin,
-	}.init(p.ctx)
-	semiJoin.SetSchema(p.schema)
-	return semiJoin
-}
-
 func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() { // hash join doesn't promise any orders
 		return nil
@@ -189,34 +181,37 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan
 }
 
 // joinKeysMatchIndex checks if all keys match columns in index.
-func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
-	if len(index.Columns) < len(keys) {
+// It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]].
+func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) []int {
+	if len(indexCols) < len(keys) {
 		return nil
 	}
-	matchOffsets := make([]int, len(keys))
-	for i, idxCol := range index.Columns {
-		if idxCol.Length != types.UnspecifiedLength {
+	keyOff2IdxOff := make([]int, len(keys))
+	for keyOff, key := range keys {
+		idxOff := joinKeyMatchIndexCol(key, indexCols, colLengths)
+		if idxOff == -1 {
 			return nil
 		}
-		found := false
-		for j, key := range keys {
-			if idxCol.Name.L == key.ColName.L {
-				matchOffsets[i] = j
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil
-		}
-		if i+1 == len(keys) {
-			break
-		}
+		keyOff2IdxOff[keyOff] = idxOff
 	}
-	return matchOffsets
+	return keyOff2IdxOff
 }
 
-func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
+func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column, colLengths []int) int {
+	for idxOff, idxCol := range indexCols {
+		if colLengths[idxOff] != types.UnspecifiedLength {
+			continue
+		}
+		if idxCol.ColName.L == key.ColName.L {
+			return idxOff
+		}
+	}
+	return -1
+}
+
+// When inner plan is TableReader, the last two parameter will be nil
+func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int,
+	innerPlan PhysicalPlan, ranges []*ranger.NewRange, keyOff2IdxOff []int) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
@@ -235,6 +230,8 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
+		KeyOff2IdxOff:   keyOff2IdxOff,
+		Ranges:          ranges,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
 	if !prop.isEmpty() {
@@ -243,14 +240,13 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 	return []PhysicalPlan{join}
 }
 
-// getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
-// because we will swap the children of join when the right child is outer child.
-// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or PK
-// column of inner child, we can apply the index join.
+// getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
+// First of all, we'll check whether the inner child is DataSource.
+// Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
+// or match some part of on index. If so we will choose the best one and construct a index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) []PhysicalPlan {
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
 	var (
-		usedIndexInfo *model.IndexInfo
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
 	)
@@ -271,30 +267,97 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
 			innerPlan := x.forceToTableScan()
-			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
 		}
 	}
+	var (
+		bestIndexInfo  *model.IndexInfo
+		rangesOfBest   []*ranger.NewRange
+		maxUsedCols    int
+		remainedOfBest []expression.Expression
+		keyOff2IdxOff  []int
+	)
 	for _, indexInfo := range indices {
-		matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
-		if matchedOffsets == nil {
-			continue
+		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
+		// We choose the index by the number of used columns of the range, the much the better.
+		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
+		// But obviously when the range is nil, we don't need index join.
+		if len(ranges) > 0 && len(ranges[0].LowVal) > maxUsedCols {
+			bestIndexInfo = indexInfo
+			maxUsedCols = len(ranges[0].LowVal)
+			rangesOfBest = ranges
+			remainedOfBest = remained
+			keyOff2IdxOff = tmpKeyOff2IdxOff
 		}
-		usedIndexInfo = indexInfo
-		newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
-		newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
-		for i, offset := range matchedOffsets {
-			newOuterJoinKeys[i] = outerJoinKeys[offset]
-			newInnerJoinKeys[i] = innerJoinKeys[offset]
-		}
-		outerJoinKeys = newOuterJoinKeys
-		innerJoinKeys = newInnerJoinKeys
-		break
 	}
-	if usedIndexInfo != nil {
-		innerPlan := x.forceToIndexScan(usedIndexInfo)
-		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
+	if bestIndexInfo != nil {
+		innerPlan := x.forceToIndexScan(bestIndexInfo, remainedOfBest)
+		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
 	}
 	return nil
+}
+
+// buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.
+// If this index is invalid, just return nil range.
+func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (
+	[]*ranger.NewRange, []expression.Expression, []int) {
+	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
+	if len(idxCols) == 0 {
+		return nil, nil, nil
+	}
+
+	accesses, remained, keyOff2IdxOff := p.buildAccessCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
+
+	// If there's no access condition, this index should be useless.
+	if len(accesses) == 0 {
+		return nil, nil, nil
+	}
+
+	ranges, err := ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, idxCols, colLengths, accesses)
+	if err != nil {
+		terror.Log(errors.Trace(err))
+		return nil, nil, nil
+	}
+	return ranges, remained, keyOff2IdxOff
+}
+
+func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
+	innerPlan *DataSource) (accesses, remained []expression.Expression, keyOff2IdxOff []int) {
+	// Check whether all join keys match one column from index.
+	keyOff2IdxOff = joinKeysMatchIndex(keys, idxCols, colLengths)
+	if keyOff2IdxOff == nil {
+		return nil, nil, nil
+	}
+
+	// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down and
+	// cannot calculate range either. So we only need the innerPlan.pushedDownConds and the eq conditions that we generate.
+	// TODO: There may be a selection that block the index join.
+	conds := make([]expression.Expression, 0, len(keys)+len(innerPlan.pushedDownConds))
+	eqConds := make([]expression.Expression, 0, len(keys))
+	// Construct a fake equal expression for calculating the range.
+	for _, key := range keys {
+		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
+		fakeConstant := &expression.Constant{Value: types.NewIntDatum(1), RetType: key.GetType()}
+		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
+		conds = append(conds, eqFunc)
+		eqConds = append(eqConds, eqFunc)
+	}
+
+	conds = append(conds, innerPlan.pushedDownConds...)
+	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
+	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
+	// So DetachIndexConditions won't miss the equal conditions we generate.
+	accesses, remained = ranger.DetachIndexConditions(conds, idxCols, colLengths)
+
+	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
+	// Here the last means that the corresponding index column's position is maximum.
+	for _, eqCond := range eqConds {
+		if !expression.Contains(accesses, eqCond) {
+			return nil, nil, nil
+		}
+	}
+
+	return accesses, remained, keyOff2IdxOff
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
@@ -380,9 +443,6 @@ func (p *LogicalProjection) tryToGetChildProp(prop *requiredProp) (*requiredProp
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
 		idx := p.schema.ColumnIndex(col)
-		if idx == -1 {
-			return nil, false
-		}
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
 			newCols = append(newCols, expr)
@@ -401,7 +461,8 @@ func (p *LogicalProjection) genPhysPlansByReqProp(prop *requiredProp) []Physical
 		return nil
 	}
 	proj := PhysicalProjection{
-		Exprs: p.Exprs,
+		Exprs:            p.Exprs,
+		CalculateNoDelay: p.calculateNoDelay,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
@@ -453,15 +514,8 @@ func (p *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 	if !prop.allColsFromSchema(p.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
-	var join PhysicalPlan
-	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin ||
-		p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		join = p.getHashSemiJoin()
-	} else {
-		join = p.getHashJoin(prop, 1)
-	}
 	apply := PhysicalApply{
-		PhysicalJoin:  join,
+		PhysicalJoin:  p.getHashJoin(prop, 1),
 		OuterSchema:   p.corCols,
 		rightChOffset: p.children[0].Schema().Len(),
 	}.init(p.ctx,
@@ -490,26 +544,41 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 	if len(p.groupByCols) != len(p.GroupByItems) {
 		return nil
 	}
-	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties)*2)
 	for _, cols := range p.possibleProperties {
 		_, keys := getPermutation(cols, p.groupByCols)
 		if len(keys) != len(p.groupByCols) {
 			continue
 		}
-		childProp := &requiredProp{
-			cols:        keys,
-			desc:        prop.desc,
-			expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
+		for _, tp := range wholeTaskTypes {
+			// Second read in the double can't meet the stream aggregation's require prop.
+			if tp == copDoubleReadTaskType {
+				continue
+			}
+			// Now we only support pushing down stream aggregation on mocktikv.
+			// TODO: Remove it after TiKV supports stream aggregation.
+			if tp == copSingleReadTaskType {
+				client := p.ctx.GetClient()
+				if !client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeStreamAgg) {
+					continue
+				}
+			}
+			childProp := &requiredProp{
+				taskTp:      tp,
+				cols:        keys,
+				desc:        prop.desc,
+				expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
+			}
+			if !prop.isPrefix(childProp) {
+				continue
+			}
+			agg := basePhysicalAgg{
+				GroupByItems: p.GroupByItems,
+				AggFuncs:     p.AggFuncs,
+			}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
+			agg.SetSchema(p.schema.Clone())
+			streamAggs = append(streamAggs, agg)
 		}
-		if !prop.isPrefix(childProp) {
-			continue
-		}
-		agg := basePhysicalAgg{
-			GroupByItems: p.GroupByItems,
-			AggFuncs:     p.AggFuncs,
-		}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
-		agg.SetSchema(p.schema.Clone())
-		streamAggs = append(streamAggs, agg)
 	}
 	return streamAggs
 }
@@ -575,9 +644,13 @@ func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 }
 
 func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
+	if !prop.isEmpty() {
+		return nil
+	}
 	chReqProps := make([]*requiredProp, 0, len(p.children))
 	for range p.children {
-		chReqProps = append(chReqProps, prop)
+		chReqProps = append(chReqProps, &requiredProp{expectedCnt: prop.expectedCnt})
 	}
 	ua := PhysicalUnionAll{}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	ua.SetSchema(p.schema)

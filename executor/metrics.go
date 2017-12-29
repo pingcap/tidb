@@ -254,8 +254,6 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 			pa.hasRange = true
 		}
 		pa.setIsSystemTable(x.DBName)
-	case *plan.PhysicalHashSemiJoin:
-		pa.hasJoin = true
 	case *plan.Insert:
 		if x.SelectPlan != nil {
 			pa.fromPlan(x.SelectPlan)

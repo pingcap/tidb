@@ -72,7 +72,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
-		var newArgList []expression.Expression
+		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
 		for _, arg := range aggFunc.Args {
 			newArg, np, err := b.rewrite(arg, p, nil, true)
 			if err != nil {
@@ -587,64 +587,10 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
-	schema4Union := u.schema
-	for childID, child := range u.children {
-		exprs := make([]expression.Expression, len(child.Schema().Columns))
-		needProjection := false
-		for i, srcCol := range child.Schema().Columns {
-			dstType := schema4Union.Columns[i].RetType
-			srcType := srcCol.RetType
-			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
-				needProjection = true
-			} else {
-				exprs[i] = srcCol.Clone()
-			}
-		}
-		if needProjection {
-			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
-			proj.schema = schema4Union.Clone()
-			for _, col := range proj.schema.Columns {
-				col.FromID = proj.ID()
-			}
-			proj.SetChildren(u.children[childID])
-			u.children[childID] = proj
-		}
-	}
-	u.SetChildren(u.children...)
-}
+	unionSchema := u.children[0].Schema().Clone()
 
-func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := LogicalUnionAll{}.init(b.ctx)
-	u.children = make([]Plan, len(union.SelectList.Selects))
-	for i, sel := range union.SelectList.Selects {
-		u.children[i] = b.buildSelect(sel)
-		if b.err != nil {
-			return nil
-		}
-	}
-	firstSchema := u.children[0].Schema().Clone()
-	for i, sel := range u.children {
-		if firstSchema.Len() != sel.Schema().Len() {
-			b.err = errors.New("The used SELECT statements have a different number of columns")
-			return nil
-		}
-		if _, ok := sel.(*LogicalProjection); !ok {
-			b.optFlag |= flagEliminateProjection
-			proj := LogicalProjection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.ctx)
-			schema := sel.Schema().Clone()
-			for _, col := range schema.Columns {
-				col.FromID = proj.ID()
-			}
-			proj.SetSchema(schema)
-			proj.SetChildren(sel)
-			sel = proj
-			u.children[i] = proj
-		}
-	}
-
-	// infer union type
-	for i, col := range firstSchema.Columns {
+	// Infer union result types by its children's schema.
+	for i, col := range unionSchema.Columns {
 		var resultTp *types.FieldType
 		for j, child := range u.children {
 			childTp := child.Schema().Columns[i].RetType
@@ -655,13 +601,52 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			}
 		}
 		col.RetType = resultTp
+		col.DBName = model.NewCIStr("")
+	}
+	// If the types of some child don't match the types of union, we add a projection with cast function.
+	for childID, child := range u.children {
+		exprs := make([]expression.Expression, len(child.Schema().Columns))
+		needProjection := false
+		for i, srcCol := range child.Schema().Columns {
+			dstType := unionSchema.Columns[i].RetType
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				needProjection = true
+			} else {
+				exprs[i] = srcCol.Clone()
+			}
+		}
+		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
+			b.optFlag |= flagEliminateProjection
+			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
+			if childID == 0 {
+				for _, col := range unionSchema.Columns {
+					col.FromID = proj.ID()
+				}
+			}
+			proj.SetChildren(child)
+			u.children[childID] = proj
+		}
+		u.children[childID].SetSchema(unionSchema.Clone())
+	}
+	u.SetSchema(unionSchema)
+}
+
+func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
+	u := LogicalUnionAll{}.init(b.ctx)
+	u.children = make([]Plan, len(union.SelectList.Selects))
+	for i, sel := range union.SelectList.Selects {
+		u.children[i] = b.buildSelect(sel)
+		if b.err != nil {
+			return nil
+		}
+		if u.children[i].Schema().Len() != u.children[0].Schema().Len() {
+			b.err = errors.New("The used SELECT statements have a different number of columns")
+			return nil
+		}
 	}
 
-	for _, v := range firstSchema.Columns {
-		v.FromID = u.id
-		v.DBName = model.NewCIStr("")
-	}
-	u.SetSchema(firstSchema)
 	b.buildProjection4Union(u)
 	var p LogicalPlan = u
 	if union.Distinct {
@@ -1640,12 +1625,18 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		}
 	}
 	ds.SetSchema(schema)
-	if handleCol == nil {
+	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
+	// We append an extra handle column to the schema when "ds" is not a memory
+	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
+	// column is not the primary key of "ds".
+	if !isMemDB && handleCol == nil {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
 	}
-	schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+	if handleCol != nil {
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
+	}
 	// make plan as DS -> US -> Proj
 	var result LogicalPlan = ds
 	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {

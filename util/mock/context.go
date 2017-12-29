@@ -179,6 +179,9 @@ func (c *Context) GoCtx() goctx.Context {
 	return c.ctx
 }
 
+// StoreQueryFeedback stores the query feedback.
+func (c *Context) StoreQueryFeedback(_ interface{}) {}
+
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	goCtx, cancel := goctx.WithCancel(goctx.Background())

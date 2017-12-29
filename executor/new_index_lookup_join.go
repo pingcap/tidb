@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/util/ranger"
 	goctx "golang.org/x/net/context"
 )
 
@@ -56,6 +57,9 @@ type NewIndexLookUpJoin struct {
 	joinResultCursor int
 
 	resultGenerator joinResultGenerator
+
+	indexRanges   []*ranger.NewRange
+	keyOff2IdxOff []int
 }
 
 type outerCtx struct {
@@ -106,6 +110,9 @@ type innerWorker struct {
 	outerCtx    outerCtx
 	ctx         context.Context
 	executorChk *chunk.Chunk
+
+	indexRanges   []*ranger.NewRange
+	keyOff2IdxOff []int
 }
 
 // Open implements the Executor interface.
@@ -148,12 +155,19 @@ func (e *NewIndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTa
 }
 
 func (e *NewIndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
+	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
+	copiedRanges := make([]*ranger.NewRange, 0, len(e.indexRanges))
+	for _, ran := range e.indexRanges {
+		copiedRanges = append(copiedRanges, ran.Clone())
+	}
 	iw := &innerWorker{
-		innerCtx:    e.innerCtx,
-		outerCtx:    e.outerCtx,
-		taskCh:      taskCh,
-		ctx:         e.ctx,
-		executorChk: chunk.NewChunk(e.innerCtx.rowTypes),
+		innerCtx:      e.innerCtx,
+		outerCtx:      e.outerCtx,
+		taskCh:        taskCh,
+		ctx:           e.ctx,
+		executorChk:   chunk.NewChunk(e.innerCtx.rowTypes),
+		indexRanges:   copiedRanges,
+		keyOff2IdxOff: e.keyOff2IdxOff,
 	}
 	return iw
 }
@@ -222,7 +236,7 @@ func (e *NewIndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
 			e.lookUpMatchedInners(task, task.cursor)
 			outerRow := task.outerResult.GetRow(task.cursor)
 			task.cursor++
-			err = e.resultGenerator.emitToChunk(outerRow, task.matchedInners, e.joinResult)
+			err = e.resultGenerator.emitToChunk(outerRow, chunk.NewSliceIterator(task.matchedInners), e.joinResult)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -467,7 +481,7 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 }
 
 func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTask, dLookUpKeys [][]types.Datum) error {
-	innerExec, err := iw.readerBuilder.buildExecutorForDatums(goCtx, dLookUpKeys)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(goCtx, dLookUpKeys, iw.indexRanges, iw.keyOff2IdxOff)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -53,6 +53,8 @@ type SelectResult interface {
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch(goctx.Context)
+	// ScanCount gets the total scan row count.
+	ScanCount() int64
 }
 
 // PartialResult is the result from a single region server.
@@ -78,6 +80,8 @@ type selectResult struct {
 
 	selectResp *tipb.SelectResponse
 	respChkIdx int
+
+	scanCount int64
 }
 
 type newResultWithErr struct {
@@ -131,6 +135,11 @@ func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
 	pr := &partialResult{}
 	pr.rowLen = r.rowLen
 	err := pr.unmarshal(re.result)
+	if len(pr.resp.OutputCounts) > 0 {
+		r.scanCount += pr.resp.OutputCounts[0]
+	} else {
+		r.scanCount = -1
+	}
 	return pr, errors.Trace(err)
 }
 
@@ -177,11 +186,20 @@ func (r *selectResult) getSelectResp() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if len(r.selectResp.OutputCounts) > 0 {
+			r.scanCount += r.selectResp.OutputCounts[0]
+		} else {
+			r.scanCount = -1
+		}
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
 		return nil
 	}
+}
+
+func (r *selectResult) ScanCount() int64 {
+	return r.scanCount
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {

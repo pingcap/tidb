@@ -50,3 +50,7 @@ func (alloc *allocator) Base() int64 {
 func (alloc *allocator) End() int64 {
 	return alloc.Base() + step
 }
+
+func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
+	return alloc.End() + 1, nil
+}

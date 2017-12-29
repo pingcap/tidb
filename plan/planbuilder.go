@@ -225,20 +225,28 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 }
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
-	exprs := make([]expression.Expression, 0, len(v.Exprs))
 	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
+	dual.SetSchema(expression.NewSchema())
+
+	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		exprs = append(exprs, expr)
+		p.Exprs = append(p.Exprs, expr)
+		schema.Append(&expression.Column{
+			FromID:   p.id,
+			Position: schema.Len() + 1,
+			RetType:  expr.GetType(),
+		})
 	}
-	dual.SetSchema(expression.NewSchema())
-	p := LogicalProjection{Exprs: exprs}.init(b.ctx)
 	p.SetChildren(dual)
-	p.SetSchema(expression.NewSchema())
+	p.self = p
+	p.SetSchema(schema)
+	p.calculateNoDelay = true
 	return p
 }
 
