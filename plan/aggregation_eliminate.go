@@ -20,21 +20,21 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// aggEliminator tries to eliminate max/min aggregate function.
+// maxMinEliminator tries to eliminate max/min aggregate function.
 // For SQL like `select max(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id desc limit 1 where id is not null) t;`.
 // For SQL like `select min(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id limit 1 where id is not null) t;`.
-type aggEliminator struct {
+type maxMinEliminator struct {
 	ctx context.Context
 }
 
-func (a *aggEliminator) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
+func (a *maxMinEliminator) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
 	a.ctx = ctx
-	a.eliminateAgg(p)
+	a.eliminateMaxMin(p)
 	return p, nil
 }
 
 // Try to convert max/min to Limit+Sort operators.
-func (a *aggEliminator) eliminateAgg(p LogicalPlan) {
+func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 	// We don't need to guarantee that the child of it is a data source. This transformation won't be worse than previous.
 	if agg, ok := p.(*LogicalAggregation); ok {
 		// We only consider case with single max/min function.
@@ -78,6 +78,6 @@ func (a *aggEliminator) eliminateAgg(p LogicalPlan) {
 	}
 
 	for _, child := range p.Children() {
-		a.eliminateAgg(child.(LogicalPlan))
+		a.eliminateMaxMin(child.(LogicalPlan))
 	}
 }
