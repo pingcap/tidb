@@ -45,12 +45,9 @@ func (r *streamResult) Fetch(goctx.Context) {}
 func (r *streamResult) Next(goctx.Context) (PartialResult, error) {
 	var ret streamPartialResult
 	ret.rowLen = r.rowLen
-	finish, err := r.readDataFromResponse(r.resp, &ret.Chunk)
-	if err != nil {
+	finished, err := r.readDataFromResponse(r.resp, &ret.Chunk)
+	if err != nil || finished {
 		return nil, errors.Trace(err)
-	}
-	if finish {
-		return nil, nil
 	}
 	return &ret, nil
 }
@@ -58,7 +55,7 @@ func (r *streamResult) Next(goctx.Context) (PartialResult, error) {
 func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
-		err := r.takeData()
+		err := r.readDataIfNecessary()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -105,8 +102,8 @@ func (r *streamResult) readDataFromResponse(resp kv.Response, result *tipb.Chunk
 	return false, nil
 }
 
-// takeData ensures there're data is in current chunk. If no more data, return false.
-func (r *streamResult) takeData() error {
+// readDataIfNecessary ensures there are some data in current chunk. If no more data, r.curr == nil.
+func (r *streamResult) readDataIfNecessary() error {
 	if r.curr != nil && len(r.curr.RowsData) > 0 {
 		return nil
 	}
@@ -136,9 +133,10 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 			}
 		}
 	}
-	r.curr.RowsData = remainRowsData
 	if len(remainRowsData) == 0 {
 		r.curr = nil // Current chunk is finished.
+	} else {
+		r.curr.RowsData = remainRowsData
 	}
 	return nil
 }
