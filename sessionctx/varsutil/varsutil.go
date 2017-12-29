@@ -38,7 +38,6 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	s.Systems[key] = gVal
 	return gVal, nil
 }
 

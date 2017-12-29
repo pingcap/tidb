@@ -77,7 +77,7 @@ func (c *Context) GetClient() kv.Client {
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
-func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+func (c *Context) GetGlobalSysVar(name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
 		return "", variable.UnknownSystemVar.GenByArgs(name)
@@ -86,7 +86,7 @@ func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, err
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor SetGlobalSysVar interface.
-func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
+func (c *Context) SetGlobalSysVar(name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
 		return variable.UnknownSystemVar.GenByArgs(name)
@@ -164,6 +164,11 @@ func (c *Context) GetSessionManager() util.SessionManager {
 	return c.sm
 }
 
+// GetAllSysVars implements the GlobalVarsAccessor interface.
+func (c *Context) GetAllSysVars() (map[string]string, error) {
+	return make(map[string]string), nil
+}
+
 // SetSessionManager set the session manager.
 func (c *Context) SetSessionManager(sm util.SessionManager) {
 	c.sm = sm
@@ -172,11 +177,6 @@ func (c *Context) SetSessionManager(sm util.SessionManager) {
 // Cancel implements the Session interface.
 func (c *Context) Cancel() {
 	c.cancel()
-}
-
-// GoCtx returns standard context.Context that bind with current transaction.
-func (c *Context) GoCtx() goctx.Context {
-	return c.ctx
 }
 
 // StoreQueryFeedback stores the query feedback.
@@ -192,5 +192,6 @@ func NewContext() *Context {
 		cancel:      cancel,
 	}
 	ctx.sessionVars.MaxChunkSize = 2
+	ctx.sessionVars.GlobalVarsAccessor = ctx
 	return ctx
 }

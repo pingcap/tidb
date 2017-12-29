@@ -381,6 +381,7 @@ func mockContext() context.Context {
 		client: &mockClient{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
+	ctx.GetSessionVars().GlobalVarsAccessor = ctx
 	do := &domain.Domain{}
 	do.CreateStatsHandle(ctx)
 	domain.BindDomain(ctx, do)
@@ -1626,4 +1627,19 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 			c.Assert(err.Error(), Equals, t.err)
 		}
 	}
+}
+
+func (s *testPlanSuite) TestNoSideEffectInBuild(c *C) {
+	// This test covers a silly bug that build plan changes session variable value.
+	stmt, err := s.ParseOneStmt("select @@session.time_zone", "", "")
+	c.Assert(err, IsNil)
+
+	_, ok := s.ctx.GetSessionVars().Systems["time_zone"]
+	c.Assert(ok, IsFalse)
+
+	_, err = BuildLogicalPlan(s.ctx, stmt, s.is)
+	c.Assert(err, IsNil)
+
+	_, ok = s.ctx.GetSessionVars().Systems["time_zone"]
+	c.Assert(ok, IsFalse)
 }
