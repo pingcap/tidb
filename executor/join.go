@@ -20,6 +20,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/tablecodec"
@@ -58,6 +59,8 @@ type HashJoinExec struct {
 	joinType        plan.JoinType
 	innerIdx        int
 
+	// We build individual resultGenerator for each join worker when use chunk-based execution,
+	// to avoid the concurrency of joinResultGenerator.chk and joinResultGenerator.selected.
 	resultGenerators []joinResultGenerator
 
 	resultBufferCh chan *execResult // Channels for output.
@@ -65,8 +68,8 @@ type HashJoinExec struct {
 	resultCursor   int
 
 	innerResult        *chunk.List
-	outerChkResourceCh chan *chunk.Chunk
-	outerResultChs     []chan *execWorkerResult
+	outerChkResourceCh chan *execWorkerResult
+	outerResultChs     []chan *chunk.Chunk
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *execWorkerResult
 }
@@ -270,29 +273,35 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 		}
 		e.workerWaitGroup.Done()
 	}()
-	for i := 0; ; i = (i + 1) % e.concurrency {
+	for {
 		if e.finished.Load().(bool) {
 			return
 		}
-		outerResult := &execWorkerResult{
-			src: e.outerChkResourceCh,
-		}
-
+		var outerResource *execWorkerResult
+		log.Warning("into fetch")
 		select {
 		case <-e.closeCh:
 			return
-		case outerResult.chk = <-e.outerChkResourceCh:
+		case outerResource = <-e.outerChkResourceCh:
 		}
-		err := e.outerExec.NextChunk(goCtx, outerResult.chk)
-		outerResult.err = errors.Trace(err)
-		if outerResult.err == nil && outerResult.chk.NumRows() == 0 {
+		log.Warning("outer fetch")
+		if outerResource.err != nil {
 			return
 		}
-		e.outerResultChs[i] <- outerResult
-		if outerResult.err != nil {
+		outerResult := outerResource.chk
+		err := e.outerExec.NextChunk(goCtx, outerResult)
+		if err == nil && outerResult.NumRows() == 0 {
+			return
+		}
+		if err != nil {
 			e.finished.Store(true)
+			e.joinResultCh <- &execWorkerResult{
+				err: errors.Trace(err),
+			}
 			return
 		}
+		log.Warning("write to outer src")
+		outerResource.src <- outerResult
 	}
 }
 
@@ -326,14 +335,17 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 }
 
 func (e *HashJoinExec) initializeForProbe() {
-	e.outerChkResourceCh = make(chan *chunk.Chunk, e.concurrency)
+	e.outerResultChs = make([]chan *chunk.Chunk, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.outerChkResourceCh <- e.outerExec.newChunk()
+		e.outerResultChs[i] = make(chan *chunk.Chunk, 1)
 	}
 
-	e.outerResultChs = make([]chan *execWorkerResult, e.concurrency)
+	e.outerChkResourceCh = make(chan *execWorkerResult, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.outerResultChs[i] = make(chan *execWorkerResult, e.concurrency)
+		e.outerChkResourceCh <- &execWorkerResult{
+			chk: e.outerExec.newChunk(),
+			src: e.outerResultChs[i],
+		}
 	}
 
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
@@ -534,8 +546,9 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 		e.workerWaitGroup.Done()
 	}()
 	var (
-		outerResult, joinResult *execWorkerResult
-		selected                = make([]bool, 0, chunk.InitialCapacity)
+		outerResult *chunk.Chunk
+		joinResult  *execWorkerResult
+		selected    = make([]bool, 0, chunk.InitialCapacity)
 	)
 	joinResult = &execWorkerResult{
 		src: e.joinChkResourceCh[workerID],
@@ -546,24 +559,25 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 		if e.finished.Load().(bool) {
 			break
 		}
+		log.Warning("before")
 		select {
 		case <-e.closeCh:
 			return
 		case outerResult, ok = <-e.outerResultChs[workerID]:
 		}
+		log.Warning("after")
 		if !ok {
 			break
 		}
-		if outerResult.err != nil {
-			joinResult.err = errors.Trace(outerResult.err)
-			break
-		}
-		ok, joinResult = e.join2Chunk(workerID, outerResult.chk, joinResult, selected)
+		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResult, selected)
 		if !ok {
 			break
 		}
-		outerResult.chk.Reset()
-		e.outerChkResourceCh <- outerResult.chk
+		outerResult.Reset()
+		e.outerChkResourceCh <- &execWorkerResult{
+			chk: outerResult,
+			src: e.outerResultChs[workerID],
+		}
 	}
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		e.joinResultCh <- joinResult
