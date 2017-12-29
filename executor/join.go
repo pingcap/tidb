@@ -20,7 +20,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/tablecodec"
@@ -278,13 +277,11 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 			return
 		}
 		var outerResource *execWorkerResult
-		log.Warning("into fetch")
 		select {
 		case <-e.closeCh:
 			return
 		case outerResource = <-e.outerChkResourceCh:
 		}
-		log.Warning("outer fetch")
 		if outerResource.err != nil {
 			return
 		}
@@ -300,7 +297,6 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 			}
 			return
 		}
-		log.Warning("write to outer src")
 		outerResource.src <- outerResult
 	}
 }
@@ -559,13 +555,11 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 		if e.finished.Load().(bool) {
 			break
 		}
-		log.Warning("before")
 		select {
 		case <-e.closeCh:
 			return
 		case outerResult, ok = <-e.outerResultChs[workerID]:
 		}
-		log.Warning("after")
 		if !ok {
 			break
 		}
