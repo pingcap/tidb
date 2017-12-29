@@ -68,7 +68,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	if ddlInfo.Job != nil {
 		m[ddlJobID] = ddlInfo.Job.ID
 		m[ddlJobAction] = ddlInfo.Job.Type.String()
-		m[ddlJobStartTS] = ddlInfo.Job.StartTS / 1e9
+		m[ddlJobStartTS] = ddlInfo.Job.StartTS / 1e9 // unit: second
 		m[ddlJobState] = ddlInfo.Job.State.String()
 		m[ddlJobRows] = ddlInfo.Job.RowCount
 		if ddlInfo.Job.Error == nil {

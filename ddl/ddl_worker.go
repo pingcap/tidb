@@ -124,7 +124,7 @@ func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) erro
 
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
-func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64) error {
+func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job) error {
 	err := t.UpdateDDLJob(0, job)
 	return errors.Trace(err)
 }
@@ -216,7 +216,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
-			err = d.updateDDLJob(t, job, txn.StartTS())
+			err = d.updateDDLJob(t, job)
 			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
