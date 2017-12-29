@@ -602,6 +602,11 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 			best: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}->Projection",
 		},
 		{
+			// Test MaxOneRow for limit.
+			sql:  "select (select * from (select b from t limit 1) x where x.b = t1.b) from t t1",
+			best: "Join{DataScan(t1)->DataScan(t)->Projection->Limit}(t1.b,x.b)->Projection->Projection",
+		},
+		{
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
 			best: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
