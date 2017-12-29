@@ -571,9 +571,10 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
-		defaultValues = make([]types.Datum, rightExec.Schema().Len())
 		if v.JoinType == plan.RightOuterJoin {
 			defaultValues = make([]types.Datum, leftExec.Schema().Len())
+		} else {
+			defaultValues = make([]types.Datum, rightExec.Schema().Len())
 		}
 	}
 	lhsColTypes := leftExec.Schema().GetTypes()
@@ -648,9 +649,9 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
 	}
-	e.resultGenerator = make([]joinResultGenerator, e.concurrency)
+	e.resultGenerators = make([]joinResultGenerator, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.resultGenerator[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
+		e.resultGenerators[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	e.supportChk = true
