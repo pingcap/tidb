@@ -166,7 +166,9 @@ type StreamAggExec struct {
 	tmpGroupKey  []types.Datum
 
 	// for chunk execution.
-	childCursor int
+	inputRow   chunk.Row
+	mutableRow chunk.MutRow
+	rowBuffer  []types.Datum
 }
 
 // Open implements the Executor Open interface.
@@ -174,12 +176,18 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
+
 	e.executed = false
 	e.hasData = false
+	e.inputRow = e.childrenResults[0].End()
+	e.mutableRow = chunk.MutRowFromTypes(e.Schema().GetTypes())
+	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
+
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 	for _, agg := range e.AggFuncs {
 		e.aggCtxs = append(e.aggCtxs, agg.CreateContext())
 	}
+
 	return nil
 }
 
@@ -235,71 +243,83 @@ func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
-	if e.executed {
-		return nil
-	}
-
-	mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
-	retRow := make([]types.Datum, 0, e.Schema().Len())
-
-	for {
-		if e.childCursor < e.childrenResults[0].NumRows() {
-			for row := e.childrenResults[0].GetRow(e.childCursor); row != e.childrenResults[0].End(); row = row.Next() {
-				meetNewGroup, err := e.meetNewGroup(row)
-				if err != nil {
-					e.executed = true
-					return errors.Trace(err)
-				}
-				if meetNewGroup {
-					e.appendResult2Chunk(chk, retRow, mutableRow)
-				}
-				for i, af := range e.AggFuncs {
-					err := af.Update(e.aggCtxs[i], e.StmtCtx, row)
-					if err != nil {
-						e.executed = true
-						return errors.Trace(err)
-					}
-				}
-				if meetNewGroup && chk.NumRows() >= e.maxChunkSize {
-					e.childCursor = row.Idx() + 1
-					return nil
-				}
-			}
-		}
-
-		// Get resource rows from child.
-		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+	for !e.executed && chk.NumRows() < e.maxChunkSize {
+		err := e.consumeOneGroup(goCtx, chk)
 		if err != nil {
 			e.executed = true
 			return errors.Trace(err)
 		}
-		e.childCursor = 0
-
-		// No more data.
-		if e.childrenResults[0].NumRows() == 0 {
-			e.executed = true
-			if e.hasData || len(e.GroupByItems) == 0 {
-				e.appendResult2Chunk(chk, retRow, mutableRow)
-			}
-			return nil
-		}
-		e.hasData = true
 	}
+	return nil
+}
+
+func (e *StreamAggExec) consumeOneGroup(goCtx goctx.Context, chk *chunk.Chunk) error {
+	for !e.executed {
+		if err := e.fetchChildIfNecessary(goCtx, chk); err != nil {
+			return errors.Trace(err)
+		}
+		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+			meetNewGroup, err := e.meetNewGroup(e.inputRow)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if meetNewGroup {
+				e.appendResult2Chunk(chk)
+			}
+			for i, af := range e.AggFuncs {
+				err := af.Update(e.aggCtxs[i], e.StmtCtx, e.inputRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			if meetNewGroup {
+				e.inputRow = e.inputRow.Next()
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func (e *StreamAggExec) fetchChildIfNecessary(goCtx goctx.Context, chk *chunk.Chunk) error {
+	if e.inputRow != e.childrenResults[0].End() {
+		return nil
+	}
+
+	err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	e.inputRow = e.childrenResults[0].Begin()
+
+	// No more data.
+	if e.childrenResults[0].NumRows() == 0 {
+		if e.hasData || len(e.GroupByItems) == 0 {
+			e.appendResult2Chunk(chk)
+		}
+		e.executed = true
+		return nil
+	}
+
+	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
+	e.hasData = true
+	return nil
 }
 
 // appendResult2Chunk appends result of all the aggregation functions to the
 // result chunk, and realloc the evaluation context for each aggregation.
-func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk, buffer []types.Datum, mutableRow chunk.MutRow) {
-	buffer = buffer[:0]
+func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
+	e.rowBuffer = e.rowBuffer[:0]
 	for i, af := range e.AggFuncs {
-		buffer = append(buffer, af.GetResult(e.aggCtxs[i]))
+		e.rowBuffer = append(e.rowBuffer, af.GetResult(e.aggCtxs[i]))
 		e.aggCtxs[i] = af.CreateContext()
 	}
-	mutableRow.SetDatums(buffer...)
+	e.mutableRow.SetDatums(e.rowBuffer...)
 	if chk.NumCols() == 0 {
 		chk.SetNumVirtualRows(chk.NumRows() + 1)
 	} else {
-		chk.AppendRow(0, mutableRow.ToRow())
+		chk.AppendRow(0, e.mutableRow.ToRow())
 	}
 }
 
