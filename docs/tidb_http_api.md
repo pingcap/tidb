@@ -44,7 +44,7 @@
     curl http://{TiDBIP}:10080/schema/{db}
     ```
 
-1. Get schema Information about db.table, and you can get schema info by tableID
+1. Get schema Information about db.table, and you can get schema info by tableID (tableID is the **unique** identifier of table in TiDB)
 
     ```shell
     curl http://{TiDBIP}:10080/schema/{db}/{table}
