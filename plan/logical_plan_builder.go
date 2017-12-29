@@ -70,6 +70,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	// So we add the flagAggEliminate to try to convert max/min to topn and flagPushDownTopN to handle the newly added topn operator.
 	b.optFlag = b.optFlag | flagAggEliminate
 	b.optFlag = b.optFlag | flagPushDownTopN
+	b.optFlag = b.optFlag | flagPredicatePushDown
 
 	agg := LogicalAggregation{AggFuncs: make([]aggregation.Aggregation, 0, len(aggFuncList))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)

@@ -45,18 +45,13 @@ func (a *aggEliminator) eliminateAgg(p LogicalPlan) {
 		if f.GetName() != ast.AggFuncMax && f.GetName() != ast.AggFuncMin {
 			return
 		}
-		// e.g. select min(-a) from t. We cannot rewrite it easily.
-		if _, ok := f.GetArgs()[0].(*expression.Column); !ok {
-			return
-		}
 
 		child := p.Children()[0]
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.GetArgs()[0].GetType().Flag) {
 			sel := LogicalSelection{}.init(a.ctx)
 			sel.SetSchema(p.Children()[0].Schema().Clone())
-			colIdx := sel.schema.ColumnIndex(f.GetArgs()[0].(*expression.Column))
-			isNullFunc := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), sel.schema.Columns[colIdx])
+			isNullFunc := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.GetArgs()[0])
 			notNullFunc := expression.NewFunctionInternal(a.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
 			sel.SetChildren(p.Children()[0])
