@@ -830,8 +830,10 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 			tbInfo.Collate = op.StrValue
 		case ast.TableOptionShardRowID:
 			if !hasAutoIncrementColumn(tbInfo) {
-				//tbInfo.ShardRowID = op.UintValue != 0
-				tbInfo.ShardRowID = true
+				tbInfo.ShardRowIDBits = op.UintValue
+				if tbInfo.ShardRowIDBits > 15 {
+					tbInfo.ShardRowIDBits = 15
+				}
 			}
 		}
 	}
@@ -904,6 +906,9 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			for _, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
+					if opt.UintValue > 15 {
+						opt.UintValue = 15
+					}
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))

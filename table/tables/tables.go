@@ -702,8 +702,8 @@ func (t *Table) AllocAutoID(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if t.meta.ShardRowID {
-		rowID |= (rowID & 0x7fff) << 48
+	if t.meta.ShardRowIDBits > 0 {
+		rowID |= (rowID & (1<<t.meta.ShardRowIDBits - 1)) << (64 - t.meta.ShardRowIDBits - 1)
 	}
 	return rowID, nil
 }

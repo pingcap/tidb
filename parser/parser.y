@@ -181,7 +181,7 @@ import (
 	precisionType		"PRECISION"
 	primary			"PRIMARY"
 	procedure		"PROCEDURE"
-	shardRowID		"SHARD_ROW_ID"
+	shardRowIDBits		"SHARD_ROW_ID_BITS"
 	rangeKwd		"RANGE"
 	read			"READ"
 	realType		"REAL"
@@ -5273,7 +5273,7 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
 	}
-|	"SHARD_ROW_ID" EqOpt LengthNum
+|	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionShardRowID, UintValue: $3.(uint64)}
 	}

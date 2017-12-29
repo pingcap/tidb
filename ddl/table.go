@@ -260,8 +260,8 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 }
 
 func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var shardRowIDOn uint64
-	err := job.DecodeArgs(&shardRowIDOn)
+	var shardRowIDBits uint64
+	err := job.DecodeArgs(&shardRowIDBits)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -271,7 +271,7 @@ func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo.ShardRowID = shardRowIDOn != 0
+	tblInfo.ShardRowIDBits = shardRowIDBits
 	job.State = model.JobStateDone
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	ver, err = updateTableInfo(t, job, tblInfo, tblInfo.State)
