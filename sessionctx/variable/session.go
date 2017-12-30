@@ -87,6 +87,7 @@ type TransactionContext struct {
 	Histroy       interface{}
 	SchemaVersion int64
 	StartTS       uint64
+	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 }
 

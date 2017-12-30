@@ -19,6 +19,7 @@ package tables
 
 import (
 	"math"
+	"math/rand"
 	"strings"
 
 	"github.com/juju/errors"
@@ -703,7 +704,12 @@ func (t *Table) AllocAutoID(ctx context.Context) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 	if t.meta.ShardRowIDBits > 0 {
-		rowID |= (rowID & (1<<t.meta.ShardRowIDBits - 1)) << (64 - t.meta.ShardRowIDBits - 1)
+		txnCtx := ctx.GetSessionVars().TxnCtx
+		if txnCtx.Shard == nil {
+			shard := (rand.Int63() & (1<<t.meta.ShardRowIDBits - 1)) << (64 - t.meta.ShardRowIDBits - 1)
+			txnCtx.Shard = &shard
+		}
+		rowID |= *txnCtx.Shard
 	}
 	return rowID, nil
 }
