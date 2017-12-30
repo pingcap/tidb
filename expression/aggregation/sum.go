@@ -81,12 +81,15 @@ func (sf *sumFunction) CalculateDefaultValue(schema *expression.Schema, ctx cont
 // GetType implements Aggregation interface.
 func (sf *sumFunction) GetType() *types.FieldType {
 	var ft *types.FieldType
-	if types.IsTypeFloat(sf.Args[0].GetType().Tp) {
-		ft = types.NewFieldType(mysql.TypeDouble)
-	} else {
+	// For child returns integer or decimal type, "sum" should returns a "decimal",
+	// otherwise it returns a "double".
+	switch sf.Args[0].GetType().Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
 		ft = types.NewFieldType(mysql.TypeNewDecimal)
+	default:
+		ft = types.NewFieldType(mysql.TypeDouble)
 	}
-	types.SetBinChsClnFlag(ft)
 	ft.Flen, ft.Decimal = mysql.MaxRealWidth, sf.Args[0].GetType().Decimal
+	types.SetBinChsClnFlag(ft)
 	return ft
 }

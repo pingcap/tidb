@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	goctx "golang.org/x/net/context"
 )
@@ -53,7 +54,7 @@ func (m *MockExec) Open(goCtx goctx.Context) error {
 func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	goCtx := goctx.Background()
 	ctx := mock.NewContext()
-	bigExec := &MockExec{
+	outerExec := &MockExec{
 		baseExecutor: newBaseExecutor(nil, ctx),
 		Rows: []Row{
 			types.MakeDatums(1),
@@ -63,7 +64,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 			types.MakeDatums(5),
 			types.MakeDatums(6),
 		}}
-	smallExec := &MockExec{Rows: []Row{
+	innerExec := &MockExec{Rows: []Row{
 		types.MakeDatums(1),
 		types.MakeDatums(2),
 		types.MakeDatums(3),
@@ -74,19 +75,21 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
 	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
-	bigFilter := expression.NewFunctionInternal(ctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
-	smallFilter := bigFilter.Clone()
+	outerFilter := expression.NewFunctionInternal(ctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
+	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	generator := newJoinResultGenerator(ctx, plan.InnerJoin, false,
-		make([]types.Datum, smallExec.Schema().Len()), []expression.Expression{otherFilter}, nil, nil)
+		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, nil, nil)
 	join := &NestedLoopApplyExec{
 		baseExecutor:    newBaseExecutor(nil, ctx),
-		BigExec:         bigExec,
-		SmallExec:       smallExec,
-		BigFilter:       []expression.Expression{bigFilter},
-		SmallFilter:     []expression.Expression{smallFilter},
+		outerExec:       outerExec,
+		innerExec:       innerExec,
+		outerFilter:     []expression.Expression{outerFilter},
+		innerFilter:     []expression.Expression{innerFilter},
 		resultGenerator: generator,
 	}
+	join.innerList = chunk.NewList(innerExec.Schema().GetTypes(), innerExec.maxChunkSize)
+	join.innerChunk = innerExec.newChunk()
 	row, err := join.Next(goCtx)
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)

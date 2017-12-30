@@ -38,10 +38,10 @@ func (af *avgFunction) Clone() Aggregation {
 // GetType implements Aggregation interface.
 func (af *avgFunction) GetType() *types.FieldType {
 	var ft *types.FieldType
-	if types.IsTypeFloat(af.Args[0].GetType().Tp) {
-		ft = types.NewFieldType(mysql.TypeDouble)
-		ft.Decimal = af.Args[0].GetType().Decimal
-	} else {
+	switch af.Args[0].GetType().Tp {
+	// For child returns integer or decimal type, "avg" should returns a "decimal",
+	// otherwise it returns a "double".
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
 		ft = types.NewFieldType(mysql.TypeNewDecimal)
 		if af.GetMode() == FinalMode {
 			ft.Decimal = af.Args[1].GetType().Decimal
@@ -52,6 +52,9 @@ func (af *avgFunction) GetType() *types.FieldType {
 			}
 			ft.Decimal += types.DivFracIncr
 		}
+	default:
+		ft = types.NewFieldType(mysql.TypeDouble)
+		ft.Decimal = af.Args[0].GetType().Decimal
 	}
 	ft.Flen = mysql.MaxRealWidth
 	types.SetBinChsClnFlag(ft)

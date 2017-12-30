@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -463,6 +464,7 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
@@ -477,7 +479,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		b.err = us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows()
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -491,7 +493,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		b.err = us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows()
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -505,14 +507,16 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		b.err = us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows()
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return src
 	}
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
+	us.supportChk = true
 	return us
 }
 
@@ -810,23 +814,29 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
 	}
 	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-		defaultValues, otherConditions, nil, nil)
-	bigExec, smallExec := leftChild, rightChild
-	bigFilter, smallFilter := v.LeftConditions, v.RightConditions
+		defaultValues, otherConditions, leftChild.Schema().GetTypes(), rightChild.Schema().GetTypes())
+	outerExec, innerExec := leftChild, rightChild
+	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.SmallChildIdx == 0 {
-		bigExec, smallExec = rightChild, leftChild
-		bigFilter, smallFilter = v.RightConditions, v.LeftConditions
+		outerExec, innerExec = rightChild, leftChild
+		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
-	return &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx),
-		SmallExec:       smallExec,
-		BigExec:         bigExec,
-		BigFilter:       bigFilter,
-		SmallFilter:     smallFilter,
+	e := &NestedLoopApplyExec{
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, outerExec, innerExec),
+		innerExec:       innerExec,
+		outerExec:       outerExec,
+		outerFilter:     outerFilter,
+		innerFilter:     innerFilter,
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
+		outerChunk:      outerExec.newChunk(),
+		innerChunk:      innerExec.newChunk(),
+		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
+	e.innerList = chunk.NewList(innerExec.Schema().GetTypes(), e.maxChunkSize)
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
@@ -1275,7 +1285,7 @@ type dataReaderBuilder struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context, datums [][]types.Datum,
-	IndexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	IndexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(goCtx, v, datums)
@@ -1321,7 +1331,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexReader,
-	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1335,7 +1345,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Conte
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader,
-	values [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1349,7 +1359,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.IndexRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
+func buildKvRangesForIndexJoin(tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
 	for _, val := range keyDatums {
 		for _, ran := range indexRanges {
