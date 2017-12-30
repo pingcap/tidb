@@ -25,6 +25,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -192,19 +193,23 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 }
 
 // NumberToDuration converts number to Duration.
-func NumberToDuration(number int64, fsp int) (t Time, err error) {
+func NumberToDuration(number int64, fsp int) (Duration, error) {
 	if number > TimeMaxValue {
 		// Try to parse DATETIME.
 		if number >= 10000000000 { // '2001-00-00 00-00-00'
-			if t, err = ParseDatetimeFromNum(nil, number); err == nil {
-				return t, nil
+			if t, err := ParseDatetimeFromNum(nil, number); err == nil {
+				dur, err1 := t.ConvertToDuration()
+				return dur, errors.Trace(err1)
 			}
 		}
-		t = MaxMySQLTime(false, fsp)
-		return t, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
+		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
+		terror.Log(err1)
+		return dur, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
 	} else if number < -TimeMaxValue {
-		t = MaxMySQLTime(true, fsp)
-		return t, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
+		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
+		terror.Log(err1)
+		dur.Duration = -dur.Duration
+		return dur, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
 	}
 	var neg bool
 	if neg = number < 0; neg {
@@ -212,11 +217,17 @@ func NumberToDuration(number int64, fsp int) (t Time, err error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroTimestamp, ErrInvalidTimeFormat
+		return ZeroDuration, ErrInvalidTimeFormat
 	}
-	t = Time{Time: newMysqlTime(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp, Negative: neg}
-
-	return t, errors.Trace(err)
+	t := Time{Time: newMysqlTime(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
+	dur, err := t.ConvertToDuration()
+	if err != nil {
+		return ZeroDuration, errors.Trace(err)
+	}
+	if neg {
+		dur.Duration = -dur.Duration
+	}
+	return dur, nil
 }
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.

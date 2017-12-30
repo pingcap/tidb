@@ -183,12 +183,11 @@ type Time struct {
 	// TODO: Define a type for timestamp, remove its representation from here.
 	// TimeZone is valid when Type is mysql.Timestamp, it's meaningless for date/datetime.
 	TimeZone *gotime.Location
-	Negative bool
 }
 
 // MaxMySQLTime returns Time with maximum mysql time type.
-func MaxMySQLTime(neg bool, fsp int) Time {
-	return Time{Time: newMysqlTime(0, 0, 0, TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0), Type: mysql.TypeDuration, Fsp: fsp, Negative: neg}
+func MaxMySQLTime(fsp int) Time {
+	return Time{Time: newMysqlTime(0, 0, 0, TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0), Type: mysql.TypeDuration, Fsp: fsp}
 }
 
 // CurrentTime returns current time with type tp.
@@ -209,11 +208,6 @@ func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
 	}
 	t.TimeZone = to
 	return nil
-}
-
-// IsNegative returns a boolean to indicate whether the Time is negative.
-func (t *Time) IsNegative() bool {
-	return t.Negative
 }
 
 func (t Time) String() string {
@@ -307,9 +301,6 @@ func (t Time) ConvertToDuration() (Duration, error) {
 	frac := t.Time.Microsecond() * 1000
 
 	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
-	if t.Negative {
-		return Duration{Duration: -d, Fsp: t.Fsp}, nil
-	}
 	// TODO: check convert validation
 	return Duration{Duration: d, Fsp: t.Fsp}, nil
 }
