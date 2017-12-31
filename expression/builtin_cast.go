@@ -536,16 +536,14 @@ func (b *builtinCastIntAsDurationSig) evalDuration(row types.Row) (res types.Dur
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	t, err := types.NumberToDuration(val, b.tp.Decimal)
+	dur, err := types.NumberToDuration(val, b.tp.Decimal)
 	if err != nil {
 		if types.ErrOverflow.Equal(err) {
 			err = sc.HandleOverflow(err, err)
 		}
 		return res, true, errors.Trace(err)
 	}
-
-	res, err = t.ConvertToDuration()
-	return res, false, errors.Trace(err)
+	return dur, false, errors.Trace(err)
 }
 
 type builtinCastIntAsJSONSig struct {
