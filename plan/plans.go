@@ -167,11 +167,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		newRanges := ranger.FullIntRange()
 		if pkCol != nil {
-			ranges, err := ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+			ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newRanges = ranger.Ranges2IntRanges(ranges)
+			newRanges = ranges
 		}
 		ts.Ranges = newRanges
 	case *PhysicalIndexReader:
@@ -205,11 +205,11 @@ func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *Physi
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
 	newRanges := ranger.FullNewRange()
 	if len(idxCols) > 0 {
-		ranges, err := ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
+		ranges, err := ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newRanges = ranger.Ranges2NewRanges(ranges)
+		newRanges = ranges
 	}
 	return newRanges, nil
 }

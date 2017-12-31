@@ -300,7 +300,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 // buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.
 // If this index is invalid, just return nil range.
 func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (
-	indexRanges []*ranger.NewRange, remained []expression.Expression, keyOff2IdxOff []int) {
+	[]*ranger.NewRange, []expression.Expression, []int) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
 	if len(idxCols) == 0 {
 		return nil, nil, nil
@@ -313,13 +313,12 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
+	ranges, err := ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, idxCols, colLengths, accesses)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
 	}
-	indexRanges = ranger.Ranges2NewRanges(ranges)
-	return indexRanges, remained, keyOff2IdxOff
+	return ranges, remained, keyOff2IdxOff
 }
 
 func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
