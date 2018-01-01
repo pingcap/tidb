@@ -825,35 +825,28 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 	}
 
 	for _, tc := range testCases {
-		t, err := NumberToDuration(tc.number, tc.fsp)
+		dur, err := NumberToDuration(tc.number, tc.fsp)
 		if tc.hasErr {
 			c.Assert(err, NotNil)
 			continue
 		}
 		c.Assert(err, IsNil)
-		c.Assert(t.Time.Year(), Equals, tc.year)
-		c.Assert(t.Time.Month(), Equals, tc.month)
-		c.Assert(t.Time.Day(), Equals, tc.day)
-		c.Assert(t.Time.Hour(), Equals, tc.hour)
-		c.Assert(t.Time.Minute(), Equals, tc.minute)
-		c.Assert(t.Time.Second(), Equals, tc.second)
+		c.Assert(dur.Hour(), Equals, tc.hour)
+		c.Assert(dur.Minute(), Equals, tc.minute)
+		c.Assert(dur.Second(), Equals, tc.second)
 	}
 
 	var testCases1 = []struct {
 		number int64
-		neg    bool
 		dur    time.Duration
 	}{
-		{171222, false, 17*time.Hour + 12*time.Minute + 22*time.Second},
-		{-171222, true, -(17*time.Hour + 12*time.Minute + 22*time.Second)},
+		{171222, 17*time.Hour + 12*time.Minute + 22*time.Second},
+		{-171222, -(17*time.Hour + 12*time.Minute + 22*time.Second)},
 	}
 
 	for _, tc := range testCases1 {
-		t, err := NumberToDuration(tc.number, 0)
+		dur, err := NumberToDuration(tc.number, 0)
 		c.Assert(err, IsNil)
-		c.Assert(t.IsNegative(), Equals, tc.neg)
-		d, err1 := t.ConvertToDuration()
-		c.Assert(err1, IsNil)
-		c.Assert(d.Duration, Equals, tc.dur)
+		c.Assert(dur.Duration, Equals, tc.dur)
 	}
 }

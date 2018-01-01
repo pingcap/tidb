@@ -262,8 +262,9 @@ func (p PhysicalIndexScan) init(ctx context.Context) *PhysicalIndexScan {
 	return &p
 }
 
-func (p PhysicalMemTable) init(ctx context.Context) *PhysicalMemTable {
+func (p PhysicalMemTable) init(ctx context.Context, stats *statsInfo) *PhysicalMemTable {
 	p.basePhysicalPlan = newBasePhysicalPlan(TypeMemTableScan, ctx, &p)
+	p.stats = stats
 	return &p
 }
 

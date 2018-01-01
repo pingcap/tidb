@@ -159,11 +159,14 @@ func (e *PrepareExec) DoPrepare() error {
 	for i := range prepared.Params {
 		prepared.Params[i].SetDatum(types.NewIntDatum(0))
 	}
-	_, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
+	var p plan.Plan
+	p, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	if _, ok := stmt.(*ast.SelectStmt); ok {
+		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
+	}
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
 	}

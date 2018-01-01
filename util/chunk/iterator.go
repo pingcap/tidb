@@ -27,6 +27,9 @@ type Iterator interface {
 
 	// End returns the invalid end Row.
 	End() Row
+
+	// Len returns the length.
+	Len() int
 }
 
 // NewSliceIterator returns a Iterator for Row slice.
@@ -60,6 +63,10 @@ func (it *sliceIterator) End() Row {
 	return Row{}
 }
 
+func (it *sliceIterator) Len() int {
+	return len(it.rows)
+}
+
 // NewChunkIterator returns a iterator for Chunk.
 func NewChunkIterator(chk *Chunk) Iterator {
 	return &chunkIterator{chk: chk}
@@ -89,6 +96,10 @@ func (it *chunkIterator) Next() Row {
 
 func (it *chunkIterator) End() Row {
 	return Row{}
+}
+
+func (it *chunkIterator) Len() int {
+	return it.chk.NumRows()
 }
 
 // NewListIterator returns a Iterator for List.
@@ -136,6 +147,10 @@ func (it *listIterator) End() Row {
 	return Row{}
 }
 
+func (it *listIterator) Len() int {
+	return it.li.Len()
+}
+
 // NewRowPtrIterator returns a Iterator for RowPtrs.
 func NewRowPtrIterator(li *List, ptrs []RowPtr) Iterator {
 	return &rowPtrIterator{li: li, ptrs: ptrs}
@@ -166,4 +181,8 @@ func (it *rowPtrIterator) Next() Row {
 
 func (it *rowPtrIterator) End() Row {
 	return Row{}
+}
+
+func (it *rowPtrIterator) Len() int {
+	return len(it.ptrs)
 }
