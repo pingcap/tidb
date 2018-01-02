@@ -44,7 +44,7 @@ type jsonIndex struct {
 	Histogram         *tipb.Histogram `json:"histogram"`
 	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
 	NullCount         int64           `json:"null_count"`
-	LastUpdateVersion uint64
+	LastUpdateVersion uint64          `json:"last_update_version"`
 }
 
 // ConvertTo converts Bucket's LowerBound and UpperBound to type t.
