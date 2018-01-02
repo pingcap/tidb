@@ -47,29 +47,35 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 		}
 
 		child := p.Children()[0]
-		// If it can be NULL, we need to filter NULL out first.
-		if !mysql.HasNotNullFlag(f.GetArgs()[0].GetType().Flag) {
-			sel := LogicalSelection{}.init(a.ctx)
-			sel.SetSchema(p.Children()[0].Schema().Clone())
-			isNullFunc := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.GetArgs()[0])
-			notNullFunc := expression.NewFunctionInternal(a.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
-			sel.Conditions = []expression.Expression{notNullFunc}
-			sel.SetChildren(p.Children()[0])
-			child = sel
+
+		// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should NULL if the below is empty.
+		if len(expression.ExtractColumns(f.GetArgs()[0])) > 0 {
+			// If it can be NULL, we need to filter NULL out first.
+			if !mysql.HasNotNullFlag(f.GetArgs()[0].GetType().Flag) {
+				sel := LogicalSelection{}.init(a.ctx)
+				sel.SetSchema(p.Children()[0].Schema().Clone())
+				isNullFunc := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.GetArgs()[0])
+				notNullFunc := expression.NewFunctionInternal(a.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+				sel.Conditions = []expression.Expression{notNullFunc}
+				sel.SetChildren(p.Children()[0])
+				child = sel
+			}
+
+			// Add Sort and Limit operators.
+			// For max function, the sort order should be desc.
+			desc := f.GetName() == ast.AggFuncMax
+			// Compose Sort operator.
+			sort := LogicalSort{}.init(a.ctx)
+			sort.ByItems = append(sort.ByItems, &ByItems{f.GetArgs()[0], desc})
+			sort.SetSchema(child.Schema().Clone())
+			sort.SetChildren(child)
+			child = sort
 		}
 
-		// Add Sort and Limit operators.
-		// For max function, the sort order should be desc.
-		desc := f.GetName() == ast.AggFuncMax
-		// Compose Sort operator.
-		sort := LogicalSort{}.init(a.ctx)
-		sort.ByItems = append(sort.ByItems, &ByItems{f.GetArgs()[0], desc})
-		sort.SetSchema(child.Schema().Clone())
-		sort.SetChildren(child)
 		// Compose Limit operator.
 		li := LogicalLimit{Count: 1}.init(a.ctx)
-		li.SetSchema(sort.Schema().Clone())
-		li.SetChildren(sort)
+		li.SetSchema(child.Schema().Clone())
+		li.SetChildren(child)
 
 		// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
 		// Since now it's almost one row returned, a agg operator is okay to do this.
