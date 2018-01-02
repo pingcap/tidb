@@ -100,7 +100,9 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 }
 
 func (t *mockTxn) GetSnapshot() Snapshot {
-	return nil
+	return &mockSnapshot{
+		store: NewMemDbBuffer(),
+	}
 }
 
 // NewMockTxn new a mockTxn.
