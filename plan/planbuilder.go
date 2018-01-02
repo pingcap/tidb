@@ -164,6 +164,9 @@ type planBuilder struct {
 	optFlag       uint64
 
 	curClause clauseCode
+
+	rewriterStack  []*expressionRewriter
+	rwStackPointer int
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

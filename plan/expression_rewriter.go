@@ -67,13 +67,26 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
 func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (
 	expression.Expression, LogicalPlan, error) {
-	er := &expressionRewriter{
-		p:          p,
-		aggrMap:    aggMapper,
-		b:          b,
-		asScalar:   asScalar,
-		ctx:        b.ctx,
-		preprocess: preprocess,
+	b.rwStackPointer++
+	var er *expressionRewriter
+	if len(b.rewriterStack) < b.rwStackPointer {
+		er = &expressionRewriter{
+			p:          p,
+			aggrMap:    aggMapper,
+			b:          b,
+			asScalar:   asScalar,
+			ctx:        b.ctx,
+			preprocess: preprocess,
+		}
+		b.rewriterStack = append(b.rewriterStack, er)
+	} else {
+		// If er.err is not nil, the planner will fail and won't continue. So don't need to set the er.err's value.
+		er = b.rewriterStack[b.rwStackPointer-1]
+		er.p = p
+		er.aggrMap = aggMapper
+		er.asScalar = asScalar
+		er.preprocess = preprocess
+		er.ctxStack = er.ctxStack[:0]
 	}
 	if p != nil {
 		er.schema = p.Schema()
@@ -91,6 +104,7 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
+	b.rwStackPointer--
 	return er.ctxStack[0], er.p, nil
 }
 
