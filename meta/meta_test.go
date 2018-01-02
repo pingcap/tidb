@@ -280,7 +280,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 	job.ID = 2
-	err = t.UpdateDDLJob(0, job)
+	err = t.UpdateDDLJob(0, job, true)
 	c.Assert(err, IsNil)
 
 	err = t.UpdateDDLReorgHandle(job, 1)
