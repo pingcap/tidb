@@ -126,8 +126,8 @@ func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) erro
 func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64, err error) error {
 	job.LastUpdateTS = int64(updateTS)
 	updateRawArgs := true
-	// If there is an error when running job and the RawArgs hasn't been decoded wit DecodeArgs,
-	// so we should't replace RawArgs with the marshaling Args.
+	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
+	// so we shouldn't replace RawArgs with the marshaling Args.
 	if err != nil && (job.RawArgs != nil && job.Args == nil) {
 		log.Infof("[ddl] update DDL Job %s shouldn't update raw args", job)
 		updateRawArgs = false
