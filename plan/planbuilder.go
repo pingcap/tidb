@@ -220,13 +220,11 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 		vars = append(vars, newExpr)
 	}
 	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
-	exe.SetSchema(expression.NewSchema())
 	return exe
 }
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
-	dual.SetSchema(expression.NewSchema())
 
 	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
@@ -264,7 +262,6 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
 			}
 			mockTablePlan := LogicalTableDual{}.init(b.ctx)
-			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
 				return nil
@@ -280,7 +277,6 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -389,7 +385,6 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
 	selectLock.SetChildren(src)
-	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
 
@@ -402,30 +397,32 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	} else {
 		p.SQLText = x.SQLText
 	}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
 func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
-	var p Plan
+	var ret Plan
 
 	switch as.Tp {
 	case ast.AdminCheckTable:
-		p = &CheckTable{Tables: as.Tables}
-		p.SetSchema(expression.NewSchema())
+		p := &CheckTable{Tables: as.Tables}
+		ret = p
 	case ast.AdminShowDDL:
-		p = &ShowDDL{}
+		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
+		ret = p
 	case ast.AdminShowDDLJobs:
-		p = &ShowDDLJobs{}
+		p := &ShowDDLJobs{}
 		p.SetSchema(buildShowDDLJobsFields())
+		ret = p
 	case ast.AdminCancelDDLJobs:
-		p = &CancelDDLJobs{JobIDs: as.JobIDs}
+		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
+		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
-	return p
+	return ret
 }
 
 // getColsInfo returns the info of index columns, normal columns and primary key.
@@ -476,7 +473,6 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
 		}
 	}
-	p.SetSchema(&expression.Schema{})
 	return p
 }
 
@@ -491,7 +487,6 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 		}
 		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
 	}
-	p.SetSchema(&expression.Schema{})
 	return p
 }
 
@@ -503,7 +498,6 @@ func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
 		}
 	}
-	p.SetSchema(&expression.Schema{})
 	return p
 }
 
@@ -649,7 +643,6 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	p := &Simple{Statement: node}
-	p.SetSchema(expression.NewSchema())
 
 	switch raw := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
@@ -947,7 +940,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
-	insertPlan.SetSchema(expression.NewSchema())
 	return insertPlan
 }
 
@@ -971,7 +963,6 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -1046,7 +1037,6 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	}
 
 	p := &DDL{Statement: node}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 

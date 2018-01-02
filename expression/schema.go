@@ -231,7 +231,6 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	tmpL := lSchema.Clone()
 	tmpR := rSchema.Clone()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
-	ret.SetUniqueKeys(append(tmpL.Keys, tmpR.Keys...))
 	ret.TblID2Handle = tmpL.TblID2Handle
 	for id, cols := range tmpR.TblID2Handle {
 		if _, ok := ret.TblID2Handle[id]; ok {

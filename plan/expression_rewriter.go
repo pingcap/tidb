@@ -373,7 +373,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	}
 	schema := expression.NewSchema(colMaxOrMin)
 
-	agg.SetSchema(schema)
+	agg.schema = schema
 	agg.AggFuncs = []aggregation.Aggregation{funcMaxOrMin}
 
 	cond := expression.NewFunctionInternal(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, colMaxOrMin.Clone())

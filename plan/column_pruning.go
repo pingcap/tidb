@@ -80,13 +80,12 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
 	child.PruneColumns(parentUsedCols)
-	p.SetSchema(child.Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	used := getUsedList(parentUsedCols, p.schema)
+	used := getUsedList(parentUsedCols, p.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
@@ -127,7 +126,6 @@ func (p *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 	}
 	child.PruneColumns(parentUsedCols)
-	p.SetSchema(p.children[0].Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -136,16 +134,14 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 		child := c.(LogicalPlan)
 		child.PruneColumns(parentUsedCols)
 	}
-	p.SetSchema(p.children[0].Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
-	for _, col := range p.schema.TblID2Handle {
+	for _, col := range p.Schema().TblID2Handle {
 		parentUsedCols = append(parentUsedCols, col[0])
 	}
 	p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
-	p.SetSchema(p.children[0].Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -157,10 +153,9 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
 	}
-	for _, cols := range p.schema.TblID2Handle {
+	for k, cols := range p.schema.TblID2Handle {
 		if p.schema.ColumnIndex(cols[0]) == -1 {
-			p.schema.TblID2Handle = nil
-			break
+			delete(p.schema.TblID2Handle, k)
 		}
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
