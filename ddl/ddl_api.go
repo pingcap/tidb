@@ -956,6 +956,7 @@ func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) 
 	return errors.Trace(err)
 }
 
+// ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
 func (d *ddl) ShardRowID(ctx context.Context, ident ast.Ident, uVal uint64) error {
 	job, err := d.createJobByIdent(ident)
 	if err != nil {
