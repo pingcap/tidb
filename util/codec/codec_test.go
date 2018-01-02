@@ -733,9 +733,9 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 	for i := range floats {
 		dec := types.NewDecFromFloatForTest(floats[i])
 		var d types.Datum
+		d.SetMysqlDecimal(dec)
 		d.SetLength(20)
 		d.SetFrac(6)
-		d.SetMysqlDecimal(dec)
 		decs = append(decs, EncodeDecimal(nil, d))
 	}
 	for i := 0; i < len(decs)-1; i++ {
