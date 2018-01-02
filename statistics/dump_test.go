@@ -54,22 +54,21 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-
+	h.Update(is)
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta())
 	c.Assert(err, IsNil)
-	loadTbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl, true)
+	loadTbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
 	c.Assert(err, IsNil)
 	tbl := h.GetTableStats(tableInfo.Meta().ID)
 	assertTableEqual(c, loadTbl, tbl)
-
 	h.Clear()
 	h.Lease = 65536
 	h.Update(is)
 	jsonTbl, err = h.DumpStatsToJSON("test", tableInfo.Meta())
 	c.Assert(err, IsNil)
-	loadTbl, err = h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl, false)
+	loadTbl, err = h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
 	c.Assert(err, IsNil)
 	tbl = h.GetTableStats(tableInfo.Meta().ID)
 	assertTableEqual(c, loadTbl, tbl)

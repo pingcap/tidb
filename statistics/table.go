@@ -136,7 +136,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Count:     count}
 			break
 		}
-		if col == nil || col.LastUpdateVersion < histVer {
+		if col == nil || col.LastUpdateVersion < histVer || loadAll {
 			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
 			if err != nil {
 				return errors.Trace(err)

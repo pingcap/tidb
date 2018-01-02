@@ -124,7 +124,6 @@ func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex
 
 func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
-
 	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)

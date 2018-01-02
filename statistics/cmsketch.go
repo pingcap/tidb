@@ -154,6 +154,9 @@ func (c *CMSketch) TotalCount() uint64 {
 
 // Equal tests if two CM Sketch equal, it is only used for test.
 func (c *CMSketch) Equal(rc *CMSketch) bool {
+	if c == nil || rc == nil {
+		return c == nil && rc == nil
+	}
 	if c.width != rc.width || c.depth != rc.depth {
 		return false
 	}

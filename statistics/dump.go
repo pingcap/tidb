@@ -1,3 +1,16 @@
+// Copyright 2017 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package statistics
 
 import (
@@ -8,7 +21,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// JSONTable is used for Dumping statistics.
+// JSONTable is used for dumping statistics.
 type JSONTable struct {
 	DatabaseName string                 `json:"database_name"`
 	TableName    string                 `json:"table_name"`
@@ -24,7 +37,7 @@ type jsonColumn struct {
 	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
 	AlreadyLoad       bool            `json:"already_load"`
 	NullCount         int64           `json:"null_count"`
-	LastUpdateVersion uint64
+	LastUpdateVersion uint64          `json:"last_update_version"`
 }
 
 type jsonIndex struct {
@@ -48,7 +61,6 @@ func (b *Bucket) ConvertTo(h *Handle, t *types.FieldType) (err error) {
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
 	statsTable := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	tbl, err := h.tableStatsFromStorage(tableInfo, true)
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -102,7 +114,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 	return jsonTbl, nil
 }
 
-func getCMSkecth(c *tipb.CMSketch) (cms *CMSketch) {
+func getCMSketch(c *tipb.CMSketch) (cms *CMSketch) {
 	if c != nil {
 		cms = CMSketchFromProto(c)
 		if c.Rows[0] == nil {
@@ -116,7 +128,7 @@ func getCMSkecth(c *tipb.CMSketch) (cms *CMSketch) {
 }
 
 // LoadStatsFromJSON load statistic from json.
-func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTable, loadAll bool) (*Table, error) {
+func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTable) (*Table, error) {
 	tbl := &Table{
 		TableID:     tableInfo.ID,
 		Columns:     make(map[int64]*Column, len(jsonTbl.Columns)),
@@ -133,7 +145,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			}
 			idx := &Index{
 				Histogram: Histogram{ID: idxInfo.ID, NullCount: val.NullCount, LastUpdateVersion: val.LastUpdateVersion, NDV: val.Histogram.Ndv},
-				CMSketch:  getCMSkecth(val.CMSketch),
+				CMSketch:  getCMSketch(val.CMSketch),
 				Info:      idxInfo,
 			}
 			idx.Histogram.Buckets = HistogramFromProto(val.Histogram).Buckets
@@ -153,19 +165,15 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			}
 			col := &Column{
 				Histogram: Histogram{ID: colInfo.ID, NullCount: val.NullCount, LastUpdateVersion: val.LastUpdateVersion, NDV: val.Histogram.Ndv},
-				CMSketch:  getCMSkecth(val.CMSketch),
 				Info:      colInfo,
 			}
 			hist := HistogramFromProto(val.Histogram)
-			count, err := columnCountFromStorage(h.ctx, tableInfo.ID, colInfo.ID)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			col.Count = count
-			if !loadAll && !val.AlreadyLoad {
+			col.Count = int64(hist.totalRowCount())
+			if !val.AlreadyLoad {
 				tbl.Columns[col.ID] = col
 				continue
 			}
+			col.CMSketch = getCMSketch(val.CMSketch)
 			col.Histogram.Buckets = hist.Buckets
 			for i := range col.Buckets {
 				if err := col.Buckets[i].ConvertTo(h, &colInfo.FieldType); err != nil {
