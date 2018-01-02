@@ -831,8 +831,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 		case ast.TableOptionShardRowID:
 			if !hasAutoIncrementColumn(tbInfo) {
 				tbInfo.ShardRowIDBits = op.UintValue
-				if tbInfo.ShardRowIDBits > 15 {
-					tbInfo.ShardRowIDBits = 15
+				if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
+					tbInfo.ShardRowIDBits = shardRowIDBitsMax
 				}
 			}
 		}
@@ -906,8 +906,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			for _, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
-					if opt.UintValue > 15 {
-						opt.UintValue = 15
+					if opt.UintValue > shardRowIDBitsMax {
+						opt.UintValue = shardRowIDBitsMax
 					}
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
@@ -977,7 +977,7 @@ func (d *ddl) createJobByIdent(ident ast.Ident) (*model.Job, error) {
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return nil, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+		return nil, infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
