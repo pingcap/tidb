@@ -96,6 +96,14 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	}
 }
 
+func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
+	c.columns[dstColIdx] = c.columns[srcColIdx]
+}
+
+func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+	c.columns[colIdx], other.columns[otherIdx] = other.columns[otherIdx], c.columns[colIdx]
+}
+
 // SwapColumns swaps columns with another Chunk.
 func (c *Chunk) SwapColumns(other *Chunk) {
 	c.columns, other.columns = other.columns, c.columns

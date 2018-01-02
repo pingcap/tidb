@@ -599,6 +599,7 @@ type ProjectionExec struct {
 	baseExecutor
 
 	exprs            []expression.Expression
+	evaluatorSuit    *expression.EvaluatorSuit
 	vectorizable     bool
 	calculateNoDelay bool
 }
@@ -609,6 +610,7 @@ func (e *ProjectionExec) Open(goCtx goctx.Context) error {
 		return errors.Trace(err)
 	}
 	e.vectorizable = expression.Vectorizable(e.exprs)
+	e.evaluatorSuit = expression.NewEvaluatorSuit(e.exprs)
 	return nil
 }
 
@@ -639,7 +641,8 @@ func (e *ProjectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 		return errors.Trace(err)
 	}
 	if e.vectorizable {
-		return errors.Trace(expression.VectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
+		return errors.Trace(e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk))
+		//return errors.Trace(expression.VectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
 	}
 	return errors.Trace(expression.UnVectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
 }
