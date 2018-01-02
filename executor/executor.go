@@ -634,6 +634,9 @@ func (e *ProjectionExec) Next(goCtx goctx.Context) (retRow Row, err error) {
 // NextChunk implements the Executor NextChunk interface.
 func (e *ProjectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	if err := e.children[0].NextChunk(goCtx, e.childrenResults[0]); err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk))
 }
 

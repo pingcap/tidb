@@ -85,9 +85,8 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 			inputIdx2OutputIdxes: make(map[int][]int),
 		},
 		evaluator4Other: &otherEvaluator{
-			outputIdxes:  make([]int, 0, len(exprs)),
-			scalaFunc:    make([]Expression, 0, len(exprs)),
-			vectorizable: Vectorizable(exprs),
+			outputIdxes: make([]int, 0, len(exprs)),
+			scalaFunc:   make([]Expression, 0, len(exprs)),
 		},
 	}
 
@@ -101,6 +100,7 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 		}
 	}
 
+	e.evaluator4Other.vectorizable = Vectorizable(e.evaluator4Other.scalaFunc)
 	return e
 }
 
