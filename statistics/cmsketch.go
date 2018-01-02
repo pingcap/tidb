@@ -113,6 +113,9 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 
 // CMSketchFromProto converts CMSketch from its protobuf representation.
 func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
+	if protoSketch == nil {
+		return nil
+	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
 	for i, row := range protoSketch.Rows {
 		c.count = 0
@@ -157,7 +160,7 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 	if c == nil || rc == nil {
 		return c == nil && rc == nil
 	}
-	if c.width != rc.width || c.depth != rc.depth {
+	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
 		return false
 	}
 	for i := range c.table {

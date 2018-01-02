@@ -114,19 +114,6 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 	return jsonTbl, nil
 }
 
-func getCMSketch(c *tipb.CMSketch) (cms *CMSketch) {
-	if c != nil {
-		cms = CMSketchFromProto(c)
-		if c.Rows[0] == nil {
-			return cms
-		}
-		for _, val := range c.Rows[0].Counters {
-			cms.count += uint64(val)
-		}
-	}
-	return
-}
-
 // LoadStatsFromJSON load statistic from json.
 func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTable) (*Table, error) {
 	tbl := &Table{
@@ -145,7 +132,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			}
 			idx := &Index{
 				Histogram: Histogram{ID: idxInfo.ID, NullCount: val.NullCount, LastUpdateVersion: val.LastUpdateVersion, NDV: val.Histogram.Ndv},
-				CMSketch:  getCMSketch(val.CMSketch),
+				CMSketch:  CMSketchFromProto(val.CMSketch),
 				Info:      idxInfo,
 			}
 			idx.Histogram.Buckets = HistogramFromProto(val.Histogram).Buckets
@@ -173,7 +160,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 				tbl.Columns[col.ID] = col
 				continue
 			}
-			col.CMSketch = getCMSketch(val.CMSketch)
+			col.CMSketch = CMSketchFromProto(val.CMSketch)
 			col.Histogram.Buckets = hist.Buckets
 			for i := range col.Buckets {
 				if err := col.Buckets[i].ConvertTo(h, &colInfo.FieldType); err != nil {
