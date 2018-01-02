@@ -40,6 +40,8 @@ type HashAggExec struct {
 	groupMap      *mvmap.MVMap
 	groupIterator *mvmap.Iterator
 	inputRow      chunk.Row
+	mutableRow    chunk.MutRow
+	rowBuffer     []types.Datum
 	GroupByItems  []expression.Expression
 }
 
@@ -64,6 +66,8 @@ func (e *HashAggExec) Open(goCtx goctx.Context) error {
 	e.groupIterator = e.groupMap.NewIterator()
 	e.aggCtxsMap = make(aggCtxsMapper, 0)
 	e.inputRow = e.childrenResults[0].End()
+	e.mutableRow = chunk.MutRowFromTypes(e.Schema().GetTypes())
+	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 	return nil
 }
 
@@ -91,12 +95,15 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 		aggCtxs := e.getContexts(groupKey)
-		if len(e.AggFuncs) == 0 {
+		e.rowBuffer = e.rowBuffer[:0]
+		for i, af := range e.AggFuncs {
+			e.rowBuffer = append(e.rowBuffer, af.GetResult(aggCtxs[i]))
+		}
+		e.mutableRow.SetDatums(e.rowBuffer...)
+		if chk.NumCols() == 0 {
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
 		} else {
-			for i, af := range e.AggFuncs {
-				af.AppendResultToChunk(chk, i, aggCtxs[i])
-			}
+			chk.AppendRow(0, e.mutableRow.ToRow())
 		}
 		if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
 			return nil
