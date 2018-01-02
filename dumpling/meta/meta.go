@@ -445,8 +445,8 @@ var (
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -455,7 +455,7 @@ func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) err
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job) error {
-	return m.enQueueDDLJob(mDDLJobListKey, job, true)
+	return m.enQueueDDLJob(mDDLJobListKey, job)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
