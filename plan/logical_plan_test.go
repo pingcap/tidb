@@ -771,6 +771,34 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0),max(b.a))->Projection",
 		},
 		{
+			sql:  "select max(a.a), sum(b.a) from t a, t b where a.c = b.c",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(b.a),firstrow(b.c))}(a.c,b.c)->Aggr(max(a.a),sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a.a) from t a, t b, t c where a.c = b.c and b.c = c.c",
+			best: "Join{Join{DataScan(a)->DataScan(b)}(a.c,b.c)->DataScan(c)}(b.c,c.c)->Aggr(sum(a.a))->Projection",
+		},
+		{
+			sql:  "select sum(b.a) from t a left join t b on a.c = b.c",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(b.a),firstrow(b.c))}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a.a) from t a left join t b on a.c = b.c",
+			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a.a) from t a right join t b on a.c = b.c",
+			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select sum(a) from (select * from t) x",
+			best: "DataScan(t)->Aggr(sum(test.t.a))->Projection",
+		},
+		{
+			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
+			best: "UnionAll{DataScan(a)->Projection->Aggr(sum(cast(a.c1)),firstrow(cast(a.c2)))->DataScan(b)->Projection->Aggr(sum(cast(b.c1)),firstrow(cast(b.c2)))->DataScan(c)->Projection->Aggr(sum(cast(c.c1)),firstrow(c.c2))}->Aggr(sum(join_agg_0))->Projection",
+		},
+		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
 			best: "Join{DataScan(a)->DataScan(b)->Aggr(max(b.b),firstrow(b.c))}(a.c,b.c)->Projection->Projection",
 		},
@@ -1093,9 +1121,9 @@ func (s *testPlanSuite) TestValidate(c *C) {
 func checkUniqueKeys(p Plan, c *C, ans map[int][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
 	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
-	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ExplainID(), p.Schema()))
+	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
 	for i, key := range keyList {
-		c.Assert(len(key), Equals, len(p.Schema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.ExplainID(), key))
+		c.Assert(len(key), Equals, len(p.Schema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), key))
 		for j, colName := range key {
 			c.Assert(colName, Equals, p.Schema().Keys[i][j].String(), Commentf("for %s, %v %v, column dosen't match", sql, p.ID(), key))
 		}
@@ -1548,8 +1576,8 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
+		p := builder.build(stmt).(LogicalPlan)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
