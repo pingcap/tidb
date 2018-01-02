@@ -123,12 +123,12 @@ func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) erro
 
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
-func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64, err error) error {
+func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64, meetErr bool) error {
 	job.LastUpdateTS = int64(updateTS)
 	updateRawArgs := true
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
-	if err != nil && (job.RawArgs != nil && job.Args == nil) {
+	if meetErr && (job.RawArgs != nil && job.Args == nil) {
 		log.Infof("[ddl] update DDL Job %s shouldn't update raw args", job)
 		updateRawArgs = false
 	}
@@ -222,7 +222,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
-			err = d.updateDDLJob(t, job, txn.StartTS(), err)
+			err = d.updateDDLJob(t, job, txn.StartTS(), err != nil)
 			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
