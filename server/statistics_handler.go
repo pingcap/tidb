@@ -14,36 +14,31 @@
 package server
 
 import (
+	"net/http"
+
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	log "github.com/sirupsen/logrus"
-	"net/http"
 )
 
-// StatsHandler is the handler for dump statistics
+// StatsHandler is the handler for dump statistics.
 type StatsHandler struct {
-	store kv.Storage
-	do    *domain.Domain
+	do *domain.Domain
 }
 
 func (s *Server) newStatsHandler() *StatsHandler {
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
-		panic("Invalid KvStore with illegal driver")
+		panic("Illegal driver")
 	}
-	var tikvStore kv.Storage
-	if tikvStore, ok = store.store.(kv.Storage); !ok {
-		panic("Invalid KvStore with illegal store")
-	}
-	do, err := tidb.BootstrapSession(tikvStore)
+	do, err := tidb.BootstrapSession(store.store)
 	if err != nil {
 		log.Error("Failed to bootstrap session", err)
 		return nil
 	}
-	return &StatsHandler{tikvStore, do}
+	return &StatsHandler{do}
 }
 
 func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {

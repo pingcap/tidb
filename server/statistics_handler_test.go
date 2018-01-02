@@ -16,7 +16,6 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	. "github.com/pingcap/check"
@@ -36,7 +35,7 @@ func (ds *DumpStaTestSuite) TestDumpStatsAPI(c *C) {
 	ds.prepareData(c)
 	defer ds.stopServer(c)
 
-	resp, err := http.Get(fmt.Sprint("http://127.0.0.1:10090/dump_stats/tidb/test"))
+	resp, err := http.Get("http://127.0.0.1:10090/dump_stats/tidb/test")
 	c.Assert(err, IsNil)
 
 	decoder := json.NewDecoder(resp.Body)

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -52,28 +51,6 @@ type Table struct {
 	ModifyCount int64 // Total modify count in a table.
 	Version     uint64
 	Pseudo      bool
-}
-
-// JSONTable is used for Dumping statistics
-type JSONTable struct {
-	DatabaseName string                 `json:"database_name"`
-	TableName    string                 `json:"table_name"`
-	Columns      map[string]*jsonColumn `json:"columns"` // Columns[col_name]
-	Indices      map[string]*jsonIndex  `json:"indices"`
-	Count        int64                  `json:"count"`
-	ModifyCount  int64                  `json:"modify_count"`
-	Version      uint64                 `json:"version"`
-}
-
-type jsonColumn struct {
-	Histogram   *tipb.Histogram `json:"histogram"`
-	CMSketch    *tipb.CMSketch  `json:"cm_sketch"`
-	AlreadyLoad bool            `json:"already_load"`
-}
-
-type jsonIndex struct {
-	Histogram *tipb.Histogram `json:"histogram"`
-	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
 }
 
 func (t *Table) copy() *Table {
@@ -459,129 +436,4 @@ func getPseudoRowCountByIntRanges(intRanges []ranger.IntColumnRange, tableRowCou
 		rowCount = tableRowCount
 	}
 	return rowCount
-}
-
-// ConvertTo converts Bucket'LowerBound and UpperBound to type t
-func (b *Bucket) ConvertTo(h *Handle, t *types.FieldType) (err error) {
-	b.LowerBound, err = b.LowerBound.ConvertTo(h.ctx.GetSessionVars().StmtCtx, t)
-	if err != nil {
-		return
-	}
-	b.UpperBound, err = b.UpperBound.ConvertTo(h.ctx.GetSessionVars().StmtCtx, t)
-	return err
-}
-
-func (b *Bucket) calScalar() {
-	b.lowerScalar, b.upperScalar, b.commonPfxLen = preCalculateDatumScalar(&b.LowerBound, &b.UpperBound)
-}
-
-// DumpStatsToJSON dumps statistic to json
-func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
-	statTable := h.statsCache.Load().(statsCache)[tableInfo.ID]
-	tbl, err := h.tableStatsFromStorage(tableInfo, true)
-
-	if err != nil {
-		return nil, err
-	}
-	jsonTbl := &JSONTable{
-		DatabaseName: dbName,
-		TableName:    tableInfo.Name.L,
-		Columns:      make(map[string]*jsonColumn, len(tbl.Columns)),
-		Indices:      make(map[string]*jsonIndex, len(tbl.Indices)),
-		Count:        tbl.Count,
-		ModifyCount:  tbl.ModifyCount,
-		Version:      tbl.Version,
-	}
-	for key, val := range tbl.Columns {
-		hist := &Histogram{
-			ID:                val.Histogram.ID,
-			NDV:               val.Histogram.NDV,
-			NullCount:         val.Histogram.NullCount,
-			LastUpdateVersion: val.Histogram.LastUpdateVersion,
-			Buckets:           make([]Bucket, len(val.Histogram.Buckets)),
-		}
-
-		// Convert Datum to BytesDatum
-		for i, v := range val.Histogram.Buckets {
-			hist.Buckets[i] = v
-			if err := hist.Buckets[i].ConvertTo(h, types.NewFieldType(mysql.TypeBlob)); err != nil {
-				return nil, err
-			}
-		}
-		// col is the Column in Cache
-		col := statTable.Columns[key]
-		jsonCol := &jsonColumn{
-			Histogram:   HistogramToProto(hist),
-			AlreadyLoad: !(col.Count > 0 && len(col.Buckets) == 0),
-		}
-		if val.CMSketch != nil {
-			jsonCol.CMSketch = CMSketchToProto(val.CMSketch)
-		}
-		jsonTbl.Columns[val.Info.Name.L] = jsonCol
-	}
-
-	for _, val := range tbl.Indices {
-		jsonIdx := &jsonIndex{
-			Histogram: HistogramToProto(&val.Histogram),
-		}
-		if val.CMSketch != nil {
-			jsonIdx.CMSketch = CMSketchToProto(val.CMSketch)
-		}
-		jsonTbl.Indices[val.Info.Name.L] = jsonIdx
-	}
-	return jsonTbl, nil
-}
-
-// LoadStatsFromJSON load statistic from json
-func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTable, loadAll bool) (*Table, error) {
-	tbl := &Table{
-		TableID:     tableInfo.ID,
-		Columns:     make(map[int64]*Column, len(jsonTbl.Columns)),
-		Indices:     make(map[int64]*Index, len(jsonTbl.Indices)),
-		Count:       jsonTbl.Count,
-		Version:     jsonTbl.Version,
-		ModifyCount: jsonTbl.ModifyCount,
-	}
-	for key, val := range jsonTbl.Columns {
-		if loadAll || val.AlreadyLoad {
-			for _, colInfo := range tableInfo.Columns {
-				if colInfo.Name.L == key {
-					col := &Column{
-						Histogram: *HistogramFromProto(val.Histogram),
-						CMSketch:  CMSketchFromProto(val.CMSketch),
-						Info:      colInfo,
-					}
-
-					for i := range col.Histogram.Buckets {
-						if err := col.Histogram.Buckets[i].ConvertTo(h, &colInfo.FieldType); err != nil {
-							return nil, err
-						}
-						col.Histogram.Buckets[i].calScalar()
-					}
-					col.Histogram.ID = colInfo.ID
-					tbl.Columns[colInfo.ID] = col
-					for _, cnt := range val.CMSketch.Rows[0].Counters {
-						tbl.Columns[colInfo.ID].Count += int64(cnt)
-					}
-				}
-			}
-		}
-	}
-	for key, val := range jsonTbl.Indices {
-		for _, idxInfo := range tableInfo.Indices {
-			if idxInfo.Name.L == key {
-				idx := &Index{
-					Histogram: *HistogramFromProto(val.Histogram),
-					CMSketch:  CMSketchFromProto(val.CMSketch),
-					Info:      idxInfo,
-				}
-				for i := range idx.Histogram.Buckets {
-					idx.Histogram.Buckets[i].calScalar()
-				}
-				idx.Histogram.ID = idxInfo.ID
-				tbl.Indices[idxInfo.ID] = idx
-			}
-		}
-	}
-	return tbl, nil
 }
