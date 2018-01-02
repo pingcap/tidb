@@ -14,7 +14,6 @@
 package tables_test
 
 import (
-	"github.com/pingcap/tidb/util/mock"
 	"io"
 
 	. "github.com/pingcap/check"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
 )

@@ -16,7 +16,6 @@ package executor_test
 import (
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/util/mock"
 	"os"
 	"sync"
 	"testing"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
