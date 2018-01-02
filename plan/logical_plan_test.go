@@ -258,7 +258,7 @@ func MockTable() *model.TableInfo {
 		ID:        10,
 	}
 
-	pkColumn.Flag = mysql.PriKeyFlag
+	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
 	col1.Flag = mysql.NotNullFlag
