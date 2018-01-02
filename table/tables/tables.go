@@ -215,7 +215,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	bs := kv.NewBufferStore(txn)
 
 	// rebuild index
-	err := t.rebuildIndices(bs, h, touched, oldData, newData)
+	err := t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,7 +271,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	return nil
 }
 
-func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
+func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
 	for _, idx := range t.DeletableIndices() {
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
@@ -296,7 +296,7 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched []bool, 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err := t.buildIndexForRow(rm, h, newVs, idx); err != nil {
+			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx); err != nil {
 				return errors.Trace(err)
 			}
 			break
@@ -427,7 +427,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(bs, colVals, recordID); err != nil {
+		if dupHandle, err := v.Create(ctx, bs, colVals, recordID); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, errors.Trace(dupKeyErr)
 			}
@@ -599,8 +599,8 @@ func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Dat
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if _, err := idx.Create(rm, vals, h); err != nil {
+func (t *Table) buildIndexForRow(ctx context.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
+	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

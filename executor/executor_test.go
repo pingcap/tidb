@@ -16,6 +16,7 @@ package executor_test
 import (
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/util/mock"
 	"os"
 	"sync"
 	"testing"
@@ -182,7 +183,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Indices(), HasLen, 1)
-	_, err = tb.Indices()[0].Create(txn, types.MakeDatums(int64(10)), 1)
+	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)

@@ -19,6 +19,7 @@ import (
 	"io"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
@@ -177,7 +178,8 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
+func (c *index) Create(ctx context.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
+	skipCheck := ctx.GetSessionVars().SkipConstraintCheck
 	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -188,16 +190,21 @@ func (c *index) Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h in
 		return 0, errors.Trace(err)
 	}
 
-	value, err := rm.Get(key)
-	if kv.IsErrNotFound(err) {
+	var value []byte
+	if !skipCheck {
+		value, err = rm.Get(key)
+	}
+
+	if skipCheck || kv.IsErrNotFound(err) {
 		err = rm.Set(key, encodeHandle(h))
 		return 0, errors.Trace(err)
 	}
+
 	handle, err := decodeHandle(value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return handle, errors.Trace(kv.ErrKeyExists)
+	return handle, kv.ErrKeyExists
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
