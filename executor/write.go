@@ -846,34 +846,35 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 
 	txn := e.ctx.Txn()
 	rowCount := 0
-	if batchInsert && rowCount >= batchSize {
-		if err := e.ctx.NewTxn(); err != nil {
-			// We should return a special error for batch insert.
-			return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
-		}
-		txn = e.ctx.Txn()
-		rowCount = 0
-	}
-	if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
-		txn.SetOption(kv.PresumeKeyNotExists, nil)
-	}
-
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-	if e.IgnoreErr && !e.ctx.GetSessionVars().SkipConstraintCheck {
+	skipHandleCheck := false
+	if e.IgnoreErr {
 		dupOffsets, err := e.duplicateRows(rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		for _, index := range dupOffsets {
-			rows = removeRow(rows, index)
+		for k := range dupOffsets {
+			rows = removeRow(rows, k)
 		}
-		e.IgnoreErr = false
+		skipHandleCheck = true
 	}
 
 	for _, row := range rows {
-		h, err := e.Table.AddRecord(e.ctx, row, true)
+		if batchInsert && rowCount >= batchSize {
+			if err := e.ctx.NewTxn(); err != nil {
+				// We should return a special error for batch insert.
+				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+			}
+			txn = e.ctx.Txn()
+			rowCount = 0
+		}
+		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
+			txn.SetOption(kv.PresumeKeyNotExists, nil)
+		}
+		h, err := e.Table.AddRecord(e.ctx, row, skipHandleCheck)
+		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
 			rowCount++
@@ -888,11 +889,8 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 				continue
 			}
 		}
-		// Clean up option before we return an error.
-		txn.DelOption(kv.PresumeKeyNotExists)
 		return nil, errors.Trace(err)
 	}
-	txn.DelOption(kv.PresumeKeyNotExists)
 
 	if e.lastInsertID != 0 {
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
@@ -905,57 +903,87 @@ func removeRow(rows [][]types.Datum, index int) [][]types.Datum {
 	return append(rows[:index], rows[index+1:]...)
 }
 
-func (e *InsertExec) duplicateRows(rows [][]types.Datum) ([]int, error) {
-	offsets := make([]int, 0)
-	for i, row := range rows {
-		var hasRecordID bool
-		var recordID int64
-		var err error
-		for _, col := range e.Table.Cols() {
-			if col.IsPKHandleColumn(e.Table.Meta()) {
-				recordID = row[col.Offset].GetInt64()
-				hasRecordID = true
-				break
-			}
+type keyWithDupError struct {
+	key    kv.Key
+	dupErr error
+	offset int
+}
+
+func (e *InsertExec) duplicateRows(rows [][]types.Datum) (map[int]bool, error) {
+	offsets := make(map[int]bool, 0)
+	txn := e.ctx.Txn()
+	var hasRecordID bool
+	var recordIDs []int64
+	var handleCol *table.Column
+	var err error
+
+	// get recordIDs
+	for _, col := range e.Table.Cols() {
+		if col.IsPKHandleColumn(e.Table.Meta()) {
+			hasRecordID = true
+			handleCol = col
+			break
 		}
-		if !hasRecordID {
+	}
+	if hasRecordID {
+		for _, row := range rows {
+			recordIDs = append(recordIDs, row[handleCol.Offset].GetInt64())
+		}
+	} else {
+		var recordID int64
+		for range rows {
 			recordID, err = e.Table.AllocAutoID(e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			recordIDs = append(recordIDs, recordID)
 		}
+	}
 
-		txn := e.ctx.Txn()
-		bs := kv.NewBufferStore(txn)
+	var keyWithErr []keyWithDupError
+	for i, row := range rows {
+		// append record keys and errors
+		keyWithErr = append(keyWithErr, keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i]), i})
 
-		if e.Table.Meta().PKIsHandle {
-			if err = tables.CheckHandleExists(e.ctx, e.Table, recordID); kv.ErrKeyExists.Equal(err) {
-				// Key exists
-				offsets = append(offsets, i)
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			} else if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
+		// append unique keys and errors
 		for _, v := range e.Table.WritableIndices() {
+			if !v.Meta().Unique && !v.Meta().Primary {
+				continue
+			}
 			colVals, err2 := v.FetchValues(row)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
-			if v.Meta().Unique || v.Meta().Primary {
-				exist, _, err := v.Exist(bs, colVals, recordID)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if exist {
-					// Key exists
-					offsets = append(offsets, i)
-					e.ctx.GetSessionVars().StmtCtx.AppendWarning(kv.ErrKeyExists)
-				}
+			var key []byte
+			key, _, err = v.GenIndexKey(colVals, recordIDs[i])
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
+			keyWithErr = append(keyWithErr, keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name), i})
 		}
 	}
+
+	batchKeys := make([]kv.Key, len(keyWithErr))
+	for i := range batchKeys {
+		batchKeys[i] = keyWithErr[i].key
+	}
+
+	// batch get values
+	values, err := txn.GetSnapshot().BatchGet(batchKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// check duplicate keys and append warnings
+	for i, k := range batchKeys {
+		if _, exist := values[string(k)]; exist {
+			if _, ok := offsets[i] ; !ok {
+				offsets[i] = true
+			}
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(keyWithErr[i].dupErr)
+		}
+	}
+
 	return offsets, nil
 }
 

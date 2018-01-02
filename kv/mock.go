@@ -99,6 +99,10 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
+func (t *mockTxn) GetSnapshot() Snapshot {
+	return nil
+}
+
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{

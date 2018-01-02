@@ -137,6 +137,8 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetSnapshot returns the snapshot of this transaction.
+	GetSnapshot() Snapshot
 }
 
 // Client is used to send request to KV layer.
