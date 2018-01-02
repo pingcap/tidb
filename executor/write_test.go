@@ -14,7 +14,7 @@
 package executor_test
 
 import (
-	"errors"
+	//"errors"
 	"fmt"
 	"sync/atomic"
 
