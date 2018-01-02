@@ -966,8 +966,6 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 }
 
 func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error) {
-	txn := e.ctx.Txn()
-
 	// get keys need to be checked
 	keysWithErr, err := e.getKeysNeedCheck(rows)
 
@@ -976,7 +974,7 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 	for i := range batchKeys {
 		batchKeys[i] = keysWithErr[i].key
 	}
-	values, err := txn.GetSnapshot().BatchGet(batchKeys)
+	values, err := e.ctx.Txn().GetSnapshot().BatchGet(batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
