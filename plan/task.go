@@ -321,7 +321,7 @@ func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
-	return len(schema.ColumnsIndices(cols)) > 0
+	return len(cols) == 0 || len(schema.ColumnsIndices(cols)) > 0
 }
 
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
