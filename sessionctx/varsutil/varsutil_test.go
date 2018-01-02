@@ -88,7 +88,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 
-	// Test case for tidb_skip_constraint_check
+	// Test case for tidb_import_data
 	c.Assert(v.ImportingData, IsFalse)
 	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("0"))
 	c.Assert(v.ImportingData, IsFalse)
