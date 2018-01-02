@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -885,6 +886,13 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = d.RenameTable(ctx, ident, newIdent)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
+		case ast.AlterTableOption:
+			for _, opt := range spec.Options {
+				if opt.Tp == ast.TableOptionAutoIncrement {
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
+					break
+				}
+			}
 		default:
 			// Nothing to do now.
 		}
@@ -895,6 +903,33 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 	}
 
 	return nil
+}
+
+func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) error {
+	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	autoIncID, err := t.Allocator(ctx).NextGlobalAutoID(t.Meta().ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newBase = mathutil.MaxInt64(newBase, autoIncID)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionRebaseAutoID,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newBase},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 func checkColumnConstraint(constraints []*ast.ColumnOption) error {

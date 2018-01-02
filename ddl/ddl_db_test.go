@@ -1676,3 +1676,31 @@ func (s *testDBSuite) TestComment(c *C) {
 
 	s.tk.MustExec("drop table if exists ct, ct1")
 }
+
+func (s *testDBSuite) TestRebaseAutoID(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("drop database if exists tidb;")
+	s.tk.MustExec("create database tidb;")
+	s.tk.MustExec("use tidb;")
+	s.tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1"))
+	s.tk.MustExec("alter table tidb.test auto_increment = 6000;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1"))
+	s.tk.MustExec("alter table tidb.test auto_increment = 5;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1"))
+
+	// Current range for table test is [11000, 15999].
+	// Though it does not have a tuple "a = 15999", its global next auto increment id should be 16000.
+	// Anyway it is not compatible with MySQL.
+	s.tk.MustExec("alter table tidb.test auto_increment = 12000;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1", "16000 1"))
+
+	s.tk.MustExec("create table tidb.test2 (a int);")
+	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
+}
