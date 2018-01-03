@@ -1086,12 +1086,12 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			97, 97, types.NewDecFromInt(0x61), "a",
 		},
 	}
-	for _, t := range cases {
+	for i, t := range cases {
 		// Test wrapping with CastAsInt.
 		intExpr := WrapWithCastAsInt(ctx, t.expr)
 		c.Assert(intExpr.GetType().EvalType(), Equals, types.ETInt)
 		intRes, isNull, err := intExpr.EvalInt(t.row, sc)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("cast[%v]: %#v", i, t))
 		c.Assert(isNull, Equals, false)
 		c.Assert(intRes, Equals, t.intRes)
 
@@ -1101,7 +1101,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		realRes, isNull, err := realExpr.EvalReal(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
-		c.Assert(realRes, Equals, t.realRes)
+		c.Assert(realRes, Equals, t.realRes, Commentf("cast[%v]: %#v", i, t))
 
 		// Test wrapping with CastAsDecimal.
 		decExpr := WrapWithCastAsDecimal(ctx, t.expr)

@@ -118,7 +118,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
 		return sig, nil
@@ -164,12 +164,15 @@ func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
+	if args[0].GetType().Hybrid() {
+		argTp = types.ETInt
+	}
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsRealSig{bf}
@@ -210,12 +213,15 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Exp
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
 		return sig, nil
 	}
 	argTp := args[0].GetType().EvalType()
+	if args[0].GetType().Hybrid() {
+		argTp = types.ETInt
+	}
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsDecimalSig{bf}
@@ -256,7 +262,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expr
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
@@ -302,7 +308,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastTimeAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsTime)
 		return sig, nil
@@ -348,7 +354,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Ex
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDurationAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDuration)
 		return sig, nil
@@ -394,7 +400,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastJSONAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
 		return sig, nil
@@ -896,7 +902,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 
 func (b *builtinCastStringAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	if IsHybridType(b.args[0]) {
+	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalInt(row, sc)
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
@@ -936,7 +942,7 @@ type builtinCastStringAsRealSig struct {
 
 func (b *builtinCastStringAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	if IsHybridType(b.args[0]) {
+	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalReal(row, sc)
 	}
 	val, isNull, err := b.args[0].EvalString(row, sc)
@@ -957,7 +963,7 @@ type builtinCastStringAsDecimalSig struct {
 
 func (b *builtinCastStringAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	if IsHybridType(b.args[0]) {
+	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalDecimal(row, sc)
 	}
 	val, isNull, err := b.args[0].EvalString(row, sc)
@@ -1320,35 +1326,35 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row types.Row) (res types.Du
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
-func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType) (res Expression) {
+func BuildCastFunction(ctx context.Context, expr Expression, dstTp *types.FieldType) (res Expression) {
 	var fc functionClass
-	switch tp.EvalType() {
+	switch dstTp.EvalType() {
 	case types.ETInt:
-		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, dstTp}
 	case types.ETDecimal:
-		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, dstTp}
 	case types.ETReal:
-		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, dstTp}
 	case types.ETDatetime, types.ETTimestamp:
-		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, dstTp}
 	case types.ETDuration:
-		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, dstTp}
 	case types.ETJson:
-		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, dstTp}
 	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, dstTp}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(errors.Trace(err))
 	res = &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
-		RetType:  tp,
+		RetType:  dstTp,
 		Function: f,
 	}
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which would
 	// affect the evaluation of it.
-	if tp.EvalType() != types.ETJson {
+	if dstTp.EvalType() != types.ETJson {
 		res = FoldConstant(res)
 	}
 	return res
@@ -1361,10 +1367,10 @@ func WrapWithCastAsInt(ctx context.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETInt {
 		return expr
 	}
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
-	types.SetBinChsClnFlag(tp)
-	return BuildCastFunction(ctx, expr, tp)
+	dstTp := types.NewFieldType(mysql.TypeLonglong)
+	dstTp.Flen, dstTp.Decimal = expr.GetType().Flen, 0
+	types.SetBinChsClnFlag(dstTp)
+	return BuildCastFunction(ctx, expr, dstTp)
 }
 
 // WrapWithCastAsReal wraps `expr` with `cast` if the return type
