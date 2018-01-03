@@ -104,7 +104,7 @@ func (t *mockTxn) SetCap(cap int) {
 }
 
 func (t *mockTxn) Reset() {
-	t.Rollback()
+	t.valid = false
 }
 
 // NewMockTxn new a mockTxn.
