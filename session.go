@@ -727,6 +727,11 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			return nil, errors.Trace(err)
 		}
 	} else {
+		err = s.loadCommonGlobalVariablesIfNeeded()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		charset, collation := s.sessionVars.GetCharsetInfo()
 
 		// Step1: Compile query string to abstract syntax trees(ASTs).
@@ -1265,10 +1270,6 @@ func (s *session) ActivePendingTxn() error {
 	}
 	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	err = s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
@@ -1287,10 +1288,6 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	s.txnFuture = nil
 	var err error
 	s.txn, err = s.store.BeginWithStartTS(startTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)
 	}
