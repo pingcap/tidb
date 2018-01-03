@@ -258,7 +258,7 @@ func MockTable() *model.TableInfo {
 		ID:        10,
 	}
 
-	pkColumn.Flag = mysql.PriKeyFlag
+	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
 	col1.Flag = mysql.NotNullFlag
@@ -600,6 +600,11 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
 			best: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}->Projection",
+		},
+		{
+			// Test MaxOneRow for limit.
+			sql:  "select (select * from (select b from t limit 1) x where x.b = t1.b) from t t1",
+			best: "Join{DataScan(t1)->DataScan(t)->Projection->Limit}(t1.b,x.b)->Projection->Projection",
 		},
 		{
 			// Test Nested sub query.
