@@ -316,11 +316,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 		e.aggCtxs[i] = af.CreateContext()
 	}
 	e.mutableRow.SetDatums(e.rowBuffer...)
-	if chk.NumCols() == 0 {
-		chk.SetNumVirtualRows(chk.NumRows() + 1)
-	} else {
-		chk.AppendRow(0, e.mutableRow.ToRow())
-	}
+	chk.AppendRow(0, e.mutableRow.ToRow())
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
