@@ -847,6 +847,9 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	txn := e.ctx.Txn()
 	rowCount := 0
 
+	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
 	// Using BatchGet in insert ignore to filter rows before we add records to the table.
 	// If number of rows is one, using BatchGet might be slower than not using it in some cases.
 	if e.IgnoreErr {
@@ -855,6 +858,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	}
 
 	for _, row := range rows {
@@ -866,7 +870,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			txn = e.ctx.Txn()
 			rowCount = 0
 		}
-		if len(e.OnDuplicate) == 0 {
+		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row, false)
@@ -877,13 +881,6 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			continue
 		}
 		if kv.ErrKeyExists.Equal(err) {
-			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
-			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
-			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-			if e.IgnoreErr {
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				continue
-			}
 			if len(e.OnDuplicate) > 0 {
 				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
@@ -992,8 +989,8 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 		return nil, errors.Trace(err)
 	}
 
-	// append warnings and remove duplicate keys
-	offsets := make(map[int]bool, 0)
+	// append warnings and remove keys which duplicate with table rows
+	offsets := make(map[int]bool, len(rows)/2+1)
 	for _, k := range keysWithErr {
 		if _, exist := values[string(k.key)]; exist {
 			// only the first duplicate key error in one row will be appended in MySQL
@@ -1003,6 +1000,24 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 			}
 		}
 	}
+
+	// append warnings and remove keys which duplicate with statement rows
+	selfUniqueKeys := make(map[string]bool, len(keysWithErr)/2+1)
+	for _, k := range keysWithErr {
+		if _, dupRow := offsets[k.offset]; dupRow {
+			continue
+		}
+		if _, nonUnique := selfUniqueKeys[string(k.key)]; !nonUnique {
+			selfUniqueKeys[string(k.key)] = true
+		} else {
+			if _, ok := offsets[k.offset]; !ok {
+				offsets[k.offset] = true
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
+			}
+		}
+	}
+
+	// generate no duplicate error rows
 	noDupRows := make([][]types.Datum, 0, len(rows))
 	for i, row := range rows {
 		if _, ok := offsets[i]; ok {

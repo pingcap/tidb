@@ -325,7 +325,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	txn := ctx.Txn()
 	bs := kv.NewBufferStore(txn)
 
-	skipCheck := ctx.GetSessionVars().ImportingData
+	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
@@ -406,7 +406,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	importData := ctx.GetSessionVars().ImportingData
+	importData := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !importData && !skipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID); err != nil {
 			return recordID, errors.Trace(err)
