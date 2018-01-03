@@ -957,8 +957,8 @@ func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) 
 }
 
 // ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
-func (d *ddl) ShardRowID(ctx context.Context, ident ast.Ident, uVal uint64) error {
-	job, err := d.createJobByIdent(ident)
+func (d *ddl) ShardRowID(ctx context.Context, tableIdent ast.Ident, uVal uint64) error {
+	job, err := d.createJobForTable(tableIdent)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -969,15 +969,15 @@ func (d *ddl) ShardRowID(ctx context.Context, ident ast.Ident, uVal uint64) erro
 	return errors.Trace(err)
 }
 
-func (d *ddl) createJobByIdent(ident ast.Ident) (*model.Job, error) {
+func (d *ddl) createJobForTable(tableIdent ast.Ident) (*model.Job, error) {
 	is := d.GetInformationSchema()
-	schema, ok := is.SchemaByName(ident.Schema)
+	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
-		return nil, infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+		return nil, infoschema.ErrDatabaseNotExists.GenByArgs(tableIdent.Schema)
 	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
+	t, err := is.TableByName(tableIdent.Schema, tableIdent.Name)
 	if err != nil {
-		return nil, infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
+		return nil, infoschema.ErrTableNotExists.GenByArgs(tableIdent.Schema, tableIdent.Name)
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,

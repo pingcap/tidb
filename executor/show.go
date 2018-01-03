@@ -624,7 +624,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if tb.Meta().ShardRowIDBits > 0 {
-		buf.WriteString(fmt.Sprintf(" SHARD_ROW_ID_BITS=%d", tb.Meta().ShardRowIDBits))
+		buf.WriteString(fmt.Sprintf("/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits))
 	}
 
 	if len(tb.Meta().Comment) > 0 {
