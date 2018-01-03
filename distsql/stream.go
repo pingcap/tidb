@@ -54,7 +54,8 @@ func (r *streamResult) Next(goctx.Context) (PartialResult, error) {
 
 func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
+	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
+	for chk.NumRows() < maxChunkSize {
 		err := r.readDataIfNecessary()
 		if err != nil {
 			return errors.Trace(err)
