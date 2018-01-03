@@ -128,10 +128,10 @@ func (*testModelSuite) TestJobStartTime(c *C) {
 		ID:         123,
 		BinlogInfo: &HistoryInfo{},
 	}
-	str := job.StringWithStartTime()
 	t := time.Unix(0, 0)
-	ret := fmt.Sprintf("%s, start time: %v", job, t)
-	c.Assert(str, Equals, ret)
+	c.Assert(t, Equals, job.startTime())
+	ret := fmt.Sprintf("%s", job)
+	c.Assert(job.String(), Equals, ret)
 }
 
 func (*testModelSuite) TestJobCodec(c *C) {

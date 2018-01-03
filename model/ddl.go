@@ -196,15 +196,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args))
-}
-
-// StringWithStartTime returns a job's information with start time.
-// Getting start time tasks time, which impacts the performance.
-// So it's only used to show DDL information.
-func (job *Job) StringWithStartTime() string {
-	return fmt.Sprintf("%s, start time: %v", job, job.startTime())
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), job.startTime())
 }
 
 // IsFinished returns whether job is finished or not.

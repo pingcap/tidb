@@ -240,7 +240,7 @@ func (e *ShowDDLExec) Next(goCtx goctx.Context) (Row, error) {
 
 	var ddlJob string
 	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.StringWithStartTime()
+		ddlJob = e.ddlInfo.Job.String()
 	}
 
 	row := types.MakeDatums(
@@ -263,7 +263,7 @@ func (e *ShowDDLExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 
 	ddlJob := ""
 	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.StringWithStartTime()
+		ddlJob = e.ddlInfo.Job.String()
 	}
 	chk.AppendInt64(0, e.ddlInfo.SchemaVer)
 	chk.AppendString(1, e.ddlOwnerID)
@@ -307,7 +307,7 @@ func (e *ShowDDLJobsExec) Next(goCtx goctx.Context) (Row, error) {
 	}
 
 	job := e.jobs[e.cursor]
-	row := types.MakeDatums(job.StringWithStartTime(), job.State.String())
+	row := types.MakeDatums(job.String(), job.State.String())
 	e.cursor++
 
 	return row, nil
@@ -321,7 +321,7 @@ func (e *ShowDDLJobsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 	}
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		chk.AppendString(0, e.jobs[i].StringWithStartTime())
+		chk.AppendString(0, e.jobs[i].String())
 		chk.AppendString(1, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
