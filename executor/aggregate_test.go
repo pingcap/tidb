@@ -485,3 +485,15 @@ func (s *testSuite) TestHaving(c *C) {
 	tk.MustQuery("select sum(c1) - 1 from t group by c1 having sum(c1) - 1").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
 }
+
+func (s *testSuite) TestAggEliminator(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustQuery("select min(a) from t").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)")
+	tk.MustQuery("select max(a) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
+	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
+}
