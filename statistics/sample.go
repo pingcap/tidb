@@ -76,9 +76,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 		Count:     collector.Count,
 		FMSketch:  FMSketchFromProto(collector.FmSketch),
 	}
-	if collector.CmSketch != nil {
-		s.CMSketch = CMSketchFromProto(collector.CmSketch)
-	}
+	s.CMSketch = CMSketchFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {
 		s.Samples = append(s.Samples, types.NewBytesDatum(val))
 	}
