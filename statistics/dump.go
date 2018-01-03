@@ -125,17 +125,17 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 		ModifyCount: jsonTbl.ModifyCount,
 	}
 
-	for key, val := range jsonTbl.Indices {
+	for id, jsonIdx := range jsonTbl.Indices {
 		for _, idxInfo := range tableInfo.Indices {
-			if idxInfo.Name.L != key {
+			if idxInfo.Name.L != id {
 				continue
 			}
 			idx := &Index{
-				Histogram: Histogram{ID: idxInfo.ID, NullCount: val.NullCount, LastUpdateVersion: val.LastUpdateVersion, NDV: val.Histogram.Ndv},
-				CMSketch:  CMSketchFromProto(val.CMSketch),
+				Histogram: Histogram{ID: idxInfo.ID, NullCount: jsonIdx.NullCount, LastUpdateVersion: jsonIdx.LastUpdateVersion, NDV: jsonIdx.Histogram.Ndv},
+				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
 				Info:      idxInfo,
 			}
-			idx.Histogram.Buckets = HistogramFromProto(val.Histogram).Buckets
+			idx.Histogram.Buckets = HistogramFromProto(jsonIdx.Histogram).Buckets
 
 			for i := range idx.Buckets {
 				bk := &idx.Buckets[i]
