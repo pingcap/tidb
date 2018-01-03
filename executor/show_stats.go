@@ -116,7 +116,7 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 	if numOfCols > 0 {
 		isIndex = 1
 	}
-	for i := 0; i < hist.NumBuckets(); i++ {
+	for i := 0; i < hist.Len(); i++ {
 		lowerBoundStr, err := e.valueToString(hist.GetLower(i), numOfCols)
 		if err != nil {
 			return errors.Trace(err)

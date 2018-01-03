@@ -87,7 +87,7 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.
 	ndv := len(values)
 	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv)
 	for i := 0; i < ndv; i++ {
-		histogram.AddBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
+		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
 	}
 	return histogram
 }

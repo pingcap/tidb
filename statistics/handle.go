@@ -181,7 +181,7 @@ func (h *Handle) LoadNeededHistograms() error {
 	for _, col := range cols {
 		tbl := h.GetTableStats(col.tableID).copy()
 		c, ok := tbl.Columns[col.columnID]
-		if !ok || c.NumBuckets() > 0 {
+		if !ok || c.Len() > 0 {
 			histogramNeededColumns.delete(col)
 			continue
 		}

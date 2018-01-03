@@ -124,7 +124,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-		needNotLoad := col == nil || (col.NumBuckets() == 0 && col.LastUpdateVersion < histVer)
+		needNotLoad := col == nil || (col.Len() == 0 && col.LastUpdateVersion < histVer)
 		if h.Lease > 0 && !isHandle && needNotLoad {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
@@ -250,11 +250,11 @@ func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool 
 		return true
 	}
 	col, ok := t.Columns[colID]
-	if ok && col.NDV > 0 && col.NumBuckets() == 0 {
+	if ok && col.NDV > 0 && col.Len() == 0 {
 		sc.SetHistogramsNotLoad()
 		histogramNeededColumns.insert(tableColumnID{tableID: t.TableID, columnID: colID})
 	}
-	return !ok || col.NumBuckets() == 0
+	return !ok || col.Len() == 0
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
@@ -322,7 +322,7 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 // GetRowCountByIndexRanges estimates the row count by a slice of NewRange.
 func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.NewRange) (float64, error) {
 	idx := t.Indices[idxID]
-	if t.Pseudo || idx == nil || idx.NumBuckets() == 0 {
+	if t.Pseudo || idx == nil || idx.Len() == 0 {
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
 	}
 	result, err := idx.getRowCount(sc, indexRanges)

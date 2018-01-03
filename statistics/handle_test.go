@@ -383,15 +383,15 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	time.Sleep(1 * time.Second)
 	stat := h.GetTableStats(tableInfo.ID)
 	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	c.Assert(hg.NumBuckets(), Greater, 0)
+	c.Assert(hg.Len(), Greater, 0)
 	cms := stat.Columns[tableInfo.Columns[0].ID].CMSketch
 	c.Assert(cms, IsNil)
 	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
-	c.Assert(hg.NumBuckets(), Greater, 0)
+	c.Assert(hg.Len(), Greater, 0)
 	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
 	c.Assert(cms.TotalCount(), Greater, uint64(0))
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	c.Assert(hg.NumBuckets(), Equals, 0)
+	c.Assert(hg.Len(), Equals, 0)
 	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch
 	c.Assert(cms, IsNil)
 	_, err = stat.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo.Columns[2].ID)
@@ -399,7 +399,7 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	time.Sleep(1 * time.Second)
 	stat = h.GetTableStats(tableInfo.ID)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	c.Assert(hg.NumBuckets(), Greater, 0)
+	c.Assert(hg.Len(), Greater, 0)
 }
 
 func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {

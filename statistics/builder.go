@@ -50,7 +50,7 @@ func (b *SortedBuilder) Hist() *Histogram {
 func (b *SortedBuilder) Iterate(data types.Datum) error {
 	b.Count++
 	if b.Count == 1 {
-		b.hist.AddBucket(&data, &data, 1, 1)
+		b.hist.AppendBucket(&data, &data, 1, 1)
 		b.hist.NDV = 1
 		return nil
 	}
@@ -86,7 +86,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		} else {
 			b.lastNumber = b.hist.Counts[b.bucketIdx]
 			b.bucketIdx++
-			b.hist.AddBucket(&data, &data, b.lastNumber+1, 1)
+			b.hist.AppendBucket(&data, &data, b.lastNumber+1, 1)
 		}
 		b.hist.NDV++
 	}
@@ -120,7 +120,7 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, collector *SampleCol
 	}
 	bucketIdx := 0
 	var lastCount int64
-	hg.AddBucket(&samples[0], &types.Datum{}, 0, 0)
+	hg.AppendBucket(&samples[0], &types.Datum{}, 0, 0)
 	for i := int64(0); i < int64(len(samples)); i++ {
 		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i])
 		if err != nil {
@@ -144,7 +144,7 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, collector *SampleCol
 			lastCount = hg.Counts[bucketIdx]
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
-			hg.AddBucket(&samples[i], &samples[i], int64(totalCount), int64(ndvFactor))
+			hg.AppendBucket(&samples[i], &samples[i], int64(totalCount), int64(ndvFactor))
 		}
 	}
 	return hg, nil

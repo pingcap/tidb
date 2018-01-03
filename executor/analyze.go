@@ -168,8 +168,8 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		Cms:     []*statistics.CMSketch{cms},
 		IsIndex: 1,
 	}
-	if hist.NumBuckets() > 0 {
-		result.Count = hist.Counts[hist.NumBuckets()-1]
+	if hist.Len() > 0 {
+		result.Count = hist.Counts[hist.Len()-1]
 	}
 	return result
 }
@@ -257,8 +257,8 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
-	if hist.NumBuckets() > 0 {
-		result.Count += hist.Counts[hist.NumBuckets()-1]
+	if hist.Len() > 0 {
+		result.Count += hist.Counts[hist.Len()-1]
 	}
 	return result
 }
@@ -345,7 +345,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
-		err := pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+		err := pkHist.ConvertToType(&e.pkInfo.FieldType, timeZone)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

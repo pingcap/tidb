@@ -174,7 +174,7 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.C
 				continue
 			}
 		}
-		hist.AddBucket(&lower, &upper, row.GetInt64(3), row.GetInt64(4))
+		hist.AppendBucket(&lower, &upper, row.GetInt64(3), row.GetInt64(4))
 	}
 }
 
@@ -200,13 +200,13 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 			h.LastVersion = table.Version
 		}
 		for _, idx := range table.Indices {
-			for i := 1; i < idx.NumBuckets(); i++ {
+			for i := 1; i < idx.Len(); i++ {
 				idx.Counts[i] += idx.Counts[i-1]
 			}
 			idx.PreCalculateScalar()
 		}
 		for _, col := range table.Columns {
-			for i := 1; i < col.NumBuckets(); i++ {
+			for i := 1; i < col.Len(); i++ {
 				col.Counts[i] += col.Counts[i-1]
 			}
 			col.PreCalculateScalar()

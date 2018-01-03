@@ -247,7 +247,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 		}
 	}
 	for _, idx := range tbl.Indices {
-		if idx.NumBuckets() > 0 {
+		if idx.Len() > 0 {
 			return false
 		}
 	}

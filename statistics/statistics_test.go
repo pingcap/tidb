@@ -227,7 +227,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
-	c.Check(col.NumBuckets(), Equals, 232)
+	c.Check(col.Len(), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 0)
@@ -337,7 +337,7 @@ func mockHistogram(lower, num int64) *Histogram {
 	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num))
 	for i := int64(0); i < num; i++ {
 		lower, upper := types.NewIntDatum(lower+i), types.NewIntDatum(lower+i)
-		h.AddBucket(&lower, &upper, i+1, 1)
+		h.AppendBucket(&lower, &upper, i+1, 1)
 	}
 	return h
 }
@@ -384,14 +384,14 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 		h, err := MergeHistograms(sc, lh, rh, bucketCount)
 		c.Assert(err, IsNil)
 		c.Assert(h.NDV, Equals, t.ndv)
-		c.Assert(h.NumBuckets(), Equals, t.bucketNum)
+		c.Assert(h.Len(), Equals, t.bucketNum)
 		c.Assert(int64(h.totalRowCount()), Equals, t.leftNum+t.rightNum)
 		expectLower := types.NewIntDatum(t.leftLower)
 		cmp, err := h.GetLower(0).CompareDatum(sc, &expectLower)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 		expectUpper := types.NewIntDatum(t.rightLower + t.rightNum - 1)
-		cmp, err = h.GetUpper(h.NumBuckets()-1).CompareDatum(sc, &expectUpper)
+		cmp, err = h.GetUpper(h.Len()-1).CompareDatum(sc, &expectUpper)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}

@@ -89,13 +89,11 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 // of lower and upper equals to the common prefix of the lower, upper and the value. For some simple types like `Int64`,
 // we do not convert it because we can directly infer the scalar value.
 func (hg *Histogram) PreCalculateScalar() {
-	len := hg.NumBuckets()
+	len := hg.Len()
 	if len == 0 {
 		return
 	}
 	switch hg.GetLower(0).Kind() {
-	case types.KindFloat32, types.KindFloat64, types.KindInt64, types.KindUint64, types.KindMysqlDuration:
-		return
 	case types.KindMysqlDecimal, types.KindMysqlTime:
 		hg.lowerScalar = make([]float64, len)
 		hg.upperScalar = make([]float64, len)
@@ -117,18 +115,18 @@ func (hg *Histogram) PreCalculateScalar() {
 }
 
 func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
-	row := hg.Bounds.GetRow(index)
+	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
 	switch value.Kind() {
 	case types.KindFloat32:
-		return calcFraction(float64(row.GetFloat32(0)), float64(row.GetFloat32(1)), float64(value.GetFloat32()))
+		return calcFraction(float64(lower.GetFloat32(0)), float64(upper.GetFloat32(0)), float64(value.GetFloat32()))
 	case types.KindFloat64:
-		return calcFraction(row.GetFloat64(0), row.GetFloat64(1), value.GetFloat64())
+		return calcFraction(lower.GetFloat64(0), upper.GetFloat64(0), value.GetFloat64())
 	case types.KindInt64:
-		return calcFraction(float64(row.GetInt64(0)), float64(row.GetInt64(1)), float64(value.GetInt64()))
+		return calcFraction(float64(lower.GetInt64(0)), float64(upper.GetInt64(0)), float64(value.GetInt64()))
 	case types.KindUint64:
-		return calcFraction(float64(row.GetUint64(0)), float64(row.GetUint64(1)), float64(value.GetUint64()))
+		return calcFraction(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)), float64(value.GetUint64()))
 	case types.KindMysqlDuration:
-		return calcFraction(float64(row.GetDuration(0).Duration), float64(row.GetDuration(1).Duration), float64(value.GetMysqlDuration().Duration))
+		return calcFraction(float64(lower.GetDuration(0).Duration), float64(upper.GetDuration(0).Duration), float64(value.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal, types.KindMysqlTime:
 		return calcFraction(hg.lowerScalar[index], hg.upperScalar[index], convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
