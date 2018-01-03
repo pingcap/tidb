@@ -119,7 +119,8 @@ func addSpecialComment(ddlQuery string) string {
 		return ddlQuery
 	}
 	upperQuery := strings.ToUpper(ddlQuery)
-	reg, _ := regexp.Compile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
+	reg, err := regexp.Compile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
+	terror.Log(err)
 	loc := reg.FindStringIndex(upperQuery)
 	if len(loc) < 2 {
 		return ddlQuery
