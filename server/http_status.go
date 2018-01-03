@@ -45,7 +45,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/metrics", prometheus.Handler())
 
 	// HTTP path for dump statistics.
-	router.Handle("/dump_stats/{db}/{table}", s.newStatsHandler())
+	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler())
 
 	if s.cfg.Store == "tikv" {
 		tikvHandler := s.newRegionHandler()

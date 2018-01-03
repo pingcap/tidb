@@ -26,27 +26,29 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mocktikv"
 )
 
-type DumpStaTestSuite struct {
+type testDumpStatsSuite struct {
 	server *Server
 }
 
-func (ds *DumpStaTestSuite) TestDumpStatsAPI(c *C) {
+var _ = Suite(new(testDumpStatsSuite))
+
+func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.startServer(c)
 	ds.prepareData(c)
 	defer ds.stopServer(c)
 
-	resp, err := http.Get("http://127.0.0.1:10090/dump_stats/tidb/test")
+	resp, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 
 	decoder := json.NewDecoder(resp.Body)
-	var jsonTbl *statistics.JSONTable
-	err = decoder.Decode(jsonTbl)
+	var jsonTbl statistics.JSONTable
+	err = decoder.Decode(&jsonTbl)
 	c.Assert(err, IsNil)
 	c.Assert(jsonTbl.DatabaseName, Equals, "tidb")
 	c.Assert(jsonTbl.TableName, Equals, "test")
 }
 
-func (ds *DumpStaTestSuite) startServer(c *C) {
+func (ds *testDumpStatsSuite) startServer(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	store, err := tikv.NewMockTikvStore(tikv.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
@@ -69,13 +71,13 @@ func (ds *DumpStaTestSuite) startServer(c *C) {
 	waitUntilServerOnline(cfg.Status.StatusPort)
 }
 
-func (ds *DumpStaTestSuite) stopServer(c *C) {
+func (ds *testDumpStatsSuite) stopServer(c *C) {
 	if ds.server != nil {
 		ds.server.Close()
 	}
 }
 
-func (ds *DumpStaTestSuite) prepareData(c *C) {
+func (ds *testDumpStatsSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
