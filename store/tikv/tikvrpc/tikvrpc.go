@@ -53,6 +53,52 @@ const (
 	CmdSplitRegion
 )
 
+func (t CmdType) String() string {
+	switch t {
+	case CmdGet:
+		return "Get"
+	case CmdScan:
+		return "Scan"
+	case CmdPrewrite:
+		return "Prewrite"
+	case CmdCommit:
+		return "Commit"
+	case CmdCleanup:
+		return "Cleanup"
+	case CmdBatchGet:
+		return "BatchGet"
+	case CmdBatchRollback:
+		return "BatchRollback"
+	case CmdScanLock:
+		return "ScanLock"
+	case CmdResolveLock:
+		return "ResolveLock"
+	case CmdGC:
+		return "GC"
+	case CmdDeleteRange:
+		return "DeleteRange"
+	case CmdRawGet:
+		return "RawGet"
+	case CmdRawPut:
+		return "RawPut"
+	case CmdRawDelete:
+		return "RawDelete"
+	case CmdRawScan:
+		return "RawScan"
+	case CmdCop:
+		return "Cop"
+	case CmdCopStream:
+		return "CopStream"
+	case CmdMvccGetByKey:
+		return "MvccGetByKey"
+	case CmdMvccGetByStartTs:
+		return "MvccGetByStartTS"
+	case CmdSplitRegion:
+		return "SplitRegion"
+	}
+	return "Unknown"
+}
+
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	kvrpcpb.Context

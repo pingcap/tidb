@@ -72,6 +72,8 @@ func (c *mockKvClient) supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge, tipb.ExprType_JsonSet,
 		tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove, tipb.ExprType_JsonContains:
 		return false
+	case tipb.ExprType_DateFormat:
+		return true
 	case kv.ReqSubTypeDesc:
 		return true
 	default:
@@ -384,6 +386,25 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 			c.Assert(pbExpr, IsNil)
 		}
 	}
+}
+
+func (s *testEvaluatorSuite) TestDateFunc2Pb(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mockKvClient)
+	dg := new(dataGen4Expr2PbTest)
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.DateFormat,
+		types.NewFieldType(mysql.TypeUnspecified),
+		dg.genColumn(mysql.TypeDatetime, 1),
+		dg.genColumn(mysql.TypeString, 2))
+	c.Assert(err, IsNil)
+	funcs := []Expression{fc}
+	pbExprs := ExpressionsToPBList(sc, funcs, client)
+	c.Assert(pbExprs[0], NotNil)
+	js, err := json.Marshal(pbExprs[0])
+	c.Assert(err, IsNil)
+	c.Assert(string(js), Equals, "{\"tp\":6001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}")
 }
 
 func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {

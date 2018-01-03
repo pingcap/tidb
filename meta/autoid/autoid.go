@@ -18,12 +18,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 )
 
 // Test needs to change it, so it's a variable.
@@ -45,6 +45,8 @@ type Allocator interface {
 	Base() int64
 	// End is only used for test.
 	End() int64
+	// NextGlobalAutoID returns the next global autoID.
+	NextGlobalAutoID(tableID int64) (int64, error)
 }
 
 type allocator struct {
@@ -74,6 +76,18 @@ func (alloc *allocator) Base() int64 {
 // End implements autoid.Allocator End interface.
 func (alloc *allocator) End() int64 {
 	return alloc.end
+}
+
+// NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
+func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
+	var autoID int64
+	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		var err1 error
+		m := meta.NewMeta(txn)
+		autoID, err1 = m.GetAutoTableID(alloc.dbID, tableID)
+		return errors.Trace(err1)
+	})
+	return autoID + 1, errors.Trace(err)
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -182,6 +196,13 @@ func (alloc *memoryAllocator) Base() int64 {
 // End implements autoid.Allocator End interface.
 func (alloc *memoryAllocator) End() int64 {
 	return alloc.end
+}
+
+// NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
+func (alloc *memoryAllocator) NextGlobalAutoID(tableID int64) (int64, error) {
+	memIDLock.Lock()
+	defer memIDLock.Unlock()
+	return memID + 1, nil
 }
 
 // Rebase implements autoid.Allocator Rebase interface.

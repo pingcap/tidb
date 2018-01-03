@@ -2488,7 +2488,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
 	c.Assert(terror.ErrorEqual(err, expression.ErrDivisionByZero), IsTrue)
 
-	tk.MustQuery("select sum(1.2e2) * 0.1").Check(testkit.Rows("12.0"))
+	tk.MustQuery("select sum(1.2e2) * 0.1").Check(testkit.Rows("12"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a double)")
 	tk.MustExec("insert into t value(1.2)")
@@ -2665,6 +2665,31 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	tk.MustExec("insert into t values(1.123456), (1.123456)")
 	result := tk.MustQuery("select avg(a) from t")
 	result.Check(testkit.Rows("1.1234560000"))
+}
+
+func (s *testIntegrationSuite) TestAggregationBuiltinBitOr(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint)")
+	tk.MustExec("insert into t values(null);")
+	result := tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values(1);")
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2);")
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("3"))
+	tk.MustExec("insert into t values(4);")
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("7"))
+	result = tk.MustQuery("select a, bit_or(a) from t group by a order by a")
+	result.Check(testkit.Rows("<nil> 0", "1 1", "2 2", "4 4"))
+	tk.MustExec("insert into t values(-1);")
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("18446744073709551615"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltinBitXor(c *C) {
@@ -3076,6 +3101,25 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+
+	// issue #5478
+	_, err = tk.Exec("set session transaction read write;")
+	_, err = tk.Exec("set global transaction read write;")
+	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
+	r.Check(testkit.Rows("0 0 0 0"))
+
+	_, err = tk.Exec("set session transaction read only;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
+	r.Check(testkit.Rows("1 0 1 0"))
+	_, err = tk.Exec("set global transaction read only;")
+	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
+	r.Check(testkit.Rows("1 1 1 1"))
+
+	_, err = tk.Exec("set session transaction read write;")
+	_, err = tk.Exec("set global transaction read write;")
+	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
+	r.Check(testkit.Rows("0 0 0 0"))
 }
 
 func (s *testIntegrationSuite) TestIssues(c *C) {
@@ -3117,6 +3161,12 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
 		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
+
+	// for issue #5293
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert t values (1)")
+	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

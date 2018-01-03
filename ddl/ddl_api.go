@@ -18,10 +18,12 @@
 package ddl
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -34,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -318,7 +319,9 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionGenerated:
-				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
+				var buf = bytes.NewBuffer([]byte{})
+				v.Expr.Format(buf)
+				col.GeneratedExprString = buf.String()
 				col.GeneratedStored = v.Stored
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
@@ -883,6 +886,13 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = d.RenameTable(ctx, ident, newIdent)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
+		case ast.AlterTableOption:
+			for _, opt := range spec.Options {
+				if opt.Tp == ast.TableOptionAutoIncrement {
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
+					break
+				}
+			}
 		default:
 			// Nothing to do now.
 		}
@@ -893,6 +903,33 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 	}
 
 	return nil
+}
+
+func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) error {
+	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	autoIncID, err := t.Allocator(ctx).NextGlobalAutoID(t.Meta().ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newBase = mathutil.MaxInt64(newBase, autoIncID)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionRebaseAutoID,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newBase},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 func checkColumnConstraint(constraints []*ast.ColumnOption) error {
@@ -1135,7 +1172,9 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
-			col.GeneratedExprString = stringutil.RemoveBlanks(opt.Expr.Text())
+			var buf = bytes.NewBuffer([]byte{})
+			opt.Expr.Format(buf)
+			col.GeneratedExprString = buf.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {

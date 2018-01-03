@@ -88,7 +88,6 @@ const (
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	*basePlan
 	baseLogicalPlan
 
 	JoinType       JoinType
@@ -106,8 +105,10 @@ type LogicalJoin struct {
 	leftProperties  [][]*expression.Column
 	rightProperties [][]*expression.Column
 
-	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
-	// instead of null padding.
+	// DefaultValues is only used for left/right outer join, which is values the inner row's should be when the outer table
+	// doesn't match any inner table's row.
+	// That it's nil just means the default values is a slice of NULL.
+	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
 	// redundantSchema contains columns which are eliminated in join.
@@ -157,7 +158,6 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	*basePlan
 	baseLogicalPlan
 
 	Exprs []expression.Expression
@@ -165,6 +165,12 @@ type LogicalProjection struct {
 	// calculateGenCols indicates the projection is for calculating generated columns.
 	// In *UPDATE*, we should know this to tell different projections.
 	calculateGenCols bool
+
+	// calculateNoDelay indicates this Projection is the root Plan and should be
+	// calculated without delay and will not return any result to client.
+	// Currently it is "true" only when the current sql query is a "DO" statement.
+	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
+	calculateNoDelay bool
 }
 
 func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -177,7 +183,6 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	*basePlan
 	baseLogicalPlan
 
 	AggFuncs     []aggregation.Aggregation
@@ -204,7 +209,6 @@ func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCol
 
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
-	*basePlan
 	baseLogicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
@@ -240,19 +244,16 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalExists checks if a query returns result.
 type LogicalExists struct {
-	*basePlan
 	baseLogicalPlan
 }
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
-	*basePlan
 	baseLogicalPlan
 }
 
 // LogicalTableDual represents a dual table plan.
 type LogicalTableDual struct {
-	*basePlan
 	baseLogicalPlan
 
 	RowCount int
@@ -260,7 +261,6 @@ type LogicalTableDual struct {
 
 // LogicalUnionScan is only used in non read-only txn.
 type LogicalUnionScan struct {
-	*basePlan
 	baseLogicalPlan
 
 	conditions []expression.Expression
@@ -268,7 +268,6 @@ type LogicalUnionScan struct {
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
-	*basePlan
 	baseLogicalPlan
 
 	indexHints []*ast.IndexHint
@@ -313,13 +312,11 @@ func (p *DataSource) TableInfo() *model.TableInfo {
 
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
-	*basePlan
 	baseLogicalPlan
 }
 
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
-	*basePlan
 	baseLogicalPlan
 
 	ByItems []*ByItems
@@ -335,7 +332,6 @@ func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
-	*basePlan
 	baseLogicalPlan
 
 	ByItems []*ByItems
@@ -353,7 +349,6 @@ func (t *LogicalTopN) isLimit() bool {
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	*basePlan
 	baseLogicalPlan
 
 	Offset uint64
@@ -365,7 +360,6 @@ type LogicalLimit struct {
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
-	*basePlan
 	baseLogicalPlan
 
 	Lock ast.SelectLockType

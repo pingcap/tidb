@@ -306,7 +306,7 @@ func (b *builtinInJSONSig) evalInt(row types.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		result, err := json.CompareJSON(evaledArg, arg0)
+		result := json.CompareBinary(evaledArg, arg0)
 		if result == 0 {
 			return 1, false, nil
 		}
@@ -591,19 +591,19 @@ type builtinValuesJSONSig struct {
 
 // evalJSON evals a builtinValuesJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.JSON, bool, error) {
+func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.BinaryJSON, bool, error) {
 	values := b.ctx.GetSessionVars().CurrInsertValues
 	if values == nil {
-		return json.JSON{}, true, errors.New("Session current insert values is nil")
+		return json.BinaryJSON{}, true, errors.New("Session current insert values is nil")
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
-			return json.JSON{}, true, nil
+			return json.BinaryJSON{}, true, nil
 		}
 		return row.GetJSON(b.offset), false, nil
 	}
-	return json.JSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+	return json.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type bitCountFunctionClass struct {

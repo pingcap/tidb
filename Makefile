@@ -103,21 +103,27 @@ todo:
 test: checklist gotest
 
 gotest: parserlib
+	go get github.com/coreos/gofail
+	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
 	go get github.com/go-playground/overalls
+<<<<<<< HEAD
 	go get github.com/mattn/goveralls	
 	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor'
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
+=======
+	go get github.com/mattn/goveralls
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,_vendor' || { $(GOFAIL_DISABLE); exit 1; }
+	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile || { $(GOFAIL_DISABLE); exit 1; }
+>>>>>>> master
 else
 	@echo "Running in native mode."
-	go get github.com/coreos/gofail
-	@$(GOFAIL_ENABLE)
 	@export log_level=error; \
 	$(GOTEST) -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
-	@$(GOFAIL_DISABLE)
 endif
+	@$(GOFAIL_DISABLE)
 
 race: parserlib
 	@export log_level=debug; \

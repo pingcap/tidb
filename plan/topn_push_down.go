@@ -27,10 +27,9 @@ func (s *pushDownTopNOptimizer) optimize(p LogicalPlan, ctx context.Context) (Lo
 }
 
 func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
-	p := s.basePlan.self.(LogicalPlan)
+	p := s.self
 	for i, child := range p.Children() {
 		p.Children()[i] = child.(LogicalPlan).pushDownTopN(nil)
-		p.Children()[i].SetParents(p)
 	}
 	if topN != nil {
 		return topN.setChild(p, false)
@@ -49,12 +48,12 @@ func (s *LogicalTopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
 			Offset:  s.Offset,
 			partial: s.partial,
 		}.init(s.ctx)
-		setParentAndChildren(limit, p)
+		limit.SetChildren(p)
 		limit.SetSchema(p.Schema().Clone())
 		return limit
 	}
 	// Then s must be topN.
-	setParentAndChildren(s, p)
+	s.SetChildren(p)
 	s.SetSchema(p.Schema().Clone())
 	return s
 }
@@ -89,12 +88,10 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		if topN != nil {
 			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, partial: true}.init(p.ctx)
 			for _, by := range topN.ByItems {
-				newExpr := expression.ColumnSubstitute(by.Expr, p.schema, expression.Column2Exprs(child.Schema().Columns))
-				newTopN.ByItems = append(newTopN.ByItems, &ByItems{newExpr, by.Desc})
+				newTopN.ByItems = append(newTopN.ByItems, &ByItems{by.Expr.Clone(), by.Desc})
 			}
 		}
 		p.children[i] = child.(LogicalPlan).pushDownTopN(newTopN)
-		p.children[i].SetParents(p)
 	}
 	if topN != nil {
 		return topN.setChild(p, true)
@@ -108,8 +105,7 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 			by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)
 		}
 	}
-	child := p.children[0].(LogicalPlan).pushDownTopN(topN)
-	setParentAndChildren(p, child)
+	p.children[0] = p.children[0].(LogicalPlan).pushDownTopN(topN)
 	return p
 }
 
@@ -142,20 +138,18 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 }
 
 func (p *LogicalJoin) pushDownTopN(topN *LogicalTopN) LogicalPlan {
-	var leftChild, rightChild LogicalPlan
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		leftChild = p.pushDownTopNToChild(topN, 0)
-		rightChild = p.children[1].(LogicalPlan).pushDownTopN(nil)
+		p.children[0] = p.pushDownTopNToChild(topN, 0)
+		p.children[1] = p.children[1].(LogicalPlan).pushDownTopN(nil)
 	case RightOuterJoin:
-		leftChild = p.children[0].(LogicalPlan).pushDownTopN(nil)
-		rightChild = p.pushDownTopNToChild(topN, 1)
+		p.children[0] = p.children[0].(LogicalPlan).pushDownTopN(nil)
+		p.children[1] = p.pushDownTopNToChild(topN, 1)
 	default:
 		return p.baseLogicalPlan.pushDownTopN(topN)
 	}
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
 	self := p.self.(LogicalPlan)
-	setParentAndChildren(self, leftChild, rightChild)
 	if topN != nil {
 		return topN.setChild(self, true)
 	}

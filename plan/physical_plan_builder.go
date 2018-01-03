@@ -16,7 +16,6 @@ package plan
 import (
 	"math"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -68,9 +68,19 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
+func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+	if !prop.isEmpty() {
+		return invalidTask, nil
+	}
+	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx, p.stats)
+	dual.SetSchema(p.schema)
+	return &rootTask{p: dual}, nil
+}
+
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
-	// look up the task map
+	// Look up the task with this prop in the task map.
+	// It's used to reduce double counting.
 	t = p.getTask(prop)
 	if t != nil {
 		return t, nil
@@ -81,17 +91,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 		p.storeTask(prop, t)
 		return t, nil
 	}
-	// Now we only consider rootTask.
-	if len(p.basePlan.children) == 0 {
-		// When the children length is 0, we process it specially.
-		t = &rootTask{p: p.basePlan.self.(LogicalPlan).generatePhysicalPlans()[0]}
-		t = prop.enforceProperty(t, p.basePlan.ctx)
-		p.storeTask(prop, t)
-		return t, nil
-	}
-	// Else we suppose it only has one child.
-	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
-		t, err = p.getBestTask(t, prop, pp)
+	for _, pp := range p.self.genPhysPlansByReqProp(prop) {
+		t, err = p.getBestTask(t, pp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -100,55 +101,54 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 	return t, nil
 }
 
-func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan) (task, error) {
-	newProps := pp.getChildrenPossibleProps(prop)
-	for _, newProp := range newProps {
-		tasks := make([]task, 0, len(p.basePlan.children))
-		for i, child := range p.basePlan.children {
-			childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(newProp[i])
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			tasks = append(tasks, childTask)
+func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
+	tasks := make([]task, 0, len(p.basePlan.children))
+	for i, child := range p.basePlan.children {
+		childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(pp.getChildReqProps(i))
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		resultTask := pp.attach2Task(tasks...)
-		if resultTask.cost() < bestTask.cost() {
-			bestTask = resultTask
-		}
+		tasks = append(tasks, childTask)
+	}
+	resultTask := pp.attach2Task(tasks...)
+	if resultTask.cost() < bestTask.cost() {
+		bestTask = resultTask
 	}
 	return bestTask, nil
 }
 
-// tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
+// tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task.
 func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) {
+	if !prop.isEmpty() {
+		return nil, nil
+	}
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
 	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if isDistReq {
 		return nil, nil
 	}
+
 	memTable := PhysicalMemTable{
 		DBName:      p.DBName,
 		Table:       p.tableInfo,
 		Columns:     p.Columns,
 		TableAsName: p.TableAsName,
-	}.init(p.ctx)
+	}.init(p.ctx, p.stats)
 	memTable.SetSchema(p.schema)
 	memTable.Ranges = ranger.FullIntRange()
-	memTable.profile = p.profile
+
+	// Stop to push down these conditions.
 	var retPlan PhysicalPlan = memTable
 	if len(p.pushedDownConds) > 0 {
 		sel := PhysicalSelection{
 			Conditions: p.pushedDownConds,
-		}.init(p.ctx)
+		}.init(p.ctx, p.stats)
 		sel.SetSchema(p.schema)
 		sel.SetChildren(memTable)
-		sel.profile = p.profile
 		retPlan = sel
 	}
-	task = &rootTask{p: retPlan}
-	task = prop.enforceProperty(task, p.ctx)
-	return task, nil
+	return &rootTask{p: retPlan}, nil
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -160,9 +160,8 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 				return nil, errors.Trace(err)
 			}
 			if !result {
-				dual := PhysicalTableDual{}.init(p.ctx)
+				dual := PhysicalTableDual{}.init(p.ctx, p.stats)
 				dual.SetSchema(p.schema)
-				dual.profile = p.profile
 				return &rootTask{
 					p: dual,
 				}, nil
@@ -175,9 +174,14 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 // convert2NewPhysicalPlan implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
+	// So here we do nothing.
+	// TODO: Add a special prop to handle IndexJoin's inner plan.
+	// Then we can remove forceToTableScan and forceToIndexScan.
 	if prop == nil {
 		return nil, nil
 	}
+
 	t := p.getTask(prop)
 	if t != nil {
 		return t, nil
@@ -198,6 +202,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		p.storeTask(prop, t)
 		return t, nil
 	}
+
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices := p.availableIndices.indices
 	includeTableScan := p.availableIndices.includeTableScan
@@ -246,7 +251,7 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 	return true
 }
 
-func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
+func (p *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []expression.Expression) PhysicalPlan {
 	is := PhysicalIndexScan{
 		Table:            p.tableInfo,
 		TableAsName:      p.TableAsName,
@@ -254,11 +259,11 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		Columns:          p.Columns,
 		Index:            idx,
 		dataSourceSchema: p.schema,
-		Ranges:           ranger.FullIndexRange(),
+		Ranges:           ranger.FullNewRange(),
 		OutOfOrder:       true,
 	}.init(p.ctx)
-	is.filterCondition = p.pushedDownConds
-	is.profile = p.profile
+	is.filterCondition = remainedConds
+	is.stats = p.stats
 	cop := &copTask{
 		indexPlan: is,
 	}
@@ -296,19 +301,20 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		dataSourceSchema: p.schema,
 	}.init(p.ctx)
 	statsTbl := p.statisticTable
+	if statsTbl.Indices[idx.ID] != nil {
+		is.HistVersion = statsTbl.Indices[idx.ID].LastUpdateVersion
+	}
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
-	is.Ranges = ranger.FullIndexRange()
+	is.Ranges = ranger.FullNewRange()
 	if len(p.pushedDownConds) > 0 {
 		if len(idxCols) > 0 {
-			var ranges []ranger.Range
 			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(p.pushedDownConds, idxCols, colLengths)
-			ranges, err = ranger.BuildRange(sc, is.AccessCondition, ranger.IndexRangeType, idxCols, colLengths)
+			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			is.Ranges = ranger.Ranges2IndexRanges(ranges)
 			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -317,11 +323,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.filterCondition = p.pushedDownConds
 		}
 	}
-	is.profile = p.profile
-
-	cop := &copTask{
-		indexPlan: is,
-	}
+	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.ctx)
@@ -351,14 +353,14 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 	}
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
-		selectivity, err := p.statisticTable.Selectivity(p.ctx, is.filterCondition)
+		selectivity, err := statsTbl.Selectivity(p.ctx, is.filterCondition)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
 		}
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
-	is.expectedCnt = rowCount
+	is.stats = p.stats.scaleByExpectCnt(rowCount)
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
@@ -421,22 +423,18 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			indexConds = is.filterCondition
 		}
 		if indexConds != nil {
-			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx)
+			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
+				p.getStatsByFilter(append(is.AccessCondition, indexConds...)).scaleByExpectCnt(expectedCnt))
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
-			indexSel.profile = p.getStatsProfileByFilter(append(is.AccessCondition, indexConds...))
-			// FIXME: It is not precise.
-			indexSel.expectedCnt = expectedCnt
 			copTask.indexPlan = indexSel
 			copTask.cst += copTask.count() * cpuFactor
 		}
 		if tableConds != nil {
 			copTask.finishIndexPlan()
-			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx)
+			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
 			tableSel.SetSchema(copTask.tablePlan.Schema())
 			tableSel.SetChildren(copTask.tablePlan)
-			tableSel.profile = p.profile
-			tableSel.expectedCnt = expectedCnt
 			copTask.tablePlan = tableSel
 			copTask.cst += copTask.count() * cpuFactor
 		}
@@ -507,22 +505,24 @@ func (p *DataSource) forceToTableScan() PhysicalPlan {
 		Ranges:      ranger.FullIntRange(),
 	}.init(p.ctx)
 	ts.SetSchema(p.schema)
-	ts.profile = p.profile
+	ts.stats = p.stats
 	ts.filterCondition = p.pushedDownConds
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 	}
-	ts.addPushedDownSelection(copTask, p.profile, math.MaxFloat64)
+	ts.addPushedDownSelection(copTask, p.stats)
 	t := finishCopTask(copTask, p.ctx)
 	return t.plan()
 }
 
 // convertToTableScan converts the DataSource to table scan.
 func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err error) {
+	// It will be handled in convertToIndexScan.
 	if prop.taskTp == copDoubleReadTaskType {
 		return &copTask{cst: math.MaxFloat64}, nil
 	}
+
 	ts := PhysicalTableScan{
 		Table:       p.tableInfo,
 		Columns:     p.Columns,
@@ -536,29 +536,27 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+			if p.statisticTable.Columns[pkColInfo.ID] != nil {
+				ts.HistVersion = p.statisticTable.Columns[pkColInfo.ID].LastUpdateVersion
+			}
 		}
 	}
+	statsTbl := p.statisticTable
+	rowCount := float64(statsTbl.Count)
 	if len(p.pushedDownConds) > 0 {
 		if pkCol != nil {
-			var ranges []ranger.Range
 			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(p.ctx, p.pushedDownConds, pkCol)
-			ranges, err = ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
-			ts.Ranges = ranger.Ranges2IntRanges(ranges)
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// TODO: We can use p.getStatsByFilter(accessConditions).
+			rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkCol.ID, ts.Ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
 			ts.filterCondition = p.pushedDownConds
-		}
-	}
-	ts.profile = p.profile
-	statsTbl := p.statisticTable
-	rowCount := float64(statsTbl.Count)
-	if pkCol != nil {
-		// TODO: We can use p.getStatsProfileByFilter(accessConditions).
-		rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkCol.ID, ts.Ranges)
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 	}
 	copTask := &copTask{
@@ -568,14 +566,14 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	task = copTask
 	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil)
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
-		selectivity, err := p.statisticTable.Selectivity(p.ctx, ts.filterCondition)
+		selectivity, err := statsTbl.Selectivity(p.ctx, ts.filterCondition)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
 		}
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
-	ts.expectedCnt = rowCount
+	ts.stats = p.stats.scaleByExpectCnt(rowCount)
 	copTask.cst = rowCount * scanFactor
 	if matchProperty {
 		if prop.desc {
@@ -584,7 +582,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, p.profile, prop.expectedCnt)
+		ts.addPushedDownSelection(copTask, p.stats.scaleByExpectCnt(prop.expectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -592,7 +590,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, p.profile, expectedCnt)
+		ts.addPushedDownSelection(copTask, p.stats.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx)
@@ -602,14 +600,12 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	return task, nil
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *statsProfile, expectedCnt float64) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *statsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.init(ts.ctx)
+		sel := PhysicalSelection{Conditions: ts.filterCondition}.init(ts.ctx, stats)
 		sel.SetSchema(ts.schema)
 		sel.SetChildren(ts)
-		sel.profile = profile
-		sel.expectedCnt = expectedCnt
 		copTask.tablePlan = sel
 		// FIXME: It seems wrong...
 		copTask.cst += copTask.count() * cpuFactor

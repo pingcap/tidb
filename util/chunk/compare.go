@@ -161,7 +161,5 @@ func cmpJSON(l Row, lCol int, r Row, rCol int) int {
 		return cmpNull(lNull, rNull)
 	}
 	lJ, rJ := l.GetJSON(lCol), r.GetJSON(rCol)
-	cmp, err := json.CompareJSON(lJ, rJ)
-	terror.Log(err)
-	return cmp
+	return json.CompareBinary(lJ, rJ)
 }

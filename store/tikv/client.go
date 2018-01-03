@@ -15,6 +15,7 @@
 package tikv
 
 import (
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,10 +25,12 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 // MaxConnectionCount is the max gRPC connections that will be established with
@@ -43,9 +46,6 @@ const (
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
-
-	rpcLabelKV  = "kv"
-	rpcLabelCop = "cop"
 )
 
 // Client is a client that sends RPC.
@@ -62,18 +62,27 @@ type connArray struct {
 	v     []*grpc.ClientConn
 }
 
-func newConnArray(maxSize int, addr string) (*connArray, error) {
+func newConnArray(maxSize int, addr string, security config.Security) (*connArray, error) {
 	a := &connArray{
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),
 	}
-	if err := a.Init(addr); err != nil {
+	if err := a.Init(addr, security); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connArray) Init(addr string) error {
+func (a *connArray) Init(addr string, security config.Security) error {
+	opt := grpc.WithInsecure()
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+
 	for i := range a.v {
 		unaryInterceptor := grpc_middleware.ChainUnaryClient(
 			grpc_prometheus.UnaryClientInterceptor,
@@ -85,12 +94,14 @@ func (a *connArray) Init(addr string) error {
 		)
 		conn, err := grpc.Dial(
 			addr,
-			grpc.WithInsecure(),
+			opt,
 			grpc.WithTimeout(dialTimeout),
 			grpc.WithInitialWindowSize(grpcInitialWindowSize),
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
-			grpc.WithStreamInterceptor(streamInterceptor))
+			grpc.WithStreamInterceptor(streamInterceptor),
+		)
+
 		if err != nil {
 			// Cleanup if the initialization fails.
 			a.Close()
@@ -126,11 +137,13 @@ type rpcClient struct {
 	sync.RWMutex
 	isClosed bool
 	conns    map[string]*connArray
+	security config.Security
 }
 
-func newRPCClient() *rpcClient {
+func newRPCClient(security config.Security) *rpcClient {
 	return &rpcClient{
-		conns: make(map[string]*connArray),
+		conns:    make(map[string]*connArray),
+		security: security,
 	}
 }
 
@@ -158,7 +171,7 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		array, err = newConnArray(MaxConnectionCount, addr)
+		array, err = newConnArray(MaxConnectionCount, addr, c.security)
 		if err != nil {
 			return nil, err
 		}
@@ -182,11 +195,9 @@ func (c *rpcClient) closeConns() {
 // SendReq sends a Request to server and receives Response.
 func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	start := time.Now()
-	var label = rpcLabelKV
-	if req.Type == tikvrpc.CmdCop {
-		label = rpcLabelCop
-	}
-	defer func() { sendReqHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds()) }()
+	reqType := req.Type.String()
+	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
+	defer func() { sendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds()) }()
 
 	conn, err := c.getConn(addr)
 	if err != nil {

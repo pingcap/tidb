@@ -45,6 +45,9 @@ const (
 	recordRowKeyLen = prefixLen + idLen /*handle*/
 )
 
+// TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
+const TableSplitKeyLen = 1 + idLen
+
 // TablePrefix returns table's prefix 't'.
 func TablePrefix() []byte {
 	return tablePrefix

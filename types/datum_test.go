@@ -143,7 +143,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, NewBinaryLiteralFromUint(100, -1), int64(100))
 	testDatumToInt64(c, Enum{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
-	testDatumToInt64(c, json.CreateJSON(int64(3)), int64(3))
+	testDatumToInt64(c, json.CreateBinary(int64(3)), int64(3))
 
 	t, err := ParseTime(nil, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	c.Assert(err, IsNil)

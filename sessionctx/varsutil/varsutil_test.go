@@ -83,23 +83,23 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	c.Assert(SetSessionSystemVar(v, "character_set_results", types.Datum{}), IsNil)
 
-	// Test case for get TiDBSkipConstraintCheck session variable.
-	val, err = GetSessionSystemVar(v, variable.TiDBSkipConstraintCheck)
+	// Test case for get TiDBImportingData session variable.
+	val, err = GetSessionSystemVar(v, variable.TiDBImportingData)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 
-	// Test case for tidb_skip_constraint_check
-	c.Assert(v.SkipConstraintCheck, IsFalse)
-	SetSessionSystemVar(v, variable.TiDBSkipConstraintCheck, types.NewStringDatum("0"))
-	c.Assert(v.SkipConstraintCheck, IsFalse)
-	SetSessionSystemVar(v, variable.TiDBSkipConstraintCheck, types.NewStringDatum("1"))
-	c.Assert(v.SkipConstraintCheck, IsTrue)
-	SetSessionSystemVar(v, variable.TiDBSkipConstraintCheck, types.NewStringDatum("0"))
-	c.Assert(v.SkipConstraintCheck, IsFalse)
+	// Test case for tidb_import_data
+	c.Assert(v.ImportingData, IsFalse)
+	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("0"))
+	c.Assert(v.ImportingData, IsFalse)
+	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("1"))
+	c.Assert(v.ImportingData, IsTrue)
+	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("0"))
+	c.Assert(v.ImportingData, IsFalse)
 
-	// Test case for change TiDBSkipConstraintCheck session variable.
-	SetSessionSystemVar(v, variable.TiDBSkipConstraintCheck, types.NewStringDatum("1"))
-	val, err = GetSessionSystemVar(v, variable.TiDBSkipConstraintCheck)
+	// Test case for change TiDBImportingData session variable.
+	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, variable.TiDBImportingData)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 
@@ -156,11 +156,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.BatchInsert, IsFalse)
 	SetSessionSystemVar(v, variable.TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
-
-	//Test case for tidb_max_row_count_for_inlj.
-	c.Assert(v.MaxRowCountForINLJ, Equals, 128)
-	SetSessionSystemVar(v, variable.TiDBMaxRowCountForINLJ, types.NewStringDatum("127"))
-	c.Assert(v.MaxRowCountForINLJ, Equals, 127)
 
 	c.Assert(v.MaxChunkSize, Equals, 1024)
 	SetSessionSystemVar(v, variable.TiDBMaxChunkSize, types.NewStringDatum("2"))

@@ -1019,6 +1019,12 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
+	if tp == types.ETJson {
+		// In compare, if we cast string to JSON, we shouldn't parse it.
+		for i := range args {
+			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		}
+	}
 	bf.tp.Flen = 1
 	switch tp {
 	case types.ETInt:
@@ -1723,10 +1729,7 @@ func (s *builtinNullEQJSONSig) evalInt(row types.Row) (val int64, isNull bool, e
 	case isNull0 != isNull1:
 		break
 	default:
-		cmpRes, err := json.CompareJSON(arg0, arg1)
-		if err != nil {
-			return 0, true, errors.Trace(err)
-		}
+		cmpRes := json.CompareBinary(arg0, arg1)
 		if cmpRes == 0 {
 			res = 1
 		}
@@ -1917,6 +1920,5 @@ func compareJSON(args []Expression, row types.Row, ctx context.Context) (int64, 
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
 	}
-	res, err := json.CompareJSON(arg0, arg1)
-	return int64(res), err != nil, errors.Trace(err)
+	return int64(json.CompareBinary(arg0, arg1)), false, nil
 }

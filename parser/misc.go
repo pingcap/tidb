@@ -406,6 +406,7 @@ var tokenMap = map[string]int{
 	"SERIALIZABLE":             serializable,
 	"SESSION":                  session,
 	"SET":                      set,
+	"SEPARATOR":                separator,
 	"SHARE":                    share,
 	"SHARED":                   shared,
 	"SHOW":                     show,

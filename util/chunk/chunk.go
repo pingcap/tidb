@@ -30,6 +30,9 @@ var _ types.Row = Row{}
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
 	columns []*column
+	// numVirtualRows indicates the number of virtual rows, witch have zero columns.
+	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
+	numVirtualRows int
 }
 
 // Capacity constants.
@@ -41,6 +44,7 @@ const (
 func NewChunk(fields []*types.FieldType) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
+	chk.numVirtualRows = 0
 	for _, f := range fields {
 		chk.addColumnByFieldType(f, InitialCapacity)
 	}
@@ -85,7 +89,7 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 		c.addFixedLenColumn(16, initCap)
 	case mysql.TypeNewDecimal:
 		c.addFixedLenColumn(types.MyDecimalStructSize, initCap)
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeJSON:
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		c.addInterfaceColumn(initCap)
 	default:
 		c.addVarLenColumn(initCap)
@@ -95,6 +99,13 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 // SwapColumns swaps columns with another Chunk.
 func (c *Chunk) SwapColumns(other *Chunk) {
 	c.columns, other.columns = other.columns, c.columns
+	c.numVirtualRows, other.numVirtualRows = other.numVirtualRows, c.numVirtualRows
+}
+
+// SetNumVirtualRows sets the virtual row number for a Chunk.
+// It should only be used when there exists no column in the Chunk.
+func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
+	c.numVirtualRows = numVirtualRows
 }
 
 // Reset resets the chunk, so the memory it allocated can be reused.
@@ -103,6 +114,7 @@ func (c *Chunk) Reset() {
 	for _, c := range c.columns {
 		c.reset()
 	}
+	c.numVirtualRows = 0
 }
 
 // NumCols returns the number of columns in the chunk.
@@ -112,8 +124,8 @@ func (c *Chunk) NumCols() int {
 
 // NumRows returns the number of rows in the chunk.
 func (c *Chunk) NumRows() int {
-	if len(c.columns) == 0 {
-		return 0
+	if c.NumCols() == 0 {
+		return c.numVirtualRows
 	}
 	return c.columns[0].length
 }
@@ -174,6 +186,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 			dst.length++
 		}
 	}
+	c.numVirtualRows += end - begin
 }
 
 // TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
@@ -196,6 +209,7 @@ func (c *Chunk) TruncateTo(numRows int) {
 		col.length = numRows
 		col.nullBitmap = col.nullBitmap[:(col.length>>3)+1]
 	}
+	c.numVirtualRows = numRows
 }
 
 // AppendNull appends a null value to the chunk.
@@ -260,8 +274,8 @@ func (c *Chunk) AppendSet(colIdx int, set types.Set) {
 }
 
 // AppendJSON appends a JSON value to the chunk.
-func (c *Chunk) AppendJSON(colIdx int, j json.JSON) {
-	c.columns[colIdx].appendInterface(j)
+func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
+	c.columns[colIdx].appendJSON(j)
 }
 
 type column struct {
@@ -394,6 +408,12 @@ func (c *column) appendNameValue(name string, val uint64) {
 	c.finishAppendVar()
 }
 
+func (c *column) appendJSON(j json.BinaryJSON) {
+	c.data = append(c.data, j.TypeCode)
+	c.data = append(c.data, j.Value...)
+	c.finishAppendVar()
+}
+
 // Row represents a row of data, can be used to assess values.
 type Row struct {
 	c   *Chunk
@@ -496,10 +516,22 @@ func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
 }
 
 // GetJSON returns the JSON value with the colIdx.
-func (r Row) GetJSON(colIdx int) json.JSON {
+func (r Row) GetJSON(colIdx int) json.BinaryJSON {
 	col := r.c.columns[colIdx]
-	j, _ := col.ifaces[r.idx].(json.JSON)
-	return j
+	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
+	return json.BinaryJSON{TypeCode: col.data[start], Value: col.data[start+1 : end]}
+}
+
+// GetDatumRow converts chunk.Row to types.DatumRow.
+// Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
+// this function works only if the underlying chunk is valid or unchanged.
+func (r Row) GetDatumRow(fields []*types.FieldType) types.DatumRow {
+	datumRow := make(types.DatumRow, 0, r.c.NumCols())
+	for colIdx := 0; colIdx < r.c.NumCols(); colIdx++ {
+		datum := r.GetDatum(colIdx, fields[colIdx])
+		datumRow = append(datumRow, datum)
+	}
+	return datumRow
 }
 
 // GetDatum implements the types.Row interface.
@@ -538,6 +570,8 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {
 			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
+			d.SetLength(tp.Flen)
+			d.SetFrac(tp.Decimal)
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {

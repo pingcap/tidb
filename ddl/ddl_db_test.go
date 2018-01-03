@@ -1586,13 +1586,21 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	// Check show create table with virtual generated column.
 	result = s.tk.MustQuery(`show create table test_gv_ddl`)
 	result.Check(testkit.Rows(
-		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (a+8) VIRTUAL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	))
 
 	// Check alter table add a stored generated column.
 	s.tk.MustExec(`alter table test_gv_ddl add column c int as (b+2) stored`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+
+	// Check generated expression with blanks.
+	s.tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)))")
+	result = s.tk.MustQuery(`show create table table_with_gen_col_blanks`)
+	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` char(20) GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	genExprTests := []struct {
 		stmt string
@@ -1667,4 +1675,32 @@ func (s *testDBSuite) TestComment(c *C) {
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1688|Comment for index 'e' is too long (max = 1024)"))
 
 	s.tk.MustExec("drop table if exists ct, ct1")
+}
+
+func (s *testDBSuite) TestRebaseAutoID(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("drop database if exists tidb;")
+	s.tk.MustExec("create database tidb;")
+	s.tk.MustExec("use tidb;")
+	s.tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1"))
+	s.tk.MustExec("alter table tidb.test auto_increment = 6000;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1"))
+	s.tk.MustExec("alter table tidb.test auto_increment = 5;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1"))
+
+	// Current range for table test is [11000, 15999].
+	// Though it does not have a tuple "a = 15999", its global next auto increment id should be 16000.
+	// Anyway it is not compatible with MySQL.
+	s.tk.MustExec("alter table tidb.test auto_increment = 12000;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1", "16000 1"))
+
+	s.tk.MustExec("create table tidb.test2 (a int);")
+	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }

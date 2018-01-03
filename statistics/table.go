@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -310,17 +310,17 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
 }
 
-// GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
-func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.ColumnRange) (float64, error) {
+// GetRowCountByColumnRanges estimates the row count by a slice of NewRange.
+func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.NewRange) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
-		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
+		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
 	}
 	c := t.Columns[colID]
 	return c.getColumnRowCount(sc, colRanges)
 }
 
-// GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
-func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.IndexRange) (float64, error) {
+// GetRowCountByIndexRanges estimates the row count by a slice of NewRange.
+func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.NewRange) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
@@ -339,7 +339,7 @@ func PseudoTable(tableID int64) *Table {
 	return t
 }
 
-func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.IndexRange,
+func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange,
 	tableRowCount float64) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
@@ -354,8 +354,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
 		}
-		colRange := []*ranger.ColumnRange{{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}}
-		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, colRange)
+		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.NewRange{indexRange}, i)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -373,25 +372,25 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 	return totalCount, nil
 }
 
-func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.ColumnRange) (float64, error) {
+func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.NewRange, colIdx int) (float64, error) {
 	var rowCount float64
 	var err error
 	for _, ran := range columnRanges {
-		if ran.Low.Kind() == types.KindNull && ran.High.Kind() == types.KindMaxValue {
+		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount
-		} else if ran.Low.Kind() == types.KindMinNotNull {
+		} else if ran.LowVal[colIdx].Kind() == types.KindMinNotNull {
 			var nullCount float64
 			nullCount = tableRowCount / pseudoEqualRate
-			if ran.High.Kind() == types.KindMaxValue {
+			if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 				rowCount += tableRowCount - nullCount
 			} else if err == nil {
 				lessCount := tableRowCount / pseudoLessRate
 				rowCount += lessCount - nullCount
 			}
-		} else if ran.High.Kind() == types.KindMaxValue {
+		} else if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err1 := ran.Low.CompareDatum(sc, &ran.High)
+			compare, err1 := ran.LowVal[colIdx].CompareDatum(sc, &ran.HighVal[colIdx])
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}

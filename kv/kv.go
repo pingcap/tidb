@@ -162,6 +162,7 @@ const (
 	ReqSubTypeSignature  = 10003
 	ReqSubTypeAnalyzeIdx = 10004
 	ReqSubTypeAnalyzeCol = 10005
+	ReqSubTypeStreamAgg  = 10006
 )
 
 // Request represents a kv request.

@@ -14,11 +14,12 @@
 package plan
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
+	log "github.com/sirupsen/logrus"
 )
 
 type columnPruner struct {
@@ -70,18 +71,14 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
-	for _, expr := range p.Exprs {
-		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
-	}
+	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	child.PruneColumns(selfUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	for _, cond := range p.Conditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(cond)...)
-	}
+	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(child.Schema())
 }
@@ -98,9 +95,7 @@ func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range p.AggFuncs {
-		for _, arg := range aggrFunc.GetArgs() {
-			selfUsedCols = append(selfUsedCols, expression.ExtractColumns(arg)...)
-		}
+		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.GetArgs(), nil)
 	}
 	if len(p.GroupByItems) > 0 {
 		for i := len(p.GroupByItems) - 1; i >= 0; i-- {
@@ -137,23 +132,11 @@ func (p *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
-	used := getUsedList(parentUsedCols, p.Schema())
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
-		}
-	}
 	for _, c := range p.Children() {
 		child := c.(LogicalPlan)
-		schema := child.Schema()
-		var newCols []*expression.Column
-		for i, use := range used {
-			if use {
-				newCols = append(newCols, schema.Columns[i])
-			}
-		}
-		child.PruneColumns(newCols)
+		child.PruneColumns(parentUsedCols)
 	}
+	p.SetSchema(p.children[0].Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -168,7 +151,6 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
-	firstCol, firstColInfo := p.schema.Columns[0], p.Columns[0]
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
@@ -183,9 +165,9 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
-	if p.schema.Len() == 0 {
-		p.schema.Append(firstCol)
-		p.Columns = append(p.Columns, firstColInfo)
+	if p.schema.Len() == 0 && !infoschema.IsMemoryDB(p.DBName.L) {
+		p.Columns = append(p.Columns, model.NewExtraHandleColInfo())
+		p.schema.Append(p.newExtraHandleSchemaCol())
 	}
 }
 
@@ -245,12 +227,6 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) {
 	rChild := p.children[1].(LogicalPlan)
 	lChild.PruneColumns(leftCols)
 	rChild.PruneColumns(rightCols)
-	// After column pruning, the size of schema may change, so we should also change the len of default value.
-	if p.JoinType == LeftOuterJoin {
-		p.DefaultValues = make([]types.Datum, p.children[1].Schema().Len())
-	} else if p.JoinType == RightOuterJoin {
-		p.DefaultValues = make([]types.Datum, p.children[0].Schema().Len())
-	}
 	p.mergeSchema()
 }
 

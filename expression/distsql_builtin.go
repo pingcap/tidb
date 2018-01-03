@@ -84,6 +84,9 @@ var distFuncs = map[tipb.ExprType]string{
 	tipb.ExprType_JsonRemove:  ast.JSONRemove,
 	tipb.ExprType_JsonArray:   ast.JSONArray,
 	tipb.ExprType_JsonObject:  ast.JSONObject,
+
+	// date functions.
+	tipb.ExprType_DateFormat: ast.DateFormat,
 }
 
 func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
@@ -499,6 +502,9 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinInDurationSig{base}
 	case tipb.ScalarFuncSig_InJson:
 		f = &builtinInJSONSig{base}
+
+	case tipb.ScalarFuncSig_DateFormatSig:
+		f = &builtinDateFormatSig{base}
 
 	default:
 		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)

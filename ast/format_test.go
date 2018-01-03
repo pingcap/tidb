@@ -24,13 +24,24 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		output string
 	}{
 		// Literals.
+		{`null`, `NULL`},
+		{`true`, `TRUE`},
 		{`350`, `350`},
+		{`001e-12`, `1e-12`}, // Float.
 		{`345.678`, `345.678`},
-		{`1e-12`, `1e-12`},
+		{`00.0001000`, `0.0001000`}, // Decimal.
 		{`null`, `NULL`},
 		{`"Hello, world"`, `"Hello, world"`},
 		{`'Hello, world'`, `"Hello, world"`},
 		{`'Hello, "world"'`, `"Hello, \"world\""`},
+		{`_utf8'你好'`, `"你好"`},
+		{`x'bcde'`, "x'bcde'"},
+		{`x''`, "x''"},
+		{`x'0035'`, "x'0035'"}, // Shouldn't trim leading zero.
+		{`b'00111111'`, `b'111111'`},
+		{`time'10:10:10.123'`, `timeliteral("10:10:10.123")`},
+		{`timestamp'1999-01-01 10:0:0.123'`, `timestampliteral("1999-01-01 10:0:0.123")`},
+		{`date '1700-01-01'`, `dateliteral("1700-01-01")`},
 
 		// Expressions.
 		{`f between 30 and 50`, "`f` BETWEEN 30 AND 50"},
@@ -54,6 +65,10 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		// Functions.
 		{` json_extract ( a,'$.b',"$.\"c d\"" ) `, "json_extract(`a`, \"$.b\", \"$.\\\"c d\\\"\")"},
 		{` length ( a )`, "length(`a`)"},
+		{`a -> '$.a'`, "json_extract(`a`, \"$.a\")"},
+		{`a.b ->> '$.a'`, "json_unquote(json_extract(`a`.`b`, \"$.a\"))"},
+		{`DATE_ADD('1970-01-01', interval 3 second)`, `date_add("1970-01-01", INTERVAL 3 SECOND)`},
+		{`TIMESTAMPDIFF(month, '2001-01-01', '2001-02-02 12:03:05.123')`, `timestampdiff(MONTH, "2001-01-01", "2001-02-02 12:03:05.123")`},
 		// Cast, Convert and Binary.
 		// There should not be spaces between 'cast' and '(' unless 'IGNORE_SPACE' mode is set.
 		// see: https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html

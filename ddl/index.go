@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	log "github.com/sirupsen/logrus"
 )
 
 const maxPrefixLength = 3072
@@ -690,7 +690,7 @@ func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, col
 		}
 
 		// Create the index.
-		handle, err := w.index.Create(txn, idxRecord.vals, idxRecord.handle)
+		handle, err := w.index.Create(w.ctx, txn, idxRecord.vals, idxRecord.handle)
 		if err != nil {
 			if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
 				// Index already exists, skip it.

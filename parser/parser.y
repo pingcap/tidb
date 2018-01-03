@@ -27,7 +27,6 @@ package parser
 
 import (
 	"strings"
-	"strconv"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/ast"
@@ -352,6 +351,7 @@ import (
 	rowFormat	"ROW_FORMAT"
 	second		"SECOND"
 	security	"SECURITY"
+	separator 	"SEPARATOR"
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	share		"SHARE"
@@ -666,6 +666,7 @@ import (
 	ReferDef			"Reference definition"
 	OnDeleteOpt			"optional ON DELETE clause"
 	OnUpdateOpt			"optional ON UPDATE clause"
+	OptGConcatSeparator		"optional GROUP_CONCAT SEPARATOR"
 	ReferOpt			"reference option"
 	ReplacePriority			"replace statement priority"
 	RowFormat			"Row format option"
@@ -1126,7 +1127,7 @@ AnalyzeTableStmt:
 	 }
 |   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
     {
-        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr)}
+        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true}
     }
 
 /*******************************************************************************************/
@@ -2497,7 +2498,7 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 
 TiDBKeyword:
@@ -2684,32 +2685,26 @@ Literal:
 	"FALSE"
 	{
 		$$ = ast.NewValueExpr(false)
-		$$.SetText("FALSE")
 	}
 |	"NULL"
 	{
 		$$ = ast.NewValueExpr(nil)
-		$$.SetText("NULL")
 	}
 |	"TRUE"
 	{
 		$$ = ast.NewValueExpr(true)
-		$$.SetText("TRUE")
 	}
 |	floatLit
 	{
 		$$ = ast.NewValueExpr($1)
-		$$.SetText(yyS[yypt].ident)
 	}
 |	decLit
 	{
 		$$ = ast.NewValueExpr($1)
-		$$.SetText(yyS[yypt].ident)
 	}
 |	intLit
 	{
 		$$ = ast.NewValueExpr($1)
-		$$.SetText(yyS[yypt].ident)
 	}
 |	StringLiteral %prec lowerThanStringLitToken
 	{
@@ -2731,18 +2726,14 @@ Literal:
 			tp.Flag |= mysql.BinaryFlag
 		}
 		$$ = expr
-		// Because `Lexer` removes quotation marks, we add them back.
-		$$.SetText(strconv.Quote($2))
 	}
 |	hexLit
 	{
 		$$ = ast.NewValueExpr($1)
-		$$.SetText(yyS[yypt].ident)
 	}
 |	bitLit
 	{
 		$$ = ast.NewValueExpr($1)
-		$$.SetText(yyS[yypt].ident)
 	}
 
 StringLiteral:
@@ -2750,8 +2741,6 @@ StringLiteral:
 	{
 		expr := ast.NewValueExpr($1)
 		$$ = expr
-		// Because `Lexer` removes quotation marks, we add them back.
-		$$.SetText(strconv.Quote($1))
 	}
 |	StringLiteral stringLit
 	{
@@ -2765,8 +2754,6 @@ StringLiteral:
 			expr.SetProjectionOffset(len(strLit))
 		}
 		$$ = expr
-		// Because `Lexer` removes quotation marks, we add them back.
-		$$.SetText(strconv.Quote(strLit + $2))
 	}
 
 
@@ -3443,9 +3430,11 @@ SumExpr:
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 	}
-|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList ')'
+|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OptGConcatSeparator ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		args := $4.([]ast.ExprNode)
+		args = append(args, $5.(ast.ExprNode))
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
 |	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
@@ -3459,6 +3448,16 @@ SumExpr:
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
+
+OptGConcatSeparator:
+        {
+            	$$ = ast.NewValueExpr(",")
+        }
+| "SEPARATOR" stringLit
+	{ 
+		$$ = ast.NewValueExpr($2)
+	}
+        
 
 FunctionCallGeneric:
 	identifier '(' ExpressionListOpt ')'
@@ -4475,7 +4474,7 @@ TransactionChars:
 	TransactionChar
 	{
 		if $1 != nil {
-			$$ = []*ast.VariableAssignment{$1.(*ast.VariableAssignment)}
+			$$ = $1
 		} else {
 			$$ = []*ast.VariableAssignment{}
 		}
@@ -4483,7 +4482,8 @@ TransactionChars:
 |	TransactionChars ',' TransactionChar
 	{
 		if $3 != nil {
-			$$ = append($1.([]*ast.VariableAssignment), $3.(*ast.VariableAssignment))
+			varAssigns := $3.([]*ast.VariableAssignment)
+			$$ = append($1.([]*ast.VariableAssignment), varAssigns...)
 		} else {
 			$$ = $1
 		}
@@ -4492,18 +4492,26 @@ TransactionChars:
 TransactionChar:
 	"ISOLATION" "LEVEL" IsolationLevel
 	{
+		varAssigns := []*ast.VariableAssignment{}
 		expr := ast.NewValueExpr($3)
-		$$ = &ast.VariableAssignment{Name: "tx_isolation", Value: expr, IsSystem: true}
+		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_isolation", Value: expr, IsSystem: true})
+		$$ = varAssigns
 	}
 |	"READ" "WRITE"
 	{
-		// Parsed but ignored
-		$$ = nil
+		varAssigns := []*ast.VariableAssignment{}
+		expr := ast.NewValueExpr("0")
+		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_read_only", Value: expr, IsSystem: true})
+		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "transaction_read_only", Value: expr, IsSystem: true})
+		$$ = varAssigns
 	}
 |	"READ" "ONLY"
 	{
-		// Parsed but ignored
-		$$ = nil
+		varAssigns := []*ast.VariableAssignment{}
+		expr := ast.NewValueExpr("1")
+		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_read_only", Value: expr, IsSystem: true})
+		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "transaction_read_only", Value: expr, IsSystem: true})
+		$$ = varAssigns
 	}
 
 IsolationLevel:

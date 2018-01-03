@@ -540,7 +540,7 @@ type builtinIfJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfJSONSig) evalJSON(row types.Row) (ret json.JSON, isNull bool, err error) {
+func (b *builtinIfJSONSig) evalJSON(row types.Row) (ret json.BinaryJSON, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
@@ -696,7 +696,7 @@ type builtinIfNullJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIfNullJSONSig) evalJSON(row types.Row) (json.JSON, bool, error) {
+func (b *builtinIfNullJSONSig) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalJSON(row, sc)
 	if !isNull {

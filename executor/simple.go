@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -29,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -48,10 +49,18 @@ type SimpleExec struct {
 
 // Next implements Execution Next interface.
 func (e *SimpleExec) Next(goCtx goctx.Context) (Row, error) {
+	return nil, errors.Trace(e.run(goCtx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *SimpleExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *SimpleExec) run(goCtx goctx.Context) (err error) {
 	if e.done {
-		return nil, nil
+		return nil
 	}
-	var err error
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
@@ -75,15 +84,12 @@ func (e *SimpleExec) Next(goCtx goctx.Context) (Row, error) {
 		err = e.executeKillStmt(x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
-		return nil, nil
+		return nil
 	case *ast.DropStatsStmt:
 		err = e.executeDropStats(x)
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	e.done = true
-	return nil, nil
+	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
@@ -128,6 +134,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	if e.ctx.Txn().Valid() {
+		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
 		return e.ctx.Txn().Rollback()
 	}
 	return nil

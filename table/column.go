@@ -21,7 +21,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	log "github.com/sirupsen/logrus"
 )
 
 // Column provides meta data describing a table column.
@@ -380,7 +380,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeEnum:
 		d.SetMysqlEnum(types.Enum{})
 	case mysql.TypeJSON:
-		d.SetMysqlJSON(json.CreateJSON(nil))
+		d.SetMysqlJSON(json.CreateBinary(nil))
 	}
 	return d
 }

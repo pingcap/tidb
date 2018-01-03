@@ -16,7 +16,6 @@ package tables
 import (
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/google/btree"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	log "github.com/sirupsen/logrus"
 )
 
 const btreeDegree = 32

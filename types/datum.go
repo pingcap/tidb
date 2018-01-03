@@ -71,10 +71,6 @@ func (d *Datum) Copy() *Datum {
 		ret.b = make([]byte, len(d.b))
 		copy(ret.b, d.b)
 	}
-	// JSON object requires a deep copy, because it includes map/slice fields.
-	if ret.k == KindMysqlJSON {
-		ret.x = *ret.x.(json.JSON).Copy()
-	}
 	return &ret
 }
 
@@ -283,15 +279,16 @@ func (d *Datum) SetMysqlSet(b Set) {
 	d.b = hack.Slice(b.Name)
 }
 
-// GetMysqlJSON gets json.JSON value
-func (d *Datum) GetMysqlJSON() json.JSON {
-	return d.x.(json.JSON)
+// GetMysqlJSON gets json.BinaryJSON value
+func (d *Datum) GetMysqlJSON() json.BinaryJSON {
+	return json.BinaryJSON{TypeCode: byte(d.i), Value: d.b}
 }
 
-// SetMysqlJSON sets json.JSON value
-func (d *Datum) SetMysqlJSON(b json.JSON) {
+// SetMysqlJSON sets json.BinaryJSON value
+func (d *Datum) SetMysqlJSON(b json.BinaryJSON) {
 	d.k = KindMysqlJSON
-	d.x = b
+	d.i = int64(b.TypeCode)
+	d.b = b.Value
 }
 
 // GetMysqlTime gets types.Time value
@@ -389,7 +386,7 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetBinaryLiteral(BinaryLiteral(x))
 	case Set:
 		d.SetMysqlSet(x)
-	case json.JSON:
+	case json.BinaryJSON:
 		d.SetMysqlJSON(x)
 	case Time:
 		d.SetMysqlTime(x)
@@ -623,12 +620,12 @@ func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set) (int, err
 	}
 }
 
-func (d *Datum) compareMysqlJSON(sc *stmtctx.StatementContext, target json.JSON) (int, error) {
+func (d *Datum) compareMysqlJSON(sc *stmtctx.StatementContext, target json.BinaryJSON) (int, error) {
 	origin, err := d.ToMysqlJSON()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return json.CompareJSON(origin, target)
+	return json.CompareBinary(origin, target), nil
 }
 
 func (d *Datum) compareMysqlTime(sc *stmtctx.StatementContext, time Time) (int, error) {
@@ -1219,23 +1216,23 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {
 	switch d.k {
 	case KindString, KindBytes:
-		var j json.JSON
-		if j, err = json.ParseFromString(d.GetString()); err == nil {
+		var j json.BinaryJSON
+		if j, err = json.ParseBinaryFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
 	case KindInt64:
 		i64 := d.GetInt64()
-		ret.SetMysqlJSON(json.CreateJSON(i64))
+		ret.SetMysqlJSON(json.CreateBinary(i64))
 	case KindUint64:
 		u64 := d.GetUint64()
-		ret.SetMysqlJSON(json.CreateJSON(u64))
+		ret.SetMysqlJSON(json.CreateBinary(u64))
 	case KindFloat32, KindFloat64:
 		f64 := d.GetFloat64()
-		ret.SetMysqlJSON(json.CreateJSON(f64))
+		ret.SetMysqlJSON(json.CreateBinary(f64))
 	case KindMysqlDecimal:
 		var f64 float64
 		if f64, err = d.GetMysqlDecimal().ToFloat64(); err == nil {
-			ret.SetMysqlJSON(json.CreateJSON(f64))
+			ret.SetMysqlJSON(json.CreateBinary(f64))
 		}
 	case KindMysqlJSON:
 		ret = *d
@@ -1245,7 +1242,7 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 			// TODO: fix precision of MysqlTime. For example,
 			// On MySQL 5.7 CAST(NOW() AS JSON) -> "2011-11-11 11:11:11.111111",
 			// But now we can only return "2011-11-11 11:11:11".
-			ret.SetMysqlJSON(json.CreateJSON(s))
+			ret.SetMysqlJSON(json.CreateBinary(s))
 		}
 	}
 	return ret, errors.Trace(err)
@@ -1510,11 +1507,11 @@ func (d *Datum) ToBytes() ([]byte, error) {
 
 // ToMysqlJSON is similar to convertToMysqlJSON, except the
 // latter parses from string, but the former uses it as primitive.
-func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
+func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 	var in interface{}
 	switch d.Kind() {
 	case KindMysqlJSON:
-		j = d.x.(json.JSON)
+		j = d.GetMysqlJSON()
 		return
 	case KindInt64:
 		in = d.GetInt64()
@@ -1537,7 +1534,7 @@ func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
 			return
 		}
 	}
-	j = json.CreateJSON(in)
+	j = json.CreateBinary(in)
 	return
 }
 

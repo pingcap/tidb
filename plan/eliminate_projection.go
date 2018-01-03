@@ -16,7 +16,6 @@ package plan
 import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/types"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated, returns true if
@@ -70,19 +69,15 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 }
 
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
-	children := make([]Plan, 0, len(p.Children()))
-	for _, child := range p.Children() {
-		newChild := doPhysicalProjectionElimination(child.(PhysicalPlan))
-		children = append(children, newChild)
+	for i, child := range p.Children() {
+		p.Children()[i] = doPhysicalProjectionElimination(child.(PhysicalPlan))
 	}
-	setParentAndChildren(p, children...)
 
 	proj, isProj := p.(*PhysicalProjection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
 	}
 	child := p.Children()[0]
-	removePlan(p)
 	return child.(PhysicalPlan)
 }
 
@@ -115,18 +110,15 @@ func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context) (Log
 // eliminate eliminates the redundant projection in a logical plan.
 func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool) LogicalPlan {
 	proj, isProj := p.(*LogicalProjection)
-	children := make([]Plan, 0, len(p.Children()))
-
 	childFlag := canEliminate
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		childFlag = false
 	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
 		childFlag = true
 	}
-	for _, child := range p.Children() {
-		children = append(children, pe.eliminate(child.(LogicalPlan), replace, childFlag))
+	for i, child := range p.Children() {
+		p.Children()[i] = pe.eliminate(child.(LogicalPlan), replace, childFlag)
 	}
-	setParentAndChildren(p, children...)
 
 	switch p.(type) {
 	case *LogicalSort, *LogicalTopN, *LogicalLimit, *LogicalSelection, *LogicalMaxOneRow, *LogicalLock:
@@ -158,52 +150,11 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	if !(isProj && canEliminate && canProjectionBeEliminatedLoose(proj)) {
 		return p
 	}
-	if join, ok := p.Parents()[0].(*LogicalJoin); ok {
-		pe.resetDefaultValues(join, p)
-	}
 	exprs := proj.Exprs
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
-	removePlan(p)
 	return p.Children()[0].(LogicalPlan)
-}
-
-// If the inner child of a Join is a Projection which been eliminated,
-// and the schema of child plan of Projection is not consistent with
-// the schema of Projection, the default values of Join should be reset.
-func (pe *projectionEliminater) resetDefaultValues(join *LogicalJoin, prj Plan) {
-	prjChild := prj.Children()[0]
-	var joinInnerChild Plan
-	switch join.JoinType {
-	case LeftOuterJoin:
-		joinInnerChild = join.Children()[1]
-	case RightOuterJoin:
-		joinInnerChild = join.Children()[0]
-	default:
-		return
-	}
-	if joinInnerChild != prj {
-		return
-	}
-	var schemaIdxMap map[int]int
-	prjSchema := prj.Schema().Columns
-	childOfPrjSchema := prjChild.Schema().Columns
-	for i := 0; i < len(prjSchema); i++ {
-		for j := 0; j < len(childOfPrjSchema); j++ {
-			if prjSchema[i].Equal(childOfPrjSchema[j], nil) {
-				schemaIdxMap[i] = j
-			}
-		}
-	}
-	newDefaultValues := make([]types.Datum, len(childOfPrjSchema))
-	for i := range prjSchema {
-		if j, ok := schemaIdxMap[i]; ok {
-			newDefaultValues[j] = join.DefaultValues[i]
-		}
-	}
-	join.DefaultValues = newDefaultValues
-	return
 }
 
 func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {

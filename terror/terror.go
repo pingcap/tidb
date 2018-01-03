@@ -19,9 +19,9 @@ import (
 	"runtime"
 	"strconv"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	log "github.com/sirupsen/logrus"
 )
 
 // Global error instances.

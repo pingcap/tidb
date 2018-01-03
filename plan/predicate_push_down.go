@@ -28,27 +28,27 @@ func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, er
 	return p, nil
 }
 
-func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression) {
+func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, chIdx int) {
+	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
 	conditions = expression.PropagateConstant(p.context(), conditions)
 	selection := LogicalSelection{Conditions: conditions}.init(p.context())
 	selection.SetSchema(child.Schema().Clone())
-	replaceChild(p, child, selection)
 	selection.SetChildren(child)
-	child.SetParents(selection)
-	selection.SetParents(p)
+	p.Children()[chIdx] = selection
 }
 
 // PredicatePushDown implements LogicalPlan interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	if len(p.basePlan.children) == 0 {
-		return predicates, p.basePlan.self.(LogicalPlan)
+	if len(p.children) == 0 {
+		return predicates, p.self
 	}
-	child := p.basePlan.children[0].(LogicalPlan)
-	rest, _ := child.PredicatePushDown(predicates)
-	if len(rest) > 0 {
-		addSelection(p.basePlan.self, child, rest)
-	}
-	return nil, p.basePlan.self.(LogicalPlan)
+	child := p.children[0].(LogicalPlan)
+	rest, newChild := child.PredicatePushDown(predicates)
+	addSelection(p.self, newChild, rest, 0)
+	return nil, p.self
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
@@ -58,7 +58,6 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		return nil, p
 	}
-	removePlan(p)
 	return nil, child
 }
 
@@ -88,15 +87,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		e := joinReOrderSolver{ctx: p.ctx}
 		e.reorderJoin(groups, predicates)
 		newJoin := e.resultJoin
-		if len(p.parents) > 0 {
-			parent := p.parents[0]
-			newJoin.SetParents(parent)
-			replaceChild(parent, p, newJoin)
-		}
 		return newJoin.PredicatePushDown(predicates)
 	}
 	var leftCond, rightCond []expression.Expression
-	retPlan = p
 	leftPlan := p.children[0].(LogicalPlan)
 	rightPlan := p.children[1].(LogicalPlan)
 	var (
@@ -141,14 +134,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
-	leftRet, _ := leftPlan.PredicatePushDown(leftCond)
-	rightRet, _ := rightPlan.PredicatePushDown(rightCond)
-	if len(leftRet) > 0 {
-		addSelection(p, leftPlan, leftRet)
-	}
-	if len(rightRet) > 0 {
-		addSelection(p, rightPlan, rightRet)
-	}
+	leftRet, lCh := leftPlan.PredicatePushDown(leftCond)
+	rightRet, rCh := rightPlan.PredicatePushDown(rightCond)
+	addSelection(p, lCh, leftRet, 0)
+	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
 	for _, eqCond := range p.EqualConditions {
 		p.LeftJoinKeys = append(p.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
@@ -156,7 +145,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	}
 	p.mergeSchema()
 	p.buildKeyInfo()
-	return
+	return ret, p.self
 }
 
 // updateEQCond will extract the arguments of a equal condition that connect two expressions.
@@ -220,8 +209,7 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 		proj.Exprs = append(proj.Exprs, col.Clone())
 	}
 	proj.SetSchema(child.Schema().Clone())
-	setParentAndChildren(proj, child)
-	proj.SetParents(p)
+	proj.SetChildren(child)
 	p.children[idx] = proj
 	return proj
 }
@@ -307,34 +295,24 @@ func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
-	retPlan = p
 	var push = make([]expression.Expression, 0, p.Schema().Len())
 	for _, cond := range predicates {
 		push = append(push, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
 	}
-	child := p.children[0].(LogicalPlan)
-	restConds, _ := child.PredicatePushDown(push)
-	if len(restConds) > 0 {
-		addSelection(p, child, restConds)
-	}
-	return
+	return p.baseLogicalPlan.PredicatePushDown(push)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
-	retPlan = p
-	for _, proj := range p.children {
+	for i, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
-			newCond := expression.ColumnSubstitute(cond, p.Schema(), expression.Column2Exprs(proj.Schema().Columns))
-			newExprs = append(newExprs, newCond)
+			newExprs = append(newExprs, cond.Clone())
 		}
-		retCond, _ := proj.(LogicalPlan).PredicatePushDown(newExprs)
-		if len(retCond) != 0 {
-			addSelection(p, proj.(LogicalPlan), retCond)
-		}
+		retCond, newChild := proj.(LogicalPlan).PredicatePushDown(newExprs)
+		addSelection(p, newChild, retCond, i)
 	}
-	return
+	return nil, p
 }
 
 // getGbyColIndex gets the column's index in the group-by columns.
@@ -344,7 +322,6 @@ func (p *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
-	retPlan = p
 	var condsToPush []expression.Expression
 	exprsOriginal := make([]expression.Expression, 0, len(p.AggFuncs))
 	for _, fun := range p.AggFuncs {
@@ -377,8 +354,8 @@ func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expressio
 			ret = append(ret, cond)
 		}
 	}
-	_, _ = p.baseLogicalPlan.PredicatePushDown(condsToPush)
-	return ret, retPlan
+	p.baseLogicalPlan.PredicatePushDown(condsToPush)
+	return ret, p
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

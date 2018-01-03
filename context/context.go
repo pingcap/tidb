@@ -67,6 +67,9 @@ type Context interface {
 
 	// PreparedPlanCache returns the cache of the physical plan
 	PreparedPlanCache() *kvcache.SimpleLRUCache
+
+	// StoreQueryFeedback stores the query feedback.
+	StoreQueryFeedback(feedback interface{})
 }
 
 type basicCtxType int

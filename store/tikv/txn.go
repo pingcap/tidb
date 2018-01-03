@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -181,7 +181,12 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	log.Infof("[kv] Rollback txn %d", txn.StartTS())
+	logMsg := fmt.Sprintf("[kv] Rollback txn %d", txn.StartTS())
+	if txn.store.mock {
+		log.Debug(logMsg)
+	} else {
+		log.Info(logMsg)
+	}
 	txnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil

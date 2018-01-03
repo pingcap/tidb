@@ -660,6 +660,16 @@ func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	tk.MustExec("update update_modified set col_1 = 3, col_2 = 'a'")
 	r = tk.MustQuery("SELECT * FROM update_modified")
 	r.Check(testkit.Rows("3 a"))
+
+	// Test update a field with different column type.
+	tk.MustExec(`CREATE TABLE update_with_diff_type (a int, b JSON)`)
+	tk.MustExec(`INSERT INTO update_with_diff_type VALUES(3, '{"a": "测试"}')`)
+	tk.MustExec(`UPDATE update_with_diff_type SET a = '300'`)
+	r = tk.MustQuery("SELECT a FROM update_with_diff_type")
+	r.Check(testkit.Rows("300"))
+	tk.MustExec(`UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}'`)
+	r = tk.MustQuery("SELECT b FROM update_with_diff_type")
+	r.Check(testkit.Rows(`{"a":"测试"}`))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -1061,17 +1071,11 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context
 
 func (s *testSuite) TestBatchInsertDelete(c *C) {
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
-	originBatch := executor.BatchInsertSize
-	originDeleteBatch := executor.BatchDeleteSize
 	defer func() {
 		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
-		executor.BatchInsertSize = originBatch
-		executor.BatchDeleteSize = originDeleteBatch
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
 	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
-	executor.BatchInsertSize = 50
-	executor.BatchDeleteSize = 50
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1112,6 +1116,7 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
+
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
@@ -1120,11 +1125,24 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
 
-	// Change to batch inset mode.
+	// Change to batch inset mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
+	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+
+	// Enlarge the batch size to 150 which is larger than the txn limitation (100).
+	// So the insert will meet error.
+	tk.MustExec("set @@session.tidb_dml_batch_size=150;")
+	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("320"))
+	// Set it back to 50.
+	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
+
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
@@ -1148,8 +1166,9 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
-	// Enable batch delete.
+	// Enable batch delete and set batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_delete=on;")
+	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 	tk.MustExec("delete from batch_insert;")
 	// Make sure that all rows are gone.
 	r = tk.MustQuery("select count(*) from batch_insert;")

@@ -45,6 +45,7 @@
 		Chunk
 		RowMeta
 		DAGRequest
+		StreamResponse
 */
 package tipb
 

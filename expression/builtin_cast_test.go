@@ -215,13 +215,13 @@ var (
 		Fsp:  types.DefaultFsp}
 
 	// jsonInt indicates json(3)
-	jsonInt = types.NewDatum(json.CreateJSON(int64(3)))
+	jsonInt = types.NewDatum(json.CreateBinary(int64(3)))
 
 	// jsonTime indicates "CURRENT_DAY 12:59:59"
-	jsonTime = types.NewDatum(json.CreateJSON(tm.String()))
+	jsonTime = types.NewDatum(json.CreateBinary(tm.String()))
 
 	// jsonDuration indicates
-	jsonDuration = types.NewDatum(json.CreateJSON(duration.String()))
+	jsonDuration = types.NewDatum(json.CreateBinary(duration.String()))
 )
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {

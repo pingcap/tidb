@@ -18,11 +18,11 @@ import (
 	"math"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -52,25 +53,31 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		for _, col := range a.executor.Schema().Columns {
-			dbName := col.DBName.O
-			if dbName == "" && col.TblName.L != "" {
-				dbName = a.stmt.Ctx.GetSessionVars().CurrentDB
-			}
-			rf := &ast.ResultField{
-				ColumnAsName: col.ColName,
-				TableAsName:  col.TblName,
-				DBName:       model.NewCIStr(dbName),
-				Table:        &model.TableInfo{Name: col.OrigTblName},
-				Column: &model.ColumnInfo{
-					FieldType: *col.RetType,
-					Name:      col.ColName,
-				},
-			}
-			a.fields = append(a.fields, rf)
-		}
+		a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
+}
+
+func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*ast.ResultField) {
+	rfs = make([]*ast.ResultField, 0, schema.Len())
+	for _, col := range schema.Columns {
+		dbName := col.DBName.O
+		if dbName == "" && col.TblName.L != "" {
+			dbName = defaultDB
+		}
+		rf := &ast.ResultField{
+			ColumnAsName: col.ColName,
+			TableAsName:  col.TblName,
+			DBName:       model.NewCIStr(dbName),
+			Table:        &model.TableInfo{Name: col.OrigTblName},
+			Column: &model.ColumnInfo{
+				FieldType: *col.RetType,
+				Name:      col.ColName,
+			},
+		}
+		rfs = append(rfs, rf)
+	}
+	return rfs
 }
 
 func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
@@ -212,6 +219,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}
 
 	if err := e.Open(goCtx); err != nil {
+		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
 
@@ -228,8 +236,13 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql)
 	}
-	// Fields or Schema are only used for statements that return result set.
+	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
+		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
+	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
+		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+		// the Projection has two expressions and two columns in the schema, but we should
+		// not return the result of the two expressions.
 		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
 	}
 
@@ -264,20 +277,30 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 		}
 		a.logSlowQuery(txnTS, err == nil)
 	}()
-	for {
-		var row Row
-		row, err = e.Next(goCtx)
+
+	if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
+		err = e.NextChunk(goCtx, e.newChunk())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Even though there isn't any result set, the row is still used to indicate if there is
-		// more work to do.
-		// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
-		// There is no more rows to update.
-		if row == nil {
-			return nil, nil
+	} else {
+		for {
+			var row Row
+			row, err = e.Next(goCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// Even though there isn't any result set, the row is still used to indicate if there is
+			// more work to do.
+			// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
+			// There is no more rows to update.
+			if row == nil {
+				return nil, nil
+			}
 		}
 	}
+
+	return nil, nil
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.

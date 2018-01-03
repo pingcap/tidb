@@ -180,7 +180,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
+// See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
 func (s *testSessionSuite) TestRowLock(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -1305,7 +1305,7 @@ func (s *testSessionSuite) TestCaseInsensitive(c *C) {
 	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
 }
 
-// Testcase for delete panic
+// for delete panic
 func (s *testSessionSuite) TestDeletePanic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")
@@ -1568,6 +1568,153 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}
 	c.Assert(count, Equals, 100)
 	c.Assert(numChunks, Equals, 50)
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table test1(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert test1 values (%d)", i))
+	}
+	tk.MustExec("create table test2(a int)")
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+	tk.MustExec("insert into test2(a) select a from test1;")
+
+	rs, err := tk.Exec("select * from test2")
+	c.Assert(err, IsNil)
+	var idx int
+	for {
+		chk := rs.NewChunk()
+		err = rs.NextChunk(goctx.TODO(), chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			row := chk.GetRow(rowIdx)
+			c.Assert(row.GetInt64(0), Equals, int64(idx))
+			idx++
+		}
+	}
+
+	c.Assert(idx, Equals, 100)
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("update chk set a = a + 100 where a = %d", i))
+	}
+
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+	var idx int
+	for {
+		chk := rs.NewChunk()
+		err = rs.NextChunk(goctx.TODO(), chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			row := chk.GetRow(rowIdx)
+			c.Assert(row.GetInt64(0), Equals, int64(idx+100))
+			idx++
+		}
+	}
+
+	c.Assert(idx, Equals, 100)
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk(a int)")
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+
+	for i := 0; i < 99; i++ {
+		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
+	}
+
+	rs, err := tk.Exec("select * from chk")
+	c.Assert(err, IsNil)
+
+	chk := rs.NewChunk()
+	err = rs.NextChunk(goctx.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 1)
+
+	row := chk.GetRow(0)
+	c.Assert(row.GetInt64(0), Equals, int64(99))
+	rs.Close()
+}
+
+func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table chk1(a int)")
+	tk.MustExec("create table chk2(a int)")
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk1 values (%d)", i))
+	}
+
+	for i := 0; i < 50; i++ {
+		tk.MustExec(fmt.Sprintf("insert chk2 values (%d)", i))
+	}
+
+	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().EnableChunk = true
+
+	tk.MustExec("delete chk1, chk2 from chk1 inner join chk2 where chk1.a = chk2.a")
+
+	rs, err := tk.Exec("select * from chk1")
+	c.Assert(err, IsNil)
+
+	var idx int
+	for {
+		chk := rs.NewChunk()
+		err = rs.NextChunk(goctx.TODO(), chk)
+		c.Assert(err, IsNil)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for i := 0; i < chk.NumRows(); i++ {
+			row := chk.GetRow(i)
+			c.Assert(row.GetInt64(0), Equals, int64(idx+50))
+			idx++
+		}
+	}
+	c.Assert(idx, Equals, 50)
+	rs.Close()
+
+	rs, err = tk.Exec("select * from chk2")
+	c.Assert(err, IsNil)
+
+	chk := rs.NewChunk()
+	err = rs.NextChunk(goctx.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 0)
 	rs.Close()
 }
 
