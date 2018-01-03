@@ -8,12 +8,6 @@
   revision = "a368813c5e648fee92e5f6c30e3944ff9d5e8895"
 
 [[projects]]
-  name = "github.com/Sirupsen/logrus"
-  packages = ["."]
-  revision = "ba1b36c82c5e05c4f912a88eab0dcd91a171688f"
-  version = "v0.11.5"
-
-[[projects]]
   name = "github.com/apache/thrift"
   packages = ["lib/go/thrift"]
   revision = "b2a4d4ae21c789b689dd162deb819665567f481c"
@@ -169,7 +163,6 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
-  branch = "master"
   name = "github.com/pingcap/kvproto"
   packages = ["pkg/coprocessor","pkg/eraftpb","pkg/errorpb","pkg/kvrpcpb","pkg/metapb","pkg/pdpb","pkg/raft_serverpb","pkg/tikvpb"]
   revision = "d21ce07c35b9ea66436dc632210a01d927361ed4"
@@ -177,12 +170,12 @@
 [[projects]]
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "96db717124a5bd980e8a244af2db8952e04159d6"
+  revision = "eed819b6999186a4bf2d25255f8d61b371a450d6"
 
 [[projects]]
   name = "github.com/pingcap/tipb"
-  packages = ["go-binlog","go-tipb","sharedbytes"]
-  revision = "a497eca3b8920e192aae1a5af81e573f90e59a6b"
+  packages = ["go-binlog","go-mysqlx","go-mysqlx/Connection","go-mysqlx/Crud","go-mysqlx/Datatypes","go-mysqlx/Expect","go-mysqlx/Expr","go-mysqlx/Notice","go-mysqlx/Resultset","go-mysqlx/Session","go-mysqlx/Sql","go-tipb","sharedbytes"]
+  revision = "07ff5b094233a557a3ac11b1e4d8714d8c6ff406"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"
@@ -204,6 +197,12 @@
   name = "github.com/prometheus/procfs"
   packages = ["."]
   revision = "abf152e5f3e97f2fafac028d2cc06c1feb87ffa5"
+
+[[projects]]
+  name = "github.com/sirupsen/logrus"
+  packages = ["."]
+  revision = "ba1b36c82c5e05c4f912a88eab0dcd91a171688f"
+  version = "v0.11.5"
 
 [[projects]]
   name = "github.com/spaolacci/murmur3"
@@ -262,6 +261,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "2d348a374761316f4b856e26fb02aa3f5ca0bcd26dead1748f58eeb95f353177"
+  inputs-digest = "6ae81f952eb3430f5ee880a7180373a0b6005fa39b44d4e9980aebc135a46b21"
   solver-name = "gps-cdcl"
   solver-version = 1

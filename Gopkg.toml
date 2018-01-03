@@ -25,10 +25,6 @@
   name = "github.com/BurntSushi/toml"
 
 [[constraint]]
-  name = "github.com/Sirupsen/logrus"
-  version = "0.11.5"
-
-[[constraint]]
   branch = "master"
   name = "github.com/blacktear23/go-proxyprotocol"
 
@@ -57,10 +53,6 @@
   version = "1.1.0"
 
 [[constraint]]
-  name = "github.com/grpc-ecosystem/go-grpc-middleware"
-  revision = "82921fcf811d228d2fa202bc31238b356bf9f8d5"
-
-[[constraint]]
   branch = "master"
   name = "github.com/ngaut/pools"
 
@@ -73,12 +65,12 @@
   name = "github.com/pingcap/check"
 
 [[constraint]]
-  branch = "master"
-  name = "github.com/pingcap/kvproto"
-
-[[constraint]]
   name = "github.com/prometheus/client_golang"
   version = "0.8.0"
+
+[[constraint]]
+  name = "github.com/sirupsen/logrus"
+  version = "0.11.5"
 
 [[constraint]]
   name = "github.com/spaolacci/murmur3"
@@ -91,8 +83,3 @@
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
   version = "2.0.0"
-
-[prune]
-  non-go = true
-  go-tests = true
-  unused-packages = true
