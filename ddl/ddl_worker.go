@@ -124,9 +124,15 @@ func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) erro
 
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
-func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job) error {
-	err := t.UpdateDDLJob(0, job)
-	return errors.Trace(err)
+func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
+	updateRawArgs := true
+	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
+	// so we shouldn't replace RawArgs with the marshaling Args.
+	if meetErr && (job.RawArgs != nil && job.Args == nil) {
+		log.Infof("[ddl] update DDL Job %s shouldn't update raw args", job)
+		updateRawArgs = false
+	}
+	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
 }
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
@@ -211,12 +217,12 @@ func (d *ddl) handleDDLJobQueue() error {
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			schemaVer = d.runDDLJob(t, job)
+			schemaVer, err = d.runDDLJob(t, job)
 			if job.IsCancelled() {
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
-			err = d.updateDDLJob(t, job)
+			err = d.updateDDLJob(t, job, err != nil)
 			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
@@ -249,8 +255,8 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 	return t
 }
 
-// runDDLJob runs a DDL job. It returns the current schema version in this transaction.
-func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
+// runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
+func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	log.Infof("[ddl] run DDL job %s", job)
 	if job.IsFinished() {
 		return
@@ -273,7 +279,6 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 		job.State = model.JobStateRunning
 	}
 
-	var err error
 	switch job.Type {
 	case model.ActionCreateSchema:
 		ver, err = d.onCreateSchema(t, job)
@@ -299,6 +304,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 		ver, err = d.onDropForeignKey(t, job)
 	case model.ActionTruncateTable:
 		ver, err = d.onTruncateTable(t, job)
+	case model.ActionRebaseAutoID:
+		ver, err = d.onRebaseAutoID(t, job)
 	case model.ActionRenameTable:
 		ver, err = d.onRenameTable(t, job)
 	case model.ActionSetDefaultValue:

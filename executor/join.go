@@ -465,7 +465,8 @@ type NestedLoopApplyExec struct {
 	outerChunk       *chunk.Chunk
 	outerChunkCursor int
 	outerSelected    []bool
-	innerChunkRows   []chunk.Row
+	innerList        *chunk.List
+	innerChunk       *chunk.Chunk
 	innerSelected    []bool
 	resultChunk      *chunk.Chunk
 }
@@ -564,30 +565,29 @@ func (e *NestedLoopApplyExec) prepare(goCtx goctx.Context) error {
 	}
 }
 
-// fetchAllInners reads all data from the inner table and stores them in a slice.
+// fetchAllInners reads all data from the inner table and stores them in a List.
 func (e *NestedLoopApplyExec) fetchAllInners(goCtx goctx.Context) error {
 	err := e.innerExec.Open(goCtx)
 	defer terror.Call(e.innerExec.Close)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.innerChunkRows = e.innerChunkRows[:0]
+	e.innerList.Reset()
 	for {
-		chk := e.innerExec.newChunk()
-		err := e.innerExec.NextChunk(goCtx, chk)
+		err := e.innerExec.NextChunk(goCtx, e.innerChunk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if e.innerChunk.NumRows() == 0 {
 			return nil
 		}
-		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, chk, e.innerSelected)
+		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, e.innerChunk, e.innerSelected)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for row := chk.Begin(); row != chk.End(); row = row.Next() {
+		for row := e.innerChunk.Begin(); row != e.innerChunk.End(); row = row.Next() {
 			if e.innerSelected[row.Idx()] {
-				e.innerChunkRows = append(e.innerChunkRows, row)
+				e.innerList.AppendRow(row)
 			}
 		}
 	}
@@ -661,7 +661,8 @@ func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 			return errors.Trace(err)
 		}
 		e.resultChunk.Reset()
-		err = e.resultGenerator.emitToChunk(*outerRow, e.innerChunkRows, e.resultChunk)
+		iter := chunk.NewListIterator(e.innerList)
+		err = e.resultGenerator.emitToChunk(*outerRow, iter, e.resultChunk)
 		if err != nil {
 			return errors.Trace(err)
 		}
