@@ -847,17 +847,17 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	txn := e.ctx.Txn()
 	rowCount := 0
 
+	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
 	// Using BatchGet in insert ignore to filter rows before we add records to the table.
 	// If number of rows is one, using BatchGet might be slower than not using it in some cases.
-	skipHandleCheck := false
-	if e.IgnoreErr && len(rows) > 1 {
+	if e.IgnoreErr {
 		var err error
 		rows, err = e.filterDupRows(rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		skipHandleCheck = true
-		e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	}
 
 	for _, row := range rows {
@@ -869,10 +869,10 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			txn = e.ctx.Txn()
 			rowCount = 0
 		}
-		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
+		if len(e.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
-		h, err := e.Table.AddRecord(e.ctx, row, skipHandleCheck)
+		h, err := e.Table.AddRecord(e.ctx, row, false)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
@@ -880,13 +880,6 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			continue
 		}
 		if kv.ErrKeyExists.Equal(err) {
-			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
-			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
-			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-			if e.IgnoreErr {
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				continue
-			}
 			if len(e.OnDuplicate) > 0 {
 				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)

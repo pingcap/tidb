@@ -179,7 +179,7 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 func (c *index) Create(ctx context.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
-	ignoreGet := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	importData := ctx.GetSessionVars().ImportingData
 	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -191,11 +191,11 @@ func (c *index) Create(ctx context.Context, rm kv.RetrieverMutator, indexedValue
 	}
 
 	var value []byte
-	if !ignoreGet {
+	if !importData {
 		value, err = rm.Get(key)
 	}
 
-	if ignoreGet || kv.IsErrNotFound(err) {
+	if importData || kv.IsErrNotFound(err) {
 		err = rm.Set(key, encodeHandle(h))
 		return 0, errors.Trace(err)
 	}
