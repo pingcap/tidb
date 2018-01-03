@@ -130,7 +130,7 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	return &mockSnapshot{
-		store: NewMemDbBuffer(4 * 1024),
+		store: NewMemDbBuffer(DefaultTxnMembufCap),
 	}, nil
 }
 
