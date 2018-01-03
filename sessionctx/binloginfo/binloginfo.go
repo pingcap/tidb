@@ -112,7 +112,7 @@ func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery 
 	txn.SetOption(kv.BinlogInfo, info)
 }
 
-const specialPrefix = `/*!90000`
+const specialPrefix = `/*!90000 `
 
 func addSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) {
