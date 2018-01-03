@@ -140,8 +140,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		if isAutocommit {
 			vars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
-	case variable.TiDBSkipConstraintCheck:
-		vars.SkipConstraintCheck = tidbOptOn(sVal)
+	case variable.TiDBImportingData:
+		vars.ImportingData = tidbOptOn(sVal)
 	case variable.TiDBSkipUTF8Check:
 		vars.SkipUTF8Check = tidbOptOn(sVal)
 	case variable.TiDBOptAggPushDown:
