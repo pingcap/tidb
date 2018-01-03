@@ -80,7 +80,7 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 	} else {
-		// If rewriter.err is not nil, the planner will fail and won't continue. So don't need to set the rewriter.err's value.
+		// If rewriter.err is not nil, the planner will fail and won't continue. So don't need to reset the rewriter.err's value to nil.
 		rewriter = b.rewriterPool[b.rewriterCounter-1]
 		rewriter.p = p
 		rewriter.aggrMap = aggMapper
