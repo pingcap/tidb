@@ -135,6 +135,8 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 func assertHistogramEqual(c *C, a, b statistics.Histogram) {
 	c.Assert(a.ID, Equals, b.ID)
 	c.Assert(a.NDV, Equals, b.NDV)
+	c.Assert(a.NullCount, Equals, b.NullCount)
+	c.Assert(a.LastUpdateVersion, Equals, b.LastUpdateVersion)
 	c.Assert(len(a.Buckets), Equals, len(b.Buckets))
 	for j := 0; j < len(a.Buckets); j++ {
 		c.Assert(a.Buckets[j], DeepEquals, b.Buckets[j])
