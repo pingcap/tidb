@@ -31,6 +31,7 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagMaxMinEliminate
 	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
@@ -41,6 +42,7 @@ const (
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&maxMinEliminator{},
 	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},

@@ -66,6 +66,12 @@ func (p *LogicalAggregation) collectGroupByColumns() {
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
+	// We may apply aggregation eliminate optimization.
+	// So we add the flagMaxMinEliminate to try to convert max/min to topn and flagPushDownTopN to handle the newly added topn operator.
+	b.optFlag = b.optFlag | flagMaxMinEliminate
+	b.optFlag = b.optFlag | flagPushDownTopN
+	// when we eliminate the max and min we may add `is not null` filter.
+	b.optFlag = b.optFlag | flagPredicatePushDown
 
 	agg := LogicalAggregation{AggFuncs: make([]aggregation.Aggregation, 0, len(aggFuncList))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
