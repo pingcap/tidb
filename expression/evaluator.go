@@ -20,14 +20,14 @@ import (
 )
 
 type columnEvaluator struct {
-	inputIdx2OutputIdxes map[int][]int
+	inputIdxToOutputIdxes map[int][]int
 }
 
 // run evaluates "Column" expressions.
 // NOTE: It should be called after all the other expressions are evaluated
 //	     since it will change the content of the input Chunk.
 func (e *columnEvaluator) run(ctx context.Context, input, output *chunk.Chunk) {
-	for inputIdx, outputIdxes := range e.inputIdx2OutputIdxes {
+	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
 		output.SwapColumn(outputIdxes[0], input, inputIdx)
 		for i, length := 1, len(outputIdxes); i < length; i++ {
 			output.MakeRef(outputIdxes[0], outputIdxes[i])
@@ -80,10 +80,10 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 		switch x := expr.(type) {
 		case *Column:
 			if e.columnEvaluator == nil {
-				e.columnEvaluator = &columnEvaluator{inputIdx2OutputIdxes: make(map[int][]int)}
+				e.columnEvaluator = &columnEvaluator{inputIdxToOutputIdxes: make(map[int][]int)}
 			}
 			inputIdx, outputIdx := x.Index, i
-			e.columnEvaluator.inputIdx2OutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdx2OutputIdxes[inputIdx], outputIdx)
+			e.columnEvaluator.inputIdxToOutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdxToOutputIdxes[inputIdx], outputIdx)
 		default:
 			if e.defaultEvaluator == nil {
 				e.defaultEvaluator = &defaultEvaluator{
