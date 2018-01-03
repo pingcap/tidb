@@ -2208,3 +2208,33 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		c.Assert(d.IsNull(), IsTrue)
 	}
 }
+
+func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
+	sv := s.ctx.GetSessionVars()
+	originTZ := sv.GetTimeZone()
+	sv.TimeZone, _ = time.LoadLocation("Asia/Tokyo")
+	defer func() {
+		sv.TimeZone = originTZ
+	}()
+
+	for _, funcName := range []string{ast.Sysdate, ast.Curdate} {
+		now := time.Now().In(sv.TimeZone)
+		f, err := funcs[funcName].getFunction(s.ctx, nil)
+		d, err := evalBuiltinFunc(f, nil)
+		c.Assert(err, IsNil)
+
+		result, _ := d.GetMysqlTime().Time.GoTime(sv.TimeZone)
+		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
+	}
+
+	for _, funcName := range []string{ast.CurrentTime, ast.Curtime} {
+		now := time.Now().In(sv.TimeZone)
+		f, err := funcs[funcName].getFunction(s.ctx, nil)
+		d, err := evalBuiltinFunc(f, nil)
+		c.Assert(err, IsNil)
+
+		t, _ := d.GetMysqlDuration().ConvertToTime(mysql.TypeDatetime)
+		result, _ := t.Time.GoTime(sv.TimeZone)
+		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
+	}
+}
