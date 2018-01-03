@@ -912,7 +912,7 @@ type keyWithDupError struct {
 
 func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 	var hasRecordID bool
-	var recordIDs []int64
+	recordIDs := make([]int64, len(rows))
 	var handleCol *table.Column
 	for _, col := range e.Table.Cols() {
 		if col.IsPKHandleColumn(e.Table.Meta()) {
@@ -922,23 +922,32 @@ func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 		}
 	}
 	if hasRecordID {
-		for _, row := range rows {
-			recordIDs = append(recordIDs, row[handleCol.Offset].GetInt64())
+		for i, row := range rows {
+			recordIDs[i] = row[handleCol.Offset].GetInt64()
 		}
 	} else {
-		for range rows {
+		for i := range recordIDs {
 			recordID, err := e.Table.AllocAutoID(e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			recordIDs = append(recordIDs, recordID)
+			recordIDs[i] = recordID
 		}
 	}
 	return recordIDs, nil
 }
 
+// getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
+// which need to be checked whether they are duplicate keys.
 func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, error) {
-	var keysWithErr []keyWithDupError
+	nUnique := 0
+	for _, v := range e.Table.WritableIndices() {
+		if !v.Meta().Unique && !v.Meta().Primary {
+			continue
+		}
+		nUnique++
+	}
+	keysWithErr := make([]keyWithDupError, len(rows)*(nUnique+1))
 
 	// get recordIDs
 	recordIDs, err := e.getRecordIDs(rows)
@@ -946,9 +955,11 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 		return nil, errors.Trace(err)
 	}
 
+	nKeys := 0
 	for i, row := range rows {
 		// append record keys and errors
-		keysWithErr = append(keysWithErr, keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i]), i})
+		keysWithErr[nKeys] = keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i]), i}
+		nKeys++
 
 		// append unique keys and errors
 		for _, v := range e.Table.WritableIndices() {
@@ -965,7 +976,8 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			keysWithErr = append(keysWithErr, keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name), i})
+			keysWithErr[nKeys] = keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name), i}
+			nKeys++
 		}
 	}
 	return keysWithErr, nil
