@@ -23,35 +23,29 @@ type columnEvaluator struct {
 	inputIdx2OutputIdxes map[int][]int
 }
 
-func (e *columnEvaluator) add(colExpr *Column, outputIdx int) {
-	inputIdx := colExpr.Index
-	e.inputIdx2OutputIdxes[inputIdx] = append(e.inputIdx2OutputIdxes[inputIdx], outputIdx)
-}
-
 // run evaluates "Column" expressions.
 // NOTE: It should be called after all the other expressions are evaluated
 //	     since it will change the content of the input Chunk.
-func (e *columnEvaluator) run(ctx context.Context, input, output *chunk.Chunk) error {
+func (e *columnEvaluator) run(ctx context.Context, input, output *chunk.Chunk) {
 	for inputIdx, outputIdxes := range e.inputIdx2OutputIdxes {
 		output.SwapColumn(outputIdxes[0], input, inputIdx)
 		for i, length := 1, len(outputIdxes); i < length; i++ {
 			output.MakeRef(outputIdxes[0], outputIdxes[i])
 		}
 	}
-	return nil
 }
 
-type otherEvaluator struct {
+type defaultEvaluator struct {
 	outputIdxes  []int
-	scalaFunc    []Expression
+	exprs        []Expression
 	vectorizable bool
 }
 
-func (e *otherEvaluator) run(ctx context.Context, input, output *chunk.Chunk) error {
+func (e *defaultEvaluator) run(ctx context.Context, input, output *chunk.Chunk) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	if e.vectorizable {
 		for i := range e.outputIdxes {
-			err := evalOneColumn(sc, e.scalaFunc[i], input, output, e.outputIdxes[i])
+			err := evalOneColumn(sc, e.exprs[i], input, output, e.outputIdxes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -61,7 +55,7 @@ func (e *otherEvaluator) run(ctx context.Context, input, output *chunk.Chunk) er
 
 	for row := input.Begin(); row != input.End(); row = row.Next() {
 		for i := range e.outputIdxes {
-			err := evalOneCell(sc, e.scalaFunc[i], row, output, e.outputIdxes[i])
+			err := evalOneCell(sc, e.exprs[i], row, output, e.outputIdxes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -74,44 +68,52 @@ func (e *otherEvaluator) run(ctx context.Context, input, output *chunk.Chunk) er
 // It seperates them to "column" and "other" expressions and evaluates "other"
 // expressions before "column" expressions.
 type EvaluatorSuit struct {
-	evaluator4Col   *columnEvaluator
-	evaluator4Other *otherEvaluator
+	*columnEvaluator  // Evaluator for column expressions.
+	*defaultEvaluator // Evaluator for other expressions.
 }
 
 // NewEvaluatorSuit creates an EvaluatorSuit to evaluate all the exprs.
 func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
-	e := &EvaluatorSuit{
-		evaluator4Col: &columnEvaluator{
-			inputIdx2OutputIdxes: make(map[int][]int),
-		},
-		evaluator4Other: &otherEvaluator{
-			outputIdxes: make([]int, 0, len(exprs)),
-			scalaFunc:   make([]Expression, 0, len(exprs)),
-		},
-	}
+	e := &EvaluatorSuit{}
 
 	for i, expr := range exprs {
 		switch x := expr.(type) {
 		case *Column:
-			e.evaluator4Col.add(x, i)
+			if e.columnEvaluator == nil {
+				e.columnEvaluator = &columnEvaluator{inputIdx2OutputIdxes: make(map[int][]int)}
+			}
+			inputIdx, outputIdx := x.Index, i
+			e.columnEvaluator.inputIdx2OutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdx2OutputIdxes[inputIdx], outputIdx)
 		default:
-			e.evaluator4Other.outputIdxes = append(e.evaluator4Other.outputIdxes, i)
-			e.evaluator4Other.scalaFunc = append(e.evaluator4Other.scalaFunc, x)
+			if e.defaultEvaluator == nil {
+				e.defaultEvaluator = &defaultEvaluator{
+					outputIdxes: make([]int, 0, len(exprs)),
+					exprs:       make([]Expression, 0, len(exprs)),
+				}
+			}
+			e.defaultEvaluator.exprs = append(e.defaultEvaluator.exprs, x)
+			e.defaultEvaluator.outputIdxes = append(e.defaultEvaluator.outputIdxes, i)
 		}
 	}
 
-	e.evaluator4Other.vectorizable = Vectorizable(e.evaluator4Other.scalaFunc)
+	if e.defaultEvaluator != nil {
+		e.defaultEvaluator.vectorizable = Vectorizable(e.defaultEvaluator.exprs)
+	}
 	return e
 }
 
 // Run evaluates all the expressions hold by this EvaluatorSuit.
+// NOTE: "defaultEvaluator" must be evaluated before "columnEvaluator".
 func (e *EvaluatorSuit) Run(ctx context.Context, input, output *chunk.Chunk) error {
-	// NOTE: "evaluator4Other" must be evaluated before "evaluator4Col".
-	if err := e.evaluator4Other.run(ctx, input, output); err != nil {
-		return errors.Trace(err)
+	if e.defaultEvaluator != nil {
+		err := e.defaultEvaluator.run(ctx, input, output)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	if err := e.evaluator4Col.run(ctx, input, output); err != nil {
-		return errors.Trace(err)
+
+	if e.columnEvaluator != nil {
+		e.columnEvaluator.run(ctx, input, output)
 	}
 	return nil
 }
