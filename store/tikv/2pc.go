@@ -224,10 +224,14 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		twoPhaseCommitGP.Go(func() {
+			start := time.Now()
+			defer func() { secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds()) }()
+			secondaryLockCleanupWorkerCounter.Inc()
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
 			}
+			secondaryLockCleanupWorkerCounter.Dec()
 		})
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
@@ -570,12 +574,17 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		c.mu.RUnlock()
 		if !committed && !undetermined {
 			twoPhaseCommitGP.Go(func() {
+				start := time.Now()
+				defer func() { secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds()) }()
+
+				secondaryLockCleanupWorkerCounter.Inc()
 				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
 				if err != nil {
 					log.Infof("2PC cleanup err: %v, tid: %d", err, c.startTS)
 				} else {
 					log.Infof("2PC clean up done, tid: %d", c.startTS)
 				}
+				secondaryLockCleanupWorkerCounter.Dec()
 			})
 		}
 	}()

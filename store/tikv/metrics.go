@@ -172,6 +172,23 @@ var (
 			Name:      "load_safepoint_total",
 			Help:      "Counter of load safepoint.",
 		}, []string{"type"})
+
+	secondaryLockCleanupWorkerCounter = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "lock_cleanup_worker_total",
+			Help:      "Counter of secondary lock cleanup worker.",
+		})
+
+	secondaryLockCleanupHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "secondary_lock_cleanup_seconds",
+			Help:      "Bucketed histogram of processing time of secondary lock cleanup.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 1),
+		}, []string{"type"})
 )
 
 func reportRegionError(e *errorpb.Error) {
