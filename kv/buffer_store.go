@@ -47,6 +47,7 @@ func NewBufferStore(r Retriever, cap int) *BufferStore {
 	}
 }
 
+// Reset resets s.MemBuffer.
 func (s *BufferStore) Reset() {
 	s.MemBuffer.Reset()
 }
