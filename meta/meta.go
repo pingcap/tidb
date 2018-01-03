@@ -445,8 +445,8 @@ var (
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -455,7 +455,7 @@ func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) err
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job) error {
-	return m.enQueueDDLJob(mDDLJobListKey, job, true)
+	return m.enQueueDDLJob(mDDLJobListKey, job)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
@@ -491,8 +491,10 @@ func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
-	b, err := job.Encode(true)
+// updateDDLJob updates the DDL job with index and key.
+// updateRawArgs is used to determine whether to update the raw args when encode the job.
+func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -500,8 +502,9 @@ func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
 }
 
 // UpdateDDLJob updates the DDL job with index.
-func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
-	return m.updateDDLJob(index, job, mDDLJobListKey)
+// updateRawArgs is used to determine whether to update the raw args when encode the job.
+func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool) error {
+	return m.updateDDLJob(index, job, mDDLJobListKey, updateRawArgs)
 }
 
 // DDLJobQueueLen returns the DDL job queue length.
