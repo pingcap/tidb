@@ -861,14 +861,12 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 			Type:     mysql.TypeDatetime,
 			Fsp:      6,
 			TimeZone: nil,
-			Negative: false,
 		}
 		t2 := types.Time{
 			Time:     test.t2,
 			Type:     mysql.TypeDatetime,
 			Fsp:      6,
 			TimeZone: nil,
-			Negative: false,
 		}
 		c.Assert(types.TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
