@@ -145,22 +145,22 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			tbl.Indices[idx.ID] = idx
 		}
 	}
-	for key, val := range jsonTbl.Columns {
+	for id, jsonCol := range jsonTbl.Columns {
 		for _, colInfo := range tableInfo.Columns {
-			if colInfo.Name.L != key {
+			if colInfo.Name.L != id {
 				continue
 			}
 			col := &Column{
-				Histogram: Histogram{ID: colInfo.ID, NullCount: val.NullCount, LastUpdateVersion: val.LastUpdateVersion, NDV: val.Histogram.Ndv},
+				Histogram: Histogram{ID: colInfo.ID, NullCount: jsonCol.NullCount, LastUpdateVersion: jsonCol.LastUpdateVersion, NDV: jsonCol.Histogram.Ndv},
 				Info:      colInfo,
 			}
-			hist := HistogramFromProto(val.Histogram)
+			hist := HistogramFromProto(jsonCol.Histogram)
 			col.Count = int64(hist.totalRowCount())
-			if !val.AlreadyLoad {
+			if !jsonCol.AlreadyLoad {
 				tbl.Columns[col.ID] = col
 				continue
 			}
-			col.CMSketch = CMSketchFromProto(val.CMSketch)
+			col.CMSketch = CMSketchFromProto(jsonCol.CMSketch)
 			col.Histogram.Buckets = hist.Buckets
 			for i := range col.Buckets {
 				if err := col.Buckets[i].ConvertTo(h, &colInfo.FieldType); err != nil {
