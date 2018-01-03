@@ -163,6 +163,15 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		// issue 4472
 		{`select sum(distinct(if('a', (select adddate(elt(999, count(*)), interval 1 day)), .1))) as foo;`, true, nil},
 		{`select sum(1 in (select count(1)))`, true, nil},
+
+		// issue 5529
+		{"CREATE TABLE `t` (`id` int(11) NOT NULL AUTO_INCREMENT, `a` decimal(100,4) DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE `t` (`id` int(11) NOT NULL AUTO_INCREMENT, `a` decimal(65,4) DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin", true, nil},
+		{"CREATE TABLE `t` (`id` int(11) NOT NULL AUTO_INCREMENT, `a` decimal(65,31) DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin", false, types.ErrTooBigScale},
+		{"CREATE TABLE `t` (`id` int(11) NOT NULL AUTO_INCREMENT, `a` decimal(66,31) DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin", false, types.ErrTooBigScale},
+		{"alter table t modify column a DECIMAL(66,30);", false, types.ErrTooBigPrecision},
+		{"alter table t modify column a DECIMAL(65,31);", false, types.ErrTooBigScale},
+		{"alter table t modify column a DECIMAL(65,30);", true, nil},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
@@ -183,6 +192,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		err = plan.Preprocess(ctx, stmt, is, tt.inPrepare)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("sql: %s", tt.sql))
+		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("sql: %s, err:%v", tt.sql, err))
 	}
 }
