@@ -165,8 +165,10 @@ type planBuilder struct {
 
 	curClause clauseCode
 
-	rewriterStack  []*expressionRewriter
-	rwStackPointer int
+	// rewriterPool stores the expressionRewriter we have created to reuse it if it has been released.
+	// rewriterCounter counts how many rewriter is being used.
+	rewriterPool    []*expressionRewriter
+	rewriterCounter int
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
