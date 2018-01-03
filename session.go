@@ -784,6 +784,12 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
 	}
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.DoPrepare()
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, errors.Trace(err)
@@ -841,6 +847,7 @@ func (s *session) ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, args .
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	s.PrepareTxnCtx(goCtx)
 	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	if err != nil {
