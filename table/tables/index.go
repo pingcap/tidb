@@ -191,11 +191,11 @@ func (c *index) Create(ctx context.Context, rm kv.RetrieverMutator, indexedValue
 	}
 
 	var value []byte
-	if !importData {
+	if !ctx.GetSessionVars().BatchCheck && !importData {
 		value, err = rm.Get(key)
 	}
 
-	if importData || kv.IsErrNotFound(err) {
+	if ctx.GetSessionVars().BatchCheck || importData || kv.IsErrNotFound(err) {
 		err = rm.Set(key, encodeHandle(h))
 		return 0, errors.Trace(err)
 	}

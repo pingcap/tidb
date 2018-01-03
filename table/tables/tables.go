@@ -419,7 +419,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			return 0, errors.Trace(err2)
 		}
 		var dupKeyErr error
-		if !importData && (v.Meta().Unique || v.Meta().Primary) {
+		if !ctx.GetSessionVars().BatchCheck && !importData && (v.Meta().Unique || v.Meta().Primary) {
 			entryKey, err1 := t.genIndexKeyStr(colVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
