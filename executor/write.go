@@ -912,8 +912,8 @@ type keyWithDupError struct {
 
 func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 	var hasRecordID bool
-	recordIDs := make([]int64, len(rows))
 	var handleCol *table.Column
+	recordIDs := make([]int64, 0, len(rows))
 	for _, col := range e.Table.Cols() {
 		if col.IsPKHandleColumn(e.Table.Meta()) {
 			hasRecordID = true
@@ -922,16 +922,16 @@ func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 		}
 	}
 	if hasRecordID {
-		for i, row := range rows {
-			recordIDs[i] = row[handleCol.Offset].GetInt64()
+		for _, row := range rows {
+			recordIDs = append(recordIDs, row[handleCol.Offset].GetInt64())
 		}
 	} else {
-		for i := range recordIDs {
+		for range rows {
 			recordID, err := e.Table.AllocAutoID(e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			recordIDs[i] = recordID
+			recordIDs = append(recordIDs, recordID)
 		}
 	}
 	return recordIDs, nil
@@ -947,7 +947,7 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 		}
 		nUnique++
 	}
-	keysWithErr := make([]keyWithDupError, len(rows)*(nUnique+1))
+	keysWithErr := make([]keyWithDupError, 0, len(rows)*(nUnique+1))
 
 	// get recordIDs
 	recordIDs, err := e.getRecordIDs(rows)
@@ -955,11 +955,9 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 		return nil, errors.Trace(err)
 	}
 
-	nKeys := 0
 	for i, row := range rows {
 		// append record keys and errors
-		keysWithErr[nKeys] = keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i]), i}
-		nKeys++
+		keysWithErr = append(keysWithErr, keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i]), i})
 
 		// append unique keys and errors
 		for _, v := range e.Table.WritableIndices() {
@@ -976,8 +974,7 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			keysWithErr[nKeys] = keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name), i}
-			nKeys++
+			keysWithErr = append(keysWithErr, keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name), i})
 		}
 	}
 	return keysWithErr, nil
@@ -988,9 +985,9 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 	keysWithErr, err := e.getKeysNeedCheck(rows)
 
 	// batch get values
-	batchKeys := make([]kv.Key, len(keysWithErr))
-	for i := range batchKeys {
-		batchKeys[i] = keysWithErr[i].key
+	batchKeys := make([]kv.Key, 0, len(keysWithErr))
+	for i := range keysWithErr {
+		batchKeys = append(batchKeys, keysWithErr[i].key)
 	}
 	values, err := e.ctx.Txn().GetSnapshot().BatchGet(batchKeys)
 	if err != nil {
@@ -1008,7 +1005,7 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 			}
 		}
 	}
-	var noDupRows [][]types.Datum
+	noDupRows := make([][]types.Datum, 0, len(rows))
 	for i, row := range rows {
 		if _, ok := offsets[i]; ok {
 			continue
