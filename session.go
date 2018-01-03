@@ -135,6 +135,14 @@ type session struct {
 	statsCollector *statistics.SessionStatsCollector
 }
 
+func (s *session) getMembufCap() int {
+	if s.sessionVars.ImportingData {
+		return kv.ImportingTxnMembufCap
+	}
+
+	return kv.DefaultTxnMembufCap
+}
+
 func (s *session) cleanRetryInfo() {
 	if !s.sessionVars.RetryInfo.Retrying {
 		retryInfo := s.sessionVars.RetryInfo
@@ -866,10 +874,12 @@ func (s *session) NewTxn() error {
 			return errors.Trace(err)
 		}
 	}
+
 	txn, err := s.store.Begin()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	txn.SetMemBufCap(s.getMembufCap())
 	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
 	return nil
@@ -1259,10 +1269,12 @@ func (s *session) ActivePendingTxn() error {
 	}
 	future := s.txnFuture
 	s.txnFuture = nil
+
 	txn, err := future.wait()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	txn.SetMemBufCap(s.getMembufCap())
 	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 	err = s.loadCommonGlobalVariablesIfNeeded()
@@ -1283,6 +1295,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if s.txnFuture == nil {
 		return errors.New("transaction channel is not set")
 	}
+
 	// no need to get txn from txnFutureCh since txn should init with startTs
 	s.txnFuture = nil
 	var err error
@@ -1290,6 +1303,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.txn.SetMemBufCap(s.getMembufCap())
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)

@@ -137,6 +137,9 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// SetMemBufCap sets the transaction's MemBuffer capability, to reduce memory allocations.
+	// Please call it before you use the transaction, otherwise it will not works.
+	SetMemBufCap(cap int)
 }
 
 // Client is used to send request to KV layer.

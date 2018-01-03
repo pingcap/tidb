@@ -212,7 +212,7 @@ func (t *Table) FirstKey() kv.Key {
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	txn := ctx.Txn()
-	bs := kv.NewBufferStore(txn)
+	bs := kv.NewBufferStore(txn, kv.SmallTxnMembufCap)
 
 	// rebuild index
 	err := t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
@@ -323,7 +323,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	}
 
 	txn := ctx.Txn()
-	bs := kv.NewBufferStore(txn)
+	bs := kv.NewBufferStore(txn, len(t.indices)*2)
 
 	skipCheck := ctx.GetSessionVars().ImportingData
 	if skipCheck {

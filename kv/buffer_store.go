@@ -17,6 +17,15 @@ import (
 	"github.com/juju/errors"
 )
 
+const (
+	// DefaultTxnMembufCap is the default transaction membuf capability.
+	DefaultTxnMembufCap = 4 * 1024
+	// ImportingTxnMembufCap is the capability of tidb importing data situation.
+	ImportingTxnMembufCap = 32 * 1024
+	// SmallTxnMembufCap is the capability of the small transaction.
+	SmallTxnMembufCap = 8
+)
+
 // BufferStore wraps a Retriever for read and a MemBuffer for buffered write.
 // Common usage pattern:
 //	bs := NewBufferStore(r) // use BufferStore to wrap a Retriever
@@ -30,11 +39,19 @@ type BufferStore struct {
 }
 
 // NewBufferStore creates a BufferStore using r for read.
-func NewBufferStore(r Retriever) *BufferStore {
+func NewBufferStore(r Retriever, cap int) *BufferStore {
+	if cap <= 0 {
+		cap = DefaultTxnMembufCap
+	}
 	return &BufferStore{
 		r:         r,
-		MemBuffer: &lazyMemBuffer{},
+		MemBuffer: &lazyMemBuffer{cap: cap},
 	}
+}
+
+// SetCap sets the MemBuffer capability.
+func (s *BufferStore) SetCap(cap int) {
+	s.MemBuffer.(*lazyMemBuffer).cap = cap
 }
 
 // Get implements the Retriever interface.
