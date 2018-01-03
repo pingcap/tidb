@@ -65,6 +65,11 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	}, nil
 }
 
+// SetMemBufCap sets the transaction's MemBuffer capability, to reduce memory allocations.
+func (txn *tikvTxn) SetMemBufCap(cap int) {
+	txn.us.SetMemBufCap(cap)
+}
+
 // Get implements transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	txnCmdCounter.WithLabelValues("get").Inc()

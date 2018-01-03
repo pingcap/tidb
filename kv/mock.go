@@ -99,6 +99,10 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
+func (t *mockTxn) SetMemBufCap(cap int) {
+
+}
+
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{
@@ -126,7 +130,7 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	return &mockSnapshot{
-		store: NewMemDbBuffer(),
+		store: NewMemDbBuffer(DefaultTxnMembufCap),
 	}, nil
 }
 

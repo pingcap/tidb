@@ -41,9 +41,9 @@ type memDbIter struct {
 }
 
 // NewMemDbBuffer creates a new memDbBuffer.
-func NewMemDbBuffer() MemBuffer {
+func NewMemDbBuffer(cap int) MemBuffer {
 	return &memDbBuffer{
-		db:              memdb.New(comparer.DefaultComparer, 4*1024),
+		db:              memdb.New(comparer.DefaultComparer, cap),
 		entrySizeLimit:  TxnEntrySizeLimit,
 		bufferLenLimit:  atomic.LoadUint64(&TxnEntryCountLimit),
 		bufferSizeLimit: TxnTotalSizeLimit,
