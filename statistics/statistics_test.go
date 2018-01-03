@@ -336,7 +336,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	col, err = BuildColumn(ctx, bucketCount, 2, collector)
 	c.Assert(err, IsNil)
 	c.Assert(len(col.Buckets), Equals, 1)
-	c.Assert(col.Buckets[0].LowerBound, DeepEquals, col.Buckets[1].UpperBound)
+	c.Assert(col.Buckets[0].LowerBound, DeepEquals, col.Buckets[0].UpperBound)
 }
 
 func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
