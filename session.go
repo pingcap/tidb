@@ -879,7 +879,7 @@ func (s *session) NewTxn() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn.SetMemBufCap(s.getMembufCap())
+	txn.SetCap(s.getMembufCap())
 	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
 	return nil
@@ -1274,7 +1274,7 @@ func (s *session) ActivePendingTxn() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn.SetMemBufCap(s.getMembufCap())
+	txn.SetCap(s.getMembufCap())
 	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 	err = s.loadCommonGlobalVariablesIfNeeded()
@@ -1303,7 +1303,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.txn.SetMemBufCap(s.getMembufCap())
+	s.txn.SetCap(s.getMembufCap())
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)

@@ -66,7 +66,8 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	h, err := originTable.AddRecord(ctx, row, false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	h, err := originTable.AddRecord(ctx, row, false, bs)
 	c.Assert(err, IsNil)
 	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
@@ -167,7 +168,8 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10), false)
+			bs := kv.NewBufferStore(hookCtx.Txn(), kv.DefaultTxnMembufCap)
+			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10), false, bs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -218,7 +220,8 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3), false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -292,7 +295,8 @@ func (s *testColumnChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writ
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h, err := publicTable.AddRecord(ctx, types.MakeDatums(4, 4, 4), false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	h, err := publicTable.AddRecord(ctx, types.MakeDatums(4, 4, 4), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -212,7 +212,8 @@ func (t *Table) FirstKey() kv.Key {
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	txn := ctx.Txn()
-	bs := kv.NewBufferStore(txn, kv.SmallTxnMembufCap)
+	// TODO: reuse bs, pass it in like AddRecord does.
+	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
 
 	// rebuild index
 	err := t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
@@ -306,7 +307,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool, bs *kv.BufferStore) (recordID int64, err error) {
 	var hasRecordID bool
 	for _, col := range t.Cols() {
 		if col.IsPKHandleColumn(t.meta) {
@@ -323,8 +324,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	}
 
 	txn := ctx.Txn()
-	bs := kv.NewBufferStore(txn, len(t.indices)*2)
-
 	skipCheck := ctx.GetSessionVars().ImportingData
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)

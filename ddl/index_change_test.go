@@ -62,11 +62,14 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	// insert t values (1, 1), (2, 2), (3, 3)
-	_, err = originTable.AddRecord(ctx, types.MakeDatums(1, 1), false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(1, 1), false, bs)
 	c.Assert(err, IsNil)
-	_, err = originTable.AddRecord(ctx, types.MakeDatums(2, 2), false)
+	bs.Reset()
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(2, 2), false, bs)
 	c.Assert(err, IsNil)
-	_, err = originTable.AddRecord(ctx, types.MakeDatums(3, 3), false)
+	bs.Reset()
+	_, err = originTable.AddRecord(ctx, types.MakeDatums(3, 3), false, bs)
 	c.Assert(err, IsNil)
 
 	err = ctx.Txn().Commit(goctx.Background())
@@ -186,7 +189,8 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, de
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = delOnlyTbl.AddRecord(ctx, types.MakeDatums(4, 4), false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	_, err = delOnlyTbl.AddRecord(ctx, types.MakeDatums(4, 4), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -196,7 +200,8 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, de
 	}
 
 	// WriteOnlyTable: insert t values (5, 5);
-	_, err = writeOnlyTbl.AddRecord(ctx, types.MakeDatums(5, 5), false)
+	bs.Reset()
+	_, err = writeOnlyTbl.AddRecord(ctx, types.MakeDatums(5, 5), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -259,7 +264,8 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(6, 6), false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(6, 6), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -268,7 +274,8 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 		return errors.Trace(err)
 	}
 	// PublicTable: insert t values (7, 7)
-	_, err = publicTbl.AddRecord(ctx, types.MakeDatums(7, 7), false)
+	bs.Reset()
+	_, err = publicTbl.AddRecord(ctx, types.MakeDatums(7, 7), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -326,7 +333,8 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, p
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(8, 8), false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(8, 8), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -366,7 +374,8 @@ func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(9, 9), false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(9, 9), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -377,7 +386,8 @@ func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, 
 	}
 
 	// DeleteOnlyTable insert t values (10, 10)
-	_, err = delTbl.AddRecord(ctx, types.MakeDatums(10, 10), false)
+	bs.Reset()
+	_, err = delTbl.AddRecord(ctx, types.MakeDatums(10, 10), false, bs)
 	if err != nil {
 		return errors.Trace(err)
 	}

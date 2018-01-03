@@ -37,8 +37,6 @@ type UnionStore interface {
 	GetOption(opt Option) interface{}
 	// GetMemBuffer return the MemBuffer binding to this UnionStore.
 	GetMemBuffer() MemBuffer
-	// SetMemBufCap sets membuffer capability.
-	SetMemBufCap(cap int)
 }
 
 // Option is used for customizing kv store's behaviors during a transaction.
@@ -157,6 +155,16 @@ func (lmb *lazyMemBuffer) Len() int {
 	return lmb.mb.Len()
 }
 
+func (lmb *lazyMemBuffer) Reset() {
+	if lmb.mb != nil {
+		lmb.mb.Reset()
+	}
+}
+
+func (lmb *lazyMemBuffer) SetCap(cap int) {
+	lmb.cap = cap
+}
+
 // Get implements the Retriever interface.
 func (us *unionStore) Get(k Key) ([]byte, error) {
 	v, err := us.MemBuffer.Get(k)
@@ -241,9 +249,13 @@ func (us *unionStore) GetMemBuffer() MemBuffer {
 	return us.BufferStore.MemBuffer
 }
 
-// SetMemBufCap sets membuffer capability.
-func (us *unionStore) SetMemBufCap(cap int) {
+// SetCap sets membuffer capability.
+func (us *unionStore) SetCap(cap int) {
 	us.BufferStore.SetCap(cap)
+}
+
+func (us *unionStore) Reset() {
+	us.BufferStore.Reset()
 }
 
 type options map[Option]interface{}

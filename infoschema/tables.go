@@ -1136,7 +1136,7 @@ func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
-func (it *infoschemaTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (it *infoschemaTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool, bs *kv.BufferStore) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 

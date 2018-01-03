@@ -17,13 +17,11 @@ import (
 	"github.com/juju/errors"
 )
 
-const (
+var (
 	// DefaultTxnMembufCap is the default transaction membuf capability.
 	DefaultTxnMembufCap = 4 * 1024
 	// ImportingTxnMembufCap is the capability of tidb importing data situation.
 	ImportingTxnMembufCap = 32 * 1024
-	// SmallTxnMembufCap is the capability of the small transaction.
-	SmallTxnMembufCap = 8
 )
 
 // BufferStore wraps a Retriever for read and a MemBuffer for buffered write.
@@ -49,9 +47,13 @@ func NewBufferStore(r Retriever, cap int) *BufferStore {
 	}
 }
 
+func (s *BufferStore) Reset() {
+	s.MemBuffer.Reset()
+}
+
 // SetCap sets the MemBuffer capability.
 func (s *BufferStore) SetCap(cap int) {
-	s.MemBuffer.(*lazyMemBuffer).cap = cap
+	s.MemBuffer.SetCap(cap)
 }
 
 // Get implements the Retriever interface.

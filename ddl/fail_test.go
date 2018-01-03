@@ -17,6 +17,7 @@ import (
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
@@ -36,7 +37,8 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	// insert t_fail values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	_, err = originTable.AddRecord(ctx, row, false)
+	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	_, err = originTable.AddRecord(ctx, row, false, bs)
 	c.Assert(err, IsNil)
 	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)

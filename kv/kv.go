@@ -109,6 +109,11 @@ type MemBuffer interface {
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
+	// Reset cleanup the MemBuffer
+	Reset()
+	// SetCap sets the MemBuffer capability, to reduce memory allocations.
+	// Please call it before you use the MemBuffer, otherwise it will not works.
+	SetCap(cap int)
 }
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -137,9 +142,6 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
-	// SetMemBufCap sets the transaction's MemBuffer capability, to reduce memory allocations.
-	// Please call it before you use the transaction, otherwise it will not works.
-	SetMemBufCap(cap int)
 }
 
 // Client is used to send request to KV layer.

@@ -65,6 +65,10 @@ func (m *memDbBuffer) Seek(k Key) (Iterator, error) {
 	return i, nil
 }
 
+func (m *memDbBuffer) SetCap(cap int) {
+
+}
+
 func (m *memDbBuffer) SeekReverse(k Key) (Iterator, error) {
 	var i *memDbIter
 	if k == nil {
@@ -118,6 +122,11 @@ func (m *memDbBuffer) Size() int {
 // Len returns the number of entries in the DB.
 func (m *memDbBuffer) Len() int {
 	return m.db.Len()
+}
+
+// Reset cleanup the MemBuffer.
+func (m *memDbBuffer) Reset() {
+	m.db.Reset()
 }
 
 // Next implements the Iterator Next.

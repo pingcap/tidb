@@ -279,7 +279,8 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
 	c.Assert(s.ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
+	bs := kv.NewBufferStore(s.ctx.Txn(), kv.DefaultTxnMembufCap)
+	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false, bs)
 	c.Assert(err, IsNil)
 	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
 
@@ -292,7 +293,8 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
 	c.Assert(s.ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(s.ctx, record2.Values, false)
+	bs.Reset()
+	_, err = tb.AddRecord(s.ctx, record2.Values, false, bs)
 	c.Assert(err, IsNil)
 	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
 	txn, err := s.store.Begin()

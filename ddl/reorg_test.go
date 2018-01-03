@@ -165,7 +165,8 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i), false)
+		bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i), false, bs)
 		c.Assert(err, IsNil)
 	}
 
