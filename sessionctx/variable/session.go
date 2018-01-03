@@ -247,9 +247,6 @@ type SessionVars struct {
 	// EnableChunk indicates whether the chunk execution model is enabled.
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
-
-	// BatchCheck indicates that whether we need to check insert keys using BatchGet in `insert ignore`.
-	BatchCheck bool
 }
 
 // NewSessionVars creates a session vars object.

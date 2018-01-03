@@ -857,8 +857,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			return nil, errors.Trace(err)
 		}
 		skipHandleCheck = true
-		e.ctx.GetSessionVars().BatchCheck = true
-		defer func(ctx context.Context) { ctx.GetSessionVars().BatchCheck = false }(e.ctx)
+		e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	}
 
 	for _, row := range rows {

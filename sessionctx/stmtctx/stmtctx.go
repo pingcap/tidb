@@ -37,6 +37,7 @@ type StatementContext struct {
 	InShowWarning          bool
 	UseCache               bool
 	PadCharToFullLength    bool
+	BatchCheck             bool // BatchCheck indicates that whether we need to check insert keys using BatchGet in `insert ignore`.
 
 	// mu struct holds variables that change during execution.
 	mu struct {
