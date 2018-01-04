@@ -1037,6 +1037,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return dom, errors.Trace(err)
 }
 
+// GetDomain gets the associated domain for store.
 func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
