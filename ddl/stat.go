@@ -27,7 +27,7 @@ var (
 	ddlOwnerLastUpdateTS = "ddl_owner_last_update_ts"
 	ddlJobID             = "ddl_job_id"
 	ddlJobAction         = "ddl_job_action"
-	ddlJobLastUpdateTS   = "ddl_job_last_update_ts"
+	ddlJobStartTS        = "ddl_job_start_ts"
 	ddlJobState          = "ddl_job_state"
 	ddlJobError          = "ddl_job_error"
 	ddlJobRows           = "ddl_job_row_count"
@@ -68,7 +68,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	if ddlInfo.Job != nil {
 		m[ddlJobID] = ddlInfo.Job.ID
 		m[ddlJobAction] = ddlInfo.Job.Type.String()
-		m[ddlJobLastUpdateTS] = ddlInfo.Job.LastUpdateTS / 1e9
+		m[ddlJobStartTS] = ddlInfo.Job.StartTS / 1e9 // unit: second
 		m[ddlJobState] = ddlInfo.Job.State.String()
 		m[ddlJobRows] = ddlInfo.Job.RowCount
 		if ddlInfo.Job.Error == nil {

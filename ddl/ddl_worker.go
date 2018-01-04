@@ -93,6 +93,7 @@ func (d *ddl) addDDLJob(ctx context.Context, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		job.StartTS = txn.StartTS()
 		err = t.EnQueueDDLJob(job)
 		return errors.Trace(err)
 	})
@@ -123,8 +124,7 @@ func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) erro
 
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
-func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64, meetErr bool) error {
-	job.LastUpdateTS = int64(updateTS)
+func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
 	updateRawArgs := true
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
@@ -222,7 +222,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
-			err = d.updateDDLJob(t, job, txn.StartTS(), err != nil)
+			err = d.updateDDLJob(t, job, err != nil)
 			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
@@ -310,6 +310,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		ver, err = d.onRenameTable(t, job)
 	case model.ActionSetDefaultValue:
 		ver, err = d.onSetDefaultValue(t, job)
+	case model.ActionShardRowID:
+		ver, err = d.onShardRowID(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

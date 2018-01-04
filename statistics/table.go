@@ -307,7 +307,9 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
 	c := t.Columns[colID]
-	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
+	result, err := c.getIntColumnRowCount(sc, intRanges)
+	result *= c.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of NewRange.
@@ -316,7 +318,9 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
 	}
 	c := t.Columns[colID]
-	return c.getColumnRowCount(sc, colRanges)
+	result, err := c.getColumnRowCount(sc, colRanges)
+	result *= c.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of NewRange.
