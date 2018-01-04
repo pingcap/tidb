@@ -47,7 +47,7 @@ func (s *BufferStore) Get(k Key) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	if len(val) == 0 {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, ErrNotExist
 	}
 	return val, nil
 }
