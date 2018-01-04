@@ -1,0 +1,241 @@
+package: github.com/pingcap/pd
+import:
+- package: github.com/BurntSushi/toml
+  version: 0.2.0
+- package: github.com/beorn7/perks
+  version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
+  subpackages:
+  - quantile
+- package: github.com/boltdb/bolt
+  version: acc803f0ced151102ed51bf824f8709ebd6602bc
+- package: github.com/cloudfoundry-incubator/candiedyaml
+  version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
+- package: github.com/cockroachdb/cmux
+  version: 112f0506e7743d64a6eb8fedbcff13d9979bbf92
+- package: github.com/coreos/etcd
+  version: v3.2.6
+  subpackages:
+  - alarm
+  - auth
+  - auth/authpb
+  - client
+  - clientv3
+  - compactor
+  - discovery
+  - embed
+  - error
+  - etcdserver
+  - etcdserver/api
+  - etcdserver/api/v2http
+  - etcdserver/api/v2http/httptypes
+  - etcdserver/api/v3rpc
+  - etcdserver/api/v3rpc/rpctypes
+  - etcdserver/auth
+  - etcdserver/etcdserverpb
+  - etcdserver/membership
+  - etcdserver/stats
+  - lease
+  - lease/leasehttp
+  - lease/leasepb
+  - mvcc
+  - mvcc/backend
+  - mvcc/mvccpb
+  - pkg/adt
+  - pkg/contention
+  - pkg/cors
+  - pkg/crc
+  - pkg/fileutil
+  - pkg/httputil
+  - pkg/idutil
+  - pkg/ioutil
+  - pkg/logutil
+  - pkg/netutil
+  - pkg/pathutil
+  - pkg/pbutil
+  - pkg/runtime
+  - pkg/schedule
+  - pkg/tlsutil
+  - pkg/transport
+  - pkg/types
+  - pkg/wait
+  - raft
+  - raft/raftpb
+  - rafthttp
+  - snap
+  - snap/snappb
+  - store
+  - version
+  - wal
+  - wal/walpb
+  - clientv3/concurrency
+- package: github.com/coreos/go-semver
+  version: ~0.2.0
+  subpackages:
+  - semver
+- package: github.com/coreos/go-systemd
+  version: v14
+  subpackages:
+  - journal
+- package: github.com/coreos/pkg
+  version: ~3.0.0
+  subpackages:
+  - capnslog
+- package: github.com/ghodss/yaml
+  version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
+- package: github.com/gogo/protobuf
+  version: 318371cbef6bab80e8d1c69b470fffa79eebfb54
+  subpackages:
+  - proto
+- package: github.com/golang/protobuf
+  version: 874264fbbb43f4d91e999fecb4b40143ed611400
+  subpackages:
+  - jsonpb
+  - proto
+- package: github.com/google/btree
+  version: 925471ac9e2131377a91e1595defec898166fe49
+- package: github.com/gorilla/context
+  version: ~1.1.0
+- package: github.com/gorilla/mux
+  version: ~1.1.0
+- package: github.com/grpc-ecosystem/grpc-gateway
+  version: v1.2.2
+  subpackages:
+  - runtime
+  - runtime/internal
+  - utilities
+- package: github.com/jonboulle/clockwork
+  version: ~0.1.0
+- package: github.com/juju/errors
+  version: b2c7a7da5b2995941048f60146e67702a292e468
+- package: github.com/matttproud/golang_protobuf_extensions
+  version: c12348ce28de40eed0136aa2b644d0ee0650e56c
+  subpackages:
+  - pbutil
+- package: github.com/pingcap/check
+  version: ce8a2f822ab1e245a4eefcef2996531c79c943f1
+- package: github.com/pingcap/kvproto
+  version: e33073e1475021e04c795c3de5e1f4e28baa708a
+  subpackages:
+  - pkg/coprocessor
+  - pkg/eraftpb
+  - pkg/errorpb
+  - pkg/kvrpcpb
+  - pkg/metapb
+  - pkg/msgpb
+  - pkg/pdpb
+  - pkg/raft_cmdpb
+  - pkg/raft_serverpb
+  - pkg/util
+- package: github.com/prometheus/client_golang
+  version: 0.8.0
+  subpackages:
+  - prometheus
+- package: github.com/prometheus/client_model
+  version: fa8ad6fec33561be4280a8f0514318c79d7f6cb6
+  subpackages:
+  - go
+- package: github.com/prometheus/common
+  version: 4402f4e5ea79ec15f3c574773b6a5198fbea215f
+  subpackages:
+  - expfmt
+  - internal/bitbucket.org/ww/goautoneg
+  - model
+- package: github.com/prometheus/procfs
+  version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
+- package: github.com/twinj/uuid
+  version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
+- package: github.com/ugorji/go
+  version: b94837a2404ab90efe9289e77a70694c355739cb
+  subpackages:
+  - codec
+- package: github.com/unrolled/render
+  version: 7bc415efc1b94ad17b0fc642cb50b3e2465027e7
+- package: github.com/urfave/negroni
+  version: dc6b9d037e8dab60cbfc09c61d6932537829be8b
+- package: github.com/xiang90/probing
+  version: 07dd2e8dfe18522e9c447ba95f2fe95262f63bb2
+- package: golang.org/x/crypto
+  version: fbbbdbdd6f61a8f86b00866626c2fe3d2a642db0
+  repo: https://github.com/golang/crypto.git
+  vcs: git
+  subpackages:
+  - bcrypt
+  - blowfish
+- package: golang.org/x/text
+  version: 836efe42bb4aa16aaa17b9c155d8813d336ed720
+- package: golang.org/x/net
+  version: d1e1b351919c6738fdeb9893d5c998b161464f0c
+  repo: https://github.com/golang/net.git
+  vcs: git
+  subpackages:
+  - context
+  - http2/hpack
+  - internal/timeseries
+  - lex/httplex
+  - trace
+- package: golang.org/x/sys
+  version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
+  repo: https://github.com/golang/sys.git
+  vcs: git
+  subpackages:
+  - unix
+- package: google.golang.org/grpc
+  version: v1.4.2
+  repo: https://github.com/grpc/grpc-go.git
+  vcs: git
+  subpackages:
+  - codes
+  - credentials
+  - grpclog
+  - internal
+  - metadata
+  - naming
+  - peer
+  - transport
+- package: github.com/spf13/cobra
+  version: 9495bc009a56819bdb0ddbc1a373e29c140bc674
+  repo: https://github.com/spf13/cobra.git
+  vcs: git
+- package: github.com/spf13/pflag
+  version: e57e3eeb33f795204c1ca35f56c44f83227c6e66
+- package: github.com/chzyer/readline
+  version: c914be64f07d9998f52bf0d598ec26d457168c0f
+- package: github.com/dustin/go-humanize
+  version: 7a41df006ff9af79a29f0ffa9c5f21fbe6314a2d
+- package: github.com/elazarl/go-bindata-assetfs
+- package: github.com/montanaflynn/stats
+  version: f8cd06f93c6c1b06028caafb88b540fc820f77c1
+- package: github.com/Sirupsen/logrus
+  version: v0.11.5
+- package: gopkg.in/natefinch/lumberjack.v2
+  version: v2
+- package: google.golang.org/genproto
+  version: b0a3dcfcd1a9bd48e63634bd8802960804cf8315
+- package: github.com/apache/thrift
+  version: ">=0.9.3, <0.11.0"
+  subpackages:
+  - lib/go/thrift
+- package: github.com/codahale/hdrhistogram
+  version: f8ad88b59a584afeee9d334eff879b104439117b
+- package: github.com/grpc-ecosystem/go-grpc-middleware
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
+  subpackages:
+  - tags
+  - tracing/opentracing
+- package: github.com/opentracing/opentracing-go
+  version: ^1
+  subpackages:
+  - ext
+  - log
+- package: github.com/uber/jaeger-client-go
+  version: d021e646f5187d77b55592c3efee1a2810e895d7
+  subpackages:
+  - config
+  - internal/spanlog
+  - log
+  - rpcmetrics
+  - thrift-gen/agent
+  - thrift-gen/jaeger
+  - thrift-gen/sampling
+  - thrift-gen/zipkincore
+  - utils
