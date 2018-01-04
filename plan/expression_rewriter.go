@@ -67,31 +67,45 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
 func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (
 	expression.Expression, LogicalPlan, error) {
-	er := &expressionRewriter{
-		p:          p,
-		aggrMap:    aggMapper,
-		b:          b,
-		asScalar:   asScalar,
-		ctx:        b.ctx,
-		preprocess: preprocess,
+	b.rewriterCounter++
+	var rewriter *expressionRewriter
+	if len(b.rewriterPool) < b.rewriterCounter {
+		rewriter = &expressionRewriter{
+			p:          p,
+			aggrMap:    aggMapper,
+			b:          b,
+			asScalar:   asScalar,
+			ctx:        b.ctx,
+			preprocess: preprocess,
+		}
+		b.rewriterPool = append(b.rewriterPool, rewriter)
+	} else {
+		// If rewriter.err is not nil, the planner will fail and won't continue. So don't need to reset the rewriter.err's value to nil.
+		rewriter = b.rewriterPool[b.rewriterCounter-1]
+		rewriter.p = p
+		rewriter.aggrMap = aggMapper
+		rewriter.asScalar = asScalar
+		rewriter.preprocess = preprocess
+		rewriter.ctxStack = rewriter.ctxStack[:0]
 	}
 	if p != nil {
-		er.schema = p.Schema()
+		rewriter.schema = p.Schema()
 	}
-	expr.Accept(er)
-	if er.err != nil {
-		return nil, nil, errors.Trace(er.err)
+	expr.Accept(rewriter)
+	if rewriter.err != nil {
+		return nil, nil, errors.Trace(rewriter.err)
 	}
-	if !asScalar && len(er.ctxStack) == 0 {
-		return nil, er.p, nil
+	if !asScalar && len(rewriter.ctxStack) == 0 {
+		return nil, rewriter.p, nil
 	}
-	if len(er.ctxStack) != 1 {
-		return nil, nil, errors.Errorf("context len %v is invalid", len(er.ctxStack))
+	if len(rewriter.ctxStack) != 1 {
+		return nil, nil, errors.Errorf("context len %v is invalid", len(rewriter.ctxStack))
 	}
-	if getRowLen(er.ctxStack[0]) != 1 {
+	if getRowLen(rewriter.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	return er.ctxStack[0], er.p, nil
+	b.rewriterCounter--
+	return rewriter.ctxStack[0], rewriter.p, nil
 }
 
 type expressionRewriter struct {

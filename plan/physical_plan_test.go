@@ -1075,3 +1075,74 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
+
+func (s *testPlanSuite) TestAggEliminater(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Max to Limit + Sort-Desc.
+		{
+			sql:  "select max(a) from t;",
+			best: "TableReader(Table(t)->Limit)->Limit->HashAgg",
+		},
+		// Min to Limit + Sort.
+		{
+			sql:  "select min(a) from t;",
+			best: "TableReader(Table(t)->Limit)->Limit->HashAgg",
+		},
+		// Min to Limit + Sort, and isnull() should be added.
+		{
+			sql:  "select min(c_str) from t;",
+			best: "IndexReader(Index(t.c_d_e_str)[[-inf,+inf]]->Limit)->Limit->HashAgg",
+		},
+		// Do nothing to max + firstrow.
+		{
+			sql:  "select max(a), b from t;",
+			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
+		// If max/min contains scalar function, we can still do transformation.
+		{
+			sql:  "select max(a+1) from t;",
+			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->TopN([plus(test.t.a, 1) true],0,1)->HashAgg",
+		},
+		// Do nothing to max+min.
+		{
+			sql:  "select max(a), min(a) from t;",
+			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
+		// Do nothing to max with groupby.
+		{
+			sql:  "select max(a) from t group by b;",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+		// If inner is not a data source, we can still do transformation.
+		{
+			sql:  "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Limit->HashAgg",
+		},
+	}
+
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc.IgnoreTruncate = false
+		p, err := plan.Optimize(se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}
