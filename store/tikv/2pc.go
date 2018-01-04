@@ -234,8 +234,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 			if e != nil {
 				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
 				secondaryLockCleanupTaskCounter.WithLabelValues("fail").Inc()
+			} else {
+				secondaryLockCleanupTaskCounter.WithLabelValues("ok").Inc()
 			}
-			secondaryLockCleanupTaskCounter.WithLabelValues("ok").Inc()
 		})
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
