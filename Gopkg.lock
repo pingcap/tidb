@@ -121,6 +121,7 @@
     ".",
     "tags",
     "tracing/opentracing",
+    "util/metautils"
   ]
   revision = "82921fcf811d228d2fa202bc31238b356bf9f8d5"
 
@@ -377,6 +378,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "307f1f4c336b841253a83e731fb59773c7ab67964655f43da10ed63d3846b81b"
+  inputs-digest = "fde982ba66eb4f0c4448dc943989427a61e3bbf875df5ba0b516d41826adb2f4"
   solver-name = "gps-cdcl"
   solver-version = 1

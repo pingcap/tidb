@@ -83,7 +83,3 @@
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
   version = "2.0.0"
-
-[[constraint]]
-  name = "github.com/grpc-ecosystem/go-grpc-middleware"
-  revision = "82921fcf811d228d2fa202bc31238b356bf9f8d5"
