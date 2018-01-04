@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -251,6 +252,8 @@ type SessionVars struct {
 
 	// RowValBuf used by tablecodec.EncodeRow, to reduce runtime.growslice.
 	RowValBuf []byte
+	// BufStore use to store temp kvs, to reduce memory allocations.
+	BufStore *kv.BufferStore
 }
 
 // NewSessionVars creates a session vars object.
@@ -291,6 +294,12 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	charset = s.Systems[CharacterSetConnection]
 	collation = s.Systems[CollationConnection]
 	return
+}
+
+// CleanBuffers cleans the temporary bufs
+func (s *SessionVars) CleanBuffers() {
+	s.RowValBuf = nil
+	s.BufStore = nil
 }
 
 // SetLastInsertID saves the last insert id to the session context.

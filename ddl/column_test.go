@@ -114,8 +114,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i), false, bs)
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i), false)
 		c.Assert(err, IsNil)
 	}
 
@@ -155,8 +154,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(num))
 
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14), false, bs)
+	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14), false)
 	c.Assert(err, IsNil)
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -343,8 +341,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tbl
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	newHandle, err := t.AddRecord(ctx, newRow, false, bs)
+	newHandle, err := t.AddRecord(ctx, newRow, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -448,8 +445,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblI
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	newHandle, err := t.AddRecord(ctx, newRow, false, bs)
+	newHandle, err := t.AddRecord(ctx, newRow, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -549,8 +545,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl,
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	newHandle, err := t.AddRecord(ctx, newRow, false, bs)
+	newHandle, err := t.AddRecord(ctx, newRow, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -647,8 +642,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx context.Context, d *ddl, tblInfo
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	handle, err = t.AddRecord(ctx, newRow, false, bs)
+	handle, err = t.AddRecord(ctx, newRow, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -754,8 +748,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	handle, err := t.AddRecord(ctx, oldRow, false, bs)
+	handle, err := t.AddRecord(ctx, oldRow, false)
 	c.Assert(err, IsNil)
 
 	err = ctx.Txn().Commit(goctx.Background())
@@ -843,8 +836,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)), false, bs)
+	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)), false)
 	c.Assert(err, IsNil)
 
 	err = ctx.Txn().Commit(goctx.Background())

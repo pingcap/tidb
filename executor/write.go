@@ -139,8 +139,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-		_, err = t.AddRecord(ctx, newData, skipHandleCheck, bs)
+		_, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
@@ -729,8 +728,7 @@ func (e *LoadDataInfo) insertData(cols []string) {
 		e.insertVal.handleLoadDataWarnings(err, warnLog)
 		return
 	}
-	bs := kv.NewBufferStore(e.insertVal.ctx.Txn(), kv.DefaultTxnMembufCap)
-	_, err = e.Table.AddRecord(e.insertVal.ctx, row, false, bs)
+	_, err = e.Table.AddRecord(e.insertVal.ctx, row, false)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
 		e.insertVal.handleLoadDataWarnings(err, warnLog)
@@ -849,7 +847,8 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	txn := e.ctx.Txn()
 	rowCount := 0
 	tmpMemCap := 64
-	bs := kv.NewBufferStore(txn, tmpMemCap)
+	e.ctx.GetSessionVars().BufStore = kv.NewBufferStore(txn, tmpMemCap)
+	defer e.ctx.GetSessionVars().CleanBuffers()
 	for _, row := range rows {
 		if batchInsert && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
@@ -858,13 +857,12 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			bs = kv.NewBufferStore(txn, tmpMemCap)
+			e.ctx.GetSessionVars().BufStore = kv.NewBufferStore(txn, tmpMemCap)
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
-		bs.Reset()
-		h, err := e.Table.AddRecord(e.ctx, row, false, bs)
+		h, err := e.Table.AddRecord(e.ctx, row, false)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
@@ -1414,15 +1412,12 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 	idx := 0
 	rowsLen := len(rows)
 	sc := e.ctx.GetSessionVars().StmtCtx
-	tmpMemCap := 128
-	bs := kv.NewBufferStore(e.ctx.Txn(), tmpMemCap)
 	for {
 		if idx >= rowsLen {
 			break
 		}
 		row := rows[idx]
-		bs.Reset()
-		h, err1 := e.Table.AddRecord(e.ctx, row, false, bs)
+		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
 			idx++

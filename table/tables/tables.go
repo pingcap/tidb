@@ -255,7 +255,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	}
 
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
+	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -309,7 +309,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool, bs *kv.BufferStore) (recordID int64, err error) {
+func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
 	for _, col := range t.Cols() {
 		if col.IsPKHandleColumn(t.meta) {
@@ -327,6 +327,11 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 
 	txn := ctx.Txn()
 	skipCheck := ctx.GetSessionVars().ImportingData
+	bs := ctx.GetSessionVars().BufStore
+	if bs == nil {
+		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	}
+	bs.Reset()
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
@@ -524,7 +529,7 @@ func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
+	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -551,7 +556,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datu
 }
 
 func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
+	data, err := tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone(), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

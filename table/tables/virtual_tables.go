@@ -124,7 +124,7 @@ func (vt *VirtualTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table Type interface.
-func (vt *VirtualTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool, bs *kv.BufferStore) (recordID int64, err error) {
+func (vt *VirtualTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 

@@ -322,8 +322,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	_, err = originTable.AddRecord(ctx, row, false, bs)
+	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
 	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)

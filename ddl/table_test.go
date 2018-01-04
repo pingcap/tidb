@@ -217,8 +217,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	count := 2000
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= count; i++ {
-		bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i), false, bs)
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
 

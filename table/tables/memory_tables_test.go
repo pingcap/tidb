@@ -101,19 +101,16 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	bs := kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false, bs)
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
-	bs.Reset()
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"), false, bs)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"), false)
 	c.Assert(err, NotNil)
-	bs.Reset()
-	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"), false, bs)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"), false)
 	c.Assert(err, IsNil)
 
 	err = tb.UpdateRecord(ctx, 1, types.MakeDatums(1, "abc"), types.MakeDatums(3, "abe"), nil)
@@ -135,8 +132,7 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(vals[0].GetString(), Equals, "abe")
 
 	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
-	bs.Reset()
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false, bs)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	tb.(*tables.MemoryTable).Truncate()
 	_, err = tb.Row(ctx, rid)
