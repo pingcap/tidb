@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -46,22 +45,6 @@ type jsonIndex struct {
 	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
 	NullCount         int64           `json:"null_count"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
-}
-
-// ConvertTo converts histogram to type tp.
-func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
-	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len())
-	for row := hg.Bounds.Begin(); row != hg.Bounds.End(); row = row.Next() {
-		d := row.GetDatum(0, hg.tp)
-		d, err := d.ConvertTo(sc, tp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		hist.Bounds.AppendDatum(0, &d)
-	}
-	hist.Repeats = hg.Repeats
-	hist.Counts = hg.Counts
-	return hist, nil
 }
 
 // DumpStatsToJSON dumps statistic to json.

@@ -111,8 +111,8 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
 	hg.Counts[len-1], hg.Repeats[len-1] = count, repeat
 }
 
-// ConvertToType converts the histogram bucket values into `tp`.
-func (hg *Histogram) ConvertToType(tp *types.FieldType, timeZone *time.Location) error {
+// DecodeTo decodes the histogram bucket values into `tp`.
+func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
 	old := hg.Bounds
 	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, old.NumRows())
 	hg.tp = tp
@@ -124,6 +124,22 @@ func (hg *Histogram) ConvertToType(tp *types.FieldType, timeZone *time.Location)
 		hg.Bounds.AppendDatum(0, &datum)
 	}
 	return nil
+}
+
+// ConvertTo converts the histogram bucket values into `tp`.
+func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
+	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len())
+	for row := hg.Bounds.Begin(); row != hg.Bounds.End(); row = row.Next() {
+		d := row.GetDatum(0, hg.tp)
+		d, err := d.ConvertTo(sc, tp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		hist.Bounds.AppendDatum(0, &d)
+	}
+	hist.Repeats = hg.Repeats
+	hist.Counts = hg.Counts
+	return hist, nil
 }
 
 // Len is the number of buckets in the histogram.
