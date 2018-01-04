@@ -902,7 +902,6 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 type keyWithDupError struct {
 	key    kv.Key
 	dupErr error
-	offset int
 }
 
 func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
@@ -934,7 +933,7 @@ func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, error) {
+func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError, error) {
 	nUnique := 0
 	for _, v := range e.Table.WritableIndices() {
 		if !v.Meta().Unique && !v.Meta().Primary {
@@ -942,7 +941,7 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 		}
 		nUnique++
 	}
-	keysWithErr := make([]keyWithDupError, 0, len(rows)*(nUnique+1))
+	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
 
 	// get recordIDs
 	recordIDs, err := e.getRecordIDs(rows)
@@ -951,8 +950,9 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 	}
 
 	for i, row := range rows {
+		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
 		// append record keys and errors
-		keysWithErr = append(keysWithErr, keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i]), i})
+		keysWithErr = append(keysWithErr, keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i])})
 
 		// append unique keys and errors
 		for _, v := range e.Table.WritableIndices() {
@@ -969,20 +969,27 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([]keyWithDupError, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			keysWithErr = append(keysWithErr, keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name), i})
+			keysWithErr = append(keysWithErr, keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name)})
 		}
+		rowWithKeys = append(rowWithKeys, keysWithErr)
 	}
-	return keysWithErr, nil
+	return rowWithKeys, nil
 }
 
 func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error) {
 	// get keys need to be checked
-	keysWithErr, err := e.getKeysNeedCheck(rows)
+	rowWithKeys, err := e.getKeysNeedCheck(rows)
 
 	// batch get values
-	batchKeys := make([]kv.Key, 0, len(keysWithErr))
-	for i := range keysWithErr {
-		batchKeys = append(batchKeys, keysWithErr[i].key)
+	nKeys := 0
+	for _, v := range rowWithKeys {
+		nKeys += len(v)
+	}
+	batchKeys := make([]kv.Key, 0, nKeys)
+	for _, v := range rowWithKeys {
+		for _, k := range v {
+			batchKeys = append(batchKeys, k.key)
+		}
 	}
 	values, err := e.ctx.Txn().GetSnapshot().BatchGet(batchKeys)
 	if err != nil {
@@ -991,34 +998,21 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 
 	// append warnings and mark duplicated rows
 	dupRowOffsets := make(map[int]bool, len(rows)/2+1)
-	// find duplicate keys in storage
-	for _, k := range keysWithErr {
-		// skip when already found duplicate key on the row
-		if _, marked := dupRowOffsets[k.offset]; marked {
+	for i, v := range rowWithKeys {
+		if _, marked := dupRowOffsets[i]; marked {
 			continue
 		}
-		if _, found := values[string(k.key)]; found {
-			dupRowOffsets[k.offset] = true
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
-		}
-	}
-	// find duplicate keys in insert statement
-	uniqueInsertKeys := make(map[string]int, len(keysWithErr)/2+1)
-	for _, k := range keysWithErr {
-		// skip when already found duplicate key on the row
-		if _, marked := dupRowOffsets[k.offset]; marked {
-			continue
-		}
-		if of, found := uniqueInsertKeys[string(k.key)]; found {
-			if _, marked := dupRowOffsets[of]; marked {
-				// update offset if previous unique key in a marked duplicate row
-				uniqueInsertKeys[string(k.key)] = k.offset
-				continue
+		for _, k := range v {
+			if _, found := values[string(k.key)]; found {
+				dupRowOffsets[i] = true
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
+				break
 			}
-			dupRowOffsets[k.offset] = true
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
-		} else {
-			uniqueInsertKeys[string(k.key)] = k.offset
+		}
+		if _, marked := dupRowOffsets[i]; !marked {
+			for _, k := range v {
+				values[string(k.key)] = []byte{}
+			}
 		}
 	}
 
