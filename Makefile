@@ -109,15 +109,9 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
 	go get github.com/go-playground/overalls
-<<<<<<< HEAD
-	go get github.com/mattn/goveralls	
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor'
-	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
-=======
 	go get github.com/mattn/goveralls
 	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,_vendor' || { $(GOFAIL_DISABLE); exit 1; }
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile || { $(GOFAIL_DISABLE); exit 1; }
->>>>>>> master
 else
 	@echo "Running in native mode."
 	@export log_level=error; \
