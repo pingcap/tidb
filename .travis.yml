@@ -23,5 +23,6 @@ before_install:
   - sudo touch /logs/unit-test
   # See https://github.com/golang/go/issues/12933
   - bash gitcookie.sh
+
 script:
   - make dev
