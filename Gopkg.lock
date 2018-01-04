@@ -31,7 +31,14 @@
 
 [[projects]]
   name = "github.com/coreos/etcd"
-  packages = ["auth/authpb","clientv3","clientv3/concurrency","etcdserver/api/v3rpc/rpctypes","etcdserver/etcdserverpb","mvcc/mvccpb"]
+  packages = [
+    "auth/authpb",
+    "clientv3",
+    "clientv3/concurrency",
+    "etcdserver/api/v3rpc/rpctypes",
+    "etcdserver/etcdserverpb",
+    "mvcc/mvccpb"
+  ]
   revision = "9d43462d174c664f5edf313dec0de31e1ef4ed47"
   version = "v3.2.6"
 
@@ -80,7 +87,10 @@
 
 [[projects]]
   name = "github.com/golang/protobuf"
-  packages = ["proto","ptypes/any"]
+  packages = [
+    "proto",
+    "ptypes/any"
+  ]
   revision = "8ee79997227bf9b34611aee7946ae64735e6fd93"
 
 [[projects]]
@@ -107,7 +117,12 @@
 
 [[projects]]
   name = "github.com/grpc-ecosystem/go-grpc-middleware"
-  packages = [".","tags","tracing/opentracing","util/metautils"]
+  packages = [
+    ".",
+    "tags",
+    "tracing/opentracing",
+    "util/metautils"
+  ]
   revision = "82921fcf811d228d2fa202bc31238b356bf9f8d5"
 
 [[projects]]
@@ -141,7 +156,11 @@
 
 [[projects]]
   name = "github.com/opentracing/opentracing-go"
-  packages = [".","ext","log"]
+  packages = [
+    ".",
+    "ext",
+    "log"
+  ]
   revision = "1949ddbfd147afd4d964a9f00b24eb291e0e7c38"
   version = "v1.0.2"
 
@@ -159,12 +178,34 @@
 
 [[projects]]
   name = "github.com/pingcap/goleveldb"
-  packages = ["leveldb","leveldb/cache","leveldb/comparer","leveldb/errors","leveldb/filter","leveldb/iterator","leveldb/journal","leveldb/memdb","leveldb/opt","leveldb/storage","leveldb/table","leveldb/util"]
+  packages = [
+    "leveldb",
+    "leveldb/cache",
+    "leveldb/comparer",
+    "leveldb/errors",
+    "leveldb/filter",
+    "leveldb/iterator",
+    "leveldb/journal",
+    "leveldb/memdb",
+    "leveldb/opt",
+    "leveldb/storage",
+    "leveldb/table",
+    "leveldb/util"
+  ]
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
   name = "github.com/pingcap/kvproto"
-  packages = ["pkg/coprocessor","pkg/eraftpb","pkg/errorpb","pkg/kvrpcpb","pkg/metapb","pkg/pdpb","pkg/raft_serverpb","pkg/tikvpb"]
+  packages = [
+    "pkg/coprocessor",
+    "pkg/eraftpb",
+    "pkg/errorpb",
+    "pkg/kvrpcpb",
+    "pkg/metapb",
+    "pkg/pdpb",
+    "pkg/raft_serverpb",
+    "pkg/tikvpb"
+  ]
   revision = "d21ce07c35b9ea66436dc632210a01d927361ed4"
 
 [[projects]]
@@ -174,12 +215,29 @@
 
 [[projects]]
   name = "github.com/pingcap/tipb"
-  packages = ["go-binlog","go-mysqlx","go-mysqlx/Connection","go-mysqlx/Crud","go-mysqlx/Datatypes","go-mysqlx/Expect","go-mysqlx/Expr","go-mysqlx/Notice","go-mysqlx/Resultset","go-mysqlx/Session","go-mysqlx/Sql","go-tipb","sharedbytes"]
+  packages = [
+    "go-binlog",
+    "go-mysqlx",
+    "go-mysqlx/Connection",
+    "go-mysqlx/Crud",
+    "go-mysqlx/Datatypes",
+    "go-mysqlx/Expect",
+    "go-mysqlx/Expr",
+    "go-mysqlx/Notice",
+    "go-mysqlx/Resultset",
+    "go-mysqlx/Session",
+    "go-mysqlx/Sql",
+    "go-tipb",
+    "sharedbytes"
+  ]
   revision = "07ff5b094233a557a3ac11b1e4d8714d8c6ff406"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"
-  packages = ["prometheus","prometheus/push"]
+  packages = [
+    "prometheus",
+    "prometheus/push"
+  ]
   revision = "c5b7fccd204277076155f10851dad72b76a49317"
   version = "v0.8.0"
 
@@ -190,7 +248,11 @@
 
 [[projects]]
   name = "github.com/prometheus/common"
-  packages = ["expfmt","internal/bitbucket.org/ww/goautoneg","model"]
+  packages = [
+    "expfmt",
+    "internal/bitbucket.org/ww/goautoneg",
+    "model"
+  ]
   revision = "4402f4e5ea79ec15f3c574773b6a5198fbea215f"
 
 [[projects]]
@@ -201,7 +263,8 @@
 [[projects]]
   name = "github.com/sirupsen/logrus"
   packages = ["."]
-  revision = "ba1b36c82c5e05c4f912a88eab0dcd91a171688f"
+  revision = "d682213848ed68c0a260ca37d6dd5ace8423f5ba"
+  version = "v1.0.4"
 
 [[projects]]
   name = "github.com/spaolacci/murmur3"
@@ -216,7 +279,18 @@
 
 [[projects]]
   name = "github.com/uber/jaeger-client-go"
-  packages = [".","config","internal/spanlog","log","rpcmetrics","thrift-gen/agent","thrift-gen/jaeger","thrift-gen/sampling","thrift-gen/zipkincore","utils"]
+  packages = [
+    ".",
+    "config",
+    "internal/spanlog",
+    "log",
+    "rpcmetrics",
+    "thrift-gen/agent",
+    "thrift-gen/jaeger",
+    "thrift-gen/sampling",
+    "thrift-gen/zipkincore",
+    "utils"
+  ]
   revision = "d021e646f5187d77b55592c3efee1a2810e895d7"
   version = "v2.8.0"
 
@@ -227,18 +301,56 @@
   version = "v1.1.0"
 
 [[projects]]
+  branch = "master"
+  name = "golang.org/x/crypto"
+  packages = ["ssh/terminal"]
+  revision = "0fcca4842a8d74bfddc2c96a073bd2a4d2a7a2e8"
+
+[[projects]]
   name = "golang.org/x/net"
-  packages = ["context","http2","http2/hpack","idna","internal/timeseries","lex/httplex","trace"]
+  packages = [
+    "context",
+    "http2",
+    "http2/hpack",
+    "idna",
+    "internal/timeseries",
+    "lex/httplex",
+    "trace"
+  ]
   revision = "d1e1b351919c6738fdeb9893d5c998b161464f0c"
 
 [[projects]]
   name = "golang.org/x/sys"
-  packages = ["unix"]
+  packages = [
+    "unix",
+    "windows"
+  ]
   revision = "a646d33e2ee3172a661fc09bca23bb4889a41bc8"
 
 [[projects]]
   name = "golang.org/x/text"
-  packages = ["encoding","encoding/charmap","encoding/internal","encoding/internal/identifier","encoding/japanese","encoding/korean","encoding/simplifiedchinese","encoding/traditionalchinese","encoding/unicode","internal/gen","internal/triegen","internal/ucd","internal/utf8internal","runes","secure/bidirule","transform","unicode/bidi","unicode/cldr","unicode/norm","unicode/rangetable"]
+  packages = [
+    "encoding",
+    "encoding/charmap",
+    "encoding/internal",
+    "encoding/internal/identifier",
+    "encoding/japanese",
+    "encoding/korean",
+    "encoding/simplifiedchinese",
+    "encoding/traditionalchinese",
+    "encoding/unicode",
+    "internal/gen",
+    "internal/triegen",
+    "internal/ucd",
+    "internal/utf8internal",
+    "runes",
+    "secure/bidirule",
+    "transform",
+    "unicode/bidi",
+    "unicode/cldr",
+    "unicode/norm",
+    "unicode/rangetable"
+  ]
   revision = "4ee4af566555f5fbe026368b75596286a312663a"
 
 [[projects]]
@@ -248,7 +360,22 @@
 
 [[projects]]
   name = "google.golang.org/grpc"
-  packages = [".","codes","credentials","grpclb/grpc_lb_v1","grpclog","internal","keepalive","metadata","naming","peer","stats","status","tap","transport"]
+  packages = [
+    ".",
+    "codes",
+    "credentials",
+    "grpclb/grpc_lb_v1",
+    "grpclog",
+    "internal",
+    "keepalive",
+    "metadata",
+    "naming",
+    "peer",
+    "stats",
+    "status",
+    "tap",
+    "transport"
+  ]
   revision = "3419b42955675df23457629c75f58eb8dcd56954"
 
 [[projects]]
@@ -260,6 +387,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "f88d82318e5f76900a63291c420501cd32cdec807bc54a81e752784d35bf0da3"
+  inputs-digest = "330b5d4866c3acd780d6106ca2790dc947ef1cab0805cb7b57be7c0ebd255cea"
   solver-name = "gps-cdcl"
   solver-version = 1
