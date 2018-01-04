@@ -70,7 +70,7 @@
 
 [[override]]
   name = "github.com/sirupsen/logrus"
-  revision = "ba1b36c82c5e05c4f912a88eab0dcd91a171688f"
+  version = "^1.0.0"
 
 [[constraint]]
   name = "github.com/spaolacci/murmur3"
