@@ -442,14 +442,13 @@ func (c *Column) String() string {
 }
 
 // getIntColumnRowCount estimates the row count by a slice of IntColumnRange.
-func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges []types.IntColumnRange,
-	totalRowCount float64) (float64, error) {
+func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges []types.IntColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range intRanges {
 		var cnt float64
 		var err error
 		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
-			cnt = totalRowCount
+			cnt = c.totalRowCount()
 		} else if rg.LowVal == math.MinInt64 {
 			cnt, err = c.lessAndEqRowCount(sc, types.NewIntDatum(rg.HighVal))
 		} else if rg.HighVal == math.MaxInt64 {
@@ -469,8 +468,8 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 		}
 		rowCount += cnt
 	}
-	if rowCount > totalRowCount {
-		rowCount = totalRowCount
+	if rowCount > c.totalRowCount() {
+		rowCount = c.totalRowCount()
 	}
 	return rowCount, nil
 }

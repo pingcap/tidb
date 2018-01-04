@@ -180,6 +180,12 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		c.Assert(sel, NotNil, comment)
 		ratio, err := statsTbl.Selectivity(ctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
-		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, comment)
+		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
+
+		statsTbl.Count *= 10
+		ratio, err = statsTbl.Selectivity(ctx, sel.Conditions)
+		c.Assert(err, IsNil, comment)
+		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
+		statsTbl.Count /= 10
 	}
 }

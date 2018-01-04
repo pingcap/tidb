@@ -324,6 +324,36 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}
 }
 
+func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx(a))")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
+	}
+	h := dom.StatsHandle()
+	h.DumpStatsDeltaToKV()
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t select * from t")
+	testKit.MustExec("insert into t select * from t")
+	testKit.MustExec("insert into t select * from t")
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
+	// FIXME: The count for table scan is wrong.
+	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
+		"TableScan_4 Selection_5  cop table:t, range:(-inf,+inf), keep order:false 28.799999999999997",
+		"Selection_5  TableScan_4 cop le(test.t.a, 5), le(test.t.b, 5) 28.799999999999997",
+		"TableReader_6   root data:Selection_5 28.799999999999997",
+	))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {

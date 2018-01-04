@@ -214,7 +214,9 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colI
 	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
-	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
+	result, err := c.getIntColumnRowCount(sc, intRanges)
+	result *= c.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
@@ -223,7 +225,9 @@ func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID i
 	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
 	}
-	return c.getColumnRowCount(sc, colRanges)
+	result, err := c.getColumnRowCount(sc, colRanges)
+	result *= c.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
