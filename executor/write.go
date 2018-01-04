@@ -996,33 +996,23 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 		return nil, errors.Trace(err)
 	}
 
-	// append warnings and mark duplicated rows
-	dupRowOffsets := make(map[int]bool, len(rows)/2+1)
+	// append warnings and get no duplicated error rows
+	noDupRows := make([][]types.Datum, 0, len(rows))
 	for i, v := range rowWithKeys {
-		if _, marked := dupRowOffsets[i]; marked {
-			continue
-		}
+		isDup := false
 		for _, k := range v {
 			if _, found := values[string(k.key)]; found {
-				dupRowOffsets[i] = true
+				isDup = true
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
 				break
 			}
 		}
-		if _, marked := dupRowOffsets[i]; !marked {
+		if !isDup {
 			for _, k := range v {
 				values[string(k.key)] = []byte{}
 			}
+			noDupRows = append(noDupRows, rows[i])
 		}
-	}
-
-	// generate no duplicate error rows
-	noDupRows := make([][]types.Datum, 0, len(rows))
-	for i, row := range rows {
-		if _, ok := dupRowOffsets[i]; ok {
-			continue
-		}
-		noDupRows = append(noDupRows, row)
 	}
 
 	return noDupRows, nil
