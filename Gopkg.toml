@@ -68,7 +68,7 @@
   name = "github.com/prometheus/client_golang"
   version = "0.8.0"
 
-[[constraint]]
+[[override]]
   name = "github.com/sirupsen/logrus"
   revision = "ba1b36c82c5e05c4f912a88eab0dcd91a171688f"
 
