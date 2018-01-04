@@ -828,8 +828,24 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
 			tbInfo.Collate = op.StrValue
+		case ast.TableOptionShardRowID:
+			if !hasAutoIncrementColumn(tbInfo) {
+				tbInfo.ShardRowIDBits = op.UintValue
+				if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
+					tbInfo.ShardRowIDBits = shardRowIDBitsMax
+				}
+			}
 		}
 	}
+}
+
+func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
+	for _, col := range tbInfo.Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
@@ -888,9 +904,17 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
-				if opt.Tp == ast.TableOptionAutoIncrement {
+				switch opt.Tp {
+				case ast.TableOptionShardRowID:
+					if opt.UintValue > shardRowIDBitsMax {
+						opt.UintValue = shardRowIDBitsMax
+					}
+					err = d.ShardRowID(ctx, ident, opt.UintValue)
+				case ast.TableOptionAutoIncrement:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
-					break
+				}
+				if err != nil {
+					return errors.Trace(err)
 				}
 			}
 		default:
@@ -930,6 +954,37 @@ func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+// ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
+func (d *ddl) ShardRowID(ctx context.Context, tableIdent ast.Ident, uVal uint64) error {
+	job, err := d.createJobForTable(tableIdent)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.Type = model.ActionShardRowID
+	job.Args = []interface{}{uVal}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) createJobForTable(tableIdent ast.Ident) (*model.Job, error) {
+	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(tableIdent.Schema)
+	if !ok {
+		return nil, infoschema.ErrDatabaseNotExists.GenByArgs(tableIdent.Schema)
+	}
+	t, err := is.TableByName(tableIdent.Schema, tableIdent.Name)
+	if err != nil {
+		return nil, infoschema.ErrTableNotExists.GenByArgs(tableIdent.Schema, tableIdent.Name)
+	}
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	return job, nil
 }
 
 func checkColumnConstraint(constraints []*ast.ColumnOption) error {

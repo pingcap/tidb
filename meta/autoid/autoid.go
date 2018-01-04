@@ -27,7 +27,7 @@ import (
 )
 
 // Test needs to change it, so it's a variable.
-var step = int64(5000)
+var step = int64(30000)
 
 var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 

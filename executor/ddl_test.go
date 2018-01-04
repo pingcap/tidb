@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	goctx "golang.org/x/net/context"
@@ -333,4 +334,31 @@ func (s *testSuite) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+}
+
+func (s *testSuite) TestShardRowIDBits(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
+	}
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	var hasShardedID bool
+	var count int
+	c.Assert(tk.Se.NewTxn(), IsNil)
+	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+		c.Assert(h, GreaterEqual, int64(0))
+		first8bits := h >> 56
+		if first8bits > 0 {
+			hasShardedID = true
+		}
+		count++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 100)
+	c.Assert(hasShardedID, IsTrue)
 }

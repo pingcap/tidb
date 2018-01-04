@@ -113,6 +113,9 @@ type TableInfo struct {
 	// TODO: Remove it.
 	// Now it only uses for compatibility with the old version that already uses this field.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+
+	// ShardRowIDBits specify if the implicit row ID is sharded.
+	ShardRowIDBits uint64
 }
 
 // GetDBID returns the schema ID that is used to create an allocator.

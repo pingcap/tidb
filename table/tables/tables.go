@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"encoding/binary"
 	"math"
 	"strings"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
+	"github.com/spaolacci/murmur3"
 )
 
 // Table implements table.Table interface.
@@ -697,7 +699,26 @@ func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []ty
 
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *Table) AllocAutoID(ctx context.Context) (int64, error) {
-	return t.Allocator(ctx).Alloc(t.ID)
+	rowID, err := t.Allocator(ctx).Alloc(t.ID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if t.meta.ShardRowIDBits > 0 {
+		txnCtx := ctx.GetSessionVars().TxnCtx
+		if txnCtx.Shard == nil {
+			shard := t.calcShard(txnCtx.StartTS)
+			txnCtx.Shard = &shard
+		}
+		rowID |= *txnCtx.Shard
+	}
+	return rowID, nil
+}
+
+func (t *Table) calcShard(startTS uint64) int64 {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], startTS)
+	hashVal := int64(murmur3.Sum32(buf[:]))
+	return (hashVal & (1<<t.meta.ShardRowIDBits - 1)) << (64 - t.meta.ShardRowIDBits - 1)
 }
 
 // Allocator implements table.Table Allocator interface.

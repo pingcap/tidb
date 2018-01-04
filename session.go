@@ -29,7 +29,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -53,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
@@ -735,6 +733,11 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			return nil, errors.Trace(err)
 		}
 	} else {
+		err = s.loadCommonGlobalVariablesIfNeeded()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		charset, collation := s.sessionVars.GetCharsetInfo()
 
 		// Step1: Compile query string to abstract syntax trees(ASTs).
@@ -787,6 +790,12 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
 	}
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.DoPrepare()
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, errors.Trace(err)
@@ -844,6 +853,7 @@ func (s *session) ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, args .
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	s.PrepareTxnCtx(goCtx)
 	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	if err != nil {
@@ -1045,6 +1055,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	return dom, errors.Trace(err)
+}
+
+// GetDomain gets the associated domain for store.
+func GetDomain(store kv.Storage) (*domain.Domain, error) {
+	return domap.Get(store)
 }
 
 // runInBootstrapSession create a special session for boostrap to run.
@@ -1277,10 +1292,6 @@ func (s *session) ActivePendingTxn() error {
 	txn.SetCap(s.getMembufCap())
 	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	err = s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}

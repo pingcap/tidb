@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/model"
-	log "github.com/sirupsen/logrus"
 )
 
 // StatsHandler is the handler for dump statistics.
@@ -33,10 +32,10 @@ func (s *Server) newStatsHandler() *StatsHandler {
 	if !ok {
 		panic("Illegal driver")
 	}
-	do, err := tidb.BootstrapSession(store.store)
+
+	do, err := tidb.GetDomain(store.store)
 	if err != nil {
-		log.Error("Failed to bootstrap session", err)
-		return nil
+		panic("Failed to get domain")
 	}
 	return &StatsHandler{do}
 }
