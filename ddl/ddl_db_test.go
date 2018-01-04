@@ -1376,6 +1376,44 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	c.Assert(hasOldTableData, IsFalse)
 }
 
+func (s *testDBSuite) TestAlterTableOption(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test")
+	s.mustExec(c, "create table alter_table (c1 int, c2 int)")
+	ctx := s.tk.Se.(context.Context)
+
+	// alter table option comment, charset, collate together
+	s.mustExec(c, "alter table alter_table comment 'test comment' character set 'utf8' collate 'utf8_general_ci'")
+	is := domain.GetDomain(ctx).InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	c.Assert(tblInfo.Comment, Equals, "test comment")
+	c.Assert(tblInfo.Charset, Equals, "utf8")
+	c.Assert(tblInfo.Collate, Equals, "utf8_general_ci")
+
+	// alter table comment
+	s.mustExec(c, "alter table alter_table comment 'test comment2'")
+	is = domain.GetDomain(ctx).InfoSchema()
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table"))
+	c.Assert(err, IsNil)
+	c.Assert(table.Meta().Comment, Equals, "test comment2")
+
+	// alter table charset
+	s.mustExec(c, "alter table alter_table character set 'latin1'")
+	is = domain.GetDomain(ctx).InfoSchema()
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table"))
+	c.Assert(err, IsNil)
+	c.Assert(table.Meta().Charset, Equals, "latin1")
+
+	// alter table collate
+	s.mustExec(c, "alter table alter_table collate 'latin1_bin'")
+	is = domain.GetDomain(ctx).InfoSchema()
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table"))
+	c.Assert(err, IsNil)
+	c.Assert(table.Meta().Collate, Equals, "latin1_bin")
+}
+
 func (s *testDBSuite) TestRenameTable(c *C) {
 	s.testRenameTable(c, "rename table %s to %s")
 }

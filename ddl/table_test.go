@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -92,6 +93,24 @@ func testRenameTable(c *C, ctx context.Context, d *ddl, newSchemaID, oldSchemaID
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaID, tblInfo.Name},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	tblInfo.State = model.StateNone
+	return job
+}
+
+func testAlterTableOption(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, options []*ast.TableOption) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterTableOption,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{options},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -238,6 +257,32 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
 	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+
+	// for alter table option
+	tblInfo = testTableInfo(c, d, "ttt", 3)
+	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+	tblInfo.Comment = "test comment"
+	tblInfo.Charset = "utf8"
+	tblInfo.Collate = "utf8_general_ci"
+	options := []*ast.TableOption{
+		{
+			Tp:       ast.TableOptionComment,
+			StrValue: tblInfo.Comment,
+		},
+		{
+			Tp:       ast.TableOptionCharset,
+			StrValue: tblInfo.Charset,
+		},
+		{
+			Tp:       ast.TableOptionCollate,
+			StrValue: tblInfo.Collate,
+		},
+	}
+	job = testAlterTableOption(c, ctx, d, s.dbInfo, tblInfo, options)
+	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 }
 

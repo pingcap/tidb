@@ -850,6 +850,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 
 	for _, spec := range validSpecs {
 		switch spec.Tp {
+		case ast.AlterTableOption:
+			err = d.AlterTableOption(ctx, ident, spec.Options)
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
 				return errRunMultiSchemaChanges
@@ -941,6 +943,31 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 	}
 
 	return nil
+}
+
+// AlterTableOption will alter table options.
+func (d *ddl) AlterTableOption(ctx context.Context, ti ast.Ident, options []*ast.TableOption) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAlterTableOption,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{options},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 // AddColumn will add a new column to the table.
