@@ -177,6 +177,7 @@ import (
 	or			"OR"
 	order			"ORDER"
 	outer			"OUTER"
+	packKeys		"PACK_KEYS"
 	partition		"PARTITION"
 	precisionType		"PRECISION"
 	primary			"PRIMARY"
@@ -5276,6 +5277,11 @@ TableOption:
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionShardRowID, UintValue: $3.(uint64)}
+	}
+|	"PACK_KEYS" EqOpt StatsPersistentVal
+	{
+		// Parse it but will ignore it.
+		$$ = &ast.TableOption{Tp: ast.TableOptionPackKeys}
 	}
 
 StatsPersistentVal:

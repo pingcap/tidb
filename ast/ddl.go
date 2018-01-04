@@ -637,6 +637,7 @@ const (
 	TableOptionRowFormat
 	TableOptionStatsPersistent
 	TableOptionShardRowID
+	TableOptionPackKeys
 )
 
 // RowFormat types

@@ -404,10 +404,11 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	c.Assert(err, IsNil)
 	c.Assert(cnt, Equals, int64(2))
 
+	mockCtx := mock.NewContext()
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	_, err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
@@ -425,7 +426,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	_, err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))

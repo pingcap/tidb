@@ -359,6 +359,7 @@ var tokenMap = map[string]int{
 	"OR":                       or,
 	"ORDER":                    order,
 	"OUTER":                    outer,
+	"PACK_KEYS":                packKeys,
 	"PARTITION":                partition,
 	"PARTITIONS":               partitions,
 	"PASSWORD":                 password,
