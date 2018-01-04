@@ -105,10 +105,6 @@ func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context) (Log
 	return root.(LogicalPlan), nil
 }
 
-func (pe *projectionEliminater) buildJoinSchema(join *LogicalJoin) {
-	join.schema = buildJoinSchema(join.JoinType, join)
-}
-
 // eliminate eliminates the redundant projection in a logical plan.
 func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool) LogicalPlan {
 	proj, isProj := p.(*LogicalProjection)
@@ -124,9 +120,9 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 
 	switch x := p.(type) {
 	case *LogicalJoin:
-		pe.buildJoinSchema(x)
+		x.schema = buildJoinSchema(x.JoinType, x)
 	case *LogicalApply:
-		pe.buildJoinSchema(&x.LogicalJoin)
+		x.schema = buildJoinSchema(x.JoinType, x)
 	default:
 		for _, dst := range p.Schema().Columns {
 			resolveColumnAndReplace(dst, replace)

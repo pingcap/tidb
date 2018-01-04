@@ -183,7 +183,7 @@ type LogicalPlan interface {
 	MaxOneRow() bool
 
 	// findColumn finds the column in basePlan's schema.
-	// If the column is not in the schema, returns error.
+	// If the column is not in the schema, returns an error.
 	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 }
 

@@ -103,3 +103,15 @@ func (s *baseSchemaProducer) Schema() *expression.Schema {
 func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
 }
+
+func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
+	switch joinType {
+	case SemiJoin, AntiSemiJoin:
+		return join.Children()[0].Schema().Clone()
+	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		newSchema := join.Children()[0].Schema().Clone()
+		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
+		return newSchema
+	}
+	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
+}
