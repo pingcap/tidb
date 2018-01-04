@@ -72,7 +72,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	bs, err := EncodeRow(row, colIDs, time.Local, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -128,7 +128,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeRow([]types.Datum{}, []int64{}, time.Local)
+	bs, err = EncodeRow([]types.Datum{}, []int64{}, time.Local, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, HasLen, 1)
 
@@ -162,7 +162,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	bs, err := EncodeRow(row, colIDs, time.Local, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -212,7 +212,7 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	bs, err := EncodeRow(row, colIDs, time.Local, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 

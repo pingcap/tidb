@@ -58,7 +58,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		rowKey := tablecodec.EncodeRowKeyWithHandle(tblID, handle)
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))
 		// TODO: Should use session's TimeZone instead of UTC.
-		rowValue, err1 := tablecodec.EncodeRow([]types.Datum{colValue}, []int64{colID}, time.UTC)
+		rowValue, err1 := tablecodec.EncodeRow([]types.Datum{colValue}, []int64{colID}, time.UTC, nil)
 		c.Assert(err1, IsNil)
 		txn.Set(rowKey, rowValue)
 

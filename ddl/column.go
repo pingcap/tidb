@@ -344,7 +344,7 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 		}
 		newColumnIDs = append(newColumnIDs, colMeta.colID)
 		newRow = append(newRow, colMeta.defaultVal)
-		newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs, time.UTC)
+		newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs, time.UTC, nil)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

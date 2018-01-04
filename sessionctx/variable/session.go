@@ -247,6 +247,9 @@ type SessionVars struct {
 	// EnableChunk indicates whether the chunk execution model is enabled.
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
+
+	// RowValBuf used by tablecodec.EncodeRow, to reduce runtime.growslice.
+	RowValBuf []byte
 }
 
 // NewSessionVars creates a session vars object.

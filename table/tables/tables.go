@@ -253,7 +253,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	}
 
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -358,7 +358,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	}
 
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -522,7 +522,7 @@ func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -533,11 +533,11 @@ func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum,
 }
 
 func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
-	old, err := tablecodec.EncodeRow(oldRow, colIDs, ctx.GetSessionVars().GetTimeZone())
+	old, err := tablecodec.EncodeRow(oldRow, colIDs, ctx.GetSessionVars().GetTimeZone(), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	new, err := tablecodec.EncodeRow(newRow, colIDs, ctx.GetSessionVars().GetTimeZone())
+	new, err := tablecodec.EncodeRow(newRow, colIDs, ctx.GetSessionVars().GetTimeZone(), nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -549,7 +549,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datu
 }
 
 func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone())
+	data, err := tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
 	if err != nil {
 		return errors.Trace(err)
 	}

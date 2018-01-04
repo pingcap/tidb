@@ -168,7 +168,7 @@ func EncodeValue(raw types.Datum, loc *time.Location) ([]byte, error) {
 
 // EncodeRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
-func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location) ([]byte, error) {
+func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location, valBuf []byte) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
@@ -187,7 +187,7 @@ func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location) ([]byte, e
 		// We could not set nil value into kv.
 		return []byte{codec.NilFlag}, nil
 	}
-	return codec.EncodeValue(nil, values...)
+	return codec.EncodeValue(valBuf, values...)
 }
 
 func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
