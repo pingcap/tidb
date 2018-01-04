@@ -365,7 +365,7 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	rowStr2 := fmt.Sprintf("%v %v", "3", "4")
 	r.Check(testkit.Rows(rowStr, rowStr1, rowStr2))
 
-	tk.MustExec("insert ignore into t values (3, 5), (4, 5)")
+	tk.MustExec("insert ignore into t values (4, 4), (4, 5), (4, 6)")
 	r = tk.MustQuery("select * from t;")
 	rowStr3 := fmt.Sprintf("%v %v", "4", "5")
 	r.Check(testkit.Rows(rowStr, rowStr1, rowStr2, rowStr3))

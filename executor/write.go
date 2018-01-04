@@ -989,25 +989,43 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 		return nil, errors.Trace(err)
 	}
 
-	// append warnings and make duplicated rows
-	offsets := make(map[int]bool, len(rows)/2+1)
+	// append warnings and mark duplicated rows
+	dupRowOffsets := make(map[int]bool, len(rows)/2+1)
+	// find duplicate keys in storage
 	for _, k := range keysWithErr {
-		if _, exist := values[string(k.key)]; exist {
-			// only the first duplicate key error in one row will be appended in MySQL
-			if _, ok := offsets[k.offset]; !ok {
-				offsets[k.offset] = true
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
+		// skip when already found duplicate key on the row
+		if _, marked := dupRowOffsets[k.offset]; marked {
+			continue
+		}
+		if _, found := values[string(k.key)]; found {
+			dupRowOffsets[k.offset] = true
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
+		}
+	}
+	// find duplicate keys in insert statement
+	uniqueInsertKeys := make(map[string]int, len(keysWithErr)/2+1)
+	for _, k := range keysWithErr {
+		// skip when already found duplicate key on the row
+		if _, marked := dupRowOffsets[k.offset]; marked {
+			continue
+		}
+		if of, found := uniqueInsertKeys[string(k.key)]; found {
+			if _, marked := dupRowOffsets[of]; marked {
+				// update offset if previous unique key in a marked duplicate row
+				uniqueInsertKeys[string(k.key)] = k.offset
+				continue
 			}
+			dupRowOffsets[k.offset] = true
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
 		} else {
-			// add keys of rows to values, due to they need to be check within insert statement
-			values[string(k.key)] = []byte{}
+			uniqueInsertKeys[string(k.key)] = k.offset
 		}
 	}
 
 	// generate no duplicate error rows
 	noDupRows := make([][]types.Datum, 0, len(rows))
 	for i, row := range rows {
-		if _, ok := offsets[i]; ok {
+		if _, ok := dupRowOffsets[i]; ok {
 			continue
 		}
 		noDupRows = append(noDupRows, row)
