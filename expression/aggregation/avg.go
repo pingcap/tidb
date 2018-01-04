@@ -14,6 +14,7 @@
 package aggregation
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -37,22 +38,25 @@ func (af *avgFunction) Clone() Aggregation {
 // GetType implements Aggregation interface.
 func (af *avgFunction) GetType() *types.FieldType {
 	var ft *types.FieldType
-	if types.IsTypeFloat(af.Args[0].GetType().Tp) {
-		ft = types.NewFieldType(mysql.TypeDouble)
-		ft.Decimal = af.Args[0].GetType().Decimal
-	} else {
+	switch af.Args[0].GetType().Tp {
+	// For child returns integer or decimal type, "avg" should returns a "decimal",
+	// otherwise it returns a "double".
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
 		ft = types.NewFieldType(mysql.TypeNewDecimal)
 		if af.GetMode() == FinalMode {
-			ft.Decimal = af.Args[1].GetType().Decimal
+			ft.Flen, ft.Decimal = af.Args[1].GetType().Flen, af.Args[1].GetType().Decimal
 		} else {
-			ft.Decimal = af.Args[0].GetType().Decimal
-			if ft.Decimal < 0 {
-				ft.Decimal = 0
+			if af.Args[0].GetType().Decimal < 0 {
+				ft.Decimal = mysql.MaxDecimalScale
+			} else {
+				ft.Decimal = mathutil.Min(af.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 			}
-			ft.Decimal += types.DivFracIncr
+			ft.Flen = mysql.MaxDecimalWidth
 		}
+	default:
+		ft = types.NewFieldType(mysql.TypeDouble)
+		ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
 	}
-	ft.Flen = mysql.MaxRealWidth
 	types.SetBinChsClnFlag(ft)
 	return ft
 }
@@ -114,7 +118,7 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	terror.Log(errors.Trace(err))
 	frac := af.GetType().Decimal
 	if frac == -1 {
-		frac = types.MaxFraction
+		frac = mysql.MaxDecimalScale
 	}
 	err = to.Round(to, frac, types.ModeHalfEven)
 	terror.Log(errors.Trace(err))

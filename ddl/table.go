@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	log "github.com/sirupsen/logrus"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -58,8 +59,9 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 		if EnableSplitTableRegion {
 			err = d.splitTableRegion(tbInfo.ID)
+			// It will be automatically splitting by TiKV later.
 			if err != nil {
-				return ver, errors.Trace(err)
+				log.Warnf("[ddl] split table region failed %v", err)
 			}
 		}
 		// Finish this job.
@@ -217,6 +219,66 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []interface{}{startKey}
+	return ver, nil
+}
+
+func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	var newBase int64
+	err := job.DecodeArgs(&newBase)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo.AutoIncID = newBase
+	tbl, err := d.getTable(schemaID, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	// The operation of the minus 1 to make sure that the current value doesn't be used,
+	// the next Alloc operation will get this value.
+	// Its behavior is consistent with MySQL.
+	err = tbl.RebaseAutoID(nil, tblInfo.AutoIncID-1, false)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateDone
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	ver, err = updateTableInfo(t, job, tblInfo, tblInfo.State)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	return ver, nil
+}
+
+func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var shardRowIDBits uint64
+	err := job.DecodeArgs(&shardRowIDBits)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo.ShardRowIDBits = shardRowIDBits
+	job.State = model.JobStateDone
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	ver, err = updateTableInfo(t, job, tblInfo, tblInfo.State)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 	return ver, nil
 }
 

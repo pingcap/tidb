@@ -236,7 +236,7 @@ func (e *NewIndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
 			e.lookUpMatchedInners(task, task.cursor)
 			outerRow := task.outerResult.GetRow(task.cursor)
 			task.cursor++
-			err = e.resultGenerator.emitToChunk(outerRow, task.matchedInners, e.joinResult)
+			err = e.resultGenerator.emitToChunk(outerRow, chunk.NewSliceIterator(task.matchedInners), e.joinResult)
 			if err != nil {
 				return errors.Trace(err)
 			}

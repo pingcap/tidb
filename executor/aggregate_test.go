@@ -298,6 +298,7 @@ func (s *testSuite) TestAggPrune(c *C) {
 	tk.MustExec("create table t(id int primary key, b varchar(50), c int)")
 	tk.MustExec("insert into t values(1, '1ff', NULL), (2, '234.02', 1)")
 	tk.MustQuery("select id, sum(b) from t group by id").Check(testkit.Rows("1 1", "2 234.02"))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("235.02"))
 	tk.MustQuery("select id, count(c) from t group by id").Check(testkit.Rows("1 0", "2 1"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, b float, c float)")
@@ -483,4 +484,16 @@ func (s *testSuite) TestHaving(c *C) {
 	tk.MustQuery("select sum(c1) from t group by c1 having sum(c1)").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select sum(c1) - 1 from t group by c1 having sum(c1) - 1").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestAggEliminator(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustQuery("select min(a) from t").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)")
+	tk.MustQuery("select max(a) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
+	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
 }

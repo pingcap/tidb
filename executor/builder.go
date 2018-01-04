@@ -464,6 +464,7 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
@@ -478,7 +479,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		b.err = us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows()
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -492,7 +493,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		b.err = us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows()
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -506,14 +507,16 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		b.err = us.buildAndSortAddedRows(x.table)
+		b.err = us.buildAndSortAddedRows()
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return src
 	}
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
+	us.supportChk = true
 	return us
 }
 
@@ -669,12 +672,14 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &StreamAggExec{
+	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
@@ -826,8 +831,10 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
 		outerChunk:      outerExec.newChunk(),
+		innerChunk:      innerExec.newChunk(),
 		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
+	e.innerList = chunk.NewList(innerExec.Schema().GetTypes(), e.maxChunkSize)
 	e.supportChk = true
 	return e
 }

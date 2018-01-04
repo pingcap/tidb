@@ -24,12 +24,6 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// Range is the interface of the three type of range.
-type Range interface {
-	fmt.Stringer
-	Convert2NewRange() *NewRange
-}
-
 // IntColumnRange represents a range for a integer column, both low and high are inclusive.
 type IntColumnRange struct {
 	LowVal  int64
@@ -54,11 +48,6 @@ func (tr IntColumnRange) String() string {
 		r = strconv.FormatInt(tr.HighVal, 10) + "]"
 	}
 	return l + "," + r
-}
-
-// Convert2NewRange implements the Convert2NewRange interface.
-func (tr IntColumnRange) Convert2NewRange() *NewRange {
-	panic("you shouldn't call this method.")
 }
 
 // NewRange represents a range generated in physical plan building phase.
@@ -127,11 +116,6 @@ func (ran *NewRange) String() string {
 		r = ")"
 	}
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
-}
-
-// Convert2NewRange implements the Convert2NewRange interface.
-func (ran *NewRange) Convert2NewRange() *NewRange {
-	return ran
 }
 
 // PrefixEqualLen tells you how long the prefix of the range is a point.
