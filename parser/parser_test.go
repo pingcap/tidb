@@ -1290,6 +1290,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) STATS_PERSISTENT = default", true},
 		{"create table t (c int) STATS_PERSISTENT = 0", true},
 		{"create table t (c int) STATS_PERSISTENT = 1", true},
+		{"create table t (c int) PACK_KEYS = 1", true},
+		{"create table t (c int) PACK_KEYS = 0", true},
+		{"create table t (c int) PACK_KEYS = DEFAULT", true},
 		// partition option
 		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
