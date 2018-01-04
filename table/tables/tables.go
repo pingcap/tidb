@@ -365,10 +365,11 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	}
 
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
+	ctx.GetSessionVars().RowValBuf, err = tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone(), ctx.GetSessionVars().RowValBuf[:0])
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	value := ctx.GetSessionVars().RowValBuf
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
