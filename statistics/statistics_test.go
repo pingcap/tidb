@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -44,11 +45,6 @@ type testStatisticsSuite struct {
 	samples []types.Datum
 	rc      ast.RecordSet
 	pk      ast.RecordSet
-}
-
-type dataTable struct {
-	count   int64
-	samples []types.Datum
 }
 
 type recordSet struct {
@@ -328,6 +324,19 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count, err = col.lessRowCount(sc, types.NewIntDatum(99999))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 99999)
+
+	datum := types.Datum{}
+	datum.SetMysqlJSON(json.BinaryJSON{TypeCode: json.TypeCodeLiteral})
+	collector = &SampleCollector{
+		Count:     1,
+		NullCount: 0,
+		Samples:   []types.Datum{datum},
+		FMSketch:  sketch,
+	}
+	col, err = BuildColumn(ctx, bucketCount, 2, collector)
+	c.Assert(err, IsNil)
+	c.Assert(len(col.Buckets), Equals, 1)
+	c.Assert(col.Buckets[0].LowerBound, DeepEquals, col.Buckets[0].UpperBound)
 }
 
 func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
