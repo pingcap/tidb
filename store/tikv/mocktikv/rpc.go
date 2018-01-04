@@ -614,6 +614,19 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			res = handler.handleCopAnalyzeRequest(r)
 		}
 		resp.Cop = res
+	case tikvrpc.CmdCopStream:
+		r := req.Cop
+		if err := handler.checkRequestContext(reqCtx); err != nil {
+			resp.CopStream = &mockCopStreamErrClient{Error: err}
+			return resp, nil
+		}
+		handler.rawStartKey = MvccKey(handler.startKey).Raw()
+		handler.rawEndKey = MvccKey(handler.endKey).Raw()
+		copStream, err := handler.handleCopStream(r)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.CopStream = copStream
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
