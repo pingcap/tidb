@@ -1,0 +1,8 @@
+This is a goinstall-able mirror of modified code already published at:
+http://git.nic.cz/redmine/projects/gogolex/repository
+
+Online godoc documentation for this tool available at:
+http://godoc.org/github.com/cznic/golex
+
+Installation:
+$ go get github.com/cznic/golex
