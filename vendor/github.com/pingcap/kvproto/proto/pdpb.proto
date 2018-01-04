@@ -1,0 +1,333 @@
+syntax = "proto3";
+package pdpb;
+
+import "metapb.proto";
+import "eraftpb.proto";
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+option java_package = "com.pingcap.tikv.kvproto";
+
+service PD {
+    // GetMembers get the member list of this cluster. It does not require
+    // the cluster_id in request matchs the id of this cluster.
+    rpc GetMembers(GetMembersRequest) returns (GetMembersResponse) {}
+
+    rpc Tso(stream TsoRequest) returns (stream TsoResponse) {}
+
+    rpc Bootstrap(BootstrapRequest) returns (BootstrapResponse) {}
+
+    rpc IsBootstrapped(IsBootstrappedRequest) returns (IsBootstrappedResponse) {}
+
+    rpc AllocID(AllocIDRequest) returns (AllocIDResponse) {}
+
+    rpc GetStore(GetStoreRequest) returns (GetStoreResponse) {}
+
+    rpc PutStore(PutStoreRequest) returns (PutStoreResponse) {}
+
+    rpc StoreHeartbeat(StoreHeartbeatRequest) returns (StoreHeartbeatResponse) {}
+
+    rpc RegionHeartbeat(stream RegionHeartbeatRequest) returns (stream RegionHeartbeatResponse) {}
+
+    rpc GetRegion(GetRegionRequest) returns (GetRegionResponse) {}
+
+    rpc GetRegionByID(GetRegionByIDRequest) returns (GetRegionResponse) {}
+
+    rpc AskSplit(AskSplitRequest) returns (AskSplitResponse) {}
+
+    rpc ReportSplit(ReportSplitRequest) returns (ReportSplitResponse) {}
+
+    rpc GetClusterConfig(GetClusterConfigRequest) returns (GetClusterConfigResponse) {}
+
+    rpc PutClusterConfig(PutClusterConfigRequest) returns (PutClusterConfigResponse) {}
+}
+
+message RequestHeader {
+    // cluster_id is the ID of the cluster which be sent to.
+    uint64 cluster_id = 1;
+}
+
+message ResponseHeader {
+    // cluster_id is the ID of the cluster which sent the response.
+    uint64 cluster_id = 1;
+    Error error = 2;
+}
+
+enum ErrorType {
+    OK = 0;
+    UNKNOWN = 1;
+    NOT_BOOTSTRAPPED = 2;
+    STORE_TOMBSTONE = 3;
+    ALREADY_BOOTSTRAPPED = 4;
+}
+
+message Error {
+    ErrorType type = 1;
+    string message = 2;
+}
+
+message TsoRequest {
+    RequestHeader header = 1;
+
+    uint32 count = 2;
+}
+
+message Timestamp {
+    int64 physical = 1;
+    int64 logical = 2;
+}
+
+message TsoResponse {
+    ResponseHeader header = 1;
+
+    uint32 count = 2;
+    Timestamp timestamp = 3;
+}
+
+message BootstrapRequest {
+    RequestHeader header = 1;
+
+    metapb.Store store = 2;
+    metapb.Region region = 3;
+}
+
+message BootstrapResponse {
+    ResponseHeader header = 1;
+}
+
+message IsBootstrappedRequest {
+    RequestHeader header = 1;
+}
+
+message IsBootstrappedResponse {
+    ResponseHeader header = 1;
+
+    bool bootstrapped = 2;
+}
+
+message AllocIDRequest {
+    RequestHeader header = 1;
+}
+
+message AllocIDResponse {
+    ResponseHeader header = 1;
+
+    uint64 id = 2;
+}
+
+message GetStoreRequest {
+    RequestHeader header = 1;
+
+    uint64 store_id = 2;
+}
+
+message GetStoreResponse {
+    ResponseHeader header = 1;
+
+    metapb.Store store = 2;
+}
+
+message PutStoreRequest {
+    RequestHeader header = 1;
+
+    metapb.Store store = 2;
+}
+
+message PutStoreResponse {
+    ResponseHeader header = 1;
+}
+
+message GetRegionRequest {
+    RequestHeader header = 1;
+
+    bytes region_key = 2;
+}
+
+message GetRegionResponse {
+    ResponseHeader header = 1;
+
+    metapb.Region region = 2;
+    metapb.Peer leader = 3;
+}
+
+message GetRegionByIDRequest {
+    RequestHeader header = 1;
+
+    uint64 region_id = 2;
+}
+
+// Use GetRegionResponse as the response of GetRegionByIDRequest.
+
+message GetClusterConfigRequest {
+    RequestHeader header = 1;
+}
+
+message GetClusterConfigResponse {
+    ResponseHeader header = 1;
+
+    metapb.Cluster cluster = 2;
+}
+
+message PutClusterConfigRequest {
+    RequestHeader header = 1;
+
+    metapb.Cluster cluster = 2;
+}
+
+message PutClusterConfigResponse {
+    ResponseHeader header = 1;
+}
+
+message Member {
+    // name is the name of the PD member.
+    string name = 1;
+    // member_id is the unique id of the PD member.
+    uint64 member_id = 2;
+    repeated string peer_urls = 3;
+    repeated string client_urls = 4;
+}
+
+message GetMembersRequest {
+    RequestHeader header = 1;
+}
+
+message GetMembersResponse {
+    ResponseHeader header = 1;
+
+    repeated Member members = 2;
+    Member leader = 3;
+}
+
+message PeerStats {
+    metapb.Peer peer = 1;
+    uint64 down_seconds = 2;
+}
+
+message RegionHeartbeatRequest {
+    RequestHeader header = 1;
+
+    metapb.Region region = 2;
+    // Leader Peer sending the heartbeat.
+    metapb.Peer leader = 3;
+    // Leader considers that these peers are down.
+    repeated PeerStats down_peers = 4;
+    // Pending peers are the peers that the leader can't consider as
+    // working followers.
+    repeated metapb.Peer pending_peers = 5;
+    // Bytes read/written during this period.
+    uint64 bytes_written = 6;
+    uint64 bytes_read = 7;
+    // Keys read/written during this period.
+    uint64 keys_written = 8;
+    uint64 keys_read = 9;
+    // Approximate region size.
+    uint64 approximate_size = 10;
+}
+
+message ChangePeer {
+    metapb.Peer peer = 1;
+    eraftpb.ConfChangeType change_type = 2;
+}
+
+message TransferLeader {
+    metapb.Peer peer = 1;
+}
+
+message RegionHeartbeatResponse {
+    ResponseHeader header = 1;
+
+    // Notice, Pd only allows handling reported epoch >= current pd's.
+    // Leader peer reports region status with RegionHeartbeatRequest
+    // to pd regularly, pd will determine whether this region
+    // should do ChangePeer or not.
+    // E,g, max peer number is 3, region A, first only peer 1 in A.
+    // 1. Pd region state -> Peers (1), ConfVer (1).
+    // 2. Leader peer 1 reports region state to pd, pd finds the
+    // peer number is < 3, so first changes its current region
+    // state -> Peers (1, 2), ConfVer (1), and returns ChangePeer Adding 2.
+    // 3. Leader does ChangePeer, then reports Peers (1, 2), ConfVer (2),
+    // pd updates its state -> Peers (1, 2), ConfVer (2).
+    // 4. Leader may report old Peers (1), ConfVer (1) to pd before ConfChange
+    // finished, pd stills responses ChangePeer Adding 2, of course, we must
+    // guarantee the second ChangePeer can't be applied in TiKV.
+    ChangePeer change_peer = 2;
+    // Pd can return transfer_leader to let TiKV does leader transfer itself.
+    TransferLeader transfer_leader = 3;
+    // ID of the region
+    uint64 region_id = 4;
+    metapb.RegionEpoch region_epoch = 5;
+    // Leader of the region at the moment of the corresponding request was made.
+    metapb.Peer target_peer = 6;
+}
+
+message AskSplitRequest {
+    RequestHeader header = 1;
+
+    metapb.Region region = 2;
+}
+
+message AskSplitResponse {
+    ResponseHeader header = 1;
+
+    // We split the region into two, first uses the origin
+    // parent region id, and the second uses the new_region_id.
+    // We must guarantee that the new_region_id is global unique.
+    uint64 new_region_id = 2;
+    // The peer ids for the new split region.
+    repeated uint64 new_peer_ids = 3;
+}
+
+message ReportSplitRequest {
+    RequestHeader header = 1;
+
+    metapb.Region left = 2;
+    metapb.Region right = 3;
+}
+
+message ReportSplitResponse {
+    ResponseHeader header = 1;
+}
+
+message StoreStats {
+    uint64 store_id = 1;
+    // Capacity for the store.
+    uint64 capacity = 2;
+    // Available size for the store.
+    uint64 available = 3;
+    // Total region count in this store.
+    uint32 region_count = 4;
+    // Current sending snapshot count.
+    uint32 sending_snap_count = 5;
+    // Current receiving snapshot count.
+    uint32 receiving_snap_count = 6;
+    // When the store is started (unix timestamp in seconds).
+    uint32 start_time = 7;
+    // How many region is applying snapshot.
+    uint32 applying_snap_count = 8;
+    // If the store is busy
+    bool is_busy = 9;
+    // Actually used space by db
+    uint64 used_size = 10;
+    // Bytes written for the store.
+    uint64 bytes_written = 11;
+    // Keys written for the store.
+    uint64 keys_written = 12;
+    // Bytes read for the store.
+    uint64 bytes_read = 13;
+    // Keys read for the store.
+    uint64 keys_read = 14;
+}
+
+message StoreHeartbeatRequest {
+    RequestHeader header = 1;
+
+    StoreStats stats = 2;
+}
+
+message StoreHeartbeatResponse {
+    ResponseHeader header = 1;
+}

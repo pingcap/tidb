@@ -1,0 +1,89 @@
+/*
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; version 2 of the
+ * License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301  USA
+ */
+syntax = "proto2";
+
+// ifdef PROTOBUF_LITE: option optimize_for = LITE_RUNTIME;
+
+// Messages to manage Sessions
+//
+// .. uml::
+//
+//   == session start ==
+//   Client -> Server: AuthenticateStart
+//   opt
+//   Server --> Client: AuthenticateContinue
+//   Client --> Server: AuthenticateContinue
+//   end
+//   alt
+//   Server --> Client: AuthenticateOk
+//   else
+//   Server --> Client: Error
+//   end
+//   ...
+//   == session reset ==
+//   Client -> Server: Reset
+//   Server --> Client: Ok
+//   == session end ==
+//   Client -> Server: Close
+//   Server --> Client: Ok
+//
+package Mysqlx.Session;
+option java_package = "com.mysql.cj.mysqlx.protobuf";
+
+// the initial message send from the client to the server to start the
+// authentication proccess
+//
+// :param mech_name: authentication mechanism name
+// :param auth_data: authentication data
+// :param initial_response: initial response
+// :Returns: :protobuf:msg:`Mysqlx.Session::AuthenticateContinue`
+message AuthenticateStart {
+  required string mech_name = 1;
+  optional bytes auth_data = 2;
+  optional bytes initial_response = 3;
+}
+
+// send by client or server after a :protobuf:msg:`Mysqlx.Session::AuthenticateStart` to
+// exchange more auth data
+//
+// :param auth_data: authentication data
+// :Returns: :protobuf:msg:`Mysqlx.Session::AuthenticateContinue`
+message AuthenticateContinue {
+  required bytes auth_data = 1;
+}
+
+// sent by the server after successful authentication
+//
+// :param auth_data: authentication data
+message AuthenticateOk {
+  optional bytes auth_data = 1;
+}
+
+// reset the current session
+//
+// :Returns: :protobuf:msg:`Mysqlx::Ok`
+message Reset {
+}
+
+// close the current session
+//
+// :Returns: :protobuf:msg:`Mysqlx::Ok`
+message Close {
+}
+

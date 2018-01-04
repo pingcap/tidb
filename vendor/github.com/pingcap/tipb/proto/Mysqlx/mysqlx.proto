@@ -1,0 +1,137 @@
+/*
+ * Copyright (c) 2015, 2017, Oracle and/or its affiliates. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; version 2 of the
+ * License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301  USA
+ */
+
+// tell protobuf 3.0 to use protobuf 2.x rules
+syntax = "proto2";
+
+// ifdef PROTOBUF_LITE: option optimize_for = LITE_RUNTIME;
+
+package Mysqlx;
+option java_package = "com.mysql.cj.mysqlx.protobuf";
+
+
+// style-guide:
+//
+// see https://developers.google.com/protocol-buffers/docs/style
+//
+// message CamelCaseMsg {
+//   enum CamelCaseEnum {
+//     FIRST_VALUE = 1;
+//   }
+//   required CamelCaseEnum some_enum = 1;
+// }
+//
+
+
+// IDs of messages that can be sent from client to the server
+//
+// .. note::
+//   this message is never sent on the wire. It is only used to let ``protoc``
+//
+//   * generate constants
+//   * check for uniqueness
+message ClientMessages {
+  enum Type {
+    CON_CAPABILITIES_GET = 1;
+    CON_CAPABILITIES_SET = 2;
+    CON_CLOSE = 3;
+
+    SESS_AUTHENTICATE_START = 4;
+    SESS_AUTHENTICATE_CONTINUE  = 5;
+    SESS_RESET = 6;
+    SESS_CLOSE = 7;
+
+    SQL_STMT_EXECUTE = 12;
+
+    CRUD_FIND = 17;
+    CRUD_INSERT = 18;
+    CRUD_UPDATE = 19;
+    CRUD_DELETE = 20;
+
+    EXPECT_OPEN = 24;
+    EXPECT_CLOSE = 25;
+
+    CRUD_CREATE_VIEW = 30;
+    CRUD_MODIFY_VIEW = 31;
+    CRUD_DROP_VIEW = 32;
+  }
+}
+
+// IDs of messages that can be sent from server to client
+//
+// .. note::
+//   this message is never sent on the wire. It is only used to let ``protoc``
+//
+//   * generate constants
+//   * check for uniqueness
+message ServerMessages {
+  enum Type {
+    OK = 0;
+    ERROR = 1;
+
+    CONN_CAPABILITIES = 2;
+
+    SESS_AUTHENTICATE_CONTINUE = 3;
+    SESS_AUTHENTICATE_OK = 4;
+
+    // NOTICE has to stay at 11 forever
+    NOTICE = 11;
+
+    RESULTSET_COLUMN_META_DATA = 12;
+    RESULTSET_ROW = 13;
+    RESULTSET_FETCH_DONE = 14;
+    RESULTSET_FETCH_SUSPENDED = 15;
+    RESULTSET_FETCH_DONE_MORE_RESULTSETS = 16;
+
+    SQL_STMT_EXECUTE_OK = 17;
+    RESULTSET_FETCH_DONE_MORE_OUT_PARAMS = 18;
+  };
+}
+
+
+// generic Ok message
+message Ok {
+  optional string msg = 1;
+}
+
+
+// generic Error message
+//
+// A ``severity`` of ``ERROR`` indicates the current message sequence is
+// aborted for the given error and the session is ready for more.
+//
+// In case of a ``FATAL`` error message the client should not expect
+// the server to continue handling any further messages and should
+// close the connection.
+//
+// :param severity: severity of the error message
+// :param code: error-code
+// :param sql_state: SQL state
+// :param msg: human readable error message
+message Error {
+  optional Severity severity = 1 [ default = ERROR ];
+  required uint32 code = 2;
+  required string sql_state = 4;
+  required string msg = 3;
+
+  enum Severity {
+    ERROR = 0;
+    FATAL = 1;
+  };
+}

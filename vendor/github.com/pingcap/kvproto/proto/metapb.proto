@@ -1,0 +1,59 @@
+syntax = "proto3";
+package metapb;
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+option java_package = "com.pingcap.tikv.kvproto";
+
+message Cluster {
+    uint64 id = 1;
+    // max peer count for a region.
+    // pd will do the auto-balance if region peer count mismatches.
+    uint32 max_peer_count = 2;
+    // more attributes......
+}
+
+enum StoreState {
+    Up = 0;
+    Offline = 1;
+    Tombstone = 2;
+}
+
+// Case insensitive key/value for replica constraints.
+message StoreLabel {
+    string key = 1;
+    string value = 2;
+}
+
+message Store {
+    uint64 id = 1;
+    string address = 2;
+    StoreState state = 3;
+    repeated StoreLabel labels = 4;
+    // more attributes......
+}
+
+message RegionEpoch {
+    // Conf change version, auto increment when add or remove peer
+    uint64 conf_ver = 1;
+    // Region version, auto increment when split or merge
+    uint64 version = 2;
+}
+
+message Region {
+    uint64 id = 1;
+    // Region key range [start_key, end_key).
+    bytes start_key = 2;
+    bytes end_key = 3;
+    RegionEpoch region_epoch = 4;
+    repeated Peer peers = 5;
+}
+
+message Peer {      
+    uint64 id = 1;
+    uint64 store_id = 2;
+}

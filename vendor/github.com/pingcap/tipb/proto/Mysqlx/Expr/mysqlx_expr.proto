@@ -1,0 +1,253 @@
+/*
+ * Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; version 2 of the
+ * License.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301  USA
+ */
+syntax = "proto2";
+
+// ifdef PROTOBUF_LITE: option optimize_for = LITE_RUNTIME;
+
+// Expression syntax
+//
+// expr is the fundamental structure in various places
+// of the SQL language:
+//
+// * ``SELECT <expr> AS ...``
+// * ``WHERE <expr>``
+//
+// The structures can be used to:
+//
+// * build an Item-tree in the MySQL Server
+// * generate SQL from it
+// * use as filter condition in CRUD's Find(), Update() and Delete() calls.
+package Mysqlx.Expr;
+option java_package = "com.mysql.cj.mysqlx.protobuf";
+
+import "Mysqlx/Datatypes/mysqlx_datatypes.proto";
+
+// Expressions
+//
+// the "root" of the expression tree
+//
+// .. productionlist::
+//   expr: `operator` |
+//       : `identifier` |
+//       : `function_call` |
+//       : variable |
+//       : `literal` |
+//       : placeholder
+//
+// If expression type is PLACEHOLDER then it refers to the value of a parameter
+// specified when executing a statement (see `args` field of `StmtExecute` command).
+// Field `position` (which must be present for such an expression) gives 0-based
+// position of the parameter in the parameter list.
+//
+message Expr {
+  enum Type {
+    IDENT          = 1;
+    LITERAL        = 2;
+    VARIABLE       = 3;
+    FUNC_CALL      = 4;
+    OPERATOR       = 5;
+    PLACEHOLDER    = 6;
+    OBJECT         = 7;
+    ARRAY          = 8;
+  };
+
+  required Type type = 1;
+
+  optional ColumnIdentifier identifier = 2;
+  optional string       variable = 3;
+  optional Mysqlx.Datatypes.Scalar literal = 4;
+  optional FunctionCall function_call = 5;
+  optional Operator     operator = 6;
+  optional uint32       position = 7;
+  optional Object       object = 8;
+  optional Array        array = 9;
+}
+
+// identifier: name, schame.name
+//
+// .. productionlist::
+//   identifier: string "." string |
+//             : string
+message Identifier {
+  required string name = 1;
+  optional string schema_name = 2;
+}
+
+// DocumentPathItem
+//
+// .. productionlist::
+//    document_path: path_item | path_item document_path
+//    path_item    : member | array_index | "**"
+//    member       : "." string | "." "*"
+//    array_index  : "[" number "]" | "[" "*" "]"
+//
+message DocumentPathItem {
+  enum Type {
+    MEMBER = 1;             // .member
+    MEMBER_ASTERISK = 2;    // .*
+    ARRAY_INDEX = 3;        // [index]
+    ARRAY_INDEX_ASTERISK = 4; // [*]
+    DOUBLE_ASTERISK = 5;    // **
+  };
+  required Type type = 1;
+  optional string value = 2;
+  optional uint32 index = 3;
+}
+
+
+// col_identifier (table): col@doc_path, tbl.col@doc_path col, tbl.col, schema.tbl.col
+// col_identifier (document): doc_path
+//
+// .. productionlist::
+//   col_identifier: string "." string "." string |
+//             : string "." string |
+//             : string |
+//             : string "." string "." string "@" document_path |
+//             : string "." string "@" document_path |
+//             : string "@" document_path |
+//             : document_path
+//    document_path: member | arrayLocation | doubleAsterisk
+//    member = "." string | "." "*"
+//    arrayLocation = "[" index "]" | "[" "*" "]"
+//    doubleAsterisk = "**"
+//
+message ColumnIdentifier {
+  repeated Mysqlx.Expr.DocumentPathItem document_path = 1;
+  optional string name = 2;
+  optional string table_name = 3;
+  optional string schema_name = 4;
+}
+
+// function call: ``func(a, b, "1", 3)``
+//
+// .. productionlist::
+//   function_call: `identifier` "(" [ `expr` ["," `expr` ]* ] ")"
+message FunctionCall {
+  required Identifier name = 1;
+  repeated Expr param = 2;
+}
+
+// operator: ``<<(a, b)``
+//
+// .. note::
+//
+//   Non-authoritative list of operators implemented (case sensitive):
+//
+//   Nullary
+//     * ``*``
+//     * ``default``
+//
+//   Unary
+//     * ``!``
+//     * ``sign_plus``
+//     * ``sign_minus``
+//     * ``~``
+//
+//   Binary
+//     * ``&&``
+//     * ``||``
+//     * ``xor``
+//     * ``==``
+//     * ``!=``
+//     * ``>``
+//     * ``>=``
+//     * ``<``
+//     * ``<=``
+//     * ``&``
+//     * ``|``
+//     * ``^``
+//     * ``<<``
+//     * ``>>``
+//     * ``+``
+//     * ``-``
+//     * ``*``
+//     * ``/``
+//     * ``div``
+//     * ``%``
+//     * ``is``
+//     * ``is_not``
+//     * ``regexp``
+//     * ``not_regexp``
+//     * ``like``
+//     * ``not_like``
+//     * ``cast``
+//
+//   Using special representation, with more than 2 params
+//     * ``in`` (param[0] IN (param[1], param[2], ...))
+//     * ``not_in`` (param[0] NOT IN (param[1], param[2], ...))
+//
+//   Ternary
+//     * ``between``
+//     * ``between_not``
+//     * ``date_add``
+//     * ``date_sub``
+//
+//   Units for date_add/date_sub
+//     * ``MICROSECOND``
+//     * ``SECOND``
+//     * ``MINUTE``
+//     * ``HOUR``
+//     * ``DAY``
+//     * ``WEEK``
+//     * ``MONTH``
+//     * ``QUARTER``
+//     * ``YEAR``
+//     * ``SECOND_MICROSECOND``
+//     * ``MINUTE_MICROSECOND``
+//     * ``MINUTE_SECOND``
+//     * ``HOUR_MICROSECOND``
+//     * ``HOUR_SECOND``
+//     * ``HOUR_MINUTE``
+//     * ``DAY_MICROSECOND``
+//     * ``DAY_SECOND``
+//     * ``DAY_MINUTE``
+//     * ``DAY_HOUR``
+//
+//   Types for cast
+//     * ``BINARY[(N)]``
+//     * ``CHAR[(N)]``
+//     * ``DATE``
+//     * ``DATETIME``
+//     * ``DECIMAL[(M[,D])]``
+//     * ``JSON``
+//     * ``SIGNED [INTEGER]``
+//     * ``TIME``
+//     * ``UNSIGNED [INTEGER]``
+//
+// .. productionlist::
+//   operator: `name` "(" [ `expr` ["," `expr` ]* ] ")"
+message Operator {
+  required string name = 1;
+  repeated Expr param = 2;
+}
+
+// an object (with expression values)
+message Object {
+  message ObjectField {
+    required string key = 1;
+    required Expr value = 2;
+  }
+
+  repeated ObjectField fld = 1;
+}
+
+// a Array of expressions
+message Array {
+  repeated Expr value = 1;
+}

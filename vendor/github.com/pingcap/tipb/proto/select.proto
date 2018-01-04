@@ -1,0 +1,149 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "executor.proto";
+import "expression.proto";
+import "schema.proto";
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+// SelectRequest works like a simplified select statement.
+message SelectRequest {
+	// transaction start timestamp.
+	optional uint64 start_ts = 1 [(gogoproto.nullable) = false];
+
+	// If table_info is not null, it represents a table scan, index_info would be null.
+	optional TableInfo table_info = 2;
+
+	// If index_info is not null, it represents an index scan, table_info would be null.
+	optional IndexInfo index_info = 3;
+
+	// fields to be selected, fields type can be column reference for simple scan.
+	// or aggregation function. If no fields specified, only handle will be returned.
+	repeated Expr fields = 4;
+
+	// disjoint handle ranges to be scanned.
+	repeated KeyRange ranges = 5;
+
+	// distinct result.
+	optional bool distinct = 6 [(gogoproto.nullable) = false];
+
+	// where condition.
+	optional Expr where = 7;
+
+	// group by clause.
+	repeated ByItem group_by = 8;
+
+	// having clause.
+	optional Expr having = 9;
+
+	// order by clause.
+	repeated ByItem order_by = 10;
+
+	// limit the result to be returned.
+	optional int64 limit = 12;
+
+	// aggregate functions
+	repeated Expr aggregates = 13;
+
+	// time zone offset in seconds
+	optional int64 time_zone_offset = 14 [(gogoproto.nullable) = false];
+
+	// flags is used to store flags that change the execution mode, it contains:
+	//	ignore_truncate = 1
+	//		truncate error should be ignore if set.
+	//	truncate_as_warning = 1 << 1
+	//		when ignored_truncate is not set, return warning instead of error if this flag is set.
+	//	...
+	//	add more when needed.
+	optional uint64 flags = 15 [(gogoproto.nullable) = false];
+}
+
+// values are all in text format.
+message Row {
+	optional bytes handle = 1;
+	optional bytes data = 2;
+}
+
+message Error {
+	optional int32 code = 1 [(gogoproto.nullable) = false];
+
+	optional string msg = 2 [(gogoproto.nullable) = false];
+}
+
+// Response for SelectRequest.
+message SelectResponse {
+	optional Error error = 1;
+
+	// Result rows.
+	repeated Row rows = 2;
+
+    	// Use multiple chunks to reduce memory allocation and
+        // avoid allocating large contiguous memory.
+    	repeated Chunk chunks = 3 [(gogoproto.nullable) = false];
+
+	repeated Error warnings = 4;
+
+	repeated int64 output_counts = 5;
+}
+
+// Chunk contains multiple rows data and rows meta.
+message Chunk {
+    	// Data for all rows in the chunk.
+    	optional bytes rows_data = 3 [(gogoproto.customtype) = "github.com/pingcap/tipb/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
+
+    	// Meta data for every row.
+    	repeated RowMeta rows_meta = 4 [(gogoproto.nullable) = false];
+}
+
+// RowMeta contains row handle and length of a row.
+message RowMeta {
+	optional int64 handle = 1 [(gogoproto.nullable) = false];
+	optional int64 length = 2 [(gogoproto.nullable) = false];
+}
+
+// DAGRequest represents the request that will be handled with DAG mode.
+message DAGRequest {
+	// Transaction start timestamp.
+	optional uint64 start_ts = 1 [(gogoproto.nullable) = false];
+
+	// It represents push down Executors.
+	repeated Executor executors = 2;
+
+	// time zone offset in seconds
+	optional int64 time_zone_offset = 3 [(gogoproto.nullable) = false];
+
+	// flags are used to store flags that change the execution mode, it contains:
+	//	ignore_truncate = 1
+	//		truncate error should be ignore if set.
+	//	truncate_as_warning = 1 << 1
+	//		when ignored_truncate is not set, return warning instead of error if this flag is set.
+	//	...
+	//	add more when needed.
+	optional uint64 flags = 4 [(gogoproto.nullable) = false];
+
+	// It represents which columns we should output.
+	repeated uint32 output_offsets = 5;
+}
+
+enum EncodeType {
+	TypeDefault = 0;
+	TypeArrow = 1;
+}
+
+message StreamResponse {
+	optional Error error = 1;
+	optional EncodeType encode_type = 2 [(gogoproto.nullable) = false];
+	// Data for all rows
+	optional bytes data = 3 [(gogoproto.customtype) = "github.com/pingcap/tipb/sharedbytes.SharedBytes", (gogoproto.nullable) = false];
+	repeated Error warnings = 4;
+	// output row count for each executor
+	repeated int64 output_counts = 5;
+}

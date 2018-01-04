@@ -1,0 +1,432 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+message FieldType {
+	optional int32 tp = 1      [(gogoproto.nullable) = false];
+	optional uint32 flag = 2   [(gogoproto.nullable) = false];
+	optional int32 flen = 3    [(gogoproto.nullable) = false];
+	optional int32 decimal = 4 [(gogoproto.nullable) = false];
+	optional int32 collate = 5 [(gogoproto.nullable) = false];
+	optional string charset = 6 [(gogoproto.nullable) = false];
+}
+
+enum ExprType {
+	/* Children count 0. */
+	// Values are encoded bytes.
+	Null = 0;
+	Int64 = 1;
+	Uint64 = 2;
+	Float32 = 3;
+	Float64 = 4;
+	String = 5;
+	Bytes = 6;
+
+	// Mysql specific types.
+	MysqlBit = 101;
+	MysqlDecimal = 102;
+	MysqlDuration = 103;
+	MysqlEnum = 104;
+	MysqlHex = 105;
+	MysqlSet = 106;
+	MysqlTime = 107;
+	MysqlJson = 108;
+
+	// Encoded value list.
+	ValueList = 151;
+
+	// Column reference. value is int64 column ID.
+	ColumnRef = 201;
+
+	/* Unary operations, children count 1. */
+	Not = 1001;
+	Neg = 1002;
+	BitNeg = 1003;
+
+	/* Binary operations, children count 2. */
+	// Comparison operations.
+	LT = 2001;
+	LE = 2002;
+	EQ = 2003;
+	NE = 2004;
+	GE = 2005;
+	GT = 2006;
+	NullEQ = 2007;
+
+	// Bit operations.
+	BitAnd = 2101;
+	BitOr = 2102;
+	BitXor = 2103;
+	LeftShift = 2104;
+	RighShift = 2105;
+
+	// Arithmatic.
+	Plus = 2201;
+	Minus = 2202;
+	Mul = 2203;
+	Div = 2204;
+	IntDiv = 2205;
+	Mod = 2206;
+
+	// Logic operations.
+	And = 2301;
+	Or = 2302;
+	Xor = 2303;
+
+	/* Mysql functions, children count is function specific. */
+	// Aggregate functions.
+	Count = 3001;
+	Sum = 3002;
+	Avg = 3003;
+	Min = 3004;
+	Max = 3005;
+	First = 3006;
+	GroupConcat = 3007;
+	Agg_BitAnd = 3008;
+	Agg_BitOr = 3009;
+	Agg_BitXor = 3010;
+	Std = 3011;
+	Stddev = 3012;
+	StddevPop = 3013;
+	StddevSamp = 3014;
+	VarPop = 3015;
+	VarSamp = 3016;
+	Variance = 3017;
+
+	// Math functions.
+	Abs = 3101;
+	Pow = 3102;
+	Round = 3103;
+
+	// String functions.
+	Concat = 3201;
+	ConcatWS = 3202;
+	Left = 3203;
+	Length = 3204;
+	Lower = 3205;
+	Repeat = 3206;
+	Replace = 3207;
+	Upper = 3208;
+	Strcmp = 3209;
+	Convert = 3210;
+	Cast = 3211;
+	Substring = 3212;
+	SubstringIndex = 3213;
+	Locate = 3214;
+	Trim = 3215;
+
+	// Control flow functions.
+	If = 3301;
+	NullIf = 3302;
+	IfNull = 3303;
+
+	// Time functions.
+	Date = 3401;
+	DateAdd = 3402;
+	DateSub = 3403;
+
+	Year = 3411;
+	YearWeek = 3412;
+
+	Month = 3421;
+
+	Week = 3431;
+	Weekday = 3432;
+	WeekOfYear = 3433;
+
+	Day = 3441;
+	DayName = 3442;
+	DayOfYear = 3443;
+	DayOfMonth = 3444;
+	DayOfWeek = 3445;
+
+	Hour = 3451;
+	Minute = 3452;
+	Second = 3453;
+	Microsecond = 3454;
+
+	Extract = 3461;
+
+	// Other functions;
+	Coalesce = 3501;
+	Greatest = 3502;
+	Least = 3503;
+
+	/* Json functions; */
+	JsonExtract = 3601;
+	JsonType = 3602;
+	JsonArray = 3603;
+	JsonObject = 3604;
+	JsonMerge = 3605;
+	JsonValid = 3606;
+	JsonSet = 3607;
+	JsonInsert = 3608;
+	JsonReplace = 3609;
+	JsonRemove = 3610;
+	JsonContains = 3611;
+	JsonUnquote = 3612;
+	JsonContainsPath = 3613;
+
+	/* Other expressions. */
+	In = 4001;
+	IsTruth = 4002;
+	IsNull = 4003;
+	ExprRow = 4004;
+	Like = 4005;
+	RLike = 4006;
+	Case = 4007;
+
+	DateFormat = 6001;
+
+	/* Scalar Function */
+	ScalarFunc = 10000;
+}
+
+enum ScalarFuncSig {
+    /* Casting */
+	CastIntAsInt = 0;
+	CastIntAsReal = 1;
+	CastIntAsString = 2;
+	CastIntAsDecimal = 3;
+	CastIntAsTime = 4;
+	CastIntAsDuration = 5;
+	CastIntAsJson = 6;
+
+	CastRealAsInt = 10;
+	CastRealAsReal = 11;
+	CastRealAsString = 12;
+	CastRealAsDecimal = 13;
+	CastRealAsTime = 14;
+	CastRealAsDuration = 15;
+	CastRealAsJson = 16;
+
+	CastDecimalAsInt = 20;
+	CastDecimalAsReal = 21;
+	CastDecimalAsString = 22;
+	CastDecimalAsDecimal = 23;
+	CastDecimalAsTime = 24;
+	CastDecimalAsDuration = 25;
+	CastDecimalAsJson = 26;
+
+	CastStringAsInt = 30;
+	CastStringAsReal = 31;
+	CastStringAsString = 32;
+	CastStringAsDecimal = 33;
+	CastStringAsTime = 34;
+	CastStringAsDuration = 35;
+	CastStringAsJson = 36;
+
+	CastTimeAsInt = 40;
+	CastTimeAsReal = 41;
+	CastTimeAsString = 42;
+	CastTimeAsDecimal = 43;
+	CastTimeAsTime = 44;
+	CastTimeAsDuration = 45;
+	CastTimeAsJson = 46;
+
+	CastDurationAsInt = 50;
+	CastDurationAsReal = 51;
+	CastDurationAsString = 52;
+	CastDurationAsDecimal = 53;
+	CastDurationAsTime = 54;
+	CastDurationAsDuration = 55;
+	CastDurationAsJson = 56;
+
+	CastJsonAsInt = 60;
+	CastJsonAsReal = 61;
+	CastJsonAsString = 62;
+	CastJsonAsDecimal = 63;
+	CastJsonAsTime = 64;
+	CastJsonAsDuration = 65;
+	CastJsonAsJson = 66;
+
+	LTInt = 100;
+	LTReal = 101;
+	LTDecimal = 102;
+	LTString = 103;
+	LTTime = 104;
+	LTDuration = 105;
+	LTJson = 106;
+
+	LEInt = 110;
+	LEReal = 111;
+	LEDecimal = 112;
+	LEString = 113;
+	LETime = 114;
+	LEDuration = 115;
+	LEJson = 116;
+
+	GTInt = 120;
+	GTReal = 121;
+	GTDecimal = 122;
+	GTString = 123;
+	GTTime = 124;
+	GTDuration = 125;
+	GTJson = 126;
+
+	GEInt = 130;
+	GEReal = 131;
+	GEDecimal = 132;
+	GEString = 133;
+	GETime = 134;
+	GEDuration = 135;
+	GEJson = 136;
+
+	EQInt = 140;
+	EQReal = 141;
+	EQDecimal = 142;
+	EQString = 143;
+	EQTime = 144;
+	EQDuration = 145;
+	EQJson = 146;
+
+	NEInt = 150;
+	NEReal = 151;
+	NEDecimal = 152;
+	NEString = 153;
+	NETime = 154;
+	NEDuration = 155;
+	NEJson = 156;
+
+	NullEQInt = 160;
+	NullEQReal = 161;
+	NullEQDecimal = 162;
+	NullEQString = 163;
+	NullEQTime = 164;
+	NullEQDuration = 165;
+	NullEQJson = 166;
+
+	PlusReal = 200;
+	PlusDecimal = 201;
+	PlusInt = 203;
+	MinusReal = 204;
+	MinusDecimal = 205;
+	MinusInt = 207;
+	MultiplyReal = 208;
+	MultiplyDecimal = 209;
+	MultiplyInt = 210;
+	DivideReal = 211;
+	DivideDecimal = 212;
+
+	AbsInt = 2101;
+	AbsUInt = 2102;
+	AbsReal = 2103;
+	AbsDecimal = 2104;
+	CeilIntToDec = 2105;
+	CeilIntToInt = 2106;
+	CeilDecToInt = 2107;
+	CeilDecToDec = 2108;
+	CeilReal = 2109;
+	FloorIntToDec = 2110;
+	FloorIntToInt = 2111;
+	FloorDecToInt = 2112;
+	FloorDecToDec = 2113;
+	FloorReal = 2114;
+
+	LogicalAnd = 3101;
+	LogicalOr = 3102;
+	LogicalXor = 3103;
+	UnaryNot = 3104;
+	UnaryMinusInt = 3108;
+	UnaryMinusReal = 3109;
+	UnaryMinusDecimal = 3110;
+	DecimalIsNull = 3111;
+	DurationIsNull = 3112;
+	RealIsNull = 3113;
+	StringIsNull = 3114;
+	TimeIsNull = 3115;
+	IntIsNull = 3116;
+	JsonIsNull = 3117;
+	BitAndSig = 3118;
+	BitOrSig = 3119;
+	BitXorSig = 3120;
+	BitNegSig = 3121;
+	IntIsTrue = 3122;
+	RealIsTrue = 3123;
+	DecimalIsTrue = 3124;
+	IntIsFalse = 3125;
+	RealIsFalse = 3126;
+	DecimalIsFalse = 3127;
+
+	InInt = 4001;
+	InReal = 4002;
+	InDecimal = 4003;
+	InString = 4004;
+	InTime = 4005;
+	InDuration = 4006;
+	InJson = 4007;
+
+	IfNullInt = 4101;
+	IfNullReal = 4102;
+	IfNullDecimal = 4103;
+	IfNullString = 4104;
+	IfNullTime = 4105;
+	IfNullDuration = 4106;
+	IfInt = 4107;
+	IfReal = 4108;
+	IfDecimal = 4109;
+	IfString = 4110;
+	IfTime = 4111;
+	IfDuration = 4112;
+	IfNullJson = 4113;
+	IfJson = 4114;
+
+	CoalesceInt = 4201;
+	CoalesceReal = 4202;
+	CoalesceDecimal = 4203;
+	CoalesceString = 4204;
+	CoalesceTime = 4205;
+	CoalesceDuration = 4206;
+	CoalesceJson = 4207;
+
+	CaseWhenInt = 4208;
+	CaseWhenReal = 4209;
+	CaseWhenDecimal = 4210;
+	CaseWhenString = 4211;
+	CaseWhenTime = 4212;
+	CaseWhenDuration = 4213;
+	CaseWhenJson = 4214;
+
+	/*
+	 * Here we use suffix *Sig* to avoid name conflict. After we removes
+	 * all same things in ExprType, we can rename them back.
+	 */
+	LikeSig = 4310;
+
+	JsonExtractSig = 5001;
+	JsonUnquoteSig = 5002;
+	JsonTypeSig = 5003;
+	JsonSetSig = 5004;
+	JsonInsertSig = 5005;
+	JsonReplaceSig = 5006;
+	JsonRemoveSig = 5007;
+	JsonMergeSig = 5008;
+	JsonObjectSig = 5009;
+	JsonArraySig = 5010;
+
+	DateFormatSig = 6001;
+}
+
+// Evaluators should implement evaluation functions for every expression type.
+message Expr {
+	optional ExprType tp = 1 [(gogoproto.nullable) = false];
+	optional bytes val = 2;
+	repeated Expr children = 3;
+	optional ScalarFuncSig sig = 4 [(gogoproto.nullable) = false];
+	optional FieldType field_type = 5;
+}
+
+// ByItem type for group by and order by.
+message ByItem {
+	optional Expr expr = 1;
+	optional bool desc = 2 [(gogoproto.nullable) = false];
+}

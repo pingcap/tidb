@@ -1,0 +1,52 @@
+syntax = "proto3";
+package tikvpb;
+
+import "coprocessor.proto";
+import "kvrpcpb.proto";
+import "raft_serverpb.proto";
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+option java_package = "com.pingcap.tikv.kvproto";
+
+// Serve as a distributed kv database.
+service Tikv {
+    // KV commands with mvcc/txn supported.
+    rpc KvGet(kvrpcpb.GetRequest) returns (kvrpcpb.GetResponse) {}
+    rpc KvScan(kvrpcpb.ScanRequest) returns (kvrpcpb.ScanResponse) {}
+    rpc KvPrewrite(kvrpcpb.PrewriteRequest) returns (kvrpcpb.PrewriteResponse) {}
+    rpc KvCommit(kvrpcpb.CommitRequest) returns (kvrpcpb.CommitResponse) {}
+    rpc KvImport(kvrpcpb.ImportRequest) returns (kvrpcpb.ImportResponse) {}
+    rpc KvCleanup(kvrpcpb.CleanupRequest) returns (kvrpcpb.CleanupResponse) {}
+    rpc KvBatchGet(kvrpcpb.BatchGetRequest) returns (kvrpcpb.BatchGetResponse) {}
+    rpc KvBatchRollback(kvrpcpb.BatchRollbackRequest) returns (kvrpcpb.BatchRollbackResponse) {}
+    rpc KvScanLock(kvrpcpb.ScanLockRequest) returns (kvrpcpb.ScanLockResponse) {}
+    rpc KvResolveLock(kvrpcpb.ResolveLockRequest) returns (kvrpcpb.ResolveLockResponse) {}
+    rpc KvGC(kvrpcpb.GCRequest) returns (kvrpcpb.GCResponse) {}
+    rpc KvDeleteRange(kvrpcpb.DeleteRangeRequest) returns (kvrpcpb.DeleteRangeResponse) {}
+
+    // RawKV commands.
+    rpc RawGet(kvrpcpb.RawGetRequest) returns (kvrpcpb.RawGetResponse) {}
+    rpc RawPut(kvrpcpb.RawPutRequest) returns (kvrpcpb.RawPutResponse) {}
+    rpc RawDelete(kvrpcpb.RawDeleteRequest) returns (kvrpcpb.RawDeleteResponse) {}
+    rpc RawScan(kvrpcpb.RawScanRequest) returns (kvrpcpb.RawScanResponse) {}
+
+    // SQL push down commands.
+    rpc Coprocessor(coprocessor.Request) returns (coprocessor.Response) {}
+    rpc CoprocessorStream(coprocessor.Request)  returns (stream coprocessor.Response) {}
+
+    // Raft commands (tikv <-> tikv).
+    rpc Raft(stream raft_serverpb.RaftMessage) returns (raft_serverpb.Done) {}
+    rpc Snapshot(stream raft_serverpb.SnapshotChunk) returns (raft_serverpb.Done) {}
+
+    // Region commands.
+    rpc SplitRegion (kvrpcpb.SplitRegionRequest) returns (kvrpcpb.SplitRegionResponse) {}
+
+    // transaction debugger commands.
+    rpc MvccGetByKey(kvrpcpb.MvccGetByKeyRequest) returns (kvrpcpb.MvccGetByKeyResponse) {}
+    rpc MvccGetByStartTs(kvrpcpb.MvccGetByStartTsRequest) returns (kvrpcpb.MvccGetByStartTsResponse) {}
+}
