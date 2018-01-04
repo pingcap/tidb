@@ -169,9 +169,11 @@ func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expres
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 		return sig, nil
 	}
-	argTp := args[0].GetType().EvalType()
+	var argTp types.EvalType
 	if args[0].GetType().Hybrid() {
 		argTp = types.ETInt
+	} else {
+		argTp = args[0].GetType().EvalType()
 	}
 	switch argTp {
 	case types.ETInt:
@@ -218,9 +220,11 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Exp
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
 		return sig, nil
 	}
-	argTp := args[0].GetType().EvalType()
+	var argTp types.EvalType
 	if args[0].GetType().Hybrid() {
 		argTp = types.ETInt
+	} else {
+		argTp = args[0].GetType().EvalType()
 	}
 	switch argTp {
 	case types.ETInt:
@@ -308,12 +312,12 @@ func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsBinaryLiteral(args[0]) {
-		sig = &builtinCastTimeAsTimeSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsTime)
-		return sig, nil
+	var argTp types.EvalType
+	if args[0].GetType().Hybrid() {
+		argTp = types.ETInt
+	} else {
+		argTp = args[0].GetType().EvalType()
 	}
-	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsTimeSig{bf}
@@ -354,12 +358,12 @@ func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Ex
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsBinaryLiteral(args[0]) {
-		sig = &builtinCastDurationAsDurationSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDuration)
-		return sig, nil
+	var argTp types.EvalType
+	if args[0].GetType().Hybrid() {
+		argTp = types.ETInt
+	} else {
+		argTp = args[0].GetType().EvalType()
 	}
-	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsDurationSig{bf}
@@ -400,12 +404,12 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsBinaryLiteral(args[0]) {
-		sig = &builtinCastJSONAsJSONSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
-		return sig, nil
+	var argTp types.EvalType
+	if args[0].GetType().Hybrid() {
+		argTp = types.ETInt
+	} else {
+		argTp = args[0].GetType().EvalType()
 	}
-	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsJSONSig{bf}

@@ -1107,9 +1107,9 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		decExpr := WrapWithCastAsDecimal(ctx, t.expr)
 		c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
 		decRes, isNull, err := decExpr.EvalDecimal(t.row, sc)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("case[%v]: %#v\n", i, t))
 		c.Assert(isNull, Equals, false)
-		c.Assert(decRes.Compare(t.decRes), Equals, 0)
+		c.Assert(decRes.Compare(t.decRes), Equals, 0, Commentf("case[%v]: %#v\n", i, t))
 
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(ctx, t.expr)

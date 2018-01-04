@@ -63,10 +63,6 @@ func (col *CorrelatedColumn) EvalReal(row types.Row, sc *stmtctx.StatementContex
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
-	if col.GetType().Hybrid() {
-		res, err := col.Data.ToFloat64(sc)
-		return res, err != nil, errors.Trace(err)
-	}
 	return col.Data.GetFloat64(), false, nil
 }
 
@@ -87,10 +83,6 @@ func (col *CorrelatedColumn) EvalString(row types.Row, sc *stmtctx.StatementCont
 func (col *CorrelatedColumn) EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (*types.MyDecimal, bool, error) {
 	if col.Data.IsNull() {
 		return nil, true, nil
-	}
-	if col.GetType().Hybrid() {
-		res, err := col.Data.ToDecimal(sc)
-		return res, err != nil, errors.Trace(err)
 	}
 	return col.Data.GetMysqlDecimal(), false, nil
 }
