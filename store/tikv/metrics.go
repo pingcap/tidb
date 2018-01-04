@@ -181,6 +181,14 @@ var (
 			Help:      "Counter of secondary lock cleanup worker.",
 		})
 
+	secondaryLockCleanupTaskCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "lock_cleanup_task_total",
+			Help:      "result statistic of secondary lock cleanup task.",
+		}, []string{"type"})
+
 	secondaryLockCleanupHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -232,4 +240,5 @@ func init() {
 	prometheus.MustRegister(loadSafepointCounter)
 	prometheus.MustRegister(secondaryLockCleanupWorkerCounter)
 	prometheus.MustRegister(secondaryLockCleanupHistogram)
+	prometheus.MustRegister(secondaryLockCleanupTaskCounter)
 }
