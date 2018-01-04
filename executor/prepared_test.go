@@ -113,6 +113,37 @@ func (s *testSuite) TestPrepared(c *C) {
 		_, err = tk.Exec("execute stmt")
 		c.Assert(err, NotNil)
 
+		_, _, fields, err := tk.Se.PrepareStmt("select a from prepare3")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "test")
+		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+
+		_, _, fields, err = tk.Se.PrepareStmt("select a from prepare3 where ?")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "test")
+		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+
+		_, _, fields, err = tk.Se.PrepareStmt("select (1,1) in (select 1,1)")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "")
+		c.Assert(fields[0].TableAsName.L, Equals, "")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "(1,1) in (select 1,1)")
+
+		_, _, fields, err = tk.Se.PrepareStmt("select * from prepare3 as t1 join prepare3 as t2")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "test")
+		c.Assert(fields[0].TableAsName.L, Equals, "t1")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+		c.Assert(fields[1].DBName.L, Equals, "test")
+		c.Assert(fields[1].TableAsName.L, Equals, "t2")
+		c.Assert(fields[1].ColumnAsName.L, Equals, "a")
+
+		_, _, fields, err = tk.Se.PrepareStmt("update prepare3 set a = ?")
+		c.Assert(err, IsNil)
+		c.Assert(len(fields), Equals, 0)
+
 		// Coverage.
 		exec := &executor.ExecuteExec{}
 		exec.Next(goCtx)

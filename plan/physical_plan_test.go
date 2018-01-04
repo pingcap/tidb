@@ -394,11 +394,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test join key with cast.
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->StreamAgg)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
-			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection->Sort",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->StreamAgg)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection->Sort",
 		},
 		// FIXME: Report error by resolver.
 		//{
@@ -737,7 +737,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test stream agg + index single.
 		{
 			sql:  "select sum(e), avg(e + c) from t where c = 1 group by c",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]])->StreamAgg",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->StreamAgg)->StreamAgg",
 		},
 		// Test hash agg + index single.
 		{
@@ -779,25 +779,33 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->StreamAgg->Projection",
 		},
 		{
+			sql:  "select sum(e+1) from t group by e,d,c order by c",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Projection",
+		},
+		{
 			sql:  "select sum(to_base64(e)) from t group by e,d,c order by c,e",
 			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->StreamAgg->Sort->Projection",
+		},
+		{
+			sql:  "select sum(e+1) from t group by e,d,c order by c,e",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Sort->Projection",
 		},
 		// Test stream agg + limit or sort
 		{
 			sql:  "select count(*) from t group by g order by g limit 10",
-			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit->Projection",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Limit->Projection",
 		},
 		{
 			sql:  "select count(*) from t group by g limit 10",
-			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Limit",
 		},
 		{
 			sql:  "select count(*) from t group by g order by g",
-			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Projection",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Projection",
 		},
 		{
 			sql:  "select count(*) from t group by g order by g desc limit 1",
-			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit->Projection",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]]->StreamAgg)->StreamAgg->Limit->Projection",
 		},
 		// Test hash agg + limit or sort
 		{
@@ -1056,6 +1064,77 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), cast(hanfei))])->Projection",
 		},
 	}
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc.IgnoreTruncate = false
+		p, err := plan.Optimize(se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}
+
+func (s *testPlanSuite) TestAggEliminater(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := tidb.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Max to Limit + Sort-Desc.
+		{
+			sql:  "select max(a) from t;",
+			best: "TableReader(Table(t)->Limit)->Limit->HashAgg",
+		},
+		// Min to Limit + Sort.
+		{
+			sql:  "select min(a) from t;",
+			best: "TableReader(Table(t)->Limit)->Limit->HashAgg",
+		},
+		// Min to Limit + Sort, and isnull() should be added.
+		{
+			sql:  "select min(c_str) from t;",
+			best: "IndexReader(Index(t.c_d_e_str)[[-inf,+inf]]->Limit)->Limit->HashAgg",
+		},
+		// Do nothing to max + firstrow.
+		{
+			sql:  "select max(a), b from t;",
+			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
+		// If max/min contains scalar function, we can still do transformation.
+		{
+			sql:  "select max(a+1) from t;",
+			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->TopN([plus(test.t.a, 1) true],0,1)->HashAgg",
+		},
+		// Do nothing to max+min.
+		{
+			sql:  "select max(a), min(a) from t;",
+			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
+		// Do nothing to max with groupby.
+		{
+			sql:  "select max(a) from t group by b;",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+		// If inner is not a data source, we can still do transformation.
+		{
+			sql:  "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Limit->HashAgg",
+		},
+	}
+
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")

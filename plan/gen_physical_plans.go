@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -28,7 +29,7 @@ import (
 )
 
 func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, prop)
+	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, p.stats, prop)
 	us.SetSchema(p.schema)
 	return []PhysicalPlan{us}
 }
@@ -210,7 +211,7 @@ func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column
 
 // When inner plan is TableReader, the last two parameter will be nil
 func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int,
-	innerPlan PhysicalPlan, ranges []*ranger.IndexRange, keyOff2IdxOff []int) []PhysicalPlan {
+	innerPlan PhysicalPlan, ranges []*ranger.NewRange, keyOff2IdxOff []int) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
@@ -271,7 +272,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	}
 	var (
 		bestIndexInfo  *model.IndexInfo
-		rangesOfBest   []*ranger.IndexRange
+		rangesOfBest   []*ranger.NewRange
 		maxUsedCols    int
 		remainedOfBest []expression.Expression
 		keyOff2IdxOff  []int
@@ -299,7 +300,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 // buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.
 // If this index is invalid, just return nil range.
 func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (
-	indexRanges []*ranger.IndexRange, remained []expression.Expression, keyOff2IdxOff []int) {
+	[]*ranger.NewRange, []expression.Expression, []int) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
 	if len(idxCols) == 0 {
 		return nil, nil, nil
@@ -312,13 +313,12 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	ranges, err := ranger.BuildRange(p.ctx.GetSessionVars().StmtCtx, accesses, ranger.IndexRangeType, idxCols, colLengths)
+	ranges, err := ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, idxCols, colLengths, accesses)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
 	}
-	indexRanges = ranger.Ranges2IndexRanges(ranges)
-	return indexRanges, remained, keyOff2IdxOff
+	return ranges, remained, keyOff2IdxOff
 }
 
 func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
@@ -461,7 +461,8 @@ func (p *LogicalProjection) genPhysPlansByReqProp(prop *requiredProp) []Physical
 		return nil
 	}
 	proj := PhysicalProjection{
-		Exprs: p.Exprs,
+		Exprs:            p.Exprs,
+		CalculateNoDelay: p.calculateNoDelay,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
@@ -543,26 +544,41 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 	if len(p.groupByCols) != len(p.GroupByItems) {
 		return nil
 	}
-	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties)*2)
 	for _, cols := range p.possibleProperties {
 		_, keys := getPermutation(cols, p.groupByCols)
 		if len(keys) != len(p.groupByCols) {
 			continue
 		}
-		childProp := &requiredProp{
-			cols:        keys,
-			desc:        prop.desc,
-			expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
+		for _, tp := range wholeTaskTypes {
+			// Second read in the double can't meet the stream aggregation's require prop.
+			if tp == copDoubleReadTaskType {
+				continue
+			}
+			// Now we only support pushing down stream aggregation on mocktikv.
+			// TODO: Remove it after TiKV supports stream aggregation.
+			if tp == copSingleReadTaskType {
+				client := p.ctx.GetClient()
+				if !client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeStreamAgg) {
+					continue
+				}
+			}
+			childProp := &requiredProp{
+				taskTp:      tp,
+				cols:        keys,
+				desc:        prop.desc,
+				expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
+			}
+			if !prop.isPrefix(childProp) {
+				continue
+			}
+			agg := basePhysicalAgg{
+				GroupByItems: p.GroupByItems,
+				AggFuncs:     p.AggFuncs,
+			}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
+			agg.SetSchema(p.schema.Clone())
+			streamAggs = append(streamAggs, agg)
 		}
-		if !prop.isPrefix(childProp) {
-			continue
-		}
-		agg := basePhysicalAgg{
-			GroupByItems: p.GroupByItems,
-			AggFuncs:     p.AggFuncs,
-		}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
-		agg.SetSchema(p.schema.Clone())
-		streamAggs = append(streamAggs, agg)
 	}
 	return streamAggs
 }

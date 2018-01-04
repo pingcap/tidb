@@ -28,6 +28,16 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// Filter the input expressions, append the results to result.
+func Filter(result []Expression, input []Expression, filter func(Expression) bool) []Expression {
+	for _, e := range input {
+		if filter(e) {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) (cols []*Column) {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.

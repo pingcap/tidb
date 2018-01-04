@@ -151,7 +151,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 }
 
 func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
-	indexRanges := make([]*ranger.IndexRange, 0, 6)
+	indexRanges := make([]*ranger.NewRange, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 2))
@@ -179,11 +179,11 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
 	}
 }
 
-func generateIndexRange(vals ...int64) *ranger.IndexRange {
+func generateIndexRange(vals ...int64) *ranger.NewRange {
 	lowDatums := generateDatumSlice(vals...)
 	highDatums := make([]types.Datum, len(vals))
 	copy(highDatums, lowDatums)
-	return &ranger.IndexRange{LowVal: lowDatums, HighVal: highDatums}
+	return &ranger.NewRange{LowVal: lowDatums, HighVal: highDatums}
 }
 
 func generateDatumSlice(vals ...int64) []types.Datum {

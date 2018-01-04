@@ -24,14 +24,6 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// Range is the interface of the three type of range.
-type Range interface {
-	fmt.Stringer
-	Convert2IntRange() IntColumnRange
-	Convert2ColumnRange() *ColumnRange
-	Convert2IndexRange() *IndexRange
-}
-
 // IntColumnRange represents a range for a integer column, both low and high are inclusive.
 type IntColumnRange struct {
 	LowVal  int64
@@ -58,61 +50,8 @@ func (tr IntColumnRange) String() string {
 	return l + "," + r
 }
 
-// Convert2IntRange implements the Convert2IntRange interface.
-func (tr IntColumnRange) Convert2IntRange() IntColumnRange {
-	return tr
-}
-
-// Convert2ColumnRange implements the Convert2ColumnRange interface.
-func (tr IntColumnRange) Convert2ColumnRange() *ColumnRange {
-	panic("you shouldn't call this method.")
-}
-
-// Convert2IndexRange implements the Convert2IndexRange interface.
-func (tr IntColumnRange) Convert2IndexRange() *IndexRange {
-	panic("you shouldn't call this method.")
-}
-
-// ColumnRange represents a range for a column.
-type ColumnRange struct {
-	Low      types.Datum
-	High     types.Datum
-	LowExcl  bool
-	HighExcl bool
-}
-
-func (cr *ColumnRange) String() string {
-	var l, r string
-	if cr.LowExcl {
-		l = "("
-	} else {
-		l = "["
-	}
-	if cr.HighExcl {
-		r = ")"
-	} else {
-		r = "]"
-	}
-	return l + formatDatum(cr.Low) + "," + formatDatum(cr.High) + r
-}
-
-// Convert2IntRange implements the Convert2IntRange interface.
-func (cr *ColumnRange) Convert2IntRange() IntColumnRange {
-	panic("you shouldn't call this method.")
-}
-
-// Convert2ColumnRange implements the Convert2ColumnRange interface.
-func (cr *ColumnRange) Convert2ColumnRange() *ColumnRange {
-	return cr
-}
-
-// Convert2IndexRange implements the Convert2IndexRange interface.
-func (cr *ColumnRange) Convert2IndexRange() *IndexRange {
-	panic("you shouldn't call this method.")
-}
-
-// IndexRange represents a range for an index.
-type IndexRange struct {
+// NewRange represents a range generated in physical plan building phase.
+type NewRange struct {
 	LowVal  []types.Datum
 	HighVal []types.Datum
 
@@ -120,31 +59,31 @@ type IndexRange struct {
 	HighExclude bool // High value is exclusive.
 }
 
-// Clone clones a IndexRange.
-func (ir *IndexRange) Clone() *IndexRange {
-	newRange := &IndexRange{
-		LowVal:      make([]types.Datum, 0, len(ir.LowVal)),
-		HighVal:     make([]types.Datum, 0, len(ir.HighVal)),
-		LowExclude:  ir.LowExclude,
-		HighExclude: ir.HighExclude,
+// Clone clones a NewRange.
+func (ran *NewRange) Clone() *NewRange {
+	newRange := &NewRange{
+		LowVal:      make([]types.Datum, 0, len(ran.LowVal)),
+		HighVal:     make([]types.Datum, 0, len(ran.HighVal)),
+		LowExclude:  ran.LowExclude,
+		HighExclude: ran.HighExclude,
 	}
-	for i, length := 0, len(ir.LowVal); i < length; i++ {
-		newRange.LowVal = append(newRange.LowVal, ir.LowVal[i])
+	for i, length := 0, len(ran.LowVal); i < length; i++ {
+		newRange.LowVal = append(newRange.LowVal, ran.LowVal[i])
 	}
-	for i, length := 0, len(ir.HighVal); i < length; i++ {
-		newRange.HighVal = append(newRange.HighVal, ir.HighVal[i])
+	for i, length := 0, len(ran.HighVal); i < length; i++ {
+		newRange.HighVal = append(newRange.HighVal, ran.HighVal[i])
 	}
 	return newRange
 }
 
-// IsPoint returns if the index range is a point.
-func (ir *IndexRange) IsPoint(sc *stmtctx.StatementContext) bool {
-	if len(ir.LowVal) != len(ir.HighVal) {
+// IsPoint returns if the range is a point.
+func (ran *NewRange) IsPoint(sc *stmtctx.StatementContext) bool {
+	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
-	for i := range ir.LowVal {
-		a := ir.LowVal[i]
-		b := ir.HighVal[i]
+	for i := range ran.LowVal {
+		a := ran.LowVal[i]
+		b := ran.HighVal[i]
 		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
 			return false
 		}
@@ -156,50 +95,35 @@ func (ir *IndexRange) IsPoint(sc *stmtctx.StatementContext) bool {
 			return false
 		}
 	}
-	return !ir.LowExclude && !ir.HighExclude
+	return !ran.LowExclude && !ran.HighExclude
 }
 
-// Convert2IndexRange implements the Convert2IndexRange interface.
-func (ir *IndexRange) String() string {
-	lowStrs := make([]string, 0, len(ir.LowVal))
-	for _, d := range ir.LowVal {
+// Convert2NewRange implements the Convert2NewRange interface.
+func (ran *NewRange) String() string {
+	lowStrs := make([]string, 0, len(ran.LowVal))
+	for _, d := range ran.LowVal {
 		lowStrs = append(lowStrs, formatDatum(d))
 	}
-	highStrs := make([]string, 0, len(ir.LowVal))
-	for _, d := range ir.HighVal {
+	highStrs := make([]string, 0, len(ran.LowVal))
+	for _, d := range ran.HighVal {
 		highStrs = append(highStrs, formatDatum(d))
 	}
 	l, r := "[", "]"
-	if ir.LowExclude {
+	if ran.LowExclude {
 		l = "("
 	}
-	if ir.HighExclude {
+	if ran.HighExclude {
 		r = ")"
 	}
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
-// Convert2IntRange implements the Convert2IntRange interface.
-func (ir *IndexRange) Convert2IntRange() IntColumnRange {
-	panic("you shouldn't call this method.")
-}
-
-// Convert2ColumnRange implements the Convert2ColumnRange interface.
-func (ir *IndexRange) Convert2ColumnRange() *ColumnRange {
-	panic("you shouldn't call this method.")
-}
-
-// Convert2IndexRange implements the Convert2IndexRange interface.
-func (ir *IndexRange) Convert2IndexRange() *IndexRange {
-	return ir
-}
-
 // PrefixEqualLen tells you how long the prefix of the range is a point.
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
-func (ir *IndexRange) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
-	// Here, len(ir.LowVal) always equal to len(ir.HighVal)
-	for i := 0; i < len(ir.LowVal); i++ {
-		cmp, err := ir.LowVal[i].CompareDatum(sc, &ir.HighVal[i])
+func (ran *NewRange) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
+	// Here, len(ran.LowVal) always equal to len(ran.HighVal)
+	for i := 0; i < len(ran.LowVal); i++ {
+		cmp, err := ran.LowVal[i].CompareDatum(sc, &ran.HighVal[i])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -207,7 +131,7 @@ func (ir *IndexRange) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) 
 			return i, nil
 		}
 	}
-	return len(ir.LowVal), nil
+	return len(ran.LowVal), nil
 }
 
 func formatDatum(d types.Datum) string {

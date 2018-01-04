@@ -19,6 +19,14 @@ import (
 	. "github.com/pingcap/check"
 )
 
+var _ = Suite(&testJSONSuite{})
+
+type testJSONSuite struct{}
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
 func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
 	strs := []string{
 		`{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`,
@@ -26,23 +34,8 @@ func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
 		`[{"a":1,"b":true},3,3.5,"hello, world",null,true]`,
 	}
 	for _, str := range strs {
-		j := mustParseFromString(str)
-		data := Serialize(j)
-		bj := BinaryJSON{TypeCode: data[0], Value: data[1:]}
-		c.Assert(bj.String(), Equals, str)
 		parsedBJ := mustParseBinaryFromString(c, str)
 		c.Assert(parsedBJ.String(), Equals, str)
-
-		// Test JSON marshaled string can be unmarshaled by BinaryJSON
-		marshaled, err := j.MarshalJSON()
-		c.Assert(err, IsNil)
-		err = bj.UnmarshalJSON(marshaled)
-		c.Assert(err, IsNil)
-		j2, err := bj.ToJSON()
-		c.Assert(err, IsNil)
-		cmp, err := CompareJSON(j, j2)
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, 0)
 	}
 }
 
@@ -108,7 +101,7 @@ func (s *testJSONSuite) TestBinaryJSONType(c *C) {
 	}
 	// we can't parse '9223372036854775808' to JSON::Uint64 now,
 	// because go builtin JSON parser treats that as DOUBLE.
-	c.Assert(CreateJSON(uint64(1<<63)).Type(), Equals, "UNSIGNED INTEGER")
+	c.Assert(CreateBinary(uint64(1<<63)).Type(), Equals, "UNSIGNED INTEGER")
 }
 
 func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
@@ -298,31 +291,5 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 	bj, _ := ParseBinaryFromString(benchStr)
 	for i := 0; i < b.N; i++ {
 		bj.MarshalJSON()
-	}
-}
-
-func BenchmarkMarshal(b *testing.B) {
-	b.ReportAllocs()
-	b.SetBytes(int64(len(benchStr)))
-	j, _ := ParseFromString(benchStr)
-	for i := 0; i < b.N; i++ {
-		j.MarshalJSON()
-	}
-}
-
-func BenchmarkSerialize(b *testing.B) {
-	b.ReportAllocs()
-	b.SetBytes(int64(len(benchStr)))
-	j, _ := ParseFromString(benchStr)
-	for i := 0; i < b.N; i++ {
-		Serialize(j)
-	}
-}
-
-func BenchmarkDeserialize(b *testing.B) {
-	b.ReportAllocs()
-	bj, _ := ParseBinaryFromString(benchStr)
-	for i := 0; i < b.N; i++ {
-		decode(bj.TypeCode, bj.Value)
 	}
 }

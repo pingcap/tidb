@@ -52,6 +52,11 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
+		// Now we only support pushing down stream aggregation on mocktikv.
+		// TODO: Remove it after TiKV supports stream aggregation.
+		if subType == kv.ReqSubTypeStreamAgg {
+			return c.store.mock
+		}
 		return c.supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeAnalyze:
 		return true
@@ -81,7 +86,8 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_Coalesce:
 		return true
 	// aggregate functions.
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
+	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
+		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr:
 		return true
 	// json functions.
 	case tipb.ExprType_JsonType, tipb.ExprType_JsonExtract, tipb.ExprType_JsonUnquote,
@@ -451,6 +457,8 @@ func (it *copIterator) sendToRespCh(goCtx goctx.Context, resp copResponse, respC
 }
 
 // Next returns next coprocessor result.
+// NOTE: Use nil to indicate finish, so if the returned values is a slice with
+// size 0, reader should continue to call Next().
 func (it *copIterator) Next() ([]byte, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
@@ -532,7 +540,19 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 			NotFillCache:   it.req.NotFillCache,
 		},
 	}
-	resp, err := sender.SendReq(bo, req, task.region, ReadTimeoutMedium)
+	timeout := ReadTimeoutMedium
+	if task.cmdType == tikvrpc.CmdCopStream {
+		// Don't set timeout for streaming, because we use context cancel to implement timeout,
+		// but call cancel() would kill the stream:
+		//
+		//     context, cancel := goctx.WithTimeout(bo, timeout)
+		//     defer cancel()
+		//     resp := client.SendReq(context, ...)
+		//
+		// The resp is a stream and killed by cancel operation immediately.
+		timeout = 0
+	}
+	resp, err := sender.SendReq(bo, req, task.region, timeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

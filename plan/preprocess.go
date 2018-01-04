@@ -333,13 +333,6 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			default:
 				// Nothing to do now.
 			}
-		case ast.AlterTableOption:
-			for _, opt := range spec.Options {
-				if opt.Tp == ast.TableOptionAutoIncrement {
-					p.err = ErrAlterAutoID
-					return
-				}
-			}
 		default:
 			// Nothing to do now.
 		}
@@ -428,6 +421,14 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			if strings.Contains(str, ",") {
 				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
 			}
+		}
+	case mysql.TypeNewDecimal:
+		if tp.Decimal > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+		}
+
+		if tp.Flen > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 	default:
 		// TODO: Add more types.

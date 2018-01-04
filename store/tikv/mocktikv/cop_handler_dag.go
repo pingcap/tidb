@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -138,7 +139,9 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	case tipb.ExecType_TypeSelection:
 		currExec, err = h.buildSelection(ctx, curr)
 	case tipb.ExecType_TypeAggregation:
-		currExec, err = h.buildAggregation(ctx, curr)
+		currExec, err = h.buildHashAgg(ctx, curr)
+	case tipb.ExecType_TypeStreamAgg:
+		currExec, err = h.buildStreamAgg(ctx, curr)
 	case tipb.ExecType_TypeTopN:
 		currExec, err = h.buildTopN(ctx, curr)
 	case tipb.ExecType_TypeLimit:
@@ -232,7 +235,7 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 	}, nil
 }
 
-func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) (*aggregateExec, error) {
+func (h *rpcHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]aggregation.Aggregation, []expression.Expression, []int, error) {
 	length := len(executor.Aggregation.AggFunc)
 	aggs := make([]aggregation.Aggregation, 0, length)
 	var err error
@@ -241,31 +244,61 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 		var aggExpr aggregation.Aggregation
 		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
 		}
 		aggs = append(aggs, aggExpr)
 		relatedColOffsets, err = extractOffsetsInExpr(expr, ctx.evalCtx.columnInfos, relatedColOffsets)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
 		}
 	}
 	for _, item := range executor.Aggregation.GroupBy {
 		relatedColOffsets, err = extractOffsetsInExpr(item, ctx.evalCtx.columnInfos, relatedColOffsets)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
 		}
 	}
 	groupBys, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, executor.Aggregation.GetGroupBy())
 	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+
+	return aggs, groupBys, relatedColOffsets, nil
+}
+
+func (h *rpcHandler) buildHashAgg(ctx *dagContext, executor *tipb.Executor) (*hashAggExec, error) {
+	aggs, groupBys, relatedColOffsets, err := h.getAggInfo(ctx, executor)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return &aggregateExec{
+	return &hashAggExec{
 		evalCtx:           ctx.evalCtx,
 		aggExprs:          aggs,
 		groupByExprs:      groupBys,
 		groups:            make(map[string]struct{}),
 		groupKeys:         make([][]byte, 0),
+		relatedColOffsets: relatedColOffsets,
+		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
+	}, nil
+}
+
+func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*streamAggExec, error) {
+	aggs, groupBys, relatedColOffsets, err := h.getAggInfo(ctx, executor)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	aggCtxs := make([]*aggregation.AggEvaluateContext, 0, len(aggs))
+	for _, agg := range aggs {
+		aggCtxs = append(aggCtxs, agg.CreateContext())
+	}
+
+	return &streamAggExec{
+		evalCtx:           ctx.evalCtx,
+		aggExprs:          aggs,
+		aggCtxs:           aggCtxs,
+		groupByExprs:      groupBys,
+		currGroupByValues: make([][]byte, 0),
 		relatedColOffsets: relatedColOffsets,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
 	}, nil
