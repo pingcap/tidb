@@ -1049,6 +1049,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return dom, errors.Trace(err)
 }
 
+// GetDomain gets the associated domain for store.
+func GetDomain(store kv.Storage) (*domain.Domain, error) {
+	return domap.Get(store)
+}
+
 // runInBootstrapSession create a special session for boostrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
