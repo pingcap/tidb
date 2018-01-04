@@ -158,7 +158,8 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 
 // EncodeValue encodes a go value to bytes.
 func EncodeValue(raw types.Datum, loc *time.Location) ([]byte, error) {
-	v, err := flatten(raw, loc)
+	var v types.Datum
+	err := flatten(raw, loc, &v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -175,13 +176,11 @@ func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location, valBuf []b
 	values := make([]types.Datum, 2*len(row))
 	for i, c := range row {
 		id := colIDs[i]
-		idv := types.NewIntDatum(id)
-		values[2*i] = idv
-		fc, err := flatten(c, loc)
+		values[2*i].SetInt64(id)
+		err := flatten(c, loc, &values[2*i+1])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		values[2*i+1] = fc
 	}
 	if len(values) == 0 {
 		// We could not set nil value into kv.
@@ -190,7 +189,7 @@ func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location, valBuf []b
 	return codec.EncodeValue(valBuf, values...)
 }
 
-func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
+func flatten(data types.Datum, loc *time.Location, ret *types.Datum) error {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
@@ -198,31 +197,33 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 		if t.Type == mysql.TypeTimestamp && loc != time.UTC {
 			err := t.ConvertTimeZone(loc, time.UTC)
 			if err != nil {
-				return data, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 		v, err := t.ToPackedUint()
-		return types.NewUintDatum(v), errors.Trace(err)
+		ret.SetUint64(v)
+		return errors.Trace(err)
 	case types.KindMysqlDuration:
 		// for mysql time type
-		data.SetInt64(int64(data.GetMysqlDuration().Duration))
-		return data, nil
+		ret.SetInt64(int64(data.GetMysqlDuration().Duration))
+		return nil
 	case types.KindMysqlEnum:
-		data.SetUint64(data.GetMysqlEnum().Value)
-		return data, nil
+		ret.SetUint64(data.GetMysqlEnum().Value)
+		return nil
 	case types.KindMysqlSet:
-		data.SetUint64(data.GetMysqlSet().Value)
-		return data, nil
+		ret.SetUint64(data.GetMysqlSet().Value)
+		return nil
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		val, err := data.GetBinaryLiteral().ToInt()
 		if err != nil {
-			return data, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		data.SetUint64(val)
-		return data, nil
+		ret.SetUint64(val)
+		return nil
 	default:
-		return data, nil
+		*ret = data
+		return nil
 	}
 }
 
