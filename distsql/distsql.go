@@ -295,6 +295,8 @@ func SelectDAG(goCtx goctx.Context, ctx context.Context, kvReq *kv.Request, fiel
 		}
 	}()
 
+	kvReq.Streaming = true
+
 	resp := ctx.GetClient().Send(goCtx, kvReq)
 	if resp == nil {
 		err = errors.New("client returns nil response")

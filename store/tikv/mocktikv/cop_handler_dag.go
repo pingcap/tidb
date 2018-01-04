@@ -48,36 +48,16 @@ type dagContext struct {
 
 func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	if len(req.Ranges) == 0 {
-		return resp
-	}
-	if req.GetTp() != kv.ReqTypeDAG {
-		return resp
-	}
 	if err := h.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
 		return resp
 	}
-
-	dagReq := new(tipb.DAGRequest)
-	err := proto.Unmarshal(req.Data, dagReq)
+	e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
 	}
-	sc := flagsToStatementContext(dagReq.Flags)
-	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
-	ctx := &dagContext{
-		dagReq:    dagReq,
-		keyRanges: req.Ranges,
-		evalCtx:   &evalContext{sc: sc, timeZone: timeZone},
-	}
-	e, err := h.buildDAG(ctx, dagReq.Executors)
-	if err != nil {
-		return &coprocessor.Response{
-			OtherError: err.Error(),
-		}
-	}
+
 	var (
 		chunks []tipb.Chunk
 		rowCnt int
@@ -107,18 +87,18 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	return buildResp(chunks, counts, err)
 }
 
-func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
+func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (executor, *tipb.DAGRequest, error) {
 	if len(req.Ranges) == 0 {
-		return nil, errors.New("request range is null")
+		return nil, nil, errors.New("request range is null")
 	}
 	if req.GetTp() != kv.ReqTypeDAG {
-		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
+		return nil, nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
 
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
 	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
@@ -128,6 +108,14 @@ func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_Copr
 		evalCtx:   &evalContext{sc: sc, timeZone: timeZone},
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return e, dagReq, err
+}
+
+func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
+	e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -439,12 +427,10 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 		EncodeType: tipb.EncodeType_TypeDefault,
 		Data:       data,
 	}
-	data1, err1 := proto.Marshal(&streamResponse)
-	if err1 != nil {
-		resp.OtherError = err1.Error()
-		return &resp, nil
+	resp.Data, err = proto.Marshal(&streamResponse)
+	if err != nil {
+		resp.OtherError = err.Error()
 	}
-	resp.Data = data1
 	return &resp, nil
 }
 
