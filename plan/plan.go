@@ -184,6 +184,9 @@ type LogicalPlan interface {
 	genPhysPlansByReqProp(*requiredProp) []PhysicalPlan
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
+
+	// MaxOneRow means whether this operator only returns max one row.
+	MaxOneRow() bool
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -203,15 +206,20 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
 
-	// statsInfo will return the statsInfo for this plan.
-	statsInfo() *statsInfo
+	// StatsInfo will return the statsInfo for this plan.
+	StatsInfo() *statsInfo
 }
 
 type baseLogicalPlan struct {
 	basePlan
 
-	taskMap map[string]task
-	self    LogicalPlan
+	taskMap   map[string]task
+	self      LogicalPlan
+	maxOneRow bool
+}
+
+func (p *baseLogicalPlan) MaxOneRow() bool {
+	return p.maxOneRow
 }
 
 type basePhysicalPlan struct {
@@ -244,14 +252,20 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	for _, child := range p.basePlan.children {
 		child.(LogicalPlan).buildKeyInfo()
 	}
-	if len(p.basePlan.children) == 1 {
+	switch p.self.(type) {
+	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
+		p.maxOneRow = p.children[0].(LogicalPlan).MaxOneRow()
+	case *LogicalMaxOneRow, *LogicalExists:
+		p.maxOneRow = true
+	}
+	if len(p.children) == 1 {
 		switch p.self.(type) {
 		case *LogicalExists, *LogicalAggregation, *LogicalProjection:
-			p.basePlan.schema.Keys = nil
+			p.schema.Keys = nil
 		case *LogicalLock:
-			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
+			p.schema.Keys = p.basePlan.children[0].Schema().Keys
 		default:
-			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
+			p.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
 		}
 	} else {
 		p.basePlan.schema.Keys = nil

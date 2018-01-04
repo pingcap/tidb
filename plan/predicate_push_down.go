@@ -307,8 +307,7 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 	for i, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
-			newCond := expression.ColumnSubstitute(cond, p.Schema(), expression.Column2Exprs(proj.Schema().Columns))
-			newExprs = append(newExprs, newCond)
+			newExprs = append(newExprs, cond.Clone())
 		}
 		retCond, newChild := proj.(LogicalPlan).PredicatePushDown(newExprs)
 		addSelection(p, newChild, retCond, i)

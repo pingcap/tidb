@@ -132,19 +132,19 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}{
 		{
 			sql:  "select count(*) from t group by e",
-			best: "IndexReader(Index(t.e)[[<nil>,+inf]])->StreamAgg",
+			best: "IndexReader(Index(t.e)[[<nil>,+inf]]->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e <= 10 group by e",
-			best: "IndexReader(Index(t.e)[[-inf,10]])->StreamAgg",
+			best: "IndexReader(Index(t.e)[[-inf,10]]->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e <= 50",
-			best: "IndexReader(Index(t.e)[[-inf,50]]->HashAgg)->HashAgg",
+			best: "IndexReader(Index(t.e)[[-inf,50]]->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
+			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
@@ -168,7 +168,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 50",
-			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->HashAgg)->HashAgg",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select * from t where t.b <= 40",
@@ -360,6 +360,36 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
+}
+
+func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx(a))")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
+	}
+	h := dom.StatsHandle()
+	h.DumpStatsDeltaToKV()
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t select * from t")
+	testKit.MustExec("insert into t select * from t")
+	testKit.MustExec("insert into t select * from t")
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
+	// FIXME: The count for table scan is wrong.
+	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
+		"TableScan_5 Selection_6  cop table:t, range:(-inf,+inf), keep order:false 28.799999999999997",
+		"Selection_6  TableScan_5 cop le(test.t.a, 5), le(test.t.b, 5) 28.799999999999997",
+		"TableReader_7   root data:Selection_6 28.799999999999997",
+	))
 }
 
 func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {

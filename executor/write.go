@@ -197,6 +197,22 @@ func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
 	return nil, e.deleteSingleTable(goCtx)
 }
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *DeleteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.finished {
+		return nil
+	}
+	defer func() {
+		e.finished = true
+	}()
+
+	if e.IsMultiTable {
+		return errors.Trace(e.deleteMultiTablesByChunk(goCtx))
+	}
+	return errors.Trace(e.deleteSingleTableByChunk(goCtx))
+}
+
 type tblColPosInfo struct {
 	tblID         int64
 	colBeginIndex int
@@ -204,31 +220,19 @@ type tblColPosInfo struct {
 	handleIndex   int
 }
 
+// tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
+// the key in map[int64]Row is the joined table handle, which represent a unique reference row.
+// the value in map[int64]Row is the deleting row.
+type tableRowMapType map[int64]map[int64]Row
+
 func (e *DeleteExec) deleteMultiTables(goCtx goctx.Context) error {
 	if len(e.Tables) == 0 {
 		return nil
 	}
 
-	e.tblMap = make(map[int64][]*ast.TableName, len(e.Tables))
-	for _, t := range e.Tables {
-		e.tblMap[t.TableInfo.ID] = append(e.tblMap[t.TableInfo.ID], t)
-	}
-	var colPosInfos []tblColPosInfo
-	// Extract the columns' position information of this table in the delete's schema, together with the table id
-	// and its handle's position in the schema.
-	for id, cols := range e.SelectExec.Schema().TblID2Handle {
-		tbl := e.tblID2Table[id]
-		for _, col := range cols {
-			if !e.matchingDeletingTable(id, col) {
-				continue
-			}
-			offset := getTableOffset(e.SelectExec.Schema(), col)
-			end := offset + len(tbl.Cols())
-			colPosInfos = append(colPosInfos, tblColPosInfo{tblID: id, colBeginIndex: offset, colEndIndex: end, handleIndex: col.Index})
-		}
-	}
-	// Map for unique (Table, Row) pair.
-	tblRowMap := make(map[int64]map[int64][]types.Datum)
+	e.initialMultiTableTblMap()
+	colPosInfos := e.getColPosInfos(e.children[0].Schema())
+	tblRowMap := make(tableRowMapType)
 	for {
 		joinedRow, err := e.SelectExec.Next(goCtx)
 		if err != nil {
@@ -238,23 +242,10 @@ func (e *DeleteExec) deleteMultiTables(goCtx goctx.Context) error {
 			break
 		}
 
-		for _, info := range colPosInfos {
-			if tblRowMap[info.tblID] == nil {
-				tblRowMap[info.tblID] = make(map[int64][]types.Datum)
-			}
-			handle := joinedRow[info.handleIndex].GetInt64()
-			tblRowMap[info.tblID][handle] = joinedRow[info.colBeginIndex:info.colEndIndex]
-		}
+		e.composeTblRowMap(tblRowMap, colPosInfos, joinedRow)
 	}
-	for id, rowMap := range tblRowMap {
-		for handle, data := range rowMap {
-			err := e.removeRow(e.ctx, e.tblID2Table[id], handle, data)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
+
+	return errors.Trace(e.removeRowsInTblRowMap(tblRowMap))
 }
 
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
@@ -301,17 +292,154 @@ func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 		if row == nil {
 			break
 		}
-		end := len(row)
-		if handleIsExtra(handleCol) {
-			end--
-		}
-		handle := row[handleCol.Index].GetInt64()
-		err = e.removeRow(e.ctx, tbl, handle, row[:end])
+		err = e.deleteOneRow(tbl, handleCol, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		rowCount++
 	}
+	return nil
+}
+
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row Row) error {
+	end := len(row)
+	if handleIsExtra(handleCol) {
+		end--
+	}
+	handle := row[handleCol.Index].GetInt64()
+	err := e.removeRow(e.ctx, tbl, handle, row[:end])
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
+	var (
+		id        int64
+		tbl       table.Table
+		handleCol *expression.Column
+		rowCount  int
+	)
+	for i, t := range e.tblID2Table {
+		id, tbl = i, t
+		handleCol = e.children[0].Schema().TblID2Handle[id][0]
+		break
+	}
+
+	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
+	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
+	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
+	fields := e.children[0].Schema().GetTypes()
+	for {
+		chk := e.children[0].newChunk()
+		err := e.children[0].NextChunk(goCtx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for chunkRow := chk.Begin(); chunkRow != chk.End(); chunkRow = chunkRow.Next() {
+			if batchDelete && rowCount >= batchDMLSize {
+				if err = e.ctx.NewTxn(); err != nil {
+					// We should return a special error for batch insert.
+					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
+				}
+				rowCount = 0
+			}
+
+			datumRow := chunkRow.GetDatumRow(fields)
+			err = e.deleteOneRow(tbl, handleCol, datumRow)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			rowCount++
+		}
+	}
+
+	return nil
+}
+
+func (e *DeleteExec) initialMultiTableTblMap() {
+	e.tblMap = make(map[int64][]*ast.TableName, len(e.Tables))
+	for _, t := range e.Tables {
+		e.tblMap[t.TableInfo.ID] = append(e.tblMap[t.TableInfo.ID], t)
+	}
+}
+
+func (e *DeleteExec) getColPosInfos(schema *expression.Schema) []tblColPosInfo {
+	var colPosInfos []tblColPosInfo
+	// Extract the columns' position information of this table in the delete's schema, together with the table id
+	// and its handle's position in the schema.
+	for id, cols := range schema.TblID2Handle {
+		tbl := e.tblID2Table[id]
+		for _, col := range cols {
+			if !e.matchingDeletingTable(id, col) {
+				continue
+			}
+			offset := getTableOffset(schema, col)
+			end := offset + len(tbl.Cols())
+			colPosInfos = append(colPosInfos, tblColPosInfo{tblID: id, colBeginIndex: offset, colEndIndex: end, handleIndex: col.Index})
+		}
+	}
+	return colPosInfos
+}
+
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []tblColPosInfo, joinedRow Row) {
+	// iterate all the joined tables, and got the copresonding rows in joinedRow.
+	for _, info := range colPosInfos {
+		if tblRowMap[info.tblID] == nil {
+			tblRowMap[info.tblID] = make(map[int64]Row)
+		}
+		handle := joinedRow[info.handleIndex].GetInt64()
+		// tblRowMap[info.tblID][handle] hold the row datas binding to this table and this handle.
+		tblRowMap[info.tblID][handle] = joinedRow[info.colBeginIndex:info.colEndIndex]
+	}
+}
+
+func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
+	if len(e.Tables) == 0 {
+		return nil
+	}
+
+	e.initialMultiTableTblMap()
+	colPosInfos := e.getColPosInfos(e.children[0].Schema())
+	tblRowMap := make(tableRowMapType)
+	fields := e.children[0].Schema().GetTypes()
+	for {
+		chk := e.children[0].newChunk()
+		err := e.children[0].NextChunk(goCtx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for joinedChunkRow := chk.Begin(); joinedChunkRow != chk.End(); joinedChunkRow = joinedChunkRow.Next() {
+			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
+			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
+		}
+	}
+
+	return errors.Trace(e.removeRowsInTblRowMap(tblRowMap))
+}
+
+func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
+	for id, rowMap := range tblRowMap {
+		for handle, data := range rowMap {
+			err := e.removeRow(e.ctx, e.tblID2Table[id], handle, data)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -632,8 +760,7 @@ func (k loadDataVarKeyType) String() string {
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
-// Next implements the Executor Next interface.
-func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
+func (e *LoadData) exec(goCtx goctx.Context) (Row, error) {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return nil, errors.New("Load Data: don't support load data without local field")
@@ -655,6 +782,18 @@ func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
 	ctx.SetValue(LoadDataVarKey, e.loadDataInfo)
 
 	return nil, nil
+}
+
+// Next implements the Executor Next interface.
+func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
+	return e.exec(goCtx)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *LoadData) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	_, err := e.exec(goCtx)
+	return errors.Trace(err)
 }
 
 // Close implements the Executor Close interface.
@@ -789,7 +928,7 @@ func (e *InsertExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 
 	var rows [][]types.Datum
 	if len(e.children) > 0 && e.children[0] != nil {
-		rows, err = e.getRowsSelect(goCtx, cols, e.IgnoreErr)
+		rows, err = e.getRowsSelectChunk(goCtx, cols, e.IgnoreErr)
 	} else {
 		rows, err = e.getRows(cols, e.IgnoreErr)
 	}

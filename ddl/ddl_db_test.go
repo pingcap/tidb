@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
@@ -66,6 +67,7 @@ type testDBSuite struct {
 	tk         *testkit.TestKit
 	s          tidb.Session
 	lease      time.Duration
+	autoIDStep int64
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
@@ -77,6 +79,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	tidb.SetSchemaLease(s.lease)
 	tidb.SetStatsLease(0)
 	s.schemaName = "test_db"
+	s.autoIDStep = autoid.GetStep()
+	autoid.SetStep(5000)
 
 	s.store, err = tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -99,6 +103,7 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+	autoid.SetStep(s.autoIDStep)
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -1675,4 +1680,32 @@ func (s *testDBSuite) TestComment(c *C) {
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1688|Comment for index 'e' is too long (max = 1024)"))
 
 	s.tk.MustExec("drop table if exists ct, ct1")
+}
+
+func (s *testDBSuite) TestRebaseAutoID(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("drop database if exists tidb;")
+	s.tk.MustExec("create database tidb;")
+	s.tk.MustExec("use tidb;")
+	s.tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1"))
+	s.tk.MustExec("alter table tidb.test auto_increment = 6000;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1"))
+	s.tk.MustExec("alter table tidb.test auto_increment = 5;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1"))
+
+	// Current range for table test is [11000, 15999].
+	// Though it does not have a tuple "a = 15999", its global next auto increment id should be 16000.
+	// Anyway it is not compatible with MySQL.
+	s.tk.MustExec("alter table tidb.test auto_increment = 12000;")
+	s.tk.MustExec("insert tidb.test values (null, 1);")
+	s.tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1", "16000 1"))
+
+	s.tk.MustExec("create table tidb.test2 (a int);")
+	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }

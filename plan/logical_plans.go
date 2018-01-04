@@ -165,6 +165,12 @@ type LogicalProjection struct {
 	// calculateGenCols indicates the projection is for calculating generated columns.
 	// In *UPDATE*, we should know this to tell different projections.
 	calculateGenCols bool
+
+	// calculateNoDelay indicates this Projection is the root Plan and should be
+	// calculated without delay and will not return any result to client.
+	// Currently it is "true" only when the current sql query is a "DO" statement.
+	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
+	calculateNoDelay bool
 }
 
 func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {

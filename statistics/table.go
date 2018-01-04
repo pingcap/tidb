@@ -113,7 +113,7 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	return nil
 }
 
-func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
+func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -125,7 +125,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
 		needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
-		if h.Lease > 0 && !isHandle && needNotLoad {
+		if h.Lease > 0 && !isHandle && needNotLoad && !loadAll {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
 				return errors.Trace(err)
@@ -136,7 +136,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Count:     count}
 			break
 		}
-		if col == nil || col.LastUpdateVersion < histVer {
+		if col == nil || col.LastUpdateVersion < histVer || loadAll {
 			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
 			if err != nil {
 				return errors.Trace(err)
@@ -161,7 +161,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 }
 
 // tableStatsFromStorage loads table stats info from storage.
-func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, error) {
+func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
 		table = &Table{
@@ -188,7 +188,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 				return nil, errors.Trace(err)
 			}
 		} else {
-			if err := h.columnStatsFromStorage(row, table, tableInfo); err != nil {
+			if err := h.columnStatsFromStorage(row, table, tableInfo, loadAll); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -307,20 +307,24 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
 	c := t.Columns[colID]
-	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
+	result, err := c.getIntColumnRowCount(sc, intRanges)
+	result *= c.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
-// GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
-func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.ColumnRange) (float64, error) {
+// GetRowCountByColumnRanges estimates the row count by a slice of NewRange.
+func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.NewRange) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
-		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
+		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
 	}
 	c := t.Columns[colID]
-	return c.getColumnRowCount(sc, colRanges)
+	result, err := c.getColumnRowCount(sc, colRanges)
+	result *= c.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
-// GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
-func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.IndexRange) (float64, error) {
+// GetRowCountByIndexRanges estimates the row count by a slice of NewRange.
+func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.NewRange) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
@@ -339,7 +343,7 @@ func PseudoTable(tableID int64) *Table {
 	return t
 }
 
-func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.IndexRange,
+func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange,
 	tableRowCount float64) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
@@ -354,8 +358,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
 		}
-		colRange := []*ranger.ColumnRange{{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}}
-		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, colRange)
+		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.NewRange{indexRange}, i)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -373,25 +376,25 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 	return totalCount, nil
 }
 
-func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.ColumnRange) (float64, error) {
+func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.NewRange, colIdx int) (float64, error) {
 	var rowCount float64
 	var err error
 	for _, ran := range columnRanges {
-		if ran.Low.Kind() == types.KindNull && ran.High.Kind() == types.KindMaxValue {
+		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount
-		} else if ran.Low.Kind() == types.KindMinNotNull {
+		} else if ran.LowVal[colIdx].Kind() == types.KindMinNotNull {
 			var nullCount float64
 			nullCount = tableRowCount / pseudoEqualRate
-			if ran.High.Kind() == types.KindMaxValue {
+			if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 				rowCount += tableRowCount - nullCount
 			} else if err == nil {
 				lessCount := tableRowCount / pseudoLessRate
 				rowCount += lessCount - nullCount
 			}
-		} else if ran.High.Kind() == types.KindMaxValue {
+		} else if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err1 := ran.Low.CompareDatum(sc, &ran.High)
+			compare, err1 := ran.LowVal[colIdx].CompareDatum(sc, &ran.HighVal[colIdx])
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}

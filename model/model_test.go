@@ -14,7 +14,9 @@
 package model
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -119,6 +121,17 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	}
 	no := anIndex.HasPrefixIndex()
 	c.Assert(no, Equals, false)
+}
+
+func (*testModelSuite) TestJobStartTime(c *C) {
+	job := &Job{
+		ID:         123,
+		BinlogInfo: &HistoryInfo{},
+	}
+	t := time.Unix(0, 0)
+	c.Assert(t, Equals, job.startTime())
+	ret := fmt.Sprintf("%s", job)
+	c.Assert(job.String(), Equals, ret)
 }
 
 func (*testModelSuite) TestJobCodec(c *C) {

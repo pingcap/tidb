@@ -398,13 +398,14 @@ func setupSignalHandler() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%s] to exit.", sig)
+		if sig == syscall.SIGTERM {
+			graceful = true
+		}
+
 		if xsvr != nil {
 			xsvr.Close() // Should close mysqlx server before server.
 		}
 		svr.Close()
-		if sig == syscall.SIGTERM {
-			graceful = true
-		}
 	}()
 }
 
