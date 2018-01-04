@@ -618,6 +618,7 @@ const (
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
 	TableOptionStatsPersistent
+	TableOptionShardRowID
 )
 
 // RowFormat types

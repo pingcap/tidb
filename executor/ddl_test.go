@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -282,4 +283,31 @@ func (s *testSuite) TestUnsupportedCharset(c *C) {
 		}
 	}
 	tk.MustExec("drop database " + dbName)
+}
+
+func (s *testSuite) TestShardRowIDBits(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
+	}
+	tbl, err := sessionctx.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	var hasShardedID bool
+	var count int
+	c.Assert(tk.Se.NewTxn(), IsNil)
+	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+		c.Assert(h, GreaterEqual, int64(0))
+		first8bits := h >> 56
+		if first8bits > 0 {
+			hasShardedID = true
+		}
+		count++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 100)
+	c.Assert(hasShardedID, IsTrue)
 }

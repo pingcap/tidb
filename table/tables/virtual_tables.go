@@ -139,7 +139,7 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, h int64, oldData, newD
 }
 
 // AllocAutoID implements table.Table Type interface.
-func (vt *VirtualTable) AllocAutoID() (int64, error) {
+func (vt *VirtualTable) AllocAutoID(ctx context.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 

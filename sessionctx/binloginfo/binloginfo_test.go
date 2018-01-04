@@ -117,11 +117,12 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk := s.tk
 	pump := s.pump
 	tk.MustExec("drop table if exists local_binlog")
-	ddlQuery := "create table local_binlog (id int primary key, name varchar(10))"
+	ddlQuery := "create table local_binlog (id int primary key, name varchar(10)) shard_row_id_bits=1"
+	binlogDDLQuery := "create table local_binlog (id int primary key, name varchar(10)) /*!90000 shard_row_id_bits=1 */"
 	tk.MustExec(ddlQuery)
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, pump, ddlQuery)
+		preDDL, commitDDL := getLatestDDLBinlog(c, pump, binlogDDLQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)

@@ -263,6 +263,29 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	return ver, nil
 }
 
+func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var shardRowIDBits uint64
+	err := job.DecodeArgs(&shardRowIDBits)
+	if err != nil {
+		job.State = model.JobCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo.ShardRowIDBits = shardRowIDBits
+	job.State = model.JobCancelled
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	ver, err = updateTableInfo(t, job, tblInfo, tblInfo.State)
+	if err != nil {
+		job.State = model.JobCancelled
+		return ver, errors.Trace(err)
+	}
+	return ver, nil
+}
+
 func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var oldSchemaID int64
 	var tableName model.CIStr

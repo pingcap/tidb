@@ -1148,7 +1148,7 @@ func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData, n
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) AllocAutoID() (int64, error) {
+func (it *infoschemaTable) AllocAutoID(ctx context.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
