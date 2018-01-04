@@ -422,8 +422,8 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 		return
 	}
 
-	copTasks := []Plan{}
-	pipelines := []string{}
+	var copTasks []Plan
+	var pipelines []string
 
 	for planQueue := []Plan{p}; len(planQueue) > 0; planQueue = planQueue[1:] {
 		curPlan := planQueue[0]

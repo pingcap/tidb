@@ -287,8 +287,8 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 		}
 		if num, null, off := parseLengthEncodedInt(data[offset:]); !null {
 			offset += off
-			kv := data[offset : offset+int(num)]
-			attrs, err := parseAttrs(kv)
+			row := data[offset : offset+int(num)]
+			attrs, err := parseAttrs(row)
 			if err != nil {
 				log.Warn("parse attrs error:", errors.ErrorStack(err))
 				return nil

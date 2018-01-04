@@ -178,16 +178,16 @@ func (p *LogicalProjection) replaceExprColumns(replace map[string]*expression.Co
 	}
 }
 
-func (p *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, agg := range p.AggFuncs {
+func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, agg := range la.AggFuncs {
 		for _, aggExpr := range agg.GetArgs() {
 			resolveExprAndReplace(aggExpr, replace)
 		}
 	}
-	for _, gbyItem := range p.GroupByItems {
+	for _, gbyItem := range la.GroupByItems {
 		resolveExprAndReplace(gbyItem, replace)
 	}
-	p.collectGroupByColumns()
+	la.collectGroupByColumns()
 }
 
 func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
@@ -196,9 +196,9 @@ func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Col
 	}
 }
 
-func (p *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
-	p.LogicalJoin.replaceExprColumns(replace)
-	for _, coCol := range p.corCols {
+func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
+	la.LogicalJoin.replaceExprColumns(replace)
+	for _, coCol := range la.corCols {
 		dst := replace[string(coCol.Column.HashCode())]
 		if dst != nil {
 			coCol.Column = *dst
@@ -206,14 +206,14 @@ func (p *LogicalApply) replaceExprColumns(replace map[string]*expression.Column)
 	}
 }
 
-func (p *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range p.ByItems {
+func (ls *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, byItem := range ls.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
-func (p *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range p.ByItems {
+func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, byItem := range lt.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
 	}
 }

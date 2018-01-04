@@ -21,7 +21,7 @@ import (
 // Portable analogs of some common call errors.
 var (
 	ErrBadConn       = errors.New("connection was bad")
-	ErrMalformPacket = errors.New("Malform packet error")
+	ErrMalformPacket = errors.New("malform packet error")
 )
 
 // SQLError records an error information, from executing SQL.

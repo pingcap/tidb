@@ -38,36 +38,36 @@ func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 }
 
 // setChild set p as topn's child. If eliminable is true, this topn plan can be removed.
-func (s *LogicalTopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
-	if s.partial && eliminable {
+func (lt *LogicalTopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
+	if lt.partial && eliminable {
 		return p
 	}
-	if s.isLimit() {
+	if lt.isLimit() {
 		limit := LogicalLimit{
-			Count:   s.Count,
-			Offset:  s.Offset,
-			partial: s.partial,
-		}.init(s.ctx)
+			Count:   lt.Count,
+			Offset:  lt.Offset,
+			partial: lt.partial,
+		}.init(lt.ctx)
 		limit.SetChildren(p)
 		limit.SetSchema(p.Schema().Clone())
 		return limit
 	}
-	// Then s must be topN.
-	s.SetChildren(p)
-	s.SetSchema(p.Schema().Clone())
-	return s
+	// Then lt must be topN.
+	lt.SetChildren(p)
+	lt.SetSchema(p.Schema().Clone())
+	return lt
 }
 
-func (s *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	if topN == nil {
-		return s.baseLogicalPlan.pushDownTopN(nil)
+		return ls.baseLogicalPlan.pushDownTopN(nil)
 	} else if topN.isLimit() {
-		topN.ByItems = s.ByItems
+		topN.ByItems = ls.ByItems
 		// If a Limit is pushed down, the LogicalSort should be converted to topN and be pushed again.
-		return s.children[0].(LogicalPlan).pushDownTopN(topN)
+		return ls.children[0].(LogicalPlan).pushDownTopN(topN)
 	}
 	// If a TopN is pushed down, this sort is useless.
-	return s.children[0].(LogicalPlan).pushDownTopN(topN)
+	return ls.children[0].(LogicalPlan).pushDownTopN(topN)
 }
 
 func (p *LogicalLimit) convertToTopN() *LogicalTopN {

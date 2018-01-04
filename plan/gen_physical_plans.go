@@ -468,61 +468,61 @@ func (p *LogicalProjection) genPhysPlansByReqProp(prop *requiredProp) []Physical
 	return []PhysicalPlan{proj}
 }
 
-func (p *LogicalTopN) getPhysTopN() []PhysicalPlan {
+func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 	ret := make([]PhysicalPlan, 0, 3)
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: math.MaxFloat64}
 		topN := PhysicalTopN{
-			ByItems: p.ByItems,
-			Count:   p.Count,
-			Offset:  p.Offset,
-			partial: p.partial,
-		}.init(p.ctx, p.stats, resultProp)
-		topN.SetSchema(p.schema)
+			ByItems: lt.ByItems,
+			Count:   lt.Count,
+			Offset:  lt.Offset,
+			partial: lt.partial,
+		}.init(lt.ctx, lt.stats, resultProp)
+		topN.SetSchema(lt.schema)
 		ret = append(ret, topN)
 	}
 	return ret
 }
 
-func (p *LogicalTopN) getPhysLimits() []PhysicalPlan {
-	prop, canPass := getPropByOrderByItems(p.ByItems)
+func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
+	prop, canPass := getPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil
 	}
 	ret := make([]PhysicalPlan, 0, 3)
 	for _, tp := range wholeTaskTypes {
-		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(p.Count + p.Offset), cols: prop.cols, desc: prop.desc}
+		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(lt.Count + lt.Offset), cols: prop.cols, desc: prop.desc}
 		limit := PhysicalLimit{
-			Count:   p.Count,
-			Offset:  p.Offset,
-			partial: p.partial,
-		}.init(p.ctx, p.stats, resultProp)
-		limit.SetSchema(p.schema)
+			Count:   lt.Count,
+			Offset:  lt.Offset,
+			partial: lt.partial,
+		}.init(lt.ctx, lt.stats, resultProp)
+		limit.SetSchema(lt.schema)
 		ret = append(ret, limit)
 	}
 	return ret
 }
 
-func (p *LogicalTopN) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	if prop.matchItems(p.ByItems) {
-		return append(p.getPhysTopN(), p.getPhysLimits()...)
+func (lt *LogicalTopN) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if prop.matchItems(lt.ByItems) {
+		return append(lt.getPhysTopN(), lt.getPhysLimits()...)
 	}
 	return nil
 }
 
-func (p *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	if !prop.allColsFromSchema(p.children[0].Schema()) { // for convenient, we don't pass through any prop
+func (la *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if !prop.allColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
 	apply := PhysicalApply{
-		PhysicalJoin:  p.getHashJoin(prop, 1),
-		OuterSchema:   p.corCols,
-		rightChOffset: p.children[0].Schema().Len(),
-	}.init(p.ctx,
-		p.stats.scaleByExpectCnt(prop.expectedCnt),
+		PhysicalJoin:  la.getHashJoin(prop, 1),
+		OuterSchema:   la.corCols,
+		rightChOffset: la.children[0].Schema().Len(),
+	}.init(la.ctx,
+		la.stats.scaleByExpectCnt(prop.expectedCnt),
 		&requiredProp{expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc},
 		&requiredProp{expectedCnt: math.MaxFloat64})
-	apply.SetSchema(p.schema)
+	apply.SetSchema(la.schema)
 	return []PhysicalPlan{apply}
 }
 
@@ -531,23 +531,23 @@ func (p *baseLogicalPlan) genPhysPlansByReqProp(_ *requiredProp) []PhysicalPlan 
 	panic("This function should not be called")
 }
 
-func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
-	if len(p.possibleProperties) == 0 {
+func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
+	if len(la.possibleProperties) == 0 {
 		return nil
 	}
-	for _, aggFunc := range p.AggFuncs {
+	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.GetMode() == aggregation.FinalMode {
 			return nil
 		}
 	}
 	// group by a + b is not interested in any order.
-	if len(p.groupByCols) != len(p.GroupByItems) {
+	if len(la.groupByCols) != len(la.GroupByItems) {
 		return nil
 	}
-	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties)*2)
-	for _, cols := range p.possibleProperties {
-		_, keys := getPermutation(cols, p.groupByCols)
-		if len(keys) != len(p.groupByCols) {
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*2)
+	for _, cols := range la.possibleProperties {
+		_, keys := getPermutation(cols, la.groupByCols)
+		if len(keys) != len(la.groupByCols) {
 			continue
 		}
 		for _, tp := range wholeTaskTypes {
@@ -558,7 +558,7 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			// Now we only support pushing down stream aggregation on mocktikv.
 			// TODO: Remove it after TiKV supports stream aggregation.
 			if tp == copSingleReadTaskType {
-				client := p.ctx.GetClient()
+				client := la.ctx.GetClient()
 				if !client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeStreamAgg) {
 					continue
 				}
@@ -567,43 +567,43 @@ func (p *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 				taskTp:      tp,
 				cols:        keys,
 				desc:        prop.desc,
-				expectedCnt: prop.expectedCnt * p.inputCount / p.stats.count,
+				expectedCnt: prop.expectedCnt * la.inputCount / la.stats.count,
 			}
 			if !prop.isPrefix(childProp) {
 				continue
 			}
 			agg := basePhysicalAgg{
-				GroupByItems: p.GroupByItems,
-				AggFuncs:     p.AggFuncs,
-			}.initForStream(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
-			agg.SetSchema(p.schema.Clone())
+				GroupByItems: la.GroupByItems,
+				AggFuncs:     la.AggFuncs,
+			}.initForStream(la.ctx, la.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
 	}
 	return streamAggs
 }
 
-func (p *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
+func (la *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() {
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
 	for _, taskTp := range wholeTaskTypes {
 		agg := basePhysicalAgg{
-			GroupByItems: p.GroupByItems,
-			AggFuncs:     p.AggFuncs,
-		}.initForHash(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64, taskTp: taskTp})
-		agg.SetSchema(p.schema.Clone())
+			GroupByItems: la.GroupByItems,
+			AggFuncs:     la.AggFuncs,
+		}.initForHash(la.ctx, la.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64, taskTp: taskTp})
+		agg.SetSchema(la.schema.Clone())
 		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs
 }
 
-func (p *LogicalAggregation) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
-	aggs = append(aggs, p.getHashAggs(prop)...)
+func (la *LogicalAggregation) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
+	aggs = append(aggs, la.getHashAggs(prop)...)
 
-	streamAggs := p.getStreamAggs(prop)
+	streamAggs := la.getStreamAggs(prop)
 	aggs = append(aggs, streamAggs...)
 
 	return aggs
@@ -657,27 +657,27 @@ func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPl
 	return []PhysicalPlan{ua}
 }
 
-func (p *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
-	ps := PhysicalSort{ByItems: p.ByItems}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64})
-	ps.SetSchema(p.schema)
+func (ls *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
+	ps := PhysicalSort{ByItems: ls.ByItems}.init(ls.ctx, ls.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64})
+	ps.SetSchema(ls.schema)
 	return ps
 }
 
-func (p *LogicalSort) getNominalSort(reqProp *requiredProp) *NominalSort {
-	prop, canPass := getPropByOrderByItems(p.ByItems)
+func (ls *LogicalSort) getNominalSort(reqProp *requiredProp) *NominalSort {
+	prop, canPass := getPropByOrderByItems(ls.ByItems)
 	if !canPass {
 		return nil
 	}
 	prop.expectedCnt = reqProp.expectedCnt
-	ps := NominalSort{}.init(p.ctx, prop)
+	ps := NominalSort{}.init(ls.ctx, prop)
 	return ps
 }
 
-func (p *LogicalSort) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
-	if prop.matchItems(p.ByItems) {
+func (ls *LogicalSort) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+	if prop.matchItems(ls.ByItems) {
 		ret := make([]PhysicalPlan, 0, 2)
-		ret = append(ret, p.getPhysicalSort(prop))
-		ns := p.getNominalSort(prop)
+		ret = append(ret, ls.getPhysicalSort(prop))
+		ns := ls.getNominalSort(prop)
 		if ns != nil {
 			ret = append(ret, ns)
 		}

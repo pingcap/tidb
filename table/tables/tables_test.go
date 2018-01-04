@@ -221,7 +221,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 }
 
 func (ts *testSuite) TestRowKeyCodec(c *C) {
-	table := []struct {
+	tableVal := []struct {
 		tableID int64
 		h       int64
 		ID      int64
@@ -232,7 +232,7 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 		{4, -1, 1},
 	}
 
-	for _, t := range table {
+	for _, t := range tableVal {
 		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, t.h)
 		tableID, handle, err := tablecodec.DecodeRecordKey(b)
 		c.Assert(err, IsNil)

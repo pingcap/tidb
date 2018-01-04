@@ -319,11 +319,11 @@ func (n *FuncCallExpr) Format(w io.Writer) {
 		for i, arg := range n.Args {
 			arg.Format(w)
 			if i != len(n.Args)-1 {
-				fmt.Fprintf(w, ", ")
+				fmt.Fprint(w, ", ")
 			}
 		}
 	}
-	fmt.Fprintf(w, ")")
+	fmt.Fprint(w, ")")
 }
 
 // specialFormatArgs formats argument list for some special functions.
@@ -331,14 +331,14 @@ func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 	switch n.FnName.L {
 	case DateAdd, DateSub, AddDate, SubDate:
 		n.Args[0].Format(w)
-		fmt.Fprintf(w, ", INTERVAL ")
+		fmt.Fprint(w, ", INTERVAL ")
 		n.Args[1].Format(w)
 		fmt.Fprintf(w, " %s", n.Args[2].GetDatum().GetString())
 		return true
 	case TimestampAdd, TimestampDiff:
 		fmt.Fprintf(w, "%s, ", n.Args[0].GetDatum().GetString())
 		n.Args[1].Format(w)
-		fmt.Fprintf(w, ", ")
+		fmt.Fprint(w, ", ")
 		n.Args[2].Format(w)
 		return true
 	}
@@ -388,19 +388,19 @@ type FuncCastExpr struct {
 func (n *FuncCastExpr) Format(w io.Writer) {
 	switch n.FunctionType {
 	case CastFunction:
-		fmt.Fprintf(w, "CAST(")
+		fmt.Fprint(w, "CAST(")
 		n.Expr.Format(w)
-		fmt.Fprintf(w, " AS ")
+		fmt.Fprint(w, " AS ")
 		n.Tp.FormatAsCastType(w)
-		fmt.Fprintf(w, ")")
+		fmt.Fprint(w, ")")
 	case CastConvertFunction:
-		fmt.Fprintf(w, "CONVERT(")
+		fmt.Fprint(w, "CONVERT(")
 		n.Expr.Format(w)
-		fmt.Fprintf(w, ", ")
+		fmt.Fprint(w, ", ")
 		n.Tp.FormatAsCastType(w)
-		fmt.Fprintf(w, ")")
+		fmt.Fprint(w, ")")
 	case CastBinaryOperator:
-		fmt.Fprintf(w, "BINARY ")
+		fmt.Fprint(w, "BINARY ")
 		n.Expr.Format(w)
 	}
 }

@@ -69,9 +69,9 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
-	return predicates, p
+func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	_, ds.pushedDownConds, predicates = expression.ExpressionsToPB(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient())
+	return predicates, ds
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
@@ -316,15 +316,15 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 }
 
 // getGbyColIndex gets the column's index in the group-by columns.
-func (p *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
-	return expression.NewSchema(p.groupByCols...).ColumnIndex(col)
+func (la *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
+	return expression.NewSchema(la.groupByCols...).ColumnIndex(col)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	var condsToPush []expression.Expression
-	exprsOriginal := make([]expression.Expression, 0, len(p.AggFuncs))
-	for _, fun := range p.AggFuncs {
+	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
+	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.GetArgs()[0])
 	}
 	for _, cond := range predicates {
@@ -339,13 +339,13 @@ func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expressio
 			extractedCols := expression.ExtractColumns(cond)
 			ok := true
 			for _, col := range extractedCols {
-				if p.getGbyColIndex(col) == -1 {
+				if la.getGbyColIndex(col) == -1 {
 					ok = false
 					break
 				}
 			}
 			if ok {
-				newFunc := expression.ColumnSubstitute(cond.Clone(), p.Schema(), exprsOriginal)
+				newFunc := expression.ColumnSubstitute(cond.Clone(), la.Schema(), exprsOriginal)
 				condsToPush = append(condsToPush, newFunc)
 			} else {
 				ret = append(ret, cond)
@@ -354,8 +354,8 @@ func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expressio
 			ret = append(ret, cond)
 		}
 	}
-	p.baseLogicalPlan.PredicatePushDown(condsToPush)
-	return ret, p
+	la.baseLogicalPlan.PredicatePushDown(condsToPush)
+	return ret, la
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
