@@ -580,6 +580,11 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
+
+	tbl.Count *= 10
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 10)
 }
 
 func (s *testStatisticsSuite) TestIndexRanges(c *C) {
