@@ -989,7 +989,7 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 		return nil, errors.Trace(err)
 	}
 
-	// append warnings and remove keys which duplicate with table rows
+	// append warnings and make duplicated rows
 	offsets := make(map[int]bool, len(rows)/2+1)
 	for _, k := range keysWithErr {
 		if _, exist := values[string(k.key)]; exist {
@@ -998,22 +998,9 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 				offsets[k.offset] = true
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
 			}
-		}
-	}
-
-	// append warnings and remove keys which duplicate with statement rows
-	selfUniqueKeys := make(map[string]bool, len(keysWithErr)/2+1)
-	for _, k := range keysWithErr {
-		if _, dupRow := offsets[k.offset]; dupRow {
-			continue
-		}
-		if _, nonUnique := selfUniqueKeys[string(k.key)]; !nonUnique {
-			selfUniqueKeys[string(k.key)] = true
 		} else {
-			if _, ok := offsets[k.offset]; !ok {
-				offsets[k.offset] = true
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
-			}
+			// add keys of rows to values, due to they need to be check within insert statement
+			values[string(k.key)] = []byte{}
 		}
 	}
 
