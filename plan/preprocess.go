@@ -422,6 +422,14 @@ func checkColumn(colDef *ast.ColumnDef) error {
 				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
 			}
 		}
+	case mysql.TypeNewDecimal:
+		if tp.Decimal > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+		}
+
+		if tp.Flen > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		}
 	default:
 		// TODO: Add more types.
 	}
