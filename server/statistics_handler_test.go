@@ -63,7 +63,7 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	cfg.Status.StatusPort = 10090
 	cfg.Status.ReportStatus = true
 
-	server, err := NewServer(cfg, tidbdrv)
+	server, err := NewServer(cfg, tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 
 	ds.server = server
