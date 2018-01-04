@@ -249,12 +249,12 @@ func NewStore(path string) (kv.Storage, error) {
 }
 
 func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
-	storeUrl, err := url.Parse(path)
+	storeURL, err := url.Parse(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	name := strings.ToLower(storeUrl.Scheme)
+	name := strings.ToLower(storeURL.Scheme)
 	d, ok := stores[name]
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
