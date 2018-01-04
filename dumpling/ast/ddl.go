@@ -636,6 +636,7 @@ const (
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
 	TableOptionStatsPersistent
+	TableOptionShardRowID
 	TableOptionPackKeys
 )
 

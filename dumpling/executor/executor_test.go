@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -65,11 +66,15 @@ type testSuite struct {
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
 	*parser.Parser
+
+	autoIDStep int64
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	s.autoIDStep = autoid.GetStep()
+	autoid.SetStep(5000)
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -96,6 +101,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
+	autoid.SetStep(s.autoIDStep)
 }
 
 func (s *testSuite) SetUpTest(c *C) {
