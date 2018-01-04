@@ -87,3 +87,7 @@
 [[constraint]]
   name = "github.com/pingcap/tipb"
   revision = "07ff5b094233a557a3ac11b1e4d8714d8c6ff406"
+
+[[constraint]]
+  name = "github.com/grpc-ecosystem/go-grpc-middleware"
+  revision = "82921fcf811d228d2fa202bc31238b356bf9f8d5"
