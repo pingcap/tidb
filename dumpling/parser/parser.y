@@ -177,6 +177,7 @@ import (
 	or			"OR"
 	order			"ORDER"
 	outer			"OUTER"
+	packKeys		"PACK_KEYS"
 	partition		"PARTITION"
 	precisionType		"PRECISION"
 	primary			"PRIMARY"
@@ -5272,6 +5273,12 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
 	}
+|	"PACK_KEYS" EqOpt StatsPersistentVal
+	{
+		// Parse it but will ignore it.
+		$$ = &ast.TableOption{Tp: ast.TableOptionPackKeys}
+	}
+
 
 StatsPersistentVal:
 	"DEFAULT"
