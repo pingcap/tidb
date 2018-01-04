@@ -44,6 +44,7 @@ const (
 	ActionRebaseAutoID
 	ActionRenameTable
 	ActionSetDefaultValue
+	ActionShardRowID
 )
 
 func (action ActionType) String() string {
@@ -78,6 +79,8 @@ func (action ActionType) String() string {
 		return "rename table"
 	case ActionSetDefaultValue:
 		return "set default value"
+	case ActionShardRowID:
+		return "shard row ID"
 	default:
 		return "none"
 	}
