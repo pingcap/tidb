@@ -113,7 +113,7 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	return nil
 }
 
-func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
+func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -125,7 +125,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
 		needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
-		if h.Lease > 0 && !isHandle && needNotLoad {
+		if h.Lease > 0 && !isHandle && needNotLoad && !loadAll {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
 				return errors.Trace(err)
@@ -136,7 +136,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Count:     count}
 			break
 		}
-		if col == nil || col.LastUpdateVersion < histVer {
+		if col == nil || col.LastUpdateVersion < histVer || loadAll {
 			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
 			if err != nil {
 				return errors.Trace(err)
@@ -161,7 +161,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 }
 
 // tableStatsFromStorage loads table stats info from storage.
-func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, error) {
+func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
 		table = &Table{
@@ -188,7 +188,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 				return nil, errors.Trace(err)
 			}
 		} else {
-			if err := h.columnStatsFromStorage(row, table, tableInfo); err != nil {
+			if err := h.columnStatsFromStorage(row, table, tableInfo, loadAll); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -307,7 +307,9 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
 	c := t.Columns[colID]
-	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
+	result, err := c.getIntColumnRowCount(sc, intRanges)
+	result *= c.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of NewRange.
@@ -316,7 +318,9 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
 	}
 	c := t.Columns[colID]
-	return c.getColumnRowCount(sc, colRanges)
+	result, err := c.getColumnRowCount(sc, colRanges)
+	result *= c.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of NewRange.

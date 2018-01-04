@@ -189,6 +189,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.RawScan.Context = ctx
 	case CmdCop:
 		req.Cop.Context = ctx
+	case CmdCopStream:
+		req.Cop.Context = ctx
 	case CmdMvccGetByKey:
 		req.MvccGetByKey.Context = ctx
 	case CmdMvccGetByStartTs:
@@ -325,6 +327,9 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawScan.GetRegionError()
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
+	case CmdCopStream:
+		// Region error will be returned when the first time StreamResponse.Recv() is called.
+		e = nil
 	case CmdMvccGetByKey:
 		e = resp.MvccGetByKey.GetRegionError()
 	case CmdMvccGetByStartTs:
