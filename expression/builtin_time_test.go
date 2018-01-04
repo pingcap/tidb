@@ -2217,24 +2217,35 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 		sv.TimeZone = originTZ
 	}()
 
-	for _, funcName := range []string{ast.Sysdate, ast.Curdate} {
-		now := time.Now().In(sv.TimeZone)
-		f, err := funcs[funcName].getFunction(s.ctx, nil)
-		d, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-
-		result, _ := d.GetMysqlTime().Time.GoTime(sv.TimeZone)
-		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
+	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
+		result, _ := d.GetMysqlTime().Time.GoTime(loc)
+		return result
 	}
-
-	for _, funcName := range []string{ast.CurrentTime, ast.Curtime} {
-		now := time.Now().In(sv.TimeZone)
-		f, err := funcs[funcName].getFunction(s.ctx, nil)
-		d, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-
+	durationToGoTime := func(d types.Datum, loc *time.Location) time.Time {
 		t, _ := d.GetMysqlDuration().ConvertToTime(mysql.TypeDatetime)
 		result, _ := t.Time.GoTime(sv.TimeZone)
+		return result
+	}
+
+	tests := []struct {
+		method        string
+		Input         []types.Datum
+		convertToTime func(types.Datum, *time.Location) time.Time
+	}{
+		{ast.Sysdate, makeDatums(2), timeToGoTime},
+		{ast.Sysdate, nil, timeToGoTime},
+		{ast.Curdate, nil, timeToGoTime},
+		{ast.CurrentTime, makeDatums(2), durationToGoTime},
+		{ast.CurrentTime, nil, durationToGoTime},
+		{ast.Curtime, nil, durationToGoTime},
+	}
+
+	for _, t := range tests {
+		now := time.Now().In(sv.TimeZone)
+		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
+		d, err := evalBuiltinFunc(f, nil)
+		c.Assert(err, IsNil)
+		result := t.convertToTime(d, sv.TimeZone)
 		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
 	}
 }
