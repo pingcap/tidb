@@ -38,6 +38,7 @@
 		ColumnInfo
 		IndexInfo
 		KeyRange
+		SelectRequest
 		Row
 		Error
 		SelectResponse
