@@ -138,8 +138,13 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, collector *SampleCol
 	}
 	bucketIdx := 0
 	var lastCount int64
-	hg.Buckets[0].LowerBound = samples[0]
-	for i := int64(0); i < int64(len(samples)); i++ {
+	hg.Buckets[0] = Bucket{
+		LowerBound: samples[0],
+		UpperBound: samples[0],
+		Count:      int64(sampleFactor),
+		Repeats:    int64(ndvFactor),
+	}
+	for i := int64(1); i < int64(len(samples)); i++ {
 		cmp, err := hg.Buckets[bucketIdx].UpperBound.CompareDatum(sc, &samples[i])
 		if err != nil {
 			return nil, errors.Trace(err)
