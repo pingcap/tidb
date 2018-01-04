@@ -202,7 +202,6 @@
   name = "github.com/sirupsen/logrus"
   packages = ["."]
   revision = "ba1b36c82c5e05c4f912a88eab0dcd91a171688f"
-  version = "v0.11.5"
 
 [[projects]]
   name = "github.com/spaolacci/murmur3"
@@ -261,6 +260,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "6ae81f952eb3430f5ee880a7180373a0b6005fa39b44d4e9980aebc135a46b21"
+  inputs-digest = "716625c6f056d6df1cff068a684fcb41daa1c1e822336a76540998cd9b42aaa8"
   solver-name = "gps-cdcl"
   solver-version = 1
