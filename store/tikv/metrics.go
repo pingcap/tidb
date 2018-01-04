@@ -230,4 +230,6 @@ func init() {
 	prometheus.MustRegister(rawkvSizeHistogram)
 	prometheus.MustRegister(txnRegionsNumHistogram)
 	prometheus.MustRegister(loadSafepointCounter)
+	prometheus.MustRegister(secondaryLockCleanupWorkerCounter)
+	prometheus.MustRegister(secondaryLockCleanupHistogram)
 }

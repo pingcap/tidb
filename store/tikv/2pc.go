@@ -225,13 +225,15 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// Commit secondary batches in background goroutine to reduce latency.
 		twoPhaseCommitGP.Go(func() {
 			start := time.Now()
-			defer func() { secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds()) }()
 			secondaryLockCleanupWorkerCounter.Inc()
+			defer func() {
+				secondaryLockCleanupWorkerCounter.Dec()
+				secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds())
+				}()
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
 			}
-			secondaryLockCleanupWorkerCounter.Dec()
 		})
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
@@ -575,16 +577,18 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		if !committed && !undetermined {
 			twoPhaseCommitGP.Go(func() {
 				start := time.Now()
-				defer func() { secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds()) }()
-
 				secondaryLockCleanupWorkerCounter.Inc()
+				defer func() {
+					secondaryLockCleanupWorkerCounter.Dec()
+					secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds())
+					}()
+
 				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
 				if err != nil {
 					log.Infof("2PC cleanup err: %v, tid: %d", err, c.startTS)
 				} else {
 					log.Infof("2PC clean up done, tid: %d", c.startTS)
 				}
-				secondaryLockCleanupWorkerCounter.Dec()
 			})
 		}
 	}()
@@ -635,10 +639,10 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		return errors.Trace(err)
 	}
 
-	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
-		err = errors.Errorf("txn takes too much time, start: %d, commit: %d", c.startTS, c.commitTS)
-		return errors.Annotate(err, txnRetryableMark)
-	}
+	//if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
+	//	err = errors.Errorf("txn takes too much time, start: %d, commit: %d", c.startTS, c.commitTS)
+	//	return errors.Annotate(err, txnRetryableMark)
+	//}
 
 	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
 	if err != nil {
