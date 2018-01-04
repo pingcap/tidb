@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -181,6 +182,9 @@ func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
+		if item.GetType().Tp == mysql.TypeNewDecimal {
+			v.SetLength(0)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
