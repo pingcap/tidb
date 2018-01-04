@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"math"
 	"testing"
 
 	"github.com/juju/errors"
@@ -517,67 +516,6 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	c.Assert(int(count), Equals, 9996)
 	ran[0].LowVal[0] = ran[0].HighVal[0]
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
-	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 1)
-}
-
-func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
-	bucketCount := int64(256)
-	ctx := mock.NewContext()
-	sc := ctx.GetSessionVars().StmtCtx
-
-	s.pk.(*recordSet).cursor = 0
-	rowCount, hg, err := buildPK(ctx, bucketCount, 0, s.pk)
-	calculateScalar(hg)
-	c.Check(err, IsNil)
-	c.Check(rowCount, Equals, int64(100000))
-	col := &Column{Histogram: *hg}
-	tbl := &Table{
-		Count:   int64(col.totalRowCount()),
-		Columns: make(map[int64]*Column),
-	}
-	ran := []ranger.IntColumnRange{{
-		LowVal:  math.MinInt64,
-		HighVal: math.MaxInt64,
-	}}
-	count, err := tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
-	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 100000)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 2000
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
-	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 1000)
-	ran[0].LowVal = 1001
-	ran[0].HighVal = 1999
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
-	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 998)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 1000
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
-	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 100)
-
-	tbl.Columns[0] = col
-	ran[0].LowVal = math.MinInt64
-	ran[0].HighVal = math.MaxInt64
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
-	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 100000)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 2000
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
-	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 1000)
-	ran[0].LowVal = 1001
-	ran[0].HighVal = 1999
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
-	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 998)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 1000
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
 }

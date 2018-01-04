@@ -83,20 +83,23 @@ func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
 	return nil, nil
 }
 
-func tableRangesToKVRanges(tid int64, tableRanges []ranger.IntColumnRange) []kv.KeyRange {
-	krs := make([]kv.KeyRange, 0, len(tableRanges))
-	for _, tableRange := range tableRanges {
-		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
-
-		var endKey kv.Key
-		if tableRange.HighVal != math.MaxInt64 {
-			endKey = tablecodec.EncodeRowKeyWithHandle(tid, tableRange.HighVal+1)
-		} else {
-			endKey = tablecodec.EncodeRowKeyWithHandle(tid, tableRange.HighVal).Next()
+func tableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
+	krs := make([]kv.KeyRange, 0, len(ranges))
+	for _, ran := range ranges {
+		var low, high []byte
+		low = codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
+		high = codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+		if ran.LowExclude {
+			low = []byte(kv.Key(low).PrefixNext())
 		}
+		if !ran.HighExclude {
+			high = []byte(kv.Key(high).PrefixNext())
+		}
+		startKey := tablecodec.EncodeRowKey(tid, low)
+		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
-	return krs
+	return krs, nil
 }
 
 /*
@@ -301,7 +304,7 @@ type TableReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []ranger.IntColumnRange
+	ranges    []*ranger.NewRange
 	dagPB     *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
@@ -874,8 +877,11 @@ func (builder *requestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, errors.Trace(builder.err)
 }
 
-func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []ranger.IntColumnRange) *requestBuilder {
-	builder.Request.KeyRanges = tableRangesToKVRanges(tid, tableRanges)
+func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.NewRange) *requestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+	builder.Request.KeyRanges, builder.err = tableRangesToKVRanges(tid, tableRanges)
 	return builder
 }
 

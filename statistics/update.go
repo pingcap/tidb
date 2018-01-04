@@ -179,7 +179,7 @@ type QueryFeedback struct {
 	colID       int64
 	isIndex     bool
 	idxRanges   []*ranger.NewRange
-	intRanges   []ranger.IntColumnRange
+	intRanges   []*ranger.NewRange
 	histVersion uint64 // histVersion is the version of the histogram when we issue the query.
 	expected    int64
 	actual      int64
@@ -205,7 +205,7 @@ func (q *QueryFeedback) SetIndexRanges(ranges []*ranger.NewRange) *QueryFeedback
 }
 
 // SetIntRanges sets the int column ranges.
-func (q *QueryFeedback) SetIntRanges(ranges []ranger.IntColumnRange) *QueryFeedback {
+func (q *QueryFeedback) SetIntRanges(ranges []*ranger.NewRange) *QueryFeedback {
 	q.intRanges = ranges
 	return q
 }

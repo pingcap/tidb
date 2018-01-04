@@ -302,12 +302,19 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []ranger.IntColumnRange) (float64, error) {
+func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.NewRange) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
-		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
+		if len(intRanges) == 0 {
+			return float64(t.Count), nil
+		}
+		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
+			return getPseudoRowCountBySignedIntRanges(intRanges, float64(t.Count)), nil
+		} else {
+			return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(t.Count)), nil
+		}
 	}
 	c := t.Columns[colID]
-	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
+	return c.getColumnRowCount(sc, intRanges)
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of NewRange.
@@ -410,25 +417,57 @@ func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 	return rowCount, nil
 }
 
-func getPseudoRowCountByIntRanges(intRanges []ranger.IntColumnRange, tableRowCount float64) float64 {
+func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.NewRange, tableRowCount float64) float64 {
 	var rowCount float64
 	for _, rg := range intRanges {
 		var cnt float64
-		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
+		low := rg.LowVal[0].GetInt64()
+		high := rg.HighVal[0].GetInt64()
+		if low == math.MinInt64 && high == math.MaxInt64 {
 			cnt = tableRowCount
-		} else if rg.LowVal == math.MinInt64 {
+		} else if low == math.MinInt64 {
 			cnt = tableRowCount / pseudoLessRate
-		} else if rg.HighVal == math.MaxInt64 {
+		} else if high == math.MaxInt64 {
 			cnt = tableRowCount / pseudoLessRate
 		} else {
-			if rg.LowVal == rg.HighVal {
+			if low == high {
 				cnt = tableRowCount / pseudoEqualRate
 			} else {
 				cnt = tableRowCount / pseudoBetweenRate
 			}
 		}
-		if rg.HighVal-rg.LowVal > 0 && cnt > float64(rg.HighVal-rg.LowVal) {
-			cnt = float64(rg.HighVal - rg.LowVal)
+		if high-low > 0 && cnt > float64(high-low) {
+			cnt = float64(high - low)
+		}
+		rowCount += cnt
+	}
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
+	}
+	return rowCount
+}
+
+func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.NewRange, tableRowCount float64) float64 {
+	var rowCount float64
+	for _, rg := range intRanges {
+		var cnt float64
+		low := rg.LowVal[0].GetUint64()
+		high := rg.HighVal[0].GetUint64()
+		if low == 0 && high == math.MaxUint64 {
+			cnt = tableRowCount
+		} else if low == 0 {
+			cnt = tableRowCount / pseudoLessRate
+		} else if high == math.MaxUint64 {
+			cnt = tableRowCount / pseudoLessRate
+		} else {
+			if low == high {
+				cnt = tableRowCount / pseudoEqualRate
+			} else {
+				cnt = tableRowCount / pseudoBetweenRate
+			}
+		}
+		if high > low && cnt > float64(high-low) {
+			cnt = float64(high - low)
 		}
 		rowCount += cnt
 	}

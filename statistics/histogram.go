@@ -16,7 +16,6 @@ package statistics
 import (
 	"bytes"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 
@@ -475,40 +474,6 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (f
 	}
 	count, err := c.Histogram.equalRowCount(sc, val)
 	return count, errors.Trace(err)
-}
-
-// getIntColumnRowCount estimates the row count by a slice of IntColumnRange.
-func (c *Column) getIntColumnRowCount(sc *stmtctx.StatementContext, intRanges []ranger.IntColumnRange,
-	totalRowCount float64) (float64, error) {
-	var rowCount float64
-	for _, rg := range intRanges {
-		var cnt float64
-		var err error
-		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
-			cnt = totalRowCount
-		} else if rg.LowVal == math.MinInt64 {
-			cnt, err = c.lessAndEqRowCount(sc, types.NewIntDatum(rg.HighVal))
-		} else if rg.HighVal == math.MaxInt64 {
-			cnt, err = c.greaterAndEqRowCount(sc, types.NewIntDatum(rg.LowVal))
-		} else {
-			if rg.LowVal == rg.HighVal {
-				cnt, err = c.equalRowCount(sc, types.NewIntDatum(rg.LowVal))
-			} else {
-				cnt, err = c.betweenRowCount(sc, types.NewIntDatum(rg.LowVal), types.NewIntDatum(rg.HighVal+1))
-			}
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if rg.HighVal-rg.LowVal > 0 && cnt > float64(rg.HighVal-rg.LowVal) {
-			cnt = float64(rg.HighVal - rg.LowVal)
-		}
-		rowCount += cnt
-	}
-	if rowCount > totalRowCount {
-		rowCount = totalRowCount
-	}
-	return rowCount, nil
 }
 
 // getColumnRowCount estimates the row count by a slice of NewRange.

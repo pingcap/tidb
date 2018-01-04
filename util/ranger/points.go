@@ -128,6 +128,10 @@ func FullIntRange() []IntColumnRange {
 	return []IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 }
 
+func FullIntNewRange() []*NewRange {
+	return []*NewRange{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
+}
+
 // FullNewRange is (-∞, +∞) for NewRange.
 func FullNewRange() []*NewRange {
 	return []*NewRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}

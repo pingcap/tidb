@@ -27,7 +27,6 @@ import (
 // Range is the interface of the three type of range.
 type Range interface {
 	fmt.Stringer
-	Convert2IntRange() IntColumnRange
 	Convert2NewRange() *NewRange
 }
 
@@ -55,11 +54,6 @@ func (tr IntColumnRange) String() string {
 		r = strconv.FormatInt(tr.HighVal, 10) + "]"
 	}
 	return l + "," + r
-}
-
-// Convert2IntRange implements the Convert2IntRange interface.
-func (tr IntColumnRange) Convert2IntRange() IntColumnRange {
-	return tr
 }
 
 // Convert2NewRange implements the Convert2NewRange interface.
@@ -135,11 +129,6 @@ func (ran *NewRange) String() string {
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
-// Convert2IntRange implements the Convert2IntRange interface.
-func (ran *NewRange) Convert2IntRange() IntColumnRange {
-	panic("you shouldn't call this method.")
-}
-
 // Convert2NewRange implements the Convert2NewRange interface.
 func (ran *NewRange) Convert2NewRange() *NewRange {
 	return ran
@@ -162,11 +151,24 @@ func (ran *NewRange) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 }
 
 func formatDatum(d types.Datum) string {
-	if d.Kind() == types.KindMinNotNull {
+	switch d.Kind() {
+	case types.KindNull:
+		return "<nil>"
+	case types.KindMinNotNull:
 		return "-inf"
-	}
-	if d.Kind() == types.KindMaxValue {
+	case types.KindMaxValue:
 		return "+inf"
+	case types.KindInt64:
+		switch d.GetInt64() {
+		case math.MinInt64:
+			return "-inf"
+		case math.MaxInt64:
+			return "+inf"
+		}
+	case types.KindUint64:
+		if d.GetUint64() == math.MaxUint64 {
+			return "+inf"
+		}
 	}
 	return fmt.Sprintf("%v", d.GetValue())
 }

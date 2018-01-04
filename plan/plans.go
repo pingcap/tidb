@@ -165,13 +165,13 @@ func (e *Execute) rebuildRange(p Plan) error {
 				pkCol = expression.ColInfo2Col(cols, pkColInfo)
 			}
 		}
-		newRanges := ranger.FullIntRange()
+		newRanges := ranger.FullIntNewRange()
 		if pkCol != nil {
 			ranges, err := ranger.BuildRange(sc, ts.AccessCondition, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newRanges = ranger.Ranges2IntRanges(ranges)
+			newRanges = ranger.Ranges2NewRanges(ranges)
 		}
 		ts.Ranges = newRanges
 	case *PhysicalIndexReader:
