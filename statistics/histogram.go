@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -302,10 +303,12 @@ func (hg *Histogram) betweenRowCount(sc *stmtctx.StatementContext, a, b types.Da
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	logrus.Warnf("less than %v: %v", a, lessCountA)
 	lessCountB, err := hg.lessRowCount(sc, b)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	logrus.Warnf("less than %v: %v", b, lessCountB)
 	if lessCountA >= lessCountB {
 		return hg.totalRowCount() / float64(hg.NDV), nil
 	}
