@@ -186,6 +186,12 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		ratio, err := statsTbl.Selectivity(ctx, p.Children()[0].(*plan.LogicalSelection).Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
+
+		statsTbl.Count *= 10
+		ratio, err = statsTbl.Selectivity(ctx, p.Children()[0].(*plan.LogicalSelection).Conditions)
+		c.Assert(err, IsNil, comment)
+		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
+		statsTbl.Count /= 10
 	}
 }
 

@@ -314,7 +314,7 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 		c.AppendSet(colIdx, d.GetMysqlSet())
 	case types.KindMysqlTime:
 		c.AppendTime(colIdx, d.GetMysqlTime())
-	case mysql.TypeJSON:
+	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
 	}
 }
