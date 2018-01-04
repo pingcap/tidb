@@ -23,7 +23,7 @@ before_install:
   - sudo touch /logs/unit-test
   # See https://github.com/golang/go/issues/12933
   - bash gitcookie.sh
-  - go get github.com/golang/dep
+  - go get github.com/golang/dep/cmd/dep
 
 script:
   - dep ensure
