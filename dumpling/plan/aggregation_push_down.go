@@ -376,11 +376,10 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				pushedAgg := a.makeNewAgg(agg.AggFuncs, gbyCols)
 				newChildren := make([]Plan, 0, len(union.children))
 				for _, child := range union.children {
-					newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
+					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child.(LogicalPlan))
 					newChildren = append(newChildren, newChild)
 				}
 				union.SetChildren(newChildren...)
-				union.SetSchema(pushedAgg.schema)
 			}
 		}
 	}

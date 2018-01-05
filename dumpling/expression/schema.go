@@ -217,7 +217,8 @@ func (s *Schema) GetTypes() []*types.FieldType {
 	return fields
 }
 
-// MergeSchema will merge two schema into one schema.
+// MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.
+// That will be processed in build_key_info.go.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	if lSchema == nil && rSchema == nil {
 		return nil
@@ -231,7 +232,6 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	tmpL := lSchema.Clone()
 	tmpR := rSchema.Clone()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
-	ret.SetUniqueKeys(append(tmpL.Keys, tmpR.Keys...))
 	ret.TblID2Handle = tmpL.TblID2Handle
 	for id, cols := range tmpR.TblID2Handle {
 		if _, ok := ret.TblID2Handle[id]; ok {
