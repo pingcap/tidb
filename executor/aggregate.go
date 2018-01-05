@@ -102,7 +102,7 @@ func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
 		}
 		vals = append(vals, v)
 	}
-	bs, err := codec.EncodeValue([]byte{}, vals...)
+	bs, err := codec.EncodeValue(e.sc, []byte{}, vals...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

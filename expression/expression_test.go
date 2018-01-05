@@ -56,7 +56,6 @@ func (s *testEvaluatorSuite) TestConstant(c *C) {
 
 	c.Assert(Zero.IsCorrelated(), IsFalse)
 	c.Assert(Zero.Decorrelate(nil).Equal(Zero, s.ctx), IsTrue)
-	c.Assert(Zero.HashCode(), DeepEquals, []byte{0x8, 0x0})
 	c.Assert(Zero.Equal(One, s.ctx), IsFalse)
 	res, err := Zero.MarshalJSON()
 	c.Assert(err, IsNil)

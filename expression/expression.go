@@ -66,9 +66,6 @@ type Expression interface {
 	// Clone copies an expression totally.
 	Clone() Expression
 
-	// HashCode create the hashcode for expression
-	HashCode() []byte
-
 	// Equal checks whether two expressions are equal.
 	Equal(e Expression, ctx context.Context) bool
 

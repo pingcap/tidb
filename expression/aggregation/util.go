@@ -22,10 +22,10 @@ func createDistinctChecker() *distinctChecker {
 }
 
 // Check checks if values is distinct.
-func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
+func (d *distinctChecker) Check(sc *stmtctx.StatementContext, values []types.Datum) (bool, error) {
 	d.buf = d.buf[:0]
 	var err error
-	d.buf, err = codec.EncodeValue(d.buf, values...)
+	d.buf, err = codec.EncodeValue(sc, d.buf, values...)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
