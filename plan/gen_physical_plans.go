@@ -30,7 +30,6 @@ import (
 
 func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, p.stats, prop)
-	us.SetSchema(p.schema)
 	return []PhysicalPlan{us}
 }
 
@@ -162,7 +161,7 @@ func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
 	return joins
 }
 
-func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) PhysicalPlan {
+func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHashJoin {
 	chReqProps := make([]*requiredProp, 2)
 	chReqProps[innerIdx] = &requiredProp{expectedCnt: math.MaxFloat64}
 	chReqProps[1-innerIdx] = &requiredProp{expectedCnt: prop.expectedCnt}
@@ -478,7 +477,6 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 			Offset:  lt.Offset,
 			partial: lt.partial,
 		}.init(lt.ctx, lt.stats, resultProp)
-		topN.SetSchema(lt.schema)
 		ret = append(ret, topN)
 	}
 	return ret
@@ -497,7 +495,6 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 			Offset:  lt.Offset,
 			partial: lt.partial,
 		}.init(lt.ctx, lt.stats, resultProp)
-		limit.SetSchema(lt.schema)
 		ret = append(ret, limit)
 	}
 	return ret
@@ -613,7 +610,6 @@ func (p *LogicalSelection) genPhysPlansByReqProp(prop *requiredProp) []PhysicalP
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), prop)
-	sel.SetSchema(p.Schema())
 	return []PhysicalPlan{sel}
 }
 
@@ -629,7 +625,6 @@ func (p *LogicalLimit) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 			Count:   p.Count,
 			partial: p.partial,
 		}.init(p.ctx, p.stats, resultProp)
-		limit.SetSchema(p.Schema())
 		ret = append(ret, limit)
 	}
 	return ret
@@ -639,7 +634,6 @@ func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
 	lock := PhysicalLock{
 		Lock: p.Lock,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), prop)
-	lock.SetSchema(p.schema)
 	return []PhysicalPlan{lock}
 }
 
@@ -653,13 +647,11 @@ func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPl
 		chReqProps = append(chReqProps, &requiredProp{expectedCnt: prop.expectedCnt})
 	}
 	ua := PhysicalUnionAll{}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
-	ua.SetSchema(p.schema)
 	return []PhysicalPlan{ua}
 }
 
-func (ls *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
+func (p *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
 	ps := PhysicalSort{ByItems: ls.ByItems}.init(ls.ctx, ls.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64})
-	ps.SetSchema(ls.schema)
 	return ps
 }
 
@@ -700,6 +692,5 @@ func (p *LogicalMaxOneRow) genPhysPlansByReqProp(prop *requiredProp) []PhysicalP
 		return nil
 	}
 	mor := PhysicalMaxOneRow{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 2})
-	mor.SetSchema(p.schema)
 	return []PhysicalPlan{mor}
 }

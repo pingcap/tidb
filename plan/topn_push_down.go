@@ -49,12 +49,10 @@ func (lt *LogicalTopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
 			partial: lt.partial,
 		}.init(lt.ctx)
 		limit.SetChildren(p)
-		limit.SetSchema(p.Schema().Clone())
 		return limit
 	}
 	// Then lt must be topN.
 	lt.SetChildren(p)
-	lt.SetSchema(p.Schema().Clone())
 	return lt
 }
 

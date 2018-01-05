@@ -35,31 +35,31 @@ import (
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
-	basePlan
+	baseSchemaProducer
 }
 
 // ShowDDLJobs is for showing DDL job list.
 type ShowDDLJobs struct {
-	basePlan
+	baseSchemaProducer
 }
 
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
-	basePlan
+	baseSchemaProducer
 
 	Tables []*ast.TableName
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
 type CancelDDLJobs struct {
-	basePlan
+	baseSchemaProducer
 
 	JobIDs []int64
 }
 
 // Prepare represents prepare plan.
 type Prepare struct {
-	basePlan
+	baseSchemaProducer
 
 	Name    string
 	SQLText string
@@ -75,7 +75,7 @@ type Prepared struct {
 
 // Execute represents prepare plan.
 type Execute struct {
-	basePlan
+	baseSchemaProducer
 
 	Name      string
 	UsingVars []expression.Expression
@@ -216,14 +216,14 @@ func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *Physi
 
 // Deallocate represents deallocate plan.
 type Deallocate struct {
-	basePlan
+	baseSchemaProducer
 
 	Name string
 }
 
 // Show represents a show plan.
 type Show struct {
-	basePlan
+	baseSchemaProducer
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -241,14 +241,14 @@ type Show struct {
 
 // Set represents a plan for set stmt.
 type Set struct {
-	basePlan
+	baseSchemaProducer
 
 	VarAssigns []*expression.VarAssignment
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.
 type Simple struct {
-	basePlan
+	baseSchemaProducer
 
 	Statement ast.StmtNode
 }
@@ -263,7 +263,7 @@ type InsertGeneratedColumns struct {
 
 // Insert represents an insert plan.
 type Insert struct {
-	basePlan
+	baseSchemaProducer
 
 	Table       table.Table
 	tableSchema *expression.Schema
@@ -286,7 +286,7 @@ type Insert struct {
 
 // Update represents Update plan.
 type Update struct {
-	basePlan
+	baseSchemaProducer
 
 	OrderedList []*expression.Assignment
 	IgnoreErr   bool
@@ -296,7 +296,7 @@ type Update struct {
 
 // Delete represents a delete plan.
 type Delete struct {
-	basePlan
+	baseSchemaProducer
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
@@ -319,7 +319,7 @@ type AnalyzeIndexTask struct {
 
 // Analyze represents an analyze plan
 type Analyze struct {
-	basePlan
+	baseSchemaProducer
 
 	ColTasks []AnalyzeColumnsTask
 	IdxTasks []AnalyzeIndexTask
@@ -327,7 +327,7 @@ type Analyze struct {
 
 // LoadData represents a loaddata plan.
 type LoadData struct {
-	basePlan
+	baseSchemaProducer
 
 	IsLocal    bool
 	Path       string
@@ -341,14 +341,14 @@ type LoadData struct {
 
 // DDL represents a DDL statement plan.
 type DDL struct {
-	basePlan
+	baseSchemaProducer
 
 	Statement ast.DDLNode
 }
 
 // Explain represents a explain plan.
 type Explain struct {
-	basePlan
+	baseSchemaProducer
 
 	StmtPlan       Plan
 	Rows           [][]string

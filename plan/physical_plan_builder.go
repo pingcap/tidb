@@ -144,7 +144,6 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 		sel := PhysicalSelection{
 			Conditions: ds.pushedDownConds,
 		}.init(ds.ctx, ds.stats)
-		sel.SetSchema(ds.schema)
 		sel.SetChildren(memTable)
 		retPlan = sel
 	}
@@ -269,8 +268,9 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 	}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
-		cop.tablePlan = PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
-		cop.tablePlan.SetSchema(is.dataSourceSchema)
+		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts.SetSchema(is.dataSourceSchema)
+		cop.tablePlan = ts
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64)
@@ -326,8 +326,9 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
-		cop.tablePlan = PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
-		cop.tablePlan.SetSchema(ds.schema.Clone())
+		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts.SetSchema(ds.schema.Clone())
+		cop.tablePlan = ts
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
 			return &copTask{cst: math.MaxFloat64}, nil
@@ -425,7 +426,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		if indexConds != nil {
 			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
 				p.getStatsByFilter(append(is.AccessCondition, indexConds...)).scaleByExpectCnt(expectedCnt))
-			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
 			copTask.indexPlan = indexSel
 			copTask.cst += copTask.count() * cpuFactor
@@ -433,7 +433,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		if tableConds != nil {
 			copTask.finishIndexPlan()
 			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
-			tableSel.SetSchema(copTask.tablePlan.Schema())
 			tableSel.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = tableSel
 			copTask.cst += copTask.count() * cpuFactor
@@ -604,7 +603,6 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *sta
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.init(ts.ctx, stats)
-		sel.SetSchema(ts.schema)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
 		// FIXME: It seems wrong...

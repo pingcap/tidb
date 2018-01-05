@@ -30,8 +30,6 @@ import (
 type Plan interface {
 	// Get all the children.
 	Children() []Plan
-	// Set the schema.
-	SetSchema(schema *expression.Schema)
 	// Get the schema.
 	Schema() *expression.Schema
 	// Get the ID.
@@ -44,10 +42,6 @@ type Plan interface {
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() context.Context
-
-	// findColumn finds the column in basePlan's schema.
-	// If the column is not in the schema, returns error.
-	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices()
@@ -187,6 +181,10 @@ type LogicalPlan interface {
 
 	// MaxOneRow means whether this operator only returns max one row.
 	MaxOneRow() bool
+
+	// findColumn finds the column in basePlan's schema.
+	// If the column is not in the schema, returns an error.
+	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -258,18 +256,6 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	case *LogicalMaxOneRow, *LogicalExists:
 		p.maxOneRow = true
 	}
-	if len(p.children) == 1 {
-		switch p.self.(type) {
-		case *LogicalExists, *LogicalAggregation, *LogicalProjection:
-			p.schema.Keys = nil
-		case *LogicalLock:
-			p.schema.Keys = p.basePlan.children[0].Schema().Keys
-		default:
-			p.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
-		}
-	} else {
-		p.basePlan.schema.Keys = nil
-	}
 }
 
 func newBasePlan(tp string, ctx context.Context) basePlan {
@@ -312,7 +298,6 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	child := p.children[0].(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
-	p.basePlan.SetSchema(child.Schema())
 }
 
 // basePlan implements base Plan interface.
@@ -320,11 +305,10 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 type basePlan struct {
 	children []Plan
 
-	schema *expression.Schema
-	tp     string
-	id     int
-	ctx    context.Context
-	stats  *statsInfo
+	tp    string
+	id    int
+	ctx   context.Context
+	stats *statsInfo
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
@@ -339,14 +323,9 @@ func (p *basePlan) ExplainID() string {
 	return fmt.Sprintf("%s_%d", p.tp, p.id)
 }
 
-// SetSchema implements Plan SetSchema interface.
-func (p *basePlan) SetSchema(schema *expression.Schema) {
-	p.schema = schema
-}
-
 // Schema implements Plan Schema interface.
 func (p *basePlan) Schema() *expression.Schema {
-	return p.schema
+	return p.children[0].Schema()
 }
 
 // Children implements Plan Children interface.
@@ -363,8 +342,8 @@ func (p *basePlan) context() context.Context {
 	return p.ctx
 }
 
-func (p *basePlan) findColumn(column *ast.ColumnName) (*expression.Column, int, error) {
-	col, idx, err := p.Schema().FindColumnAndIndex(column)
+func (p *baseLogicalPlan) findColumn(column *ast.ColumnName) (*expression.Column, int, error) {
+	col, idx, err := p.self.Schema().FindColumnAndIndex(column)
 	if err == nil && col == nil {
 		err = errors.Errorf("column %s not found", column.Name.O)
 	}

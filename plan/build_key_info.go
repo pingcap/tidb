@@ -28,6 +28,7 @@ func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPla
 }
 
 func (la *LogicalAggregation) buildKeyInfo() {
+	la.schema.Keys = nil
 	la.baseLogicalPlan.buildKeyInfo()
 	for _, key := range la.Children()[0].Schema().Keys {
 		indices := la.schema.ColumnsIndices(key)
@@ -109,6 +110,7 @@ func (p *LogicalProjection) buildSchemaByExprs() *expression.Schema {
 }
 
 func (p *LogicalProjection) buildKeyInfo() {
+	p.schema.Keys = nil
 	p.baseLogicalPlan.buildKeyInfo()
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.Children()[0].Schema().Keys {
@@ -125,6 +127,7 @@ func (p *LogicalProjection) buildKeyInfo() {
 }
 
 func (p *LogicalJoin) buildKeyInfo() {
+	p.schema.Keys = nil
 	p.baseLogicalPlan.buildKeyInfo()
 	p.maxOneRow = p.children[0].(LogicalPlan).MaxOneRow() && p.children[1].(LogicalPlan).MaxOneRow()
 	switch p.JoinType {
@@ -170,6 +173,7 @@ func (p *LogicalJoin) buildKeyInfo() {
 }
 
 func (ds *DataSource) buildKeyInfo() {
+	ds.schema.Keys = nil
 	ds.baseLogicalPlan.buildKeyInfo()
 	indices := ds.availableIndices.indices
 	for _, idx := range indices {

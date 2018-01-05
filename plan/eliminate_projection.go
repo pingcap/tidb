@@ -84,16 +84,14 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 // eliminatePhysicalProjection should be called after physical optimization to eliminate the redundant projection
 // left after logical projection elimination.
 func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
-	oldRoot := p
+	oldSchema := p.Schema()
 	newRoot := doPhysicalProjectionElimination(p)
-	if oldRoot.ID() != newRoot.ID() {
-		newCols := newRoot.Schema().Columns
-		for i, oldCol := range oldRoot.Schema().Columns {
-			newCols[i].DBName = oldCol.DBName
-			newCols[i].TblName = oldCol.TblName
-			newCols[i].ColName = oldCol.ColName
-			newCols[i].OrigTblName = oldCol.OrigTblName
-		}
+	newCols := newRoot.Schema().Columns
+	for i, oldCol := range oldSchema.Columns {
+		newCols[i].DBName = oldCol.DBName
+		newCols[i].TblName = oldCol.TblName
+		newCols[i].ColName = oldCol.ColName
+		newCols[i].OrigTblName = oldCol.OrigTblName
 	}
 	return newRoot
 }
@@ -120,26 +118,11 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		p.Children()[i] = pe.eliminate(child.(LogicalPlan), replace, childFlag)
 	}
 
-	switch p.(type) {
-	case *LogicalSort, *LogicalTopN, *LogicalLimit, *LogicalSelection, *LogicalMaxOneRow, *LogicalLock:
-		p.SetSchema(p.Children()[0].Schema())
-	case *LogicalJoin, *LogicalApply:
-		var joinTp JoinType
-		if _, isApply := p.(*LogicalApply); isApply {
-			joinTp = p.(*LogicalApply).JoinType
-		} else {
-			joinTp = p.(*LogicalJoin).JoinType
-		}
-		switch joinTp {
-		case InnerJoin, LeftOuterJoin, RightOuterJoin:
-			p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
-		case SemiJoin, AntiSemiJoin:
-			p.SetSchema(p.Children()[0].Schema().Clone())
-		case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-			newSchema := p.Children()[0].Schema().Clone()
-			newSchema.Append(p.Schema().Columns[len(p.Schema().Columns)-1])
-			p.SetSchema(newSchema)
-		}
+	switch x := p.(type) {
+	case *LogicalJoin:
+		x.schema = buildJoinSchema(x.JoinType, x)
+	case *LogicalApply:
+		x.schema = buildJoinSchema(x.JoinType, x)
 	default:
 		for _, dst := range p.Schema().Columns {
 			resolveColumnAndReplace(dst, replace)

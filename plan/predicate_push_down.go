@@ -35,7 +35,6 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 	}
 	conditions = expression.PropagateConstant(p.context(), conditions)
 	selection := LogicalSelection{Conditions: conditions}.init(p.context())
-	selection.SetSchema(child.Schema().Clone())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
 }

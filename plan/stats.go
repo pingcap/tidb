@@ -66,7 +66,7 @@ func (p *baseLogicalPlan) deriveStats() *statsInfo {
 	if len(p.children) == 0 {
 		profile := &statsInfo{
 			count:       float64(1),
-			cardinality: make([]float64, p.schema.Len()),
+			cardinality: make([]float64, p.self.Schema().Len()),
 		}
 		for i := range profile.cardinality {
 			profile.cardinality[i] = float64(1)
@@ -117,7 +117,7 @@ func (p *LogicalSelection) deriveStats() *statsInfo {
 
 func (p *LogicalUnionAll) deriveStats() *statsInfo {
 	p.stats = &statsInfo{
-		cardinality: make([]float64, p.schema.Len()),
+		cardinality: make([]float64, p.Schema().Len()),
 	}
 	for _, child := range p.children {
 		childProfile := child.(LogicalPlan).deriveStats()
@@ -317,6 +317,6 @@ func (p *LogicalExists) deriveStats() *statsInfo {
 
 func (p *LogicalMaxOneRow) deriveStats() *statsInfo {
 	p.children[0].(LogicalPlan).deriveStats()
-	p.stats = getSingletonStats(p.schema.Len())
+	p.stats = getSingletonStats(p.Schema().Len())
 	return p.stats
 }

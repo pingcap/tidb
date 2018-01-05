@@ -80,13 +80,12 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
 	child.PruneColumns(parentUsedCols)
-	p.SetSchema(child.Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 	child := la.children[0].(LogicalPlan)
-	used := getUsedList(parentUsedCols, la.schema)
+	used := getUsedList(parentUsedCols, la.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
@@ -127,7 +126,6 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 	}
 	child.PruneColumns(parentUsedCols)
-	ls.SetSchema(ls.children[0].Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -136,16 +134,14 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 		child := c.(LogicalPlan)
 		child.PruneColumns(parentUsedCols)
 	}
-	p.SetSchema(p.children[0].Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
-	for _, col := range p.schema.TblID2Handle {
+	for _, col := range p.Schema().TblID2Handle {
 		parentUsedCols = append(parentUsedCols, col[0])
 	}
 	p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
-	p.SetSchema(p.children[0].Schema())
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -157,10 +153,9 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
 	}
-	for _, cols := range ds.schema.TblID2Handle {
+	for k, cols := range ds.schema.TblID2Handle {
 		if ds.schema.ColumnIndex(cols[0]) == -1 {
-			ds.schema.TblID2Handle = nil
-			break
+			delete(ds.schema.TblID2Handle, k)
 		}
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.

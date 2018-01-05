@@ -88,7 +88,7 @@ const (
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	JoinType       JoinType
 	reordered      bool
@@ -158,7 +158,7 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	Exprs []expression.Expression
 
@@ -183,7 +183,7 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
@@ -244,7 +244,7 @@ func (la *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalExists checks if a query returns result.
 type LogicalExists struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 }
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
@@ -254,7 +254,7 @@ type LogicalMaxOneRow struct {
 
 // LogicalTableDual represents a dual table plan.
 type LogicalTableDual struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	RowCount int
 }
@@ -268,7 +268,7 @@ type LogicalUnionScan struct {
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	indexHints []*ast.IndexHint
 	tableInfo  *model.TableInfo
