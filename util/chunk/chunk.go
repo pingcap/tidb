@@ -151,7 +151,13 @@ func (c *Chunk) End() Row {
 }
 
 // AppendRow appends a row to the chunk.
-func (c *Chunk) AppendRow(colIdx int, row Row) {
+func (c *Chunk) AppendRow(row Row) {
+	c.AppendPartialRow(0, row)
+	c.numVirtualRows++
+}
+
+// AppendPartialRow appends a row to the chunk.
+func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
 		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))

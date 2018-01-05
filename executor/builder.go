@@ -786,11 +786,7 @@ func (b *executorBuilder) buildTopN(v *plan.PhysicalTopN) Executor {
 }
 
 func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApplyExec {
-	v, ok := apply.PhysicalJoin.(*plan.PhysicalHashJoin)
-	if !ok {
-		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
-		return nil
-	}
+	v := apply.PhysicalJoin
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -822,7 +818,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
 	e := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, outerExec, innerExec),
+		baseExecutor:    newBaseExecutor(apply.Schema(), b.ctx, outerExec, innerExec),
 		innerExec:       innerExec,
 		outerExec:       outerExec,
 		outerFilter:     outerFilter,

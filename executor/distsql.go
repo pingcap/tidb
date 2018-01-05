@@ -840,7 +840,7 @@ func (e *IndexLookUpExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 			return nil
 		}
 		for resultTask.cursor < len(resultTask.rows) {
-			chk.AppendRow(0, resultTask.rows[resultTask.cursor])
+			chk.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
 			if chk.NumRows() >= e.maxChunkSize {
 				return nil
