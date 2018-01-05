@@ -323,7 +323,7 @@ func (rh tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// get table's schema.
-	table, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -331,9 +331,9 @@ func (rh tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	switch rh.op {
 	case opTableRegions:
-		rh.handleRegionRequest(schema, table, w, req)
+		rh.handleRegionRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
-		rh.handleDiskUsageRequest(schema, table, w, req)
+		rh.handleDiskUsageRequest(schema, tableVal, w, req)
 	default:
 		writeError(w, errors.New("method not found"))
 	}
@@ -496,9 +496,9 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// 		`for id in [frameRange.firstTableID,frameRange.endTableID]`
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, db := range schema.AllSchemas() {
-		for _, table := range db.Tables {
-			start, end := frameRange.getIndexRangeForTable(table.ID)
-			regionDetail.addTableInRange(db.Name.String(), table, start, end)
+		for _, tableVal := range db.Tables {
+			start, end := frameRange.getIndexRangeForTable(tableVal.ID)
+			regionDetail.addTableInRange(db.Name.String(), tableVal, start, end)
 		}
 	}
 	writeData(w, regionDetail)
@@ -917,11 +917,11 @@ func (t *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) 
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	table, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return table.Meta().ID, nil
+	return tableVal.Meta().ID, nil
 }
 
 func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {

@@ -330,7 +330,7 @@ func (c *column) appendNullBitmap(on bool) {
 	}
 	if on {
 		pos := uint(c.length) & 7
-		c.nullBitmap[idx] |= byte((1 << pos))
+		c.nullBitmap[idx] |= byte(1 << pos)
 	} else {
 		c.nullCount++
 	}

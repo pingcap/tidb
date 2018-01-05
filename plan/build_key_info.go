@@ -27,32 +27,32 @@ func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPla
 	return lp, nil
 }
 
-func (p *LogicalAggregation) buildKeyInfo() {
-	p.schema.Keys = nil
-	p.baseLogicalPlan.buildKeyInfo()
-	for _, key := range p.Children()[0].Schema().Keys {
-		indices := p.schema.ColumnsIndices(key)
+func (la *LogicalAggregation) buildKeyInfo() {
+	la.schema.Keys = nil
+	la.baseLogicalPlan.buildKeyInfo()
+	for _, key := range la.Children()[0].Schema().Keys {
+		indices := la.schema.ColumnsIndices(key)
 		if indices == nil {
 			continue
 		}
 		newKey := make([]*expression.Column, 0, len(key))
 		for _, i := range indices {
-			newKey = append(newKey, p.schema.Columns[i])
+			newKey = append(newKey, la.schema.Columns[i])
 		}
-		p.schema.Keys = append(p.schema.Keys, newKey)
+		la.schema.Keys = append(la.schema.Keys, newKey)
 	}
-	if len(p.groupByCols) == len(p.GroupByItems) && len(p.GroupByItems) > 0 {
-		indices := p.schema.ColumnsIndices(p.groupByCols)
+	if len(la.groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
+		indices := la.schema.ColumnsIndices(la.groupByCols)
 		if indices != nil {
 			newKey := make([]*expression.Column, 0, len(indices))
 			for _, i := range indices {
-				newKey = append(newKey, p.schema.Columns[i])
+				newKey = append(newKey, la.schema.Columns[i])
 			}
-			p.schema.Keys = append(p.schema.Keys, newKey)
+			la.schema.Keys = append(la.schema.Keys, newKey)
 		}
 	}
-	if len(p.GroupByItems) == 0 {
-		p.maxOneRow = true
+	if len(la.GroupByItems) == 0 {
+		la.maxOneRow = true
 	}
 }
 
@@ -172,10 +172,10 @@ func (p *LogicalJoin) buildKeyInfo() {
 	}
 }
 
-func (p *DataSource) buildKeyInfo() {
-	p.schema.Keys = nil
-	p.baseLogicalPlan.buildKeyInfo()
-	indices := p.availableIndices.indices
+func (ds *DataSource) buildKeyInfo() {
+	ds.schema.Keys = nil
+	ds.baseLogicalPlan.buildKeyInfo()
+	indices := ds.availableIndices.indices
 	for _, idx := range indices {
 		if !idx.Unique {
 			continue
@@ -186,12 +186,12 @@ func (p *DataSource) buildKeyInfo() {
 			// The columns of this index should all occur in column schema.
 			// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
 			find := false
-			for i, col := range p.schema.Columns {
+			for i, col := range ds.schema.Columns {
 				if idxCol.Name.L == col.ColName.L {
-					if !mysql.HasNotNullFlag(p.Columns[i].Flag) {
+					if !mysql.HasNotNullFlag(ds.Columns[i].Flag) {
 						break
 					}
-					newKey = append(newKey, p.schema.Columns[i])
+					newKey = append(newKey, ds.schema.Columns[i])
 					find = true
 					break
 				}
@@ -202,13 +202,13 @@ func (p *DataSource) buildKeyInfo() {
 			}
 		}
 		if ok {
-			p.schema.Keys = append(p.schema.Keys, newKey)
+			ds.schema.Keys = append(ds.schema.Keys, newKey)
 		}
 	}
-	if p.tableInfo.PKIsHandle {
-		for i, col := range p.Columns {
+	if ds.tableInfo.PKIsHandle {
+		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				p.schema.Keys = append(p.schema.Keys, []*expression.Column{p.schema.Columns[i]})
+				ds.schema.Keys = append(ds.schema.Keys, []*expression.Column{ds.schema.Columns[i]})
 				break
 			}
 		}
