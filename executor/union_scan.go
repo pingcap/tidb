@@ -126,7 +126,7 @@ func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 			return nil
 		}
 		mutableRow.SetDatums(row...)
-		chk.AppendRow(0, mutableRow.ToRow())
+		chk.AppendRow(mutableRow.ToRow())
 	}
 	return nil
 }
