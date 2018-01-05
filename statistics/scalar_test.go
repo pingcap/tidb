@@ -57,7 +57,7 @@ func getUnsignedFieldType() *types.FieldType {
 	return tp
 }
 
-func (t *testStatisticsSuite) TestCalcFraction(c *C) {
+func (s *testStatisticsSuite) TestCalcFraction(c *C) {
 	tests := []struct {
 		lower    types.Datum
 		upper    types.Datum

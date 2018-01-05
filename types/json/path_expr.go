@@ -69,7 +69,7 @@ type pathLeg struct {
 
 // arrayIndexAsterisk is for parsing `*` into a number.
 // we need this number represent "all".
-const arrayIndexAsterisk int = -1
+const arrayIndexAsterisk = -1
 
 // pathExpressionFlag holds attributes of PathExpression
 type pathExpressionFlag byte
@@ -81,7 +81,7 @@ const (
 
 // containsAnyAsterisk returns true if pef contains any asterisk.
 func (pef pathExpressionFlag) containsAnyAsterisk() bool {
-	pef &= (pathExpressionContainsAsterisk | pathExpressionContainsDoubleAsterisk)
+	pef &= pathExpressionContainsAsterisk | pathExpressionContainsDoubleAsterisk
 	return byte(pef) != 0
 }
 

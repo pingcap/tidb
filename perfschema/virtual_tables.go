@@ -42,7 +42,7 @@ func (ds *statusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Dat
 		return nil, errors.Trace(err)
 	}
 
-	rows := [][]types.Datum{}
+	var rows = make([][]types.Datum, 0)
 	for status, v := range statusVars {
 		if ds.globalScope && v.Scope == variable.ScopeSession {
 			continue

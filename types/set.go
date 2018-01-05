@@ -55,7 +55,7 @@ func ParseSetName(elems []string, name string) (Set, error) {
 	for i, n := range elems {
 		key := strings.ToLower(n)
 		if _, ok := marked[key]; ok {
-			value |= (1 << uint64(i))
+			value |= 1 << uint64(i)
 			delete(marked, key)
 			items = append(items, n)
 		}
