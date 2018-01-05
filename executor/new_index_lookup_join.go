@@ -187,7 +187,7 @@ func (e *NewIndexLookUpJoin) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) er
 			if chk.NumRows() == e.maxChunkSize {
 				return nil
 			}
-			chk.AppendRow(0, e.joinResult.GetRow(e.joinResultCursor))
+			chk.AppendRow(e.joinResult.GetRow(e.joinResultCursor))
 			e.joinResultCursor++
 		}
 	}
