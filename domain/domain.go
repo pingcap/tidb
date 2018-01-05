@@ -688,8 +688,8 @@ const privilegeKey = "/tidb/privilege"
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
 	if do.etcdClient != nil {
-		kv := do.etcdClient.KV
-		_, err := kv.Put(goctx.Background(), privilegeKey, "")
+		row := do.etcdClient.KV
+		_, err := row.Put(goctx.Background(), privilegeKey, "")
 		if err != nil {
 			log.Warn("notify update privilege failed:", err)
 		}

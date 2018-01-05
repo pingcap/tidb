@@ -281,7 +281,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
-	var compareExprs []Expression
+	var compareExprs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -353,7 +353,7 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
-	var arithmeticalFuncs []Expression
+	var arithmeticalFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -408,7 +408,7 @@ func (s *testEvaluatorSuite) TestDateFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
-	var logicalFuncs []Expression
+	var logicalFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -444,7 +444,7 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
-	var bitwiseFuncs []Expression
+	var bitwiseFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -474,7 +474,7 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
-	var controlFuncs []Expression
+	var controlFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -515,7 +515,7 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
-	var otherFuncs []Expression
+	var otherFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)

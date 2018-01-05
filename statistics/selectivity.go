@@ -181,8 +181,6 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID := -1
-		bestCount := 0
 		bestID, bestCount, bestTp := -1, 0, colType
 		for i, set := range sets {
 			set.mask &= mask

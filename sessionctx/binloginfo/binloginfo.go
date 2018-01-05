@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
-	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc"
 )
 
 func init() {

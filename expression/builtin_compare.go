@@ -145,7 +145,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 			}
 			argIntLen := argTp.Flen
 			if argTp.Decimal > 0 {
-				argIntLen -= (argTp.Decimal + 1)
+				argIntLen -= argTp.Decimal + 1
 			}
 
 			// Reduce the sign bit if it is a signed integer/decimal
