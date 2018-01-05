@@ -56,8 +56,6 @@ type Histogram struct {
 	// A bucket count is the number of items stored in all previous buckets and the current bucket.
 	// Bucket counts are always in increasing order.
 	//
-	// A bucket value is the greatest item value stored in the bucket.
-	//
 	// Repeat is the number of repeats of the bucket value, it can be used to find popular values.
 	Bounds  *chunk.Chunk
 	Counts  []int64
