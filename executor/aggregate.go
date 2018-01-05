@@ -104,7 +104,7 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		if chk.NumCols() == 0 {
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
 		} else {
-			chk.AppendRow(0, e.mutableRow.ToRow())
+			chk.AppendRow(e.mutableRow.ToRow())
 		}
 		if chk.NumRows() == e.ctx.GetSessionVars().MaxChunkSize {
 			return nil
