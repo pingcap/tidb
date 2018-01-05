@@ -254,10 +254,6 @@ func (col *Column) EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (*ty
 	if row.IsNull(col.Index) {
 		return nil, true, nil
 	}
-	// We can not use val.GetMyDecimal() here directly,
-	// for sql like: `select sum(1.2e2) * 0.1` may cause an panic here,
-	// since we infer the result type of `SUM` as `mysql.TypeNewDecimal`,
-	// but what we actually get is store as float64 in Datum.
 	return row.GetMyDecimal(col.Index), false, nil
 }
 
