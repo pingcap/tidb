@@ -248,7 +248,7 @@ func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.
-func (t *MemoryTable) AllocAutoID() (int64, error) {
+func (t *MemoryTable) AllocAutoID(ctx context.Context) (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 

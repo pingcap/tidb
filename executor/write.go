@@ -1145,7 +1145,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		recordID, err = e.Table.AllocAutoID()
+		recordID, err = e.Table.AllocAutoID(e.ctx)
 		if e.filterErr(errors.Trace(err), ignoreErr) != nil {
 			return errors.Trace(err)
 		}

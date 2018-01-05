@@ -122,7 +122,7 @@ type Table interface {
 	RemoveRecord(ctx context.Context, h int64, r []types.Datum) error
 
 	// AllocAutoID allocates an auto_increment ID for a new row.
-	AllocAutoID() (int64, error)
+	AllocAutoID(ctx context.Context) (int64, error)
 
 	// Allocator returns Allocator.
 	Allocator() autoid.Allocator

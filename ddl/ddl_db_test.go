@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
@@ -66,6 +67,7 @@ type testDBSuite struct {
 	tk         *testkit.TestKit
 	s          tidb.Session
 	lease      time.Duration
+	autoIDStep int64
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
@@ -77,6 +79,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	tidb.SetSchemaLease(s.lease)
 	tidb.SetStatsLease(0)
 	s.schemaName = "test_db"
+	s.autoIDStep = autoid.GetStep()
+	autoid.SetStep(5000)
 
 	s.store, err = tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -99,6 +103,7 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+	autoid.SetStep(s.autoIDStep)
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {

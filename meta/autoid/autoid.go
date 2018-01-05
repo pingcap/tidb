@@ -27,7 +27,7 @@ import (
 )
 
 // Test needs to change it, so it's a variable.
-var step = int64(5000)
+var step = int64(30000)
 
 var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 
@@ -57,6 +57,11 @@ type allocator struct {
 // GetStep is only used by tests
 func GetStep() int64 {
 	return step
+}
+
+// SetStep is only used by tests
+func SetStep(s int64) {
+	step = s
 }
 
 // NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
