@@ -749,7 +749,7 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			if chk.NumRows() == e.maxChunkSize {
 				return nil
 			}
-			chk.AppendRow(0, e.inputRow)
+			chk.AppendRow(e.inputRow)
 		}
 		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
@@ -778,7 +778,7 @@ func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk
 				return errors.Trace(err)
 			}
 			if selected {
-				chk.AppendRow(0, e.inputRow)
+				chk.AppendRow(e.inputRow)
 				e.inputRow = e.inputRow.Next()
 				return nil
 			}
@@ -871,7 +871,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		}
 		e.seekHandle = handle + 1
 		mutableRow.SetDatums(row...)
-		chk.AppendRow(0, mutableRow.ToRow())
+		chk.AppendRow(mutableRow.ToRow())
 	}
 	return nil
 }

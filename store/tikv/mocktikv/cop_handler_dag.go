@@ -15,12 +15,15 @@ package mocktikv
 
 import (
 	"bytes"
+	"io"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -33,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc/metadata"
 )
 
 var dummySlice = make([]byte, 0)
@@ -45,36 +49,16 @@ type dagContext struct {
 
 func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	if len(req.Ranges) == 0 {
-		return resp
-	}
-	if req.GetTp() != kv.ReqTypeDAG {
-		return resp
-	}
 	if err := h.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
 		return resp
 	}
-
-	dagReq := new(tipb.DAGRequest)
-	err := proto.Unmarshal(req.Data, dagReq)
+	e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
 	}
-	sc := flagsToStatementContext(dagReq.Flags)
-	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
-	ctx := &dagContext{
-		dagReq:    dagReq,
-		keyRanges: req.Ranges,
-		evalCtx:   &evalContext{sc: sc, timeZone: timeZone},
-	}
-	e, err := h.buildDAG(ctx, dagReq.Executors)
-	if err != nil {
-		return &coprocessor.Response{
-			OtherError: err.Error(),
-		}
-	}
+
 	var (
 		chunks []tipb.Chunk
 		rowCnt int
@@ -102,6 +86,46 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		counts[offset] = e.Count() - 1
 	}
 	return buildResp(chunks, counts, err)
+}
+
+func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (executor, *tipb.DAGRequest, error) {
+	if len(req.Ranges) == 0 {
+		return nil, nil, errors.New("request range is null")
+	}
+	if req.GetTp() != kv.ReqTypeDAG {
+		return nil, nil, errors.Errorf("unsupported request type %d", req.GetTp())
+	}
+
+	dagReq := new(tipb.DAGRequest)
+	err := proto.Unmarshal(req.Data, dagReq)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	sc := flagsToStatementContext(dagReq.Flags)
+	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	ctx := &dagContext{
+		dagReq:    dagReq,
+		keyRanges: req.Ranges,
+		evalCtx:   &evalContext{sc: sc, timeZone: timeZone},
+	}
+	e, err := h.buildDAG(ctx, dagReq.Executors)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return e, dagReq, err
+}
+
+func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
+	e, dagReq, err := h.buildDAGExecutor(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &mockCopStreamClient{
+		exec:  e,
+		req:   dagReq,
+		goCtx: goctx.TODO(),
+	}, nil
 }
 
 func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
@@ -368,6 +392,96 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
 	sc.PadCharToFullLength = (flags & FlagPadCharToFullLength) > 0
 	return sc
+}
+
+// mockClientStream implements grpc ClientStream interface, its methods are never called.
+type mockClientStream struct{}
+
+func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
+func (mockClientStream) Trailer() metadata.MD         { return nil }
+func (mockClientStream) CloseSend() error             { return nil }
+func (mockClientStream) Context() goctx.Context       { return nil }
+func (mockClientStream) SendMsg(m interface{}) error  { return nil }
+func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
+
+type mockCopStreamClient struct {
+	mockClientStream
+
+	req      *tipb.DAGRequest
+	exec     executor
+	goCtx    goctx.Context
+	finished bool
+}
+
+type mockCopStreamErrClient struct {
+	mockClientStream
+
+	*errorpb.Error
+}
+
+func (mock *mockCopStreamErrClient) Recv() (*coprocessor.Response, error) {
+	return &coprocessor.Response{
+		RegionError: mock.Error,
+	}, nil
+}
+
+func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
+	if mock.finished {
+		return nil, io.EOF
+	}
+
+	var resp coprocessor.Response
+	chunk, finish, err := mock.readBlockFromExecutor()
+	if err != nil {
+		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+			resp.Locked = &kvrpcpb.LockInfo{
+				Key:         locked.Key,
+				PrimaryLock: locked.Primary,
+				LockVersion: locked.StartTS,
+				LockTtl:     locked.TTL,
+			}
+		} else {
+			resp.OtherError = err.Error()
+		}
+		return &resp, nil
+	}
+	if finish {
+		// Just mark it, need to handle the last chunk.
+		mock.finished = true
+	}
+
+	data, err := chunk.Marshal()
+	if err != nil {
+		resp.OtherError = err.Error()
+		return &resp, nil
+	}
+	streamResponse := tipb.StreamResponse{
+		Error:      toPBError(err),
+		EncodeType: tipb.EncodeType_TypeDefault,
+		Data:       data,
+	}
+	resp.Data, err = proto.Marshal(&streamResponse)
+	if err != nil {
+		resp.OtherError = err.Error()
+	}
+	return &resp, nil
+}
+
+func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, error) {
+	var chunk tipb.Chunk
+	for count := 0; count < rowsPerChunk; count++ {
+		row, err := mock.exec.Next(mock.goCtx)
+		if err != nil {
+			return chunk, false, errors.Trace(err)
+		}
+		if row == nil {
+			return chunk, true, nil
+		}
+		for _, offset := range mock.req.OutputOffsets {
+			chunk.RowsData = append(chunk.RowsData, row[offset]...)
+		}
+	}
+	return chunk, false, nil
 }
 
 func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {

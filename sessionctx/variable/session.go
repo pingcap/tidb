@@ -87,6 +87,7 @@ type TransactionContext struct {
 	Histroy       interface{}
 	SchemaVersion int64
 	StartTS       uint64
+	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 }
 
@@ -200,8 +201,8 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// SkipConstraintCheck is true when importing data.
-	SkipConstraintCheck bool
+	// ImportingData is true when importing data.
+	ImportingData bool
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
