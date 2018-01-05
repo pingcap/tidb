@@ -47,16 +47,6 @@ type jsonIndex struct {
 	LastUpdateVersion uint64          `json:"last_update_version"`
 }
 
-// ConvertTo converts Bucket's LowerBound and UpperBound to type t.
-func (b *Bucket) ConvertTo(h *Handle, t *types.FieldType) (err error) {
-	b.LowerBound, err = b.LowerBound.ConvertTo(h.ctx.GetSessionVars().StmtCtx, t)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	b.UpperBound, err = b.UpperBound.ConvertTo(h.ctx.GetSessionVars().StmtCtx, t)
-	return errors.Trace(err)
-}
-
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
 	statsTable := h.statsCache.Load().(statsCache)[tableInfo.ID]
@@ -74,23 +64,15 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 		Version:      tbl.Version,
 	}
 	for id, col := range tbl.Columns {
-		hist := &Histogram{
-			NDV:     col.NDV,
-			Buckets: make([]Bucket, len(col.Histogram.Buckets)),
-		}
-
-		// Convert Datum to BytesDatum.
-		for i, v := range col.Buckets {
-			hist.Buckets[i] = v
-			if err := hist.Buckets[i].ConvertTo(h, types.NewFieldType(mysql.TypeBlob)); err != nil {
-				return nil, errors.Trace(err)
-			}
+		hist, err := col.ConvertTo(h.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		// c is the Column in Cache.
 		c := statsTable.Columns[id]
 		jsonCol := &jsonColumn{
 			Histogram:         HistogramToProto(hist),
-			AlreadyLoad:       !(c.Count > 0 && len(c.Buckets) == 0),
+			AlreadyLoad:       !(c.Count > 0 && c.Len() == 0),
 			NullCount:         col.NullCount,
 			LastUpdateVersion: col.LastUpdateVersion,
 		}
@@ -130,18 +112,14 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			if idxInfo.Name.L != id {
 				continue
 			}
+			hist := HistogramFromProto(jsonIdx.Histogram)
+			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
+			hist.PreCalculateScalar()
 			idx := &Index{
-				Histogram: Histogram{ID: idxInfo.ID, NullCount: jsonIdx.NullCount, LastUpdateVersion: jsonIdx.LastUpdateVersion, NDV: jsonIdx.Histogram.Ndv},
+				Histogram: *hist,
 				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
 				Info:      idxInfo,
 			}
-			idx.Histogram.Buckets = HistogramFromProto(jsonIdx.Histogram).Buckets
-
-			for i := range idx.Buckets {
-				bk := &idx.Buckets[i]
-				bk.lowerScalar, bk.upperScalar, bk.commonPfxLen = preCalculateDatumScalar(&bk.LowerBound, &bk.UpperBound)
-			}
-
 			tbl.Indices[idx.ID] = idx
 		}
 	}
@@ -161,14 +139,13 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 				continue
 			}
 			col.CMSketch = CMSketchFromProto(jsonCol.CMSketch)
-			col.Histogram.Buckets = hist.Buckets
-			for i := range col.Buckets {
-				if err := col.Buckets[i].ConvertTo(h, &colInfo.FieldType); err != nil {
-					return nil, errors.Trace(err)
-				}
-				bk := &col.Buckets[i]
-				bk.lowerScalar, bk.upperScalar, bk.commonPfxLen = preCalculateDatumScalar(&bk.LowerBound, &bk.UpperBound)
+			hist, err := hist.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
+			hist.ID, hist.NullCount, hist.LastUpdateVersion = col.ID, col.NullCount, col.LastUpdateVersion
+			hist.PreCalculateScalar()
+			col.Histogram = *hist
 			tbl.Columns[col.ID] = col
 		}
 	}

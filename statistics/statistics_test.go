@@ -14,7 +14,6 @@
 package statistics
 
 import (
-	"bytes"
 	"math"
 	"testing"
 
@@ -156,7 +155,7 @@ func encodeKey(key types.Datum) types.Datum {
 }
 
 func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
+	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	goCtx := goctx.Background()
 	for {
 		row, err := records.Next(goCtx)
@@ -176,7 +175,7 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 }
 
 func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
-	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
+	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	goCtx := goctx.Background()
 	for {
@@ -202,16 +201,9 @@ func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 	return b.Count, b.Hist(), cms, nil
 }
 
-func calculateScalar(hist *Histogram) {
-	for i, bkt := range hist.Buckets {
-		bkt.lowerScalar, bkt.upperScalar, bkt.commonPfxLen = preCalculateDatumScalar(&bkt.LowerBound, &bkt.UpperBound)
-		hist.Buckets[i] = bkt
-	}
-}
-
 func checkRepeats(c *C, hg *Histogram) {
 	for _, bkt := range hg.Buckets {
-		c.Assert(bkt.Repeats, Greater, int64(0))
+		c.Assert(bkt.Repeat, Greater, int64(0))
 	}
 }
 
@@ -227,11 +219,11 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 		Samples:   s.samples,
 		FMSketch:  sketch,
 	}
-	col, err := BuildColumn(ctx, bucketCount, 2, collector)
-	checkRepeats(c, col)
-	calculateScalar(col)
+	col, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
 	c.Check(err, IsNil)
-	c.Check(len(col.Buckets), Equals, 232)
+	checkRepeats(c, col)
+	col.PreCalculateScalar()
+	c.Check(col.Len(), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 0)
@@ -264,7 +256,6 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
 		RecordSet:       s.pk,
 		ColLen:          1,
-		PkID:            -1,
 		MaxSampleSize:   1000,
 		MaxFMSketchSize: 1000,
 	}
@@ -272,14 +263,14 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	collectors, _, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(len(collectors), Equals, 1)
-	col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0])
+	col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0], types.NewFieldType(mysql.TypeLonglong))
 	c.Assert(err, IsNil)
 	checkRepeats(c, col)
 
 	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
-	checkRepeats(c, col)
-	calculateScalar(col)
 	c.Check(err, IsNil)
+	checkRepeats(c, col)
+	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, encodeKey(types.NewIntDatum(10000)))
 	c.Check(err, IsNil)
@@ -296,9 +287,9 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 
 	s.pk.(*recordSet).cursor = 0
 	tblCount, col, err = buildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
-	checkRepeats(c, col)
-	calculateScalar(col)
 	c.Check(err, IsNil)
+	checkRepeats(c, col)
+	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
 	c.Check(err, IsNil)
@@ -333,10 +324,10 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 		Samples:   []types.Datum{datum},
 		FMSketch:  sketch,
 	}
-	col, err = BuildColumn(ctx, bucketCount, 2, collector)
+	col, err = BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeJSON))
 	c.Assert(err, IsNil)
-	c.Assert(len(col.Buckets), Equals, 1)
-	c.Assert(col.Buckets[0].LowerBound, DeepEquals, col.Buckets[0].UpperBound)
+	c.Assert(col.Len(), Equals, 1)
+	c.Assert(col.GetLower(0), DeepEquals, col.GetUpper(0))
 }
 
 func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
@@ -348,28 +339,14 @@ func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 
 	p := HistogramToProto(col)
 	h := HistogramFromProto(p)
-	c.Assert(col.NDV, Equals, h.NDV)
-	c.Assert(len(col.Buckets), Equals, len(h.Buckets))
-	for i, bkt := range col.Buckets {
-		c.Assert(bkt.Count, Equals, h.Buckets[i].Count)
-		c.Assert(bkt.Repeats, Equals, h.Buckets[i].Repeats)
-		c.Assert(bytes.Equal(bkt.LowerBound.GetBytes(), h.Buckets[i].LowerBound.GetBytes()), IsTrue)
-		c.Assert(bytes.Equal(bkt.UpperBound.GetBytes(), h.Buckets[i].UpperBound.GetBytes()), IsTrue)
-	}
+	c.Assert(HistogramEqual(col, h, true), IsTrue)
 }
 
 func mockHistogram(lower, num int64) *Histogram {
-	h := &Histogram{
-		NDV: num,
-	}
+	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num))
 	for i := int64(0); i < num; i++ {
-		bkt := Bucket{
-			LowerBound: types.NewIntDatum(lower + i),
-			UpperBound: types.NewIntDatum(lower + i),
-			Count:      i + 1,
-			Repeats:    1,
-		}
-		h.Buckets = append(h.Buckets, bkt)
+		lower, upper := types.NewIntDatum(lower+i), types.NewIntDatum(lower+i)
+		h.AppendBucket(&lower, &upper, i+1, 1)
 	}
 	return h
 }
@@ -416,14 +393,14 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 		h, err := MergeHistograms(sc, lh, rh, bucketCount)
 		c.Assert(err, IsNil)
 		c.Assert(h.NDV, Equals, t.ndv)
-		c.Assert(len(h.Buckets), Equals, t.bucketNum)
-		c.Assert(h.Buckets[len(h.Buckets)-1].Count, Equals, t.leftNum+t.rightNum)
+		c.Assert(h.Len(), Equals, t.bucketNum)
+		c.Assert(int64(h.totalRowCount()), Equals, t.leftNum+t.rightNum)
 		expectLower := types.NewIntDatum(t.leftLower)
-		cmp, err := h.Buckets[0].LowerBound.CompareDatum(sc, &expectLower)
+		cmp, err := h.GetLower(0).CompareDatum(sc, &expectLower)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 		expectUpper := types.NewIntDatum(t.rightLower + t.rightNum - 1)
-		cmp, err = h.Buckets[len(h.Buckets)-1].UpperBound.CompareDatum(sc, &expectUpper)
+		cmp, err = h.GetUpper(h.Len()-1).CompareDatum(sc, &expectUpper)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -470,8 +447,8 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 		Samples:   s.samples,
 		FMSketch:  sketch,
 	}
-	hg, err := BuildColumn(ctx, bucketCount, 2, collector)
-	calculateScalar(hg)
+	hg, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
+	hg.PreCalculateScalar()
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data)}
 	tbl := &Table{
@@ -537,7 +514,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 
 	s.pk.(*recordSet).cursor = 0
 	rowCount, hg, err := buildPK(ctx, bucketCount, 0, s.pk)
-	calculateScalar(hg)
+	hg.PreCalculateScalar()
 	c.Check(err, IsNil)
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg}
@@ -603,7 +580,7 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 
 	s.rc.(*recordSet).cursor = 0
 	rowCount, hg, cms, err := buildIndex(ctx, bucketCount, 0, s.rc)
-	calculateScalar(hg)
+	hg.PreCalculateScalar()
 	c.Check(err, IsNil)
 	c.Check(rowCount, Equals, int64(100000))
 	idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
