@@ -169,11 +169,13 @@ func EncodeValue(raw types.Datum, loc *time.Location) ([]byte, error) {
 
 // EncodeRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
-func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location, valBuf []byte) ([]byte, error) {
+func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location, valBuf []byte, values []types.Datum) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
-	values := make([]types.Datum, 2*len(row))
+	if values == nil {
+		values = make([]types.Datum, len(row)*2)
+	}
 	for i, c := range row {
 		id := colIDs[i]
 		values[2*i].SetInt64(id)

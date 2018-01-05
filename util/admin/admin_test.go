@@ -498,7 +498,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	row := []types.Datum{v, {}}
 	colIDs := []int64{2, 3}
-	value, err := tablecodec.EncodeRow(row, colIDs, time.UTC, nil)
+	value, err := tablecodec.EncodeRow(row, colIDs, time.UTC, nil, nil)
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 )
 
@@ -254,6 +255,8 @@ type SessionVars struct {
 	RowValBuf []byte
 	// BufStore use to store temp kvs, to reduce memory allocations.
 	BufStore *kv.BufferStore
+	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
+	AddRowValues []types.Datum
 }
 
 // NewSessionVars creates a session vars object.
@@ -300,6 +303,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 func (s *SessionVars) CleanBuffers() {
 	s.RowValBuf = nil
 	s.BufStore = nil
+	s.AddRowValues = nil
 }
 
 // SetLastInsertID saves the last insert id to the session context.
