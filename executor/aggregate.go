@@ -17,7 +17,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/expression/aggregation/evaluators"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -166,9 +168,12 @@ type StreamAggExec struct {
 	tmpGroupKey  []types.Datum
 
 	// for chunk execution.
-	inputRow   chunk.Row
-	mutableRow chunk.MutRow
-	rowBuffer  []types.Datum
+	inputRow         chunk.Row
+	mutableRow       chunk.MutRow
+	rowBuffer        []types.Datum
+	prepared         bool
+	aggEvaluators    []evaluators.AggEvaluator
+	aggPartialResult [][]byte
 }
 
 // Open implements the Executor Open interface.
@@ -179,6 +184,9 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 
 	e.executed = false
 	e.hasData = false
+	e.prepared = false
+	e.aggEvaluators = nil
+	e.aggPartialResult = nil
 	e.inputRow = e.childrenResults[0].End()
 	e.mutableRow = chunk.MutRowFromTypes(e.Schema().GetTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
@@ -239,10 +247,41 @@ func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 	return retRow, nil
 }
 
+func (e *StreamAggExec) prepareOnce() {
+	if e.prepared {
+		return
+	}
+	e.prepared = true
+	for i, agg := range e.AggFuncs {
+		var inputIdx = []int(nil)
+		var outputIdx = []int{i}
+
+		for _, arg := range agg.GetArgs() {
+			col, ok := arg.(*expression.Column)
+			if !ok {
+				e.aggEvaluators = nil
+				return
+			}
+			inputIdx = append(inputIdx, col.Index)
+		}
+
+		aggEvaluator := evaluators.BuildAggEvaluator(agg, inputIdx, outputIdx)
+		if aggEvaluator == nil {
+			e.aggEvaluators = nil
+			return
+		}
+		e.aggEvaluators = append(e.aggEvaluators, aggEvaluator)
+	}
+	for _, evaluator := range e.aggEvaluators {
+		e.aggPartialResult = append(e.aggPartialResult, evaluator.AllocPartialResult())
+	}
+}
+
 // NextChunk implements the Executor NextChunk interface.
 func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
+	e.prepareOnce()
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
 		err := e.consumeOneGroup(goCtx, chk)
 		if err != nil {
@@ -266,10 +305,19 @@ func (e *StreamAggExec) consumeOneGroup(goCtx goctx.Context, chk *chunk.Chunk) e
 			if meetNewGroup {
 				e.appendResult2Chunk(chk)
 			}
-			for i, af := range e.AggFuncs {
-				err := af.Update(e.aggCtxs[i], e.StmtCtx, e.inputRow)
-				if err != nil {
-					return errors.Trace(err)
+			if e.aggEvaluators != nil {
+				for i, evaluator := range e.aggEvaluators {
+					err := evaluator.UpdatePartialResult(e.ctx, e.inputRow, e.aggPartialResult[i])
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+			} else {
+				for i, af := range e.AggFuncs {
+					err := af.Update(e.aggCtxs[i], e.StmtCtx, e.inputRow)
+					if err != nil {
+						return errors.Trace(err)
+					}
 				}
 			}
 			if meetNewGroup {
@@ -310,6 +358,16 @@ func (e *StreamAggExec) fetchChildIfNecessary(goCtx goctx.Context, chk *chunk.Ch
 // appendResult2Chunk appends result of all the aggregation functions to the
 // result chunk, and realloc the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
+	if e.aggEvaluators != nil {
+		for i, evaluator := range e.aggEvaluators {
+			err := evaluator.AppendFinalResult2Chunk(e.ctx, e.aggPartialResult[i], chk)
+			if err != nil {
+				terror.Log(errors.Trace(err))
+			}
+			evaluator.ResetPartialResult(e.aggPartialResult[i])
+		}
+		return
+	}
 	e.rowBuffer = e.rowBuffer[:0]
 	for i, af := range e.AggFuncs {
 		e.rowBuffer = append(e.rowBuffer, af.GetResult(e.aggCtxs[i]))

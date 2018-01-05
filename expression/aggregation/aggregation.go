@@ -77,6 +77,9 @@ type Aggregation interface {
 	// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
 	// return value will be false.
 	CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (types.Datum, bool)
+
+	// <partial | final | complete>_funcName([distinct,]arg1,arg2,...)
+	GetFuncSig() string
 }
 
 // NewAggFunction creates a new Aggregation.
@@ -160,11 +163,55 @@ const (
 	FinalMode
 )
 
+func (m AggFunctionMode) String() string {
+	switch m {
+	case CompleteMode:
+		return "map"
+	case FinalMode:
+		return "reduce"
+	}
+	return "unknown_side"
+}
+
 type aggFunction struct {
 	name     string
 	mode     AggFunctionMode
 	Args     []expression.Expression
 	Distinct bool
+}
+
+func (af *aggFunction) GetFuncSig() string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("%s_%s(", af.mode, af.name))
+	for i, arg := range af.Args {
+		buffer.WriteString(af.getTypeSig(arg.GetType()))
+		if i+1 < len(af.Args) {
+			buffer.WriteString(",")
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
+func (af *aggFunction) getTypeSig(t *types.FieldType) string {
+	switch t.EvalType() {
+	case types.ETInt:
+		return "int"
+	case types.ETReal:
+		return "real"
+	case types.ETDecimal:
+		return "decimal"
+	case types.ETString:
+		return "string"
+	case types.ETDatetime:
+		return "datetime"
+	case types.ETTimestamp:
+		return "timestamp"
+	case types.ETDuration:
+		return "duration"
+	case types.ETJson:
+		return "json"
+	}
+	return "unknown_type"
 }
 
 // Equal implements Aggregation interface.

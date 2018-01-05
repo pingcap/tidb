@@ -14,6 +14,9 @@
 package aggregation
 
 import (
+	"bytes"
+	"fmt"
+
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -135,4 +138,17 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 // GetPartialResult implements Aggregation interface.
 func (af *avgFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{types.NewIntDatum(ctx.Count), ctx.Value}
+}
+
+func (af *avgFunction) GetFuncSig() string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("%s_%s(", af.mode, af.name))
+	if af.mode == CompleteMode {
+		buffer.WriteString(af.getTypeSig(af.GetArgs()[0].GetType()))
+	} else {
+		buffer.WriteString(af.getTypeSig(af.GetArgs()[0].GetType()))
+		buffer.WriteString(",")
+		buffer.WriteString(af.getTypeSig(af.GetArgs()[1].GetType()))
+	}
+	buffer.WriteString(")")
+	return buffer.String()
 }
