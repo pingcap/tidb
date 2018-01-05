@@ -68,11 +68,7 @@ func (l *List) AppendRow(row Row) RowPtr {
 	}
 	chk := l.chunks[chkIdx]
 	rowIdx := chk.NumRows()
-	if chk.NumCols() == 0 {
-		chk.SetNumVirtualRows(chk.NumRows() + 1)
-	} else {
-		chk.AppendRow(0, row)
-	}
+	chk.AppendRow(row)
 	l.length++
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 }

@@ -173,7 +173,7 @@ func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 		rowPtr := e.rowPtrs[e.Idx]
-		chk.AppendRow(0, e.rowChunks.GetRow(rowPtr))
+		chk.AppendRow(e.rowChunks.GetRow(rowPtr))
 		e.Idx++
 	}
 	return nil
@@ -481,7 +481,7 @@ func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		chk.AppendRow(0, row)
+		chk.AppendRow(row)
 		e.Idx++
 	}
 	return nil
