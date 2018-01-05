@@ -95,21 +95,23 @@ func (hg *Histogram) PreCalculateScalar() {
 	}
 	switch hg.GetLower(0).Kind() {
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		hg.lowerScalar = make([]float64, len)
-		hg.upperScalar = make([]float64, len)
+		hg.scalars = make([]scalar, len)
 		for i := 0; i < len; i++ {
-			hg.lowerScalar[i] = convertDatumToScalar(hg.GetLower(i), 0)
-			hg.upperScalar[i] = convertDatumToScalar(hg.GetUpper(i), 0)
+			hg.scalars[i] = scalar{
+				lower: convertDatumToScalar(hg.GetLower(i), 0),
+				upper: convertDatumToScalar(hg.GetUpper(i), 0),
+			}
 		}
 	case types.KindBytes, types.KindString:
-		hg.lowerScalar = make([]float64, len)
-		hg.upperScalar = make([]float64, len)
-		hg.commonPfxLen = make([]int, len)
+		hg.scalars = make([]scalar, len)
 		for i := 0; i < len; i++ {
 			lower, upper := hg.GetLower(i), hg.GetUpper(i)
-			hg.commonPfxLen[i] = commonPrefixLength(lower.GetBytes(), upper.GetBytes())
-			hg.lowerScalar[i] = convertDatumToScalar(lower, hg.commonPfxLen[i])
-			hg.upperScalar[i] = convertDatumToScalar(upper, hg.commonPfxLen[i])
+			common := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
+			hg.scalars[i] = scalar{
+				commonPfxLen: common,
+				lower:        convertDatumToScalar(lower, common),
+				upper:        convertDatumToScalar(upper, common),
+			}
 		}
 	}
 }
@@ -128,9 +130,9 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	case types.KindMysqlDuration:
 		return calcFraction(float64(lower.GetDuration(0).Duration), float64(upper.GetDuration(0).Duration), float64(value.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		return calcFraction(hg.lowerScalar[index], hg.upperScalar[index], convertDatumToScalar(value, 0))
+		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
-		return calcFraction(hg.lowerScalar[index], hg.upperScalar[index], convertDatumToScalar(value, hg.commonPfxLen[index]))
+		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, hg.scalars[index].commonPfxLen))
 	}
 	return 0.5
 }

@@ -169,7 +169,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		IsIndex: 1,
 	}
 	if hist.Len() > 0 {
-		result.Count = hist.Counts[hist.Len()-1]
+		result.Count = hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }
@@ -258,7 +258,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 	hist := hists[0]
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
-		result.Count += hist.Counts[hist.Len()-1]
+		result.Count += hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }

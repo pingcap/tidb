@@ -62,11 +62,11 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		// The new item has the same value as current bucket value, to ensure that
 		// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 		// valuesPerBucket.
-		b.hist.Counts[b.bucketIdx]++
-		b.hist.Repeats[b.bucketIdx]++
-	} else if b.hist.Counts[b.bucketIdx]+1-b.lastNumber <= b.valuesPerBucket {
+		b.hist.Buckets[b.bucketIdx].Count++
+		b.hist.Buckets[b.bucketIdx].Repeat++
+	} else if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
 		// The bucket still have room to store a new item, update the bucket.
-		b.hist.updateLastBucket(&data, b.hist.Counts[b.bucketIdx]+1, 1)
+		b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
 		b.hist.NDV++
 	} else {
 		// All buckets are full, we should merge buckets.
@@ -77,14 +77,14 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 			if b.bucketIdx == 0 {
 				b.lastNumber = 0
 			} else {
-				b.lastNumber = b.hist.Counts[b.bucketIdx-1]
+				b.lastNumber = b.hist.Buckets[b.bucketIdx-1].Count
 			}
 		}
 		// We may merge buckets, so we should check it again.
-		if b.hist.Counts[b.bucketIdx]+1-b.lastNumber <= b.valuesPerBucket {
-			b.hist.updateLastBucket(&data, b.hist.Counts[b.bucketIdx]+1, 1)
+		if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
+			b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
 		} else {
-			b.lastNumber = b.hist.Counts[b.bucketIdx]
+			b.lastNumber = b.hist.Buckets[b.bucketIdx].Count
 			b.bucketIdx++
 			b.hist.AppendBucket(&data, &data, b.lastNumber+1, 1)
 		}
@@ -131,17 +131,17 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, collector *SampleCol
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
-			hg.Counts[bucketIdx] = int64(totalCount)
-			if float64(hg.Repeats[bucketIdx]) == ndvFactor {
-				hg.Repeats[bucketIdx] = int64(2 * sampleFactor)
+			hg.Buckets[bucketIdx].Count = int64(totalCount)
+			if float64(hg.Buckets[bucketIdx].Repeat) == ndvFactor {
+				hg.Buckets[bucketIdx].Repeat = int64(2 * sampleFactor)
 			} else {
-				hg.Repeats[bucketIdx] += int64(sampleFactor)
+				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i], int64(totalCount), int64(ndvFactor))
 		} else {
-			lastCount = hg.Counts[bucketIdx]
+			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			hg.AppendBucket(&samples[i], &samples[i], int64(totalCount), int64(ndvFactor))

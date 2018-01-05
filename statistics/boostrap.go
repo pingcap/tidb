@@ -201,13 +201,13 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		}
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
-				idx.Counts[i] += idx.Counts[i-1]
+				idx.Buckets[i].Count += idx.Buckets[i-1].Count
 			}
 			idx.PreCalculateScalar()
 		}
 		for _, col := range table.Columns {
 			for i := 1; i < col.Len(); i++ {
-				col.Counts[i] += col.Counts[i-1]
+				col.Buckets[i].Count += col.Buckets[i-1].Count
 			}
 			col.PreCalculateScalar()
 		}

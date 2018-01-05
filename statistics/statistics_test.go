@@ -202,8 +202,8 @@ func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 }
 
 func checkRepeats(c *C, hg *Histogram) {
-	for _, repeat := range hg.Repeats {
-		c.Assert(repeat, Greater, int64(0))
+	for _, bkt := range hg.Buckets {
+		c.Assert(bkt.Repeat, Greater, int64(0))
 	}
 }
 
