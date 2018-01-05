@@ -392,9 +392,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	return task, nil
 }
 
-// TODO: refine this.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
-	var indexCols []*expression.Column
+	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
 		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
 	}
@@ -455,13 +454,9 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn,
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var pkName model.CIStr
-	if table.PKIsHandle {
-		for _, colInfo := range table.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				pkName = colInfo.Name
-				break
-			}
-		}
+	pkInfo := table.GetPkColInfo()
+	if pkInfo != nil {
+		pkName = pkInfo.Name
 	}
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
