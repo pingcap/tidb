@@ -168,8 +168,8 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		Cms:     []*statistics.CMSketch{cms},
 		IsIndex: 1,
 	}
-	if len(hist.Buckets) > 0 {
-		result.Count = hist.Buckets[len(hist.Buckets)-1].Count
+	if hist.Len() > 0 {
+		result.Count = hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }
@@ -257,8 +257,8 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
-	if len(hist.Buckets) > 0 {
-		result.Count += hist.Buckets[len(hist.Buckets)-1].Count
+	if hist.Len() > 0 {
+		result.Count += hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }
@@ -346,15 +346,9 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
-		for i, bkt := range pkHist.Buckets {
-			pkHist.Buckets[i].LowerBound, err = tablecodec.DecodeColumnValue(bkt.LowerBound.GetBytes(), &e.pkInfo.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			pkHist.Buckets[i].UpperBound, err = tablecodec.DecodeColumnValue(bkt.UpperBound.GetBytes(), &e.pkInfo.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
+		err := pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 		hists = append(hists, pkHist)
 		cms = append(cms, nil)
@@ -366,7 +360,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i])
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

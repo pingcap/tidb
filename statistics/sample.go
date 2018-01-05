@@ -118,8 +118,8 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 type SampleBuilder struct {
 	Sc              *stmtctx.StatementContext
 	RecordSet       ast.RecordSet
-	ColLen          int   // ColLen is the number of columns need to be sampled.
-	PkID            int64 // If primary key is handle, the PkID is the id of the primary key. If not exists, it is -1.
+	ColLen          int // ColLen is the number of columns need to be sampled.
+	PkBuilder       *SortedBuilder
 	MaxBucketSize   int64
 	MaxSampleSize   int64
 	MaxFMSketchSize int64
@@ -133,10 +133,6 @@ type SampleBuilder struct {
 // It also returns the statistic builder for PK which contains the histogram.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder, error) {
-	var pkBuilder *SortedBuilder
-	if s.PkID != -1 {
-		pkBuilder = NewSortedBuilder(s.Sc, s.MaxBucketSize, s.PkID)
-	}
 	collectors := make([]*SampleCollector, s.ColLen)
 	for i := range collectors {
 		collectors[i] = &SampleCollector{
@@ -156,14 +152,14 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			return nil, nil, errors.Trace(err)
 		}
 		if row == nil {
-			return collectors, pkBuilder, nil
+			return collectors, s.PkBuilder, nil
 		}
 		if len(s.RecordSet.Fields()) == 0 {
 			panic(fmt.Sprintf("%T", s.RecordSet))
 		}
 		datums := ast.RowToDatums(row, s.RecordSet.Fields())
-		if s.PkID != -1 {
-			err = pkBuilder.Iterate(datums[0])
+		if s.PkBuilder != nil {
+			err = s.PkBuilder.Iterate(datums[0])
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
