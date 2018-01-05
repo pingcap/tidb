@@ -353,6 +353,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 
 	ivs.Table = v.Table
+	ivs.initDefaultValBuf()
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}
@@ -379,6 +380,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		GenColumns:   v.GenCols.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
+	insertVal.initDefaultValBuf()
 	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
