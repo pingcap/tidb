@@ -69,7 +69,7 @@ var (
 
 // TODO: support other mode
 const (
-	aes128ecbBlobkSize int = 16
+	aes128ecbBlobkSize = 16
 )
 
 type aesDecryptFunctionClass struct {
@@ -360,11 +360,11 @@ type builtinSHA2Sig struct {
 
 // Supported hash length of SHA-2 family
 const (
-	SHA0   int = 0
-	SHA224 int = 224
-	SHA256 int = 256
-	SHA384 int = 384
-	SHA512 int = 512
+	SHA0   = 0
+	SHA224 = 224
+	SHA256 = 256
+	SHA384 = 384
+	SHA512 = 512
 )
 
 // evalString evals SHA2(str, hash_length).

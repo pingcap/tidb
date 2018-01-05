@@ -64,8 +64,6 @@ type Row interface {
 	IsNull(colIdx int) bool
 }
 
-var _ Row = DatumRow{}
-
 // DatumRow is a slice of Datum, implements Row interface.
 type DatumRow []Datum
 

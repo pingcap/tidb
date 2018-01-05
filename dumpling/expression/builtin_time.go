@@ -1658,7 +1658,7 @@ func (c *sysDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTps := []types.EvalType{}
+	var argTps = make([]types.EvalType, 0)
 	if len(args) == 1 {
 		argTps = append(argTps, types.ETInt)
 	}

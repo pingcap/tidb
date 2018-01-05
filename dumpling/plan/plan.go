@@ -227,12 +227,12 @@ type basePhysicalPlan struct {
 	self             PhysicalPlan
 }
 
-func (bp *basePhysicalPlan) getChildReqProps(idx int) *requiredProp {
-	return bp.childrenReqProps[idx]
+func (p *basePhysicalPlan) getChildReqProps(idx int) *requiredProp {
+	return p.childrenReqProps[idx]
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (bp *basePhysicalPlan) ExplainInfo() string {
+func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 

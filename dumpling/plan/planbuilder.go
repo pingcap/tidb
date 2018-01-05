@@ -1015,11 +1015,11 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			table:     v.Table.Name.L,
 		})
 	case *ast.DropTableStmt:
-		for _, table := range v.Tables {
+		for _, tableVal := range v.Tables {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.DropPriv,
-				db:        table.Schema.L,
-				table:     table.Name.L,
+				db:        tableVal.Schema.L,
+				table:     tableVal.Name.L,
 			})
 		}
 	case *ast.TruncateTableStmt:

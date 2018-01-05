@@ -151,8 +151,8 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 }
 
 func encodeKey(key types.Datum) types.Datum {
-	bytes, _ := codec.EncodeKey(nil, key)
-	return types.NewBytesDatum(bytes)
+	buf, _ := codec.EncodeKey(nil, key)
+	return types.NewBytesDatum(buf)
 }
 
 func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
@@ -188,16 +188,16 @@ func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 			break
 		}
 		datums := ast.RowToDatums(row, records.Fields())
-		bytes, err := codec.EncodeKey(nil, datums...)
+		buf, err := codec.EncodeKey(nil, datums...)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		data := types.NewBytesDatum(bytes)
+		data := types.NewBytesDatum(buf)
 		err = b.Iterate(data)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		cms.InsertBytes(bytes)
+		cms.InsertBytes(buf)
 	}
 	return b.Count, b.Hist(), cms, nil
 }
