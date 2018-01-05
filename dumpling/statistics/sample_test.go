@@ -100,11 +100,12 @@ func (s *testSampleSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSampleSuite) TestCollectColumnStats(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
 	builder := statistics.SampleBuilder{
-		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+		Sc:              sc,
 		RecordSet:       s.rs,
 		ColLen:          1,
-		PkID:            1,
+		PkBuilder:       statistics.NewSortedBuilder(sc, 256, 1, types.NewFieldType(mysql.TypeLonglong)),
 		MaxSampleSize:   10000,
 		MaxBucketSize:   256,
 		MaxFMSketchSize: 1000,
@@ -126,7 +127,6 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
 		RecordSet:       s.rs,
 		ColLen:          2,
-		PkID:            -1,
 		MaxSampleSize:   1000,
 		MaxBucketSize:   256,
 		MaxFMSketchSize: 1000,
@@ -152,7 +152,6 @@ func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
 		RecordSet:       s.rs,
 		ColLen:          2,
-		PkID:            -1,
 		MaxSampleSize:   10000,
 		MaxBucketSize:   256,
 		MaxFMSketchSize: 1000,
