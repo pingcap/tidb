@@ -650,7 +650,7 @@ func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPl
 	return []PhysicalPlan{ua}
 }
 
-func (p *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
+func (ls *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
 	ps := PhysicalSort{ByItems: ls.ByItems}.init(ls.ctx, ls.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64})
 	return ps
 }
