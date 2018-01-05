@@ -204,7 +204,7 @@ func runTestRegression(c *C, overrider configOverrider, dbName string) {
 
 		dbt.mustQueryRows("SELECT 1")
 
-		b := []byte{}
+		var b = make([]byte, 0)
 		if err := dbt.db.QueryRow("SELECT ?", b).Scan(&b); err != nil {
 			dbt.Fatal(err)
 		}

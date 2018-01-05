@@ -1255,30 +1255,30 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	isZero := false
 	switch d.Kind() {
 	case KindInt64:
-		isZero = (d.GetInt64() == 0)
+		isZero = d.GetInt64() == 0
 	case KindUint64:
-		isZero = (d.GetUint64() == 0)
+		isZero = d.GetUint64() == 0
 	case KindFloat32:
-		isZero = (RoundFloat(d.GetFloat64()) == 0)
+		isZero = RoundFloat(d.GetFloat64()) == 0
 	case KindFloat64:
-		isZero = (RoundFloat(d.GetFloat64()) == 0)
+		isZero = RoundFloat(d.GetFloat64()) == 0
 	case KindString, KindBytes:
 		iVal, err1 := StrToInt(sc, d.GetString())
-		isZero, err = (iVal == 0), err1
+		isZero, err = iVal == 0, err1
 	case KindMysqlTime:
 		isZero = d.GetMysqlTime().IsZero()
 	case KindMysqlDuration:
-		isZero = (d.GetMysqlDuration().Duration == 0)
+		isZero = d.GetMysqlDuration().Duration == 0
 	case KindMysqlDecimal:
 		v, err1 := d.GetMysqlDecimal().ToFloat64()
-		isZero, err = (RoundFloat(v) == 0), err1
+		isZero, err = RoundFloat(v) == 0, err1
 	case KindMysqlEnum:
-		isZero = (d.GetMysqlEnum().ToNumber() == 0)
+		isZero = d.GetMysqlEnum().ToNumber() == 0
 	case KindMysqlSet:
-		isZero = (d.GetMysqlSet().ToNumber() == 0)
+		isZero = d.GetMysqlSet().ToNumber() == 0
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err1 := d.GetBinaryLiteral().ToInt()
-		isZero, err = (val == 0), err1
+		isZero, err = val == 0, err1
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", d.GetValue(), d.GetValue())
 	}

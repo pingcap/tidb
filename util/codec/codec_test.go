@@ -760,11 +760,11 @@ func (s *testCodecSuite) TestJSON(c *C) {
 		datums = append(datums, d)
 	}
 
-	bytes := make([]byte, 0, 4096)
-	bytes, err := encode(bytes, datums, false, false)
+	buf := make([]byte, 0, 4096)
+	buf, err := encode(buf, datums, false, false)
 	c.Assert(err, IsNil)
 
-	datums1, err := Decode(bytes, 2)
+	datums1, err := Decode(buf, 2)
 	c.Assert(err, IsNil)
 
 	for i := range datums1 {

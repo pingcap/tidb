@@ -54,11 +54,11 @@ const (
 	ErrExprInOrderBy = "ORDER BY"
 )
 
-func (p *LogicalAggregation) collectGroupByColumns() {
-	p.groupByCols = p.groupByCols[:0]
-	for _, item := range p.GroupByItems {
+func (la *LogicalAggregation) collectGroupByColumns() {
+	la.groupByCols = la.groupByCols[:0]
+	for _, item := range la.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
-			p.groupByCols = append(p.groupByCols, col)
+			la.groupByCols = append(la.groupByCols, col)
 		}
 	}
 }
@@ -1883,7 +1883,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
-		table, found := b.is.TableByID(tableInfo.ID)
+		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {
 			b.err = infoschema.ErrTableNotExists.GenByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 			return nil, nil
@@ -1900,7 +1900,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			for _, asName := range tableAsName[tableInfo] {
 				virtualAssignments = append(virtualAssignments, &ast.Assignment{
 					Column: &ast.ColumnName{Table: *asName, Name: colInfo.Name},
-					Expr:   table.Cols()[i].GeneratedExpr,
+					Expr:   tableVal.Cols()[i].GeneratedExpr,
 				})
 			}
 		}

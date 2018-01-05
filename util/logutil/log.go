@@ -23,7 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
-	lumberjack "gopkg.in/natefinch/lumberjack.v2"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const (

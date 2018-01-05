@@ -304,7 +304,7 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 		s.Status |= flag
 		return
 	}
-	s.Status &= (^flag)
+	s.Status &= ^flag
 }
 
 // GetStatusFlag gets the session server status variable, returns true if it is on.
