@@ -841,14 +841,15 @@ type InsertExec struct {
 
 func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
-	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
-	batchSize := e.ctx.GetSessionVars().DMLBatchSize
+	sessVars := e.ctx.GetSessionVars()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
 
 	txn := e.ctx.Txn()
 	rowCount := 0
 	tmpMemCap := 64
-	e.ctx.GetSessionVars().BufStore = kv.NewBufferStore(txn, tmpMemCap)
-	defer e.ctx.GetSessionVars().CleanBuffers()
+	sessVars.BufStore = kv.NewBufferStore(txn, tmpMemCap)
+	defer sessVars.CleanBuffers()
 	for _, row := range rows {
 		if batchInsert && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
@@ -857,7 +858,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			e.ctx.GetSessionVars().BufStore = kv.NewBufferStore(txn, tmpMemCap)
+			sessVars.BufStore = kv.NewBufferStore(txn, tmpMemCap)
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -865,7 +866,9 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		h, err := e.Table.AddRecord(e.ctx, row, false)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
-			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			if !sessVars.ImportingData {
+				getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			}
 			rowCount++
 			continue
 		}
@@ -890,7 +893,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	}
 
 	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+		sessVars.SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil, nil
