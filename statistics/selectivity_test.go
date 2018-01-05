@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -82,17 +83,11 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 }
 
 // mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
-func mockStatsHistogram(id int64, values []types.Datum, repeat int64) *statistics.Histogram {
+func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
 	ndv := len(values)
-	histogram := &statistics.Histogram{
-		ID:      id,
-		NDV:     int64(ndv),
-		Buckets: make([]statistics.Bucket, ndv),
-	}
+	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv)
 	for i := 0; i < ndv; i++ {
-		histogram.Buckets[i].Repeats = repeat
-		histogram.Buckets[i].Count = repeat * int64(i+1)
-		histogram.Buckets[i].UpperBound = values[i]
+		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
 	}
 	return histogram
 }
@@ -123,14 +118,15 @@ func (s *testSelectivitySuite) prepareSelectivity(testKit *testkit.TestKit, c *C
 	// Set the value of columns' histogram.
 	colValues, _ := s.generateIntDatum(1, 54)
 	for i := 1; i <= 5; i++ {
-		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10), Info: tbl.Columns[i-1]}
+		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
 	}
 
 	// Set the value of two indices' histograms.
 	idxValues, err := s.generateIntDatum(2, 3)
 	c.Assert(err, IsNil)
-	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60), Info: tbl.Indices[0]}
-	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60), Info: tbl.Indices[1]}
+	tp := types.NewFieldType(mysql.TypeBlob)
+	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60, tp), Info: tbl.Indices[0]}
+	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60, tp), Info: tbl.Indices[1]}
 	return statsTbl
 }
 

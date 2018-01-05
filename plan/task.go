@@ -129,6 +129,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.PhysicalJoin.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildJoinSchema(p.PhysicalJoin.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + lTask.count()*rTask.cost(),
@@ -145,6 +146,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(p.innerPlan, outerTask.plan())
 	}
+	p.schema = buildJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: outerTask.cost() + p.getCost(outerTask.count()),
@@ -186,6 +188,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
@@ -203,6 +206,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
@@ -280,11 +284,6 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
 			// When limit be pushed down, it should remove its offset.
 			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx, p.stats)
-			if cop.tablePlan != nil {
-				pushedDownLimit.SetSchema(cop.tablePlan.Schema())
-			} else {
-				pushedDownLimit.SetSchema(cop.indexPlan.Schema())
-			}
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
 		t = finishCopTask(cop, p.ctx)
@@ -362,14 +361,12 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
 		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
-			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 			pushedDownTopN.SetChildren(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
 		} else {
 			// FIXME: When we pushed down a top-N plan to table plan branch in case of double reading. The cost should
 			// be more expensive in case of single reading, because we may execute table scan multi times.
 			copTask.finishIndexPlan()
-			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 			pushedDownTopN.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
@@ -439,11 +436,11 @@ func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg PhysicalPl
 	if len(remained) > 0 {
 		return nil, p.self
 	}
-	partialAgg = p.self
 	originalSchema := p.schema
-	// TODO: Refactor the way of constructing aggregation functions.
 	partialSchema := expression.NewSchema()
-	partialAgg.SetSchema(partialSchema)
+	p.schema = partialSchema
+	partialAgg = p.self
+	// TODO: Refactor the way of constructing aggregation functions.
 	cursor := 0
 	finalAggFuncs := make([]aggregation.Aggregation, len(p.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
@@ -482,17 +479,20 @@ func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg PhysicalPl
 	}
 
 	if p.tp == TypeStreamAgg {
-		finalAgg = basePhysicalAgg{
+		agg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
 			GroupByItems: groupByItems,
 		}.initForStream(p.ctx, p.stats)
+		agg.SetSchema(originalSchema)
+		finalAgg = agg
 	} else {
-		finalAgg = basePhysicalAgg{
+		agg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
 			GroupByItems: groupByItems,
 		}.initForHash(p.ctx, p.stats)
+		agg.SetSchema(originalSchema)
+		finalAgg = agg
 	}
-	finalAgg.SetSchema(originalSchema)
 	return
 }
 

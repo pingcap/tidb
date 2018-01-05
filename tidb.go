@@ -249,24 +249,24 @@ func NewStore(path string) (kv.Storage, error) {
 }
 
 func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
-	url, err := url.Parse(path)
+	storeURL, err := url.Parse(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	name := strings.ToLower(url.Scheme)
+	name := strings.ToLower(storeURL.Scheme)
 	d, ok := stores[name]
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
 	var s kv.Storage
-	err1 := util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
+	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		log.Infof("new store")
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
-	return s, errors.Trace(err1)
+	return s, errors.Trace(err)
 }
 
 // DialPumpClientWithRetry tries to dial to binlogSocket,
