@@ -858,7 +858,6 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	}
 
 	for _, row := range rows {
@@ -880,6 +879,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			rowCount++
 			continue
 		}
+
 		if kv.ErrKeyExists.Equal(err) {
 			if len(e.OnDuplicate) > 0 {
 				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
@@ -1015,6 +1015,8 @@ func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error
 		}
 	}
 
+	// this statement was already been checked
+	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	return noDupRows, nil
 }
 
