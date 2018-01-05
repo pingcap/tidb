@@ -114,7 +114,7 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	for _, idxInfo := range t.Indices {
 		idxCols, lengths := expression.IndexInfo2Cols(extractedCols, idxInfo.Info)
 		// This index should have histogram.
-		if len(idxCols) > 0 && len(idxInfo.Histogram.Buckets) > 0 {
+		if len(idxCols) > 0 && idxInfo.Histogram.Len() > 0 {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, exprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
 				return 0, errors.Trace(err)
