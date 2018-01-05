@@ -101,7 +101,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			err = t.UpdateDDLJob(int64(j), job)
+			err = t.UpdateDDLJob(int64(j), job, true)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 			}
