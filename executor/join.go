@@ -579,7 +579,9 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 			src: e.outerResultChs[workerID],
 		}
 	}
-	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+	if joinResult == nil {
+		return
+	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		e.joinResultCh <- joinResult
 	}
 }
