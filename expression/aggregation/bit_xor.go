@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 type bitXorFunction struct {
@@ -77,11 +76,6 @@ func (bf *bitXorFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 // GetResult implements Aggregation interface.
 func (bf *bitXorFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
 	return ctx.Value
-}
-
-//  AppendResultToChunk implements Aggregation interface.
-func (bf *bitXorFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
-	chunk.AppendUint64(colIdx, ctx.Value.GetUint64())
 }
 
 // GetPartialResult implements Aggregation interface.

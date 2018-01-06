@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 type countFunction struct {
@@ -99,11 +98,6 @@ func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCo
 func (cf *countFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	d.SetInt64(ctx.Count)
 	return d
-}
-
-//  AppendResultToChunk implements Aggregation interface.
-func (cf *countFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
-	chunk.AppendInt64(colIdx, ctx.Count)
 }
 
 // GetPartialResult implements Aggregation interface.

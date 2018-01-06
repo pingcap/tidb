@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
@@ -49,9 +48,6 @@ type Aggregation interface {
 
 	// GetResult will be called when all data have been processed.
 	GetResult(ctx *AggEvaluateContext) types.Datum
-
-	// AppendResultToChunk will be called when all data have been processed.
-	AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext)
 
 	// GetArgs stands for getting all arguments.
 	GetArgs() []expression.Expression

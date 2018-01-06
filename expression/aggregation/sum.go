@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -44,18 +43,6 @@ func (sf *sumFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCont
 // GetResult implements Aggregation interface.
 func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	return ctx.Value
-}
-
-//  AppendResultToChunk implements Aggregation interface.
-func (sf *sumFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
-	if ctx.Value.Kind() == types.KindNull {
-		chunk.AppendNull(colIdx)
-		return
-	} else if ctx.Value.Kind() == types.KindFloat64 {
-		chunk.AppendFloat64(colIdx, ctx.Value.GetFloat64())
-		return
-	}
-	chunk.AppendMyDecimal(colIdx, ctx.Value.GetMysqlDecimal())
 }
 
 // GetPartialResult implements Aggregation interface.

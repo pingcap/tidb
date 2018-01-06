@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 type maxMinFunction struct {
@@ -54,36 +53,6 @@ func (mmf *maxMinFunction) GetType() *types.FieldType {
 // GetResult implements Aggregation interface.
 func (mmf *maxMinFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	return ctx.Value
-}
-
-//  AppendResultToChunk implements Aggregation interface.
-func (mmf *maxMinFunction) AppendResultToChunk(chunk *chunk.Chunk, colIdx int, ctx *AggEvaluateContext) {
-	if ctx.Value.IsNull() {
-		chunk.AppendNull(colIdx)
-		return
-	}
-	switch ctx.Value.Kind() {
-	case types.KindNull:
-		chunk.AppendNull(colIdx)
-	case types.KindFloat32:
-		chunk.AppendFloat32(colIdx, ctx.Value.GetFloat32())
-	case types.KindFloat64:
-		chunk.AppendFloat64(colIdx, ctx.Value.GetFloat64())
-	case types.KindInt64:
-		chunk.AppendInt64(colIdx, ctx.Value.GetInt64())
-	case types.KindUint64:
-		chunk.AppendUint64(colIdx, ctx.Value.GetUint64())
-	case types.KindMysqlDecimal:
-		chunk.AppendMyDecimal(colIdx, ctx.Value.GetMysqlDecimal())
-	case types.KindMysqlTime:
-		chunk.AppendTime(colIdx, ctx.Value.GetMysqlTime())
-	case types.KindMysqlDuration:
-		chunk.AppendDuration(colIdx, ctx.Value.GetMysqlDuration())
-	case types.KindMysqlJSON:
-		chunk.AppendJSON(colIdx, ctx.Value.GetMysqlJSON())
-	default:
-		chunk.AppendString(colIdx, ctx.Value.GetString())
-	}
 }
 
 // GetPartialResult implements Aggregation interface.
