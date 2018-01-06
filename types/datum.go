@@ -71,6 +71,13 @@ func (d *Datum) Copy() *Datum {
 		ret.b = make([]byte, len(d.b))
 		copy(ret.b, d.b)
 	}
+	switch ret.Kind() {
+	case KindMysqlDecimal:
+		d := *d.GetMysqlDecimal()
+		ret.SetMysqlDecimal(&d)
+	case KindMysqlTime:
+		ret.SetMysqlTime(d.GetMysqlTime())
+	}
 	return &ret
 }
 
@@ -1807,10 +1814,5 @@ func DatumsToString(datums []Datum) (string, error) {
 // CopyDatum returns a new copy of the datum.
 // TODO: Abandon this function.
 func CopyDatum(datum Datum) Datum {
-	ret := datum
-	if datum.b != nil {
-		ret.b = make([]byte, len(datum.b))
-		copy(ret.b, datum.b)
-	}
-	return ret
+	return *datum.Copy()
 }
