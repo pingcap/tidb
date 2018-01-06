@@ -115,8 +115,8 @@ type analyzeColumnsExec struct {
 
 func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
-	timeZone := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
-	evalCtx := &evalContext{sc: sc, timeZone: timeZone}
+	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
 	e := &analyzeColumnsExec{

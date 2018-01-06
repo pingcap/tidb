@@ -18,6 +18,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -64,6 +66,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 			ret[i] = types.NewIntDatum(int64(i))
 		}
 	} else {
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
 		// In this way, we can guarantee the datum is in order.
 		for i := 0; i < len; i++ {
 			data := make([]types.Datum, dimension)
@@ -72,7 +75,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 				data[dimension-k-1].SetInt64(int64(j % num))
 				j = j / num
 			}
-			bytes, err := codec.EncodeKey(nil, data...)
+			bytes, err := codec.EncodeKey(sc, nil, data...)
 			if err != nil {
 				return nil, err
 			}

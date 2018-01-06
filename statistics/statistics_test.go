@@ -16,6 +16,7 @@ package statistics
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -150,7 +151,8 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 }
 
 func encodeKey(key types.Datum) types.Datum {
-	buf, _ := codec.EncodeKey(nil, key)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	buf, _ := codec.EncodeKey(sc, nil, key)
 	return types.NewBytesDatum(buf)
 }
 
@@ -187,7 +189,7 @@ func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 			break
 		}
 		datums := ast.RowToDatums(row, records.Fields())
-		buf, err := codec.EncodeKey(nil, datums...)
+		buf, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
@@ -209,9 +211,9 @@ func checkRepeats(c *C, hg *Histogram) {
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
 	bucketCount := int64(256)
-	sketch, _, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
+	sketch, _, _ := buildFMSketch(sc, s.rc.(*recordSet).data, 1000)
 
 	collector := &SampleCollector{
 		Count:     s.count,
@@ -437,9 +439,9 @@ func buildCMSketch(values []types.Datum) *CMSketch {
 
 func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	bucketCount := int64(256)
-	sketch, _, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
+	sketch, _, _ := buildFMSketch(sc, s.rc.(*recordSet).data, 1000)
 
 	collector := &SampleCollector{
 		Count:     s.count,

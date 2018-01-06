@@ -377,7 +377,7 @@ func (e *CheckTableExec) run(goCtx goctx.Context) error {
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
-			err = admin.CompareIndexData(txn, tb, idx)
+			err = admin.CompareIndexData(e.ctx.GetSessionVars().StmtCtx, txn, tb, idx)
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
 			}

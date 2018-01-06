@@ -270,7 +270,7 @@ func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
 		} else {
 			handleDatum = types.NewIntDatum(handle)
 		}
-		handleBytes, err := codec.EncodeValue(b, handleDatum)
+		handleBytes, err := codec.EncodeValue(nil, b, handleDatum)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -543,7 +543,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 			} else {
 				handleDatum = types.NewIntDatum(handle)
 			}
-			handleData, err1 := codec.EncodeValue(nil, handleDatum)
+			handleData, err1 := codec.EncodeValue(nil, nil, handleDatum)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}

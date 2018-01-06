@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/meta/autoid"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/tablecodec"
@@ -445,12 +447,13 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	handle := int64(1)
 	expectRecordKey := tablecodec.EncodeRecordKey(tablePrefix, handle)
 
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	expectIdxKey := make([]byte, 0)
 	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum([]byte("a")))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum([]byte("a")))
 	c.Assert(err, IsNil)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum(handle))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum(handle))
 	c.Assert(err, IsNil)
 
 	for _, row := range kvPairs {
@@ -487,7 +490,7 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	indexPrefix = tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	expectIdxKey = []byte{}
 	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum([]byte("a")))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum([]byte("a")))
 	c.Assert(err, IsNil)
 
 	for _, row := range kvPairs {

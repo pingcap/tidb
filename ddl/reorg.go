@@ -47,6 +47,7 @@ func (d *ddl) newContext() context.Context {
 	c := mock.NewContext()
 	c.Store = d.store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	c.GetSessionVars().StmtCtx.TimeZone = time.UTC
 	return c
 }
 

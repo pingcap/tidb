@@ -167,7 +167,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 
 func checkIndexExists(ctx context.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
 	idx := tbl.Indices()[0]
-	doesExist, _, err := idx.Exist(ctx.Txn(), types.MakeDatums(indexValue), handle)
+	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, ctx.Txn(), types.MakeDatums(indexValue), handle)
 	if err != nil {
 		return errors.Trace(err)
 	}
