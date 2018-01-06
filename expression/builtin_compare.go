@@ -145,7 +145,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 			}
 			argIntLen := argTp.Flen
 			if argTp.Decimal > 0 {
-				argIntLen -= (argTp.Decimal + 1)
+				argIntLen -= argTp.Decimal + 1
 			}
 
 			// Reduce the sign bit if it is a signed integer/decimal
@@ -845,10 +845,10 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	}
 	if lhs.IsStringKind() && rhs.IsStringKind() {
 		return types.ETString
-	} else if lhs == types.ETInt && rhs == types.ETInt {
+	} else if (lhs == types.ETInt || lft.Hybrid()) && (rhs == types.ETInt || rft.Hybrid()) {
 		return types.ETInt
-	} else if (lhs == types.ETInt || lhs == types.ETDecimal) &&
-		(rhs == types.ETInt || rhs == types.ETDecimal) {
+	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
+		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
 		return types.ETDecimal
 	}
 	return types.ETReal

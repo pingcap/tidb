@@ -71,6 +71,13 @@ func (d *Datum) Copy() *Datum {
 		ret.b = make([]byte, len(d.b))
 		copy(ret.b, d.b)
 	}
+	switch ret.Kind() {
+	case KindMysqlDecimal:
+		d := *d.GetMysqlDecimal()
+		ret.SetMysqlDecimal(&d)
+	case KindMysqlTime:
+		ret.SetMysqlTime(d.GetMysqlTime())
+	}
 	return &ret
 }
 
@@ -1255,30 +1262,30 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	isZero := false
 	switch d.Kind() {
 	case KindInt64:
-		isZero = (d.GetInt64() == 0)
+		isZero = d.GetInt64() == 0
 	case KindUint64:
-		isZero = (d.GetUint64() == 0)
+		isZero = d.GetUint64() == 0
 	case KindFloat32:
-		isZero = (RoundFloat(d.GetFloat64()) == 0)
+		isZero = RoundFloat(d.GetFloat64()) == 0
 	case KindFloat64:
-		isZero = (RoundFloat(d.GetFloat64()) == 0)
+		isZero = RoundFloat(d.GetFloat64()) == 0
 	case KindString, KindBytes:
 		iVal, err1 := StrToInt(sc, d.GetString())
-		isZero, err = (iVal == 0), err1
+		isZero, err = iVal == 0, err1
 	case KindMysqlTime:
 		isZero = d.GetMysqlTime().IsZero()
 	case KindMysqlDuration:
-		isZero = (d.GetMysqlDuration().Duration == 0)
+		isZero = d.GetMysqlDuration().Duration == 0
 	case KindMysqlDecimal:
 		v, err1 := d.GetMysqlDecimal().ToFloat64()
-		isZero, err = (RoundFloat(v) == 0), err1
+		isZero, err = RoundFloat(v) == 0, err1
 	case KindMysqlEnum:
-		isZero = (d.GetMysqlEnum().ToNumber() == 0)
+		isZero = d.GetMysqlEnum().ToNumber() == 0
 	case KindMysqlSet:
-		isZero = (d.GetMysqlSet().ToNumber() == 0)
+		isZero = d.GetMysqlSet().ToNumber() == 0
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err1 := d.GetBinaryLiteral().ToInt()
-		isZero, err = (val == 0), err1
+		isZero, err = val == 0, err1
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", d.GetValue(), d.GetValue())
 	}
@@ -1807,10 +1814,5 @@ func DatumsToString(datums []Datum) (string, error) {
 // CopyDatum returns a new copy of the datum.
 // TODO: Abandon this function.
 func CopyDatum(datum Datum) Datum {
-	ret := datum
-	if datum.b != nil {
-		ret.b = make([]byte, len(datum.b))
-		copy(ret.b, datum.b)
-	}
-	return ret
+	return *datum.Copy()
 }

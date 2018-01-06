@@ -84,7 +84,7 @@ func getMaxColLen(cols []string, datas [][]string) []int {
 }
 
 func getPrintDivLine(maxColLen []int) []byte {
-	var value []byte
+	var value = make([]byte, 0)
 	for _, v := range maxColLen {
 		value = append(value, '+')
 		value = append(value, bytes.Repeat([]byte{'-'}, v+2)...)
@@ -95,7 +95,7 @@ func getPrintDivLine(maxColLen []int) []byte {
 }
 
 func getPrintCol(cols []string, maxColLen []int) []byte {
-	var value []byte
+	var value = make([]byte, 0)
 	for i, v := range cols {
 		value = append(value, '|')
 		value = append(value, ' ')
@@ -108,7 +108,7 @@ func getPrintCol(cols []string, maxColLen []int) []byte {
 }
 
 func getPrintRow(data []string, maxColLen []int) []byte {
-	var value []byte
+	var value = make([]byte, 0)
 	for i, v := range data {
 		value = append(value, '|')
 		value = append(value, ' ')
@@ -121,7 +121,7 @@ func getPrintRow(data []string, maxColLen []int) []byte {
 }
 
 func getPrintRows(datas [][]string, maxColLen []int) []byte {
-	var value []byte
+	var value = make([]byte, 0)
 	for _, data := range datas {
 		value = append(value, getPrintRow(data, maxColLen)...)
 	}
@@ -134,7 +134,7 @@ func GetPrintResult(cols []string, datas [][]string) (string, bool) {
 		return "", false
 	}
 
-	var value []byte
+	var value = make([]byte, 0)
 	maxColLen := getMaxColLen(cols, datas)
 
 	value = append(value, getPrintDivLine(maxColLen)...)

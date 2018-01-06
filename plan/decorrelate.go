@@ -25,9 +25,9 @@ import (
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
 // e.g. If the correlated columns from inner plan are [t1.a, t2.a, t3.a] and outer plan's schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is treated as this apply's correlated column.
-func (a *LogicalApply) extractCorColumnsBySchema() {
-	schema := a.children[0].Schema()
-	corCols := a.children[1].(LogicalPlan).extractCorrelatedCols()
+func (la *LogicalApply) extractCorColumnsBySchema() {
+	schema := la.children[0].Schema()
+	corCols := la.children[1].(LogicalPlan).extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
 		idx := schema.ColumnIndex(&corCol.Column)
@@ -49,28 +49,28 @@ func (a *LogicalApply) extractCorColumnsBySchema() {
 			length++
 		}
 	}
-	a.corCols = resultCorCols[:length]
+	la.corCols = resultCorCols[:length]
 }
 
 // canPullUpAgg checks if an apply can pull an aggregation up.
-func (a *LogicalApply) canPullUpAgg() bool {
-	if a.JoinType != InnerJoin && a.JoinType != LeftOuterJoin {
+func (la *LogicalApply) canPullUpAgg() bool {
+	if la.JoinType != InnerJoin && la.JoinType != LeftOuterJoin {
 		return false
 	}
-	if len(a.EqualConditions)+len(a.LeftConditions)+len(a.RightConditions)+len(a.OtherConditions) > 0 {
+	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
 		return false
 	}
-	return len(a.children[0].Schema().Keys) > 0
+	return len(la.children[0].Schema().Keys) > 0
 }
 
 // canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
-func (a *LogicalAggregation) canPullUp() bool {
-	if len(a.GroupByItems) > 0 {
+func (la *LogicalAggregation) canPullUp() bool {
+	if len(la.GroupByItems) > 0 {
 		return false
 	}
-	for _, f := range a.AggFuncs {
+	for _, f := range la.AggFuncs {
 		for _, arg := range f.GetArgs() {
-			expr := expression.EvaluateExprWithNull(a.ctx, a.children[0].Schema(), arg)
+			expr := expression.EvaluateExprWithNull(la.ctx, la.children[0].Schema(), arg)
 			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
 				return false
 			}

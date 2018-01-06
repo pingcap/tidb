@@ -50,11 +50,11 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			b = encodeSignedInt(b, vals[i].GetInt64(), comparable)
 		case types.KindUint64:
 			if hash {
-				int := vals[i].GetInt64()
-				if int < 0 {
-					b = encodeUnsignedInt(b, uint64(int), comparable)
+				integer := vals[i].GetInt64()
+				if integer < 0 {
+					b = encodeUnsignedInt(b, uint64(integer), comparable)
 				} else {
-					b = encodeSignedInt(b, int, comparable)
+					b = encodeSignedInt(b, integer, comparable)
 				}
 			} else {
 				b = encodeUnsignedInt(b, vals[i].GetUint64(), comparable)

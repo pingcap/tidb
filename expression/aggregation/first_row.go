@@ -51,7 +51,7 @@ func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.Statemen
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.Value = value
+	ctx.Value = types.CopyDatum(value)
 	ctx.GotFirstRow = true
 	return nil
 }
