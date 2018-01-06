@@ -1079,5 +1079,4 @@ func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 		}
 		e.cursor = 0
 	}
-	return nil
 }
