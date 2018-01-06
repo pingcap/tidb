@@ -321,7 +321,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
 	c.Assert(ok, IsTrue)
 	c.Assert(hg.NDV, Equals, int64(1))
-	c.Assert(len(hg.Buckets), Equals, 1)
+	c.Assert(hg.Len(), Equals, 1)
 }
 
 func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
