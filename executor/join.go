@@ -664,6 +664,22 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 	return nil
 }
 
+func (e *HashJoinExec) buildNewJoinResult(workerID int, joinResult *execWorkerResult) (bool, *execWorkerResult) {
+	joinResult = &execWorkerResult{
+		cycleChan: e.joinChkResourceCh[workerID],
+	}
+	ok := true
+	select {
+	case <-e.closeCh:
+		return false, joinResult
+	case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
+		if !ok {
+			return false, joinResult
+		}
+	}
+	return true, joinResult
+}
+
 func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResultChkBuffer *chunk.Chunk, joinResult *execWorkerResult, selected []bool) (ok bool, _ *execWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerChk, selected)
@@ -686,38 +702,25 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 				return false, joinResult
 			}
 		}
-		startRowOffset := e.maxChunkSize - joinResult.chk.NumRows()
+		// Splitting the joinResultChkBuffer into chunks that reach e.maxChunkSize.
 		// joinResultChkBuffer.NumRows() can be promised to be larger than 0.
+		startRowOffset := e.maxChunkSize - joinResult.chk.NumRows()
 		joinResult.chk.Append(joinResultChkBuffer, 0, mathutil.Min(joinResultChkBuffer.NumRows(), startRowOffset))
 		if joinResult.chk.NumRows() < e.maxChunkSize {
 			continue
 		}
 		e.joinResultCh <- joinResult
-		joinResult = &execWorkerResult{
-			cycleChan: e.joinChkResourceCh[workerID],
-		}
-		select {
-		case _, ok = <-e.closeCh:
-			return
-		case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
-			if !ok {
-				return false, joinResult
-			}
+		ok, joinResult = e.buildNewJoinResult(workerID, joinResult)
+		if !ok {
+			return false, joinResult
 		}
 		if cnt := (joinResultChkBuffer.NumRows() - startRowOffset) / e.maxChunkSize; cnt >= 1 {
 			for j := 0; j < cnt; j++ {
 				joinResult.chk.Append(joinResultChkBuffer, startRowOffset+j*e.maxChunkSize, mathutil.Min(startRowOffset+(j+1)*e.maxChunkSize, joinResultChkBuffer.NumRows()))
 				e.joinResultCh <- joinResult
-				joinResult = &execWorkerResult{
-					cycleChan: e.joinChkResourceCh[workerID],
-				}
-				select {
-				case _, ok = <-e.closeCh:
-					return
-				case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
-					if !ok {
-						return false, joinResult
-					}
+				ok, joinResult = e.buildNewJoinResult(workerID, joinResult)
+				if !ok {
+					return false, joinResult
 				}
 			}
 		}
@@ -763,44 +766,7 @@ func (e *HashJoinExec) Next(goCtx goctx.Context) (Row, error) {
 // NextChunk implements the Executor NextChunk interface.
 // hash join constructs the result following these steps:
 // step 1. fetch data from inner child and build a hash table;
-// step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers
-//
-// step 2 can be split into following work:
-//	+---------+-----------------------+--------------------------+
-//	|         |                       |                          |
-//	|         v                       v                          v
-//	|  outerChkResourceCh[0]   outerChkResourceCh[1] ...  outerChkResourceCh[n]
-//	|         +                       +                  +
-//	|         |                       |                  |
-//	|         |                       v                  |
-//	|         |      +--+ background goroutine +--+      |
-//	|         +----> |                            | <----+
-//	|                |      fetchOuterChunks      |
-//	|            +---+                            +----------+
-//	|            |   +----------------+-----------+          |
-//	|            |                    |                      |
-//	|            v                    v                      v
-//	|      outerResultCh[0]    outerResultCh[1]  ...   outerResultCh[n]
-//	|            |                    |                      |
-//	+------------o----+---------------o----+-----------------o---+
-//	             |    |               |    |                 |   |
-//	             v    |               v    |                 v   |
-//	  +---goroutine 0---+   +---goroutine 1---+     +---goroutine n---+
-//	  |                 |   |                 |     |                 |
-//	+-+   joinWorker    | +-+   joinWorker    | ... |   joinWorker    +---+
-//	| |                 | | |                 |     |                 |   |
-//	| +------+----------+ | +--------+--------+     +---------+-------+   |
-//	|        ^            |          ^                        ^           |
-//	|        |            |          |                        |           |
-//	|        +            |          +                        +           |
-//	|  joinChkResourceCh[0] |  joinChkResourceCh[1] ...   joinChkResourceCh[n]  |
-//	|        ^            |   ^                            ^              |
-//	|        |            |   |                            |              |
-//	+--------o------------+---o--->joinResultCh<-----------o--------------+
-//	         |                |       +                    |
-//	         |                |       |                    |
-//	         |                |       v                    |
-//	         +----------------+--+NextChunk+---------------+
+// step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
 		if err = e.fetchSelectedInnerRows(goCtx); err != nil {
