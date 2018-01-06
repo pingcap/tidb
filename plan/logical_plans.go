@@ -88,7 +88,7 @@ const (
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	JoinType       JoinType
 	reordered      bool
@@ -158,7 +158,7 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	Exprs []expression.Expression
 
@@ -183,7 +183,7 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
@@ -194,12 +194,12 @@ type LogicalAggregation struct {
 	inputCount         float64 // inputCount is the input count of this plan.
 }
 
-func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.baseLogicalPlan.extractCorrelatedCols()
-	for _, expr := range p.GroupByItems {
+func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := la.baseLogicalPlan.extractCorrelatedCols()
+	for _, expr := range la.GroupByItems {
 		corCols = append(corCols, extractCorColumns(expr)...)
 	}
-	for _, fun := range p.AggFuncs {
+	for _, fun := range la.AggFuncs {
 		for _, arg := range fun.GetArgs() {
 			corCols = append(corCols, extractCorColumns(arg)...)
 		}
@@ -232,10 +232,10 @@ type LogicalApply struct {
 	corCols []*expression.CorrelatedColumn
 }
 
-func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.LogicalJoin.extractCorrelatedCols()
+func (la *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := la.LogicalJoin.extractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
-		if p.children[0].Schema().Contains(&corCols[i].Column) {
+		if la.children[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}
@@ -244,7 +244,7 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalExists checks if a query returns result.
 type LogicalExists struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 }
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
@@ -254,7 +254,7 @@ type LogicalMaxOneRow struct {
 
 // LogicalTableDual represents a dual table plan.
 type LogicalTableDual struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	RowCount int
 }
@@ -268,7 +268,7 @@ type LogicalUnionScan struct {
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	indexHints []*ast.IndexHint
 	tableInfo  *model.TableInfo
@@ -293,21 +293,21 @@ type avalableIndices struct {
 	includeTableScan bool
 }
 
-func (p *DataSource) getPKIsHandleCol() *expression.Column {
-	if !p.tableInfo.PKIsHandle {
+func (ds *DataSource) getPKIsHandleCol() *expression.Column {
+	if !ds.tableInfo.PKIsHandle {
 		return nil
 	}
-	for i, col := range p.Columns {
+	for i, col := range ds.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
-			return p.schema.Columns[i]
+			return ds.schema.Columns[i]
 		}
 	}
 	return nil
 }
 
 // TableInfo returns the *TableInfo of data source.
-func (p *DataSource) TableInfo() *model.TableInfo {
-	return p.tableInfo
+func (ds *DataSource) TableInfo() *model.TableInfo {
+	return ds.tableInfo
 }
 
 // LogicalUnionAll represents LogicalUnionAll plan.
@@ -322,9 +322,9 @@ type LogicalSort struct {
 	ByItems []*ByItems
 }
 
-func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.baseLogicalPlan.extractCorrelatedCols()
-	for _, item := range p.ByItems {
+func (ls *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ls.baseLogicalPlan.extractCorrelatedCols()
+	for _, item := range ls.ByItems {
 		corCols = append(corCols, extractCorColumns(item.Expr)...)
 	}
 	return corCols
@@ -343,8 +343,8 @@ type LogicalTopN struct {
 }
 
 // isLimit checks if TopN is a limit plan.
-func (t *LogicalTopN) isLimit() bool {
-	return len(t.ByItems) == 0
+func (lt *LogicalTopN) isLimit() bool {
+	return len(lt.ByItems) == 0
 }
 
 // LogicalLimit represents offset and limit plan.

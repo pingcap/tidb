@@ -149,7 +149,7 @@ func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err e
 			}
 
 			paramTypes = data[pos : pos+(numParams<<1)]
-			pos += (numParams << 1)
+			pos += numParams << 1
 			paramValues = data[pos:]
 			// Just the first StmtExecute packet contain parameters type,
 			// we need save it for further use.

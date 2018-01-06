@@ -60,8 +60,8 @@ type conditionPair struct {
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	snapshot           Snapshot                    // for read
-	lazyConditionPairs map[string](*conditionPair) // for delay check
+	snapshot           Snapshot                  // for read
+	lazyConditionPairs map[string]*conditionPair // for delay check
 	opts               options
 }
 
@@ -70,7 +70,7 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
 		BufferStore:        NewBufferStore(snapshot, DefaultTxnMembufCap),
 		snapshot:           snapshot,
-		lazyConditionPairs: make(map[string](*conditionPair)),
+		lazyConditionPairs: make(map[string]*conditionPair),
 		opts:               make(map[Option]interface{}),
 	}
 }

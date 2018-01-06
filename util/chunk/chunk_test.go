@@ -70,7 +70,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
-		chk2.AppendRow(0, row)
+		chk2.AppendRow(row)
 	}
 	for i := 0; i < numCols; i++ {
 		col2, col1 := chk2.columns[i], chk.columns[i]
@@ -99,13 +99,13 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	c.Assert(row.GetEnum(4), check.DeepEquals, enumVal)
 	c.Assert(row.GetSet(5), check.DeepEquals, setVal)
 
-	// AppendRow can be different number of columns, useful for join.
+	// AppendPartialRow can be different number of columns, useful for join.
 	chk = newChunk(8, 8)
 	chk2 = newChunk(8)
 	chk2.AppendInt64(0, 1)
 	chk2.AppendInt64(0, -1)
-	chk.AppendRow(0, chk2.GetRow(0))
-	chk.AppendRow(1, chk2.GetRow(0))
+	chk.AppendPartialRow(0, chk2.GetRow(0))
+	chk.AppendPartialRow(1, chk2.GetRow(0))
 	c.Assert(chk.GetRow(0).GetInt64(0), check.Equals, int64(1))
 	c.Assert(chk.GetRow(0).GetInt64(1), check.Equals, int64(1))
 	c.Assert(chk.NumRows(), check.Equals, 1)
@@ -449,7 +449,7 @@ func BenchmarkAppendRow(b *testing.B) {
 func appendRow(chk *Chunk, row Row) {
 	chk.Reset()
 	for i := 0; i < 1000; i++ {
-		chk.AppendRow(0, row)
+		chk.AppendRow(row)
 	}
 }
 

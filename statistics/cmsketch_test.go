@@ -53,7 +53,7 @@ func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		diff := uint32(0)
+		var diff uint32
 		if count > estimate {
 			diff = count - estimate
 		} else {

@@ -248,11 +248,11 @@ func (pr *partialResult) unmarshal(resultSubset []byte) error {
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next(goCtx goctx.Context) (data []types.Datum, err error) {
-	chunk := pr.getChunk()
-	if chunk == nil {
+	nextChunk := pr.getChunk()
+	if nextChunk == nil {
 		return nil, nil
 	}
-	return readRowFromChunk(chunk, pr.rowLen)
+	return readRowFromChunk(nextChunk, pr.rowLen)
 }
 
 func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err error) {
@@ -273,9 +273,9 @@ func (pr *partialResult) getChunk() *tipb.Chunk {
 		if pr.chunkIdx >= len(pr.resp.Chunks) {
 			return nil
 		}
-		chunk := &pr.resp.Chunks[pr.chunkIdx]
-		if len(chunk.RowsData) > 0 {
-			return chunk
+		currentChunk := &pr.resp.Chunks[pr.chunkIdx]
+		if len(currentChunk.RowsData) > 0 {
+			return currentChunk
 		}
 		pr.chunkIdx++
 	}

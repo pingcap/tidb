@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -39,24 +40,100 @@ type HashAggExec struct {
 	aggCtxsMap    aggCtxsMapper
 	groupMap      *mvmap.MVMap
 	groupIterator *mvmap.Iterator
+	mutableRow    chunk.MutRow
+	rowBuffer     []types.Datum
 	GroupByItems  []expression.Expression
 }
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
+	if err := e.baseExecutor.Close(); err != nil {
+		return errors.Trace(err)
+	}
 	e.groupMap = nil
 	e.groupIterator = nil
 	e.aggCtxsMap = nil
-	return errors.Trace(e.children[0].Close())
+	return nil
 }
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(goCtx goctx.Context) error {
+	if err := e.baseExecutor.Open(goCtx); err != nil {
+		return errors.Trace(err)
+	}
 	e.executed = false
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
 	e.aggCtxsMap = make(aggCtxsMapper, 0)
-	return errors.Trace(e.children[0].Open(goCtx))
+	e.mutableRow = chunk.MutRowFromTypes(e.Schema().GetTypes())
+	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
+	return nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	// In this stage we consider all data from src as a single group.
+	if !e.executed {
+		err := e.execute(goCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
+			// If no groupby and no data, we should add an empty group.
+			// For example:
+			// "select count(c) from t;" should return one row [0]
+			// "select count(c) from t group by c1;" should return empty result set.
+			e.groupMap.Put([]byte{}, []byte{})
+		}
+		e.executed = true
+	}
+	chk.Reset()
+	for {
+		groupKey, _ := e.groupIterator.Next()
+		if groupKey == nil {
+			return nil
+		}
+		aggCtxs := e.getContexts(groupKey)
+		e.rowBuffer = e.rowBuffer[:0]
+		for i, af := range e.AggFuncs {
+			e.rowBuffer = append(e.rowBuffer, af.GetResult(aggCtxs[i]))
+		}
+		e.mutableRow.SetDatums(e.rowBuffer...)
+		chk.AppendRow(e.mutableRow.ToRow())
+		if chk.NumRows() == e.maxChunkSize {
+			return nil
+		}
+	}
+}
+
+// innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
+func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
+	for {
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// no more data.
+		if e.childrenResults[0].NumRows() == 0 {
+			return nil
+		}
+		for row := e.childrenResults[0].Begin(); row != e.childrenResults[0].End(); row = row.Next() {
+			groupKey, err := e.getGroupKey(row)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if e.groupMap.Get(groupKey) == nil {
+				e.groupMap.Put(groupKey, []byte{})
+			}
+			aggCtxs := e.getContexts(groupKey)
+			for i, af := range e.AggFuncs {
+				err = af.Update(aggCtxs[i], e.sc, row)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -81,6 +158,7 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 		}
 		e.executed = true
 	}
+
 	groupKey, _ := e.groupIterator.Next()
 	if groupKey == nil {
 		return nil, nil
@@ -93,10 +171,13 @@ func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
 	return retRow, nil
 }
 
-func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
+func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
+		if item.GetType().Tp == mysql.TypeNewDecimal {
+			v.SetLength(0)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -316,13 +397,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 		e.aggCtxs[i] = af.CreateContext()
 	}
 	e.mutableRow.SetDatums(e.rowBuffer...)
-	if chk.NumCols() == 0 {
-		// An example: select 10 from t group by a.
-		// We need to output an empty row for every group.
-		chk.SetNumVirtualRows(chk.NumRows() + 1)
-	} else {
-		chk.AppendRow(0, e.mutableRow.ToRow())
-	}
+	chk.AppendRow(e.mutableRow.ToRow())
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
