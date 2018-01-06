@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -254,7 +255,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	}
 
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -283,7 +284,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err = t.removeRowIndex(rm, h, oldVs, idx); err != nil {
+			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx); err != nil {
 				return errors.Trace(err)
 			}
 			break
@@ -361,7 +362,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	}
 
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -521,11 +522,11 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 
 func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
-	pk, err := codec.EncodeValue(nil, types.NewIntDatum(h))
+	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, types.NewIntDatum(h))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -536,11 +537,11 @@ func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum,
 }
 
 func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
-	old, err := tablecodec.EncodeRow(oldRow, colIDs, ctx.GetSessionVars().GetTimeZone())
+	old, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newVal, err := tablecodec.EncodeRow(newRow, colIDs, ctx.GetSessionVars().GetTimeZone())
+	newVal, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -552,7 +553,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datu
 }
 
 func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone())
+	data, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, r, colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -579,7 +580,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
 			return errors.Trace(err)
 		}
-		if err = v.Delete(ctx.Txn(), vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -593,8 +594,8 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 }
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if err := idx.Delete(rm, vals, h); err != nil {
+func (t *Table) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
+	if err := idx.Delete(sc, rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

@@ -188,7 +188,7 @@ type AnalyzeIndexExec struct {
 func (e *AnalyzeIndexExec) open() error {
 	idxRange := &ranger.NewRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	var builder requestBuilder
-	kvReq, err := builder.SetIndexRanges(e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		SetPriority(e.priority).
@@ -332,14 +332,15 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
 		}
 		for i, rc := range resp.Collectors {
-			collectors[i].MergeSampleCollector(statistics.SampleCollectorFromProto(rc))
+			collectors[i].MergeSampleCollector(sc, statistics.SampleCollectorFromProto(rc))
 		}
 	}
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()

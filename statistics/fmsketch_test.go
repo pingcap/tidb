@@ -14,20 +14,24 @@
 package statistics
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 func (s *testStatisticsSuite) TestSketch(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(s.samples, maxSize)
+	sampleSketch, ndv, err := buildFMSketch(sc, s.samples, maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(6232))
 
-	rcSketch, ndv, err := buildFMSketch(s.rc.(*recordSet).data, maxSize)
+	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(73344))
 
-	pkSketch, ndv, err := buildFMSketch(s.pk.(*recordSet).data, maxSize)
+	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(100480))
 
@@ -45,8 +49,9 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 }
 
 func (s *testStatisticsSuite) TestSketchProtoConversion(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(s.samples, maxSize)
+	sampleSketch, ndv, err := buildFMSketch(sc, s.samples, maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(6232))
 

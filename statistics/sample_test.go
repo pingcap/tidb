@@ -14,10 +14,13 @@
 package statistics_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -134,12 +137,13 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 		CMSketchDepth:   8,
 	}
 	s.rs.Close()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)
 	c.Assert(len(collectors), Equals, 2)
 	collectors[0].IsMerger = true
-	collectors[0].MergeSampleCollector(collectors[1])
+	collectors[0].MergeSampleCollector(sc, collectors[1])
 	c.Assert(collectors[0].FMSketch.NDV(), Equals, int64(9280))
 	c.Assert(len(collectors[0].Samples), Equals, 1000)
 	c.Assert(collectors[0].NullCount, Equals, int64(1000))
