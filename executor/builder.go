@@ -659,12 +659,14 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &HashAggExec{
+	e := &HashAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
