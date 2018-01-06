@@ -100,7 +100,7 @@ func (e *hashAggExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
 	for i, agg := range e.aggExprs {
 		partialResults := agg.GetPartialResult(aggCtxs[i])
 		for _, result := range partialResults {
-			data, err := codec.EncodeValue(nil, result)
+			data, err := codec.EncodeValue(e.evalCtx.sc, nil, result)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -125,7 +125,7 @@ func (e *hashAggExec) getGroupKey() ([]byte, [][]byte, error) {
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		b, err := codec.EncodeValue(nil, v)
+		b, err := codec.EncodeValue(e.evalCtx.sc, nil, v)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -214,7 +214,7 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 	for i, agg := range e.aggExprs {
 		partialResults := agg.GetPartialResult(e.aggCtxs[i])
 		for _, result := range partialResults {
-			data, err := codec.EncodeValue(nil, result)
+			data, err := codec.EncodeValue(e.evalCtx.sc, nil, result)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -225,7 +225,7 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 	}
 	e.currGroupByValues = e.currGroupByValues[:0]
 	for _, d := range e.currGroupByRow {
-		buf, err := codec.EncodeValue(nil, d)
+		buf, err := codec.EncodeValue(e.evalCtx.sc, nil, d)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

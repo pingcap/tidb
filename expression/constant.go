@@ -21,10 +21,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -314,17 +312,6 @@ func (c *Constant) IsCorrelated() bool {
 // Decorrelate implements Expression interface.
 func (c *Constant) Decorrelate(_ *Schema) Expression {
 	return c
-}
-
-// HashCode implements Expression interface.
-func (c *Constant) HashCode() []byte {
-	_, err := c.Eval(nil)
-	if err != nil {
-		terror.Log(errors.Trace(err))
-	}
-	bytes, err := codec.EncodeValue(nil, c.Value)
-	terror.Log(errors.Trace(err))
-	return bytes
 }
 
 // ResolveIndices implements Expression interface.

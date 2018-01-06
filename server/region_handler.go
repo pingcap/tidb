@@ -867,7 +867,9 @@ func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []
 }
 
 func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	idxRow, err := t.formValue2DatumRow(values, idxCols)
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.UTC
+	idxRow, err := t.formValue2DatumRow(sc, values, idxCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -875,7 +877,7 @@ func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	encodedKey, _, err := idx.GenIndexKey(idxRow, handle)
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -883,10 +885,8 @@ func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
-func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+func (t *regionHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
 	data := make([]types.Datum, len(idxCols))
-	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = time.UTC
 	for i, col := range idxCols {
 		colName := col.Name.String()
 		vals, ok := values[colName]

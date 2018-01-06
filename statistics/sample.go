@@ -39,7 +39,7 @@ type SampleCollector struct {
 }
 
 // MergeSampleCollector merges two sample collectors.
-func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
+func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc *SampleCollector) {
 	c.NullCount += rc.NullCount
 	c.Count += rc.Count
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
@@ -48,7 +48,7 @@ func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 		terror.Log(errors.Trace(err))
 	}
 	for _, val := range rc.Samples {
-		err := c.collect(val)
+		err := c.collect(sc, val)
 		terror.Log(errors.Trace(err))
 	}
 }
@@ -83,14 +83,14 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	return s
 }
 
-func (c *SampleCollector) collect(d types.Datum) error {
+func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) error {
 	if !c.IsMerger {
 		if d.IsNull() {
 			c.NullCount++
 			return nil
 		}
 		c.Count++
-		if err := c.FMSketch.InsertValue(d); err != nil {
+		if err := c.FMSketch.InsertValue(sc, d); err != nil {
 			return errors.Trace(err)
 		}
 		if c.CMSketch != nil {
@@ -166,7 +166,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			datums = datums[1:]
 		}
 		for i, val := range datums {
-			err = collectors[i].collect(val)
+			err = collectors[i].collect(s.Sc, val)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

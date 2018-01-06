@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -157,19 +158,19 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 }
 
 // EncodeValue encodes a go value to bytes.
-func EncodeValue(raw types.Datum, loc *time.Location) ([]byte, error) {
+func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) {
 	var v types.Datum
-	err := flatten(raw, loc, &v)
+	v, err := flatten(raw, sc.TimeZone, &v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b, err := codec.EncodeValue(nil, v)
+	b, err := codec.EncodeValue(sc, nil, v)
 	return b, errors.Trace(err)
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
-func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location, valBuf []byte, values []types.Datum) ([]byte, error) {
+func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
@@ -179,7 +180,7 @@ func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location, valBuf []b
 	for i, c := range row {
 		id := colIDs[i]
 		values[2*i].SetInt64(id)
-		err := flatten(c, loc, &values[2*i+1])
+		err := flatten(c, sc.TimeZone, &values[2*i+1])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -188,7 +189,7 @@ func EncodeRow(row []types.Datum, colIDs []int64, loc *time.Location, valBuf []b
 		// We could not set nil value into kv.
 		return []byte{codec.NilFlag}, nil
 	}
-	return codec.EncodeValue(valBuf, values...)
+	return codec.EncodeValue(sc, valBuf, values...)
 }
 
 func flatten(data types.Datum, loc *time.Location, ret *types.Datum) error {
