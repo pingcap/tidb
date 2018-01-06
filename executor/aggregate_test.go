@@ -307,6 +307,33 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 }
 
+func (s *testSuite) TestGroupConcatAggr(c *C) {
+	// issue #5411
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test(id int, name int)")
+	tk.MustExec("insert into test values(1, 10);")
+	tk.MustExec("insert into test values(1, 20);")
+	tk.MustExec("insert into test values(1, 30);")
+	tk.MustExec("insert into test values(2, 20);")
+	tk.MustExec("insert into test values(3, 200);")
+	tk.MustExec("insert into test values(3, 500);")
+	result := tk.MustQuery("select id, group_concat(name) from test group by id")
+	result.Check(testkit.Rows("1 10,20,30", "2 20", "3 200,500"))
+
+	result = tk.MustQuery("select id, group_concat(name SEPARATOR ';') from test group by id")
+	result.Check(testkit.Rows("1 10;20;30", "2 20", "3 200;500"))
+
+	result = tk.MustQuery("select id, group_concat(name SEPARATOR ',') from test group by id")
+	result.Check(testkit.Rows("1 10,20,30", "2 20", "3 200,500"))
+
+	result = tk.MustQuery("select id, group_concat(name SEPARATOR '%') from test group by id")
+	result.Check(testkit.Rows("1 10%20%30", "2 20", "3 200%500"))
+
+	result = tk.MustQuery("select id, group_concat(name SEPARATOR '') from test group by id")
+	result.Check(testkit.Rows("1 102030", "2 20", "3 200500"))
+}
+
 func (s *testSuite) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

@@ -327,6 +327,7 @@ import (
 	rowCount	"ROW_COUNT"
 	rowFormat	"ROW_FORMAT"
 	second		"SECOND"
+	separator 	"SEPARATOR"
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	share		"SHARE"
@@ -600,6 +601,7 @@ import (
 	ReferDef			"Reference definition"
 	OnDeleteOpt			"optional ON DELETE clause"
 	OnUpdateOpt			"optional ON UPDATE clause"
+	OptGConcatSeparator		"optional GROUP_CONCAT SEPARATOR"
 	ReferOpt			"reference option"
 	ReplacePriority			"replace statement priority"
 	RowFormat			"Row format option"
@@ -2293,7 +2295,7 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SHARE" | "SHARED"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED"
 
 TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_SMJ" | "TIDB_INLJ"
@@ -3192,9 +3194,11 @@ SumExpr:
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 	}
-|	"GROUP_CONCAT" '(' BuggyDefaultFalseDistinctOpt ExpressionList ')'
+|	"GROUP_CONCAT" '(' BuggyDefaultFalseDistinctOpt ExpressionList OptGConcatSeparator')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		args := $4.([]ast.ExprNode)
+		args = append(args, $5.(ast.ExprNode))
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
 |	"MAX" '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
@@ -3207,6 +3211,15 @@ SumExpr:
 |	"SUM" '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+
+OptGConcatSeparator:
+        {
+            	$$ = ast.NewValueExpr(",")
+        }
+| "SEPARATOR" stringLit
+	{ 
+		$$ = ast.NewValueExpr($2)
 	}
 
 FunctionCallGeneric:
