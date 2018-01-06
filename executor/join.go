@@ -282,9 +282,6 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 			return
 		case outerResource = <-e.outerChkResourceCh:
 		}
-		if outerResource.err != nil {
-			return
-		}
 		outerResult := outerResource.chk
 		err := e.outerExec.NextChunk(goCtx, outerResult)
 		if err == nil && outerResult.NumRows() == 0 {
@@ -346,11 +343,11 @@ func (e *HashJoinExec) initializeForProbe() {
 
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, e.concurrency)
+		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
 		e.joinChkResourceCh[i] <- e.newChunk()
 	}
 
-	e.joinResultCh = make(chan *execWorkerResult, e.concurrency)
+	e.joinResultCh = make(chan *execWorkerResult, e.concurrency+1)
 }
 
 func (e *HashJoinExec) fetchOuterAndProbeHashTable(goCtx goctx.Context) {
@@ -545,11 +542,19 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 		outerResult *chunk.Chunk
 		joinResult  *execWorkerResult
 		selected    = make([]bool, 0, chunk.InitialCapacity)
+		ok          bool
 	)
 	joinResult = &execWorkerResult{
 		src: e.joinChkResourceCh[workerID],
 	}
-
+	select {
+	case <-e.closeCh:
+		return
+	case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
+		if !ok {
+			return
+		}
+	}
 	// Read and filter outerResult, and join the outerResult with the inner rows.
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
@@ -666,16 +671,6 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 	if err != nil {
 		joinResult.err = errors.Trace(err)
 		return false, joinResult
-	}
-	if joinResult.chk == nil {
-		select {
-		case <-e.closeCh:
-			return
-		case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
-			if !ok {
-				return false, joinResult
-			}
-		}
 	}
 	for i, matched := range selected {
 		if !matched { // process unmatched outer rows
