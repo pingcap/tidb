@@ -160,7 +160,7 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 // EncodeValue encodes a go value to bytes.
 func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) {
 	var v types.Datum
-	v, err := flatten(raw, sc.TimeZone, &v)
+	err := flatten(raw, sc.TimeZone, &v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -174,6 +174,7 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
+	valBuf = valBuf[:0]
 	if values == nil {
 		values = make([]types.Datum, len(row)*2)
 	}

@@ -29,16 +29,14 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/sessionctx/variable"
-=======
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
->>>>>>> upstream/master
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -323,7 +321,6 @@ func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
-	sessVars := ctx.GetSessionVars()
 	for _, col := range t.Cols() {
 		if col.IsPKHandleColumn(t.meta) {
 			recordID = r[col.Offset].GetInt64()
@@ -339,6 +336,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	}
 
 	txn := ctx.Txn()
+	sessVars := ctx.GetSessionVars()
 	skipCheck := sessVars.ImportingData
 	bs := sessVars.BufStore
 	if bs == nil {
@@ -379,7 +377,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	adjustRowValuesBuf(sessVars, len(row))
 
 	key := t.RecordKey(recordID)
-	sessVars.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, sessVars.RowValBuf[:0], sessVars.AddRowValues)
+	sessVars.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, sessVars.RowValBuf, sessVars.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -559,7 +557,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datu
 	if err != nil {
 		return errors.Trace(err)
 	}
-	new, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx,newRow, colIDs, nil, nil)
+	newVal, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

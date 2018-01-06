@@ -284,6 +284,13 @@ func NewSessionVars() *SessionVars {
 	}
 }
 
+// CleanBuffers cleans the temporary bufs
+func (s *SessionVars) CleanBuffers() {
+	s.RowValBuf = nil
+	s.BufStore = nil
+	s.AddRowValues = nil
+}
+
 // GetCharsetInfo gets charset and collation for current context.
 // What character set should the server translate a statement to after receiving it?
 // For this, the server uses the character_set_connection and collation_connection system variables.
@@ -297,13 +304,6 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	charset = s.Systems[CharacterSetConnection]
 	collation = s.Systems[CollationConnection]
 	return
-}
-
-// CleanBuffers cleans the temporary bufs
-func (s *SessionVars) CleanBuffers() {
-	s.RowValBuf = nil
-	s.BufStore = nil
-	s.AddRowValues = nil
 }
 
 // SetLastInsertID saves the last insert id to the session context.
