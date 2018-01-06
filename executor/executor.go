@@ -1140,12 +1140,12 @@ type execResult struct {
 }
 
 // execWorkerResult stores the results from multi-goroutine workers.
-// `src` is a read-only channel used for Chunk reuse,
+// `cycleChan` is a read-only channel used for Chunk reuse,
 // after `chk` be consumed, it'll be send into `src`.
 type execWorkerResult struct {
-	chk *chunk.Chunk
-	err error
-	src chan<- *chunk.Chunk
+	chk       *chunk.Chunk
+	err       error
+	cycleChan chan<- *chunk.Chunk
 }
 
 func (e *UnionExec) waitAllFinished(forChunk bool) {
@@ -1228,9 +1228,9 @@ func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 func (e *UnionExec) resultPuller(goCtx goctx.Context, childID int) {
 	defer e.wg.Done()
 	result := &execWorkerResult{
-		err: nil,
-		chk: nil,
-		src: e.resourcePools[childID],
+		err:       nil,
+		chk:       nil,
+		cycleChan: e.resourcePools[childID],
 	}
 	for {
 		if e.stopFetchData.Load().(bool) {
@@ -1294,7 +1294,7 @@ func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 
 	chk.SwapColumns(result.chk)
-	result.src <- result.chk
+	result.cycleChan <- result.chk
 	return nil
 }
 

@@ -288,13 +288,12 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 			return
 		}
 		if err != nil {
-			e.finished.Store(true)
 			e.joinResultCh <- &execWorkerResult{
 				err: errors.Trace(err),
 			}
 			return
 		}
-		outerResource.src <- outerResult
+		outerResource.cycleChan <- outerResult
 	}
 }
 
@@ -336,8 +335,8 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.outerChkResourceCh = make(chan *execWorkerResult, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		e.outerChkResourceCh <- &execWorkerResult{
-			chk: e.outerExec.newChunk(),
-			src: e.outerResultChs[i],
+			chk:       e.outerExec.newChunk(),
+			cycleChan: e.outerResultChs[i],
 		}
 	}
 
@@ -545,7 +544,7 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 		ok          bool
 	)
 	joinResult = &execWorkerResult{
-		src: e.joinChkResourceCh[workerID],
+		cycleChan: e.joinChkResourceCh[workerID],
 	}
 	select {
 	case <-e.closeCh:
@@ -557,6 +556,9 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 	}
 	// Read and filter outerResult, and join the outerResult with the inner rows.
 	joinResultChkBuffer := e.newChunk()
+	emptyOuterResult := &execWorkerResult{
+		cycleChan: e.outerResultChs[workerID],
+	}
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
 			break
@@ -574,10 +576,8 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 			break
 		}
 		outerResult.Reset()
-		e.outerChkResourceCh <- &execWorkerResult{
-			chk: outerResult,
-			src: e.outerResultChs[workerID],
-		}
+		emptyOuterResult.chk = outerResult
+		e.outerChkResourceCh <- emptyOuterResult
 	}
 	if joinResult == nil {
 		return
@@ -694,7 +694,7 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 		}
 		e.joinResultCh <- joinResult
 		joinResult = &execWorkerResult{
-			src: e.joinChkResourceCh[workerID],
+			cycleChan: e.joinChkResourceCh[workerID],
 		}
 		select {
 		case _, ok = <-e.closeCh:
@@ -709,7 +709,7 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 				joinResult.chk.Append(joinResultChkBuffer, startRowOffset+j*e.maxChunkSize, mathutil.Min(startRowOffset+(j+1)*e.maxChunkSize, joinResultChkBuffer.NumRows()))
 				e.joinResultCh <- joinResult
 				joinResult = &execWorkerResult{
-					src: e.joinChkResourceCh[workerID],
+					cycleChan: e.joinChkResourceCh[workerID],
 				}
 				select {
 				case _, ok = <-e.closeCh:
@@ -825,7 +825,7 @@ func (e *HashJoinExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (err err
 		return errors.Trace(result.err)
 	}
 	chk.SwapColumns(result.chk)
-	result.src <- result.chk
+	result.cycleChan <- result.chk
 	return nil
 }
 
