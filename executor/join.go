@@ -556,6 +556,7 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 		}
 	}
 	// Read and filter outerResult, and join the outerResult with the inner rows.
+	joinResultChkBuffer := e.newChunk()
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
 			break
@@ -568,7 +569,7 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 		if !ok {
 			break
 		}
-		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResult, selected)
+		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResultChkBuffer, joinResult, selected)
 		if !ok {
 			break
 		}
@@ -626,29 +627,26 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 	return true
 }
 
-func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Row, joinResult *execWorkerResult) bool {
+func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Row, chk *chunk.Chunk) error {
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := e.getJoinKeyFromChkRow(e.outerKeys, outerRow, buffer.bytes)
 	if err != nil {
-		joinResult.err = errors.Trace(err)
-		return false
+		return errors.Trace(err)
 	}
 	if hasNull {
-		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, joinResult.chk)
+		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, chk)
 		if err != nil {
-			joinResult.err = errors.Trace(err)
-			return false
+			return errors.Trace(err)
 		}
-		return true
+		return nil
 	}
 	innerPtrs := e.hashTable.Get(joinKey)
 	if len(innerPtrs) == 0 {
-		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, joinResult.chk)
+		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, chk)
 		if err != nil {
-			joinResult.err = errors.Trace(err)
-			return false
+			return errors.Trace(err)
 		}
-		return true
+		return nil
 	}
 	innerRows := make([]chunk.Row, 0, len(innerPtrs))
 	for _, b := range innerPtrs {
@@ -657,15 +655,14 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 		innerRows = append(innerRows, matchedInner)
 	}
 
-	err = e.resultGenerators[workerID].emitToChunk(outerRow, chunk.NewSliceIterator(innerRows), joinResult.chk)
+	err = e.resultGenerators[workerID].emitToChunk(outerRow, chunk.NewSliceIterator(innerRows), chk)
 	if err != nil {
-		joinResult.err = errors.Trace(err)
-		return false
+		return errors.Trace(err)
 	}
-	return true
+	return nil
 }
 
-func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResult *execWorkerResult, selected []bool) (ok bool, _ *execWorkerResult) {
+func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResultChkBuffer *chunk.Chunk, joinResult *execWorkerResult, selected []bool) (ok bool, _ *execWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerChk, selected)
 	if err != nil {
@@ -673,31 +670,57 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 		return false, joinResult
 	}
 	for i, matched := range selected {
+		joinResultChkBuffer.Reset()
 		if !matched { // process unmatched outer rows
-			err = e.resultGenerators[workerID].emitToChunk(outerChk.GetRow(i), nil, joinResult.chk)
+			err = e.resultGenerators[workerID].emitToChunk(outerChk.GetRow(i), nil, joinResultChkBuffer)
 			if err != nil {
 				joinResult.err = errors.Trace(err)
 				return false, joinResult
 			}
 		} else { // process matched outer rows
-			ok = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResult)
+			err = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResultChkBuffer)
+			if err != nil {
+				joinResult.err = errors.Trace(err)
+				return false, joinResult
+			}
+		}
+		startRowOffset := e.maxChunkSize - joinResult.chk.NumRows()
+		// joinResultChkBuffer.NumRows() can be promised to be larger than 0.
+		joinResult.chk.Append(joinResultChkBuffer, 0, mathutil.Min(joinResultChkBuffer.NumRows(), startRowOffset))
+		if joinResult.chk.NumRows() < e.maxChunkSize {
+			continue
+		}
+		e.joinResultCh <- joinResult
+		joinResult = &execWorkerResult{
+			src: e.joinChkResourceCh[workerID],
+		}
+		select {
+		case _, ok = <-e.closeCh:
+			return
+		case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
 			if !ok {
 				return false, joinResult
 			}
 		}
-		if joinResult.chk.NumRows() >= e.maxChunkSize {
-			e.joinResultCh <- joinResult
-			joinResult = &execWorkerResult{
-				src: e.joinChkResourceCh[workerID],
-			}
-			select {
-			case _, ok = <-e.closeCh:
-				return
-			case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
-				if !ok {
-					return false, joinResult
+		if cnt := (joinResultChkBuffer.NumRows() - startRowOffset) / e.maxChunkSize; cnt >= 1 {
+			for j := 0; j < cnt; j++ {
+				joinResult.chk.Append(joinResultChkBuffer, startRowOffset+j*e.maxChunkSize, mathutil.Min(startRowOffset+(j+1)*e.maxChunkSize, joinResultChkBuffer.NumRows()))
+				e.joinResultCh <- joinResult
+				joinResult = &execWorkerResult{
+					src: e.joinChkResourceCh[workerID],
+				}
+				select {
+				case _, ok = <-e.closeCh:
+					return
+				case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
+					if !ok {
+						return false, joinResult
+					}
 				}
 			}
+		}
+		if remained := (joinResultChkBuffer.NumRows() - startRowOffset) % e.maxChunkSize; remained > 0 {
+			joinResult.chk.Append(joinResultChkBuffer, joinResultChkBuffer.NumRows()-remained, joinResultChkBuffer.NumRows())
 		}
 	}
 	return true, joinResult
