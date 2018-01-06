@@ -86,7 +86,7 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		datumBuf = append(datumBuf, value)
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(datumBuf)
+		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}

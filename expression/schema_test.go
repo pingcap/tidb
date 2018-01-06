@@ -149,14 +149,4 @@ func (s *testEvalSuite) TestSchemaMergeSchema(c *C) {
 		c.Assert(schema.Columns[i+len(lSchema.Columns)].TblName, Equals, rSchema.Columns[i].TblName)
 		c.Assert(schema.Columns[i+len(lSchema.Columns)].ColName, Equals, rSchema.Columns[i].ColName)
 	}
-	for i := 0; i < len(lSchema.Keys); i++ {
-		for j := 0; j < len(schema.Keys[i]); j++ {
-			c.Assert(schema.Keys[i][j].Equal(lSchema.Keys[i][j], nil), Equals, true)
-		}
-	}
-	for i := 0; i < len(rSchema.Keys); i++ {
-		for j := 0; j < len(schema.Keys[i]); j++ {
-			c.Assert(schema.Keys[i+len(lSchema.Keys)][j].Equal(rSchema.Keys[i][j], nil), Equals, true)
-		}
-	}
 }

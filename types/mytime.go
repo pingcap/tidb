@@ -258,7 +258,7 @@ func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 			return
 		}
 		weekYear = true
-		(year)--
+		year--
 		days = calcDaysInYear(year)
 		firstDaynr -= days
 		weekday = (weekday + 53*7 - days) % 7
@@ -415,7 +415,7 @@ func timestampDiff(intervalType string, t1 TimeInternal, t2 TimeInternal) int64 
 			(monthEnd == monthBeg && dayEnd < dayBeg) {
 			months += 12 - (monthBeg - monthEnd)
 		} else {
-			months += (monthEnd - monthBeg)
+			months += monthEnd - monthBeg
 		}
 
 		if dayEnd < dayBeg {

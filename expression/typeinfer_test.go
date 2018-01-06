@@ -108,7 +108,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	)`
 	testKit.MustExec(sql)
 
-	tests := []typeInferTestCase{}
+	var tests []typeInferTestCase
 	tests = append(tests, s.createTestCase4Constants()...)
 	tests = append(tests, s.createTestCase4Cast()...)
 	tests = append(tests, s.createTestCase4Columns()...)

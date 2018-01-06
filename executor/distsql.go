@@ -130,34 +130,17 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	return krs
 }
 
-// indexValuesToKVRanges will convert the index datums to kv ranges.
-func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRange, error) {
-	krs := make([]kv.KeyRange, 0, len(values))
-	for _, vals := range values {
-		// TODO: We don't process the case that equal key has different types.
-		valKey, err := codec.EncodeKey(nil, vals...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		valKeyNext := []byte(kv.Key(valKey).PrefixNext())
-		rangeBeginKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKey)
-		rangeEndKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKeyNext)
-		krs = append(krs, kv.KeyRange{StartKey: rangeBeginKey, EndKey: rangeEndKey})
-	}
-	return krs, nil
-}
-
-func indexRangesToKVRanges(tid, idxID int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
-		low, err := codec.EncodeKey(nil, ran.LowVal...)
+		low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if ran.LowExclude {
 			low = []byte(kv.Key(low).PrefixNext())
 		}
-		high, err := codec.EncodeKey(nil, ran.HighVal...)
+		high, err := codec.EncodeKey(sc, nil, ran.HighVal...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -277,7 +260,7 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, ctx.GetSessionVars().GetTimeZone())
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, d)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -488,7 +471,7 @@ func (e *IndexReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(goCtx goctx.Context) error {
-	kvRanges, err := indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
+	kvRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -708,7 +691,7 @@ func (w *tableWorker) pickAndExecTask(goCtx goctx.Context) {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(goCtx goctx.Context) error {
-	kvRanges, err := indexRangesToKVRanges(e.tableID, e.index.ID, e.ranges)
+	kvRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -840,7 +823,7 @@ func (e *IndexLookUpExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 			return nil
 		}
 		for resultTask.cursor < len(resultTask.rows) {
-			chk.AppendRow(0, resultTask.rows[resultTask.cursor])
+			chk.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
 			if chk.NumRows() >= e.maxChunkSize {
 				return nil
@@ -879,24 +862,16 @@ func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []ranger.In
 	return builder
 }
 
-func (builder *requestBuilder) SetIndexRanges(tid, idxID int64, ranges []*ranger.NewRange) *requestBuilder {
+func (builder *requestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) *requestBuilder {
 	if builder.err != nil {
 		return builder
 	}
-	builder.Request.KeyRanges, builder.err = indexRangesToKVRanges(tid, idxID, ranges)
+	builder.Request.KeyRanges, builder.err = indexRangesToKVRanges(sc, tid, idxID, ranges)
 	return builder
 }
 
 func (builder *requestBuilder) SetTableHandles(tid int64, handles []int64) *requestBuilder {
 	builder.Request.KeyRanges = tableHandlesToKVRanges(tid, handles)
-	return builder
-}
-
-func (builder *requestBuilder) SetIndexValues(tid, idxID int64, values [][]types.Datum) *requestBuilder {
-	if builder.err != nil {
-		return builder
-	}
-	builder.Request.KeyRanges, builder.err = indexValuesToKVRanges(tid, idxID, values)
 	return builder
 }
 

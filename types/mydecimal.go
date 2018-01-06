@@ -1767,7 +1767,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 	stop2 := 0
 	to.wordBuf = zeroMyDecimal.wordBuf
 
-	for idx1 += (wordsFrac1 - 1); idx1 >= stop1; idx1-- {
+	for idx1 += wordsFrac1 - 1; idx1 >= stop1; idx1-- {
 		carry := int32(0)
 		idxTo = startTo
 		idx2 = start2

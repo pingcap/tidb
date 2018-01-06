@@ -118,7 +118,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
 		return sig, nil
@@ -164,12 +164,17 @@ func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 		return sig, nil
 	}
-	argTp := args[0].GetType().EvalType()
+	var argTp types.EvalType
+	if args[0].GetType().Hybrid() {
+		argTp = types.ETInt
+	} else {
+		argTp = args[0].GetType().EvalType()
+	}
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsRealSig{bf}
@@ -210,12 +215,17 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Exp
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
 		return sig, nil
 	}
-	argTp := args[0].GetType().EvalType()
+	var argTp types.EvalType
+	if args[0].GetType().Hybrid() {
+		argTp = types.ETInt
+	} else {
+		argTp = args[0].GetType().EvalType()
+	}
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsDecimalSig{bf}
@@ -256,7 +266,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expr
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
+	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
@@ -302,11 +312,6 @@ func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
-		sig = &builtinCastTimeAsTimeSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsTime)
-		return sig, nil
-	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -348,11 +353,6 @@ func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Ex
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
-		sig = &builtinCastDurationAsDurationSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDuration)
-		return sig, nil
-	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -394,11 +394,6 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
-	if IsHybridType(args[0]) {
-		sig = &builtinCastJSONAsJSONSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
-		return sig, nil
-	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
@@ -896,7 +891,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 
 func (b *builtinCastStringAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	if IsHybridType(b.args[0]) {
+	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalInt(row, sc)
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
@@ -936,7 +931,7 @@ type builtinCastStringAsRealSig struct {
 
 func (b *builtinCastStringAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	if IsHybridType(b.args[0]) {
+	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalReal(row, sc)
 	}
 	val, isNull, err := b.args[0].EvalString(row, sc)
@@ -957,7 +952,7 @@ type builtinCastStringAsDecimalSig struct {
 
 func (b *builtinCastStringAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	if IsHybridType(b.args[0]) {
+	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalDecimal(row, sc)
 	}
 	val, isNull, err := b.args[0].EvalString(row, sc)

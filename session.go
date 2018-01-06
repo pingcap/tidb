@@ -732,11 +732,11 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			return nil, errors.Trace(err)
 		}
 
-		charset, collation := s.sessionVars.GetCharsetInfo()
+		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
 		// Step1: Compile query string to abstract syntax trees(ASTs).
 		startTS := time.Now()
-		stmtNodes, err := s.ParseSQL(goCtx, sql, charset, collation)
+		stmtNodes, err := s.ParseSQL(goCtx, sql, charsetInfo, collation)
 		if err != nil {
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
@@ -1231,8 +1231,8 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 
 func (s *session) getTxnFuture(ctx goctx.Context) *txnFuture {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
-	oracle := s.store.GetOracle()
-	tsFuture := oracle.GetTimestampAsync(ctx)
+	oracleStore := s.store.GetOracle()
+	tsFuture := oracleStore.GetTimestampAsync(ctx)
 	return &txnFuture{tsFuture, s.store, span}
 }
 

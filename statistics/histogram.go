@@ -19,6 +19,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -26,8 +27,10 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -43,26 +46,119 @@ type Histogram struct {
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
 
+	tp *types.FieldType
+
+	// Histogram elements.
+	//
+	// A bucket bound is the smallest and greatest values stored in the bucket. The lower and upper bound
+	// are stored in one column.
+	//
+	// A bucket count is the number of items stored in all previous buckets and the current bucket.
+	// Bucket counts are always in increasing order.
+	//
+	// A bucket repeat is the number of repeats of the bucket value, it can be used to find popular values.
+	Bounds  *chunk.Chunk
 	Buckets []Bucket
+
+	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
+	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
+	scalars []scalar
 }
 
-// Bucket is an element of histogram.
-//
-// A bucket count is the number of items stored in all previous buckets and the current bucket.
-// bucket numbers are always in increasing order.
-//
-// A bucket value is the greatest item value stored in the bucket.
-//
-// Repeat is the number of repeats of the bucket value, it can be used to find popular values.
-//
+// Bucket store the bucket count and repeat.
 type Bucket struct {
-	Count        int64
-	UpperBound   types.Datum
-	LowerBound   types.Datum
-	Repeats      int64
-	lowerScalar  float64
-	upperScalar  float64
-	commonPfxLen int // when the bucket value type is KindString or KindBytes, commonPfxLen is the common prefix length of the lower bound and upper bound.
+	Count  int64
+	Repeat int64
+}
+
+type scalar struct {
+	lower        float64
+	upper        float64
+	commonPfxLen int // commonPfxLen is the common prefix length of the lower bound and upper bound when the value type is KindString or KindBytes.
+}
+
+// NewHistogram creates a new histogram.
+func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int) *Histogram {
+	return &Histogram{
+		ID:                id,
+		NDV:               ndv,
+		NullCount:         nullCount,
+		LastUpdateVersion: version,
+		tp:                tp,
+		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
+		Buckets:           make([]Bucket, 0, bucketSize),
+	}
+}
+
+// GetLower gets the lower bound of bucket `idx`.
+func (hg *Histogram) GetLower(idx int) *types.Datum {
+	d := hg.Bounds.GetRow(2*idx).GetDatum(0, hg.tp)
+	return &d
+}
+
+// GetUpper gets the upper bound of bucket `idx`.
+func (hg *Histogram) GetUpper(idx int) *types.Datum {
+	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.tp)
+	return &d
+}
+
+// AppendBucket appends a bucket into `hg`.
+func (hg *Histogram) AppendBucket(lower *types.Datum, upper *types.Datum, count, repeat int64) {
+	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat})
+	hg.Bounds.AppendDatum(0, lower)
+	hg.Bounds.AppendDatum(0, upper)
+}
+
+func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
+	len := hg.Len()
+	hg.Bounds.TruncateTo(2*len - 1)
+	hg.Bounds.AppendDatum(0, upper)
+	hg.Buckets[len-1] = Bucket{Count: count, Repeat: repeat}
+}
+
+// DecodeTo decodes the histogram bucket values into `tp`.
+func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
+	old := hg.Bounds
+	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, old.NumRows())
+	hg.tp = tp
+	for row := old.Begin(); row != old.End(); row = row.Next() {
+		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		hg.Bounds.AppendDatum(0, &datum)
+	}
+	return nil
+}
+
+// ConvertTo converts the histogram bucket values into `tp`.
+func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
+	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len())
+	for row := hg.Bounds.Begin(); row != hg.Bounds.End(); row = row.Next() {
+		d := row.GetDatum(0, hg.tp)
+		d, err := d.ConvertTo(sc, tp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		hist.Bounds.AppendDatum(0, &d)
+	}
+	hist.Buckets = hg.Buckets
+	return hist, nil
+}
+
+// Len is the number of buckets in the histogram.
+func (hg *Histogram) Len() int {
+	return len(hg.Buckets)
+}
+
+// HistogramEqual tests if two histograms are equal.
+func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
+	if ignoreID {
+		old := b.ID
+		b.ID = a.ID
+		defer func() { b.ID = old }()
+	}
+	return bytes.Equal([]byte(a.toString(false)), []byte(b.toString(false)))
 }
 
 // SaveStatsToStorage saves the stats to storage.
@@ -95,24 +191,23 @@ func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i, bucket := range hg.Buckets {
-		var count int64
-		if i == 0 {
-			count = bucket.Count
-		} else {
-			count = bucket.Count - hg.Buckets[i-1].Count
+	sc := ctx.GetSessionVars().StmtCtx
+	for i := range hg.Buckets {
+		count := hg.Buckets[i].Count
+		if i > 0 {
+			count -= hg.Buckets[i-1].Count
 		}
 		var upperBound types.Datum
-		upperBound, err = bucket.UpperBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		upperBound, err = hg.GetUpper(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		var lowerBound types.Datum
-		lowerBound, err = bucket.LowerBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		lowerBound, err = hg.GetLower(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, bucket.Repeats, lowerBound.GetBytes(), upperBound.GetBytes())
+		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
 		_, err = exec.Execute(goCtx, insertSQL)
 		if err != nil {
 			return errors.Trace(err)
@@ -123,53 +218,37 @@ func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex
 }
 
 func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
-	selSQL := fmt.Sprintf("select bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
+	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
-	hg := &Histogram{
-		ID:                colID,
-		NDV:               distinct,
-		LastUpdateVersion: ver,
-		Buckets:           make([]Bucket, bucketSize),
-		NullCount:         nullCount,
-	}
+	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize)
+	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {
-		bucketID := rows[i].GetInt64(0)
-		count := rows[i].GetInt64(1)
-		repeats := rows[i].GetInt64(2)
+		count := rows[i].GetInt64(0)
+		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum
 		if isIndex == 1 {
-			lowerBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound = rows[i].GetDatum(4, &fields[4].Column.FieldType)
+			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
-			d := rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			lowerBound, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			d = rows[i].GetDatum(4, &fields[4].Column.FieldType)
+			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 			upperBound, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		lowerScalar, upperScalar, commonLength := preCalculateDatumScalar(&lowerBound, &upperBound)
-		hg.Buckets[bucketID] = Bucket{
-			Count:        count,
-			UpperBound:   upperBound,
-			LowerBound:   lowerBound,
-			Repeats:      repeats,
-			lowerScalar:  lowerScalar,
-			upperScalar:  upperScalar,
-			commonPfxLen: commonLength,
-		}
+		totalCount += count
+		hg.AppendBucket(&lowerBound, &upperBound, totalCount, repeats)
 	}
-	for i := 1; i < bucketSize; i++ {
-		hg.Buckets[i].Count += hg.Buckets[i-1].Count
-	}
+	hg.PreCalculateScalar()
 	return hg, nil
 }
 
@@ -186,18 +265,18 @@ func columnCountFromStorage(ctx context.Context, tableID, colID int64) (int64, e
 }
 
 func (hg *Histogram) toString(isIndex bool) string {
-	strs := make([]string, 0, len(hg.Buckets)+1)
+	strs := make([]string, 0, hg.Len()+1)
 	if isIndex {
 		strs = append(strs, fmt.Sprintf("index:%d ndv:%d", hg.ID, hg.NDV))
 	} else {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
 	}
-	for _, bucket := range hg.Buckets {
-		upperVal, err := bucket.UpperBound.ToString()
+	for i := 0; i < hg.Len(); i++ {
+		upperVal, err := hg.GetUpper(i).ToString()
 		terror.Log(errors.Trace(err))
-		lowerVal, err := bucket.LowerBound.ToString()
+		lowerVal, err := hg.GetLower(i).ToString()
 		terror.Log(errors.Trace(err))
-		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", bucket.Count, lowerVal, upperVal, bucket.Repeats))
+		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", hg.Buckets[i].Count, lowerVal, upperVal, hg.Buckets[i].Repeat))
 	}
 	return strings.Join(strs, "\n")
 }
@@ -208,13 +287,13 @@ func (hg *Histogram) equalRowCount(sc *stmtctx.StatementContext, value types.Dat
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if index == len(hg.Buckets) {
+	if index == hg.Len() {
 		return 0, nil
 	}
 	if match {
-		return float64(hg.Buckets[index].Repeats), nil
+		return float64(hg.Buckets[index].Repeat), nil
 	}
-	c, err := value.CompareDatum(sc, &hg.Buckets[index].LowerBound)
+	c, err := value.CompareDatum(sc, hg.GetLower(index))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -260,7 +339,7 @@ func (hg *Histogram) lessRowCount(sc *stmtctx.StatementContext, value types.Datu
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if index == len(hg.Buckets) {
+	if index == hg.Len() {
 		return hg.totalRowCount(), nil
 	}
 	curCount := float64(hg.Buckets[index].Count)
@@ -268,19 +347,18 @@ func (hg *Histogram) lessRowCount(sc *stmtctx.StatementContext, value types.Datu
 	if index > 0 {
 		prevCount = float64(hg.Buckets[index-1].Count)
 	}
-	lessThanBucketValueCount := curCount - float64(hg.Buckets[index].Repeats)
+	lessThanBucketValueCount := curCount - float64(hg.Buckets[index].Repeat)
 	if match {
 		return lessThanBucketValueCount, nil
 	}
-	c, err := value.CompareDatum(sc, &hg.Buckets[index].LowerBound)
+	c, err := value.CompareDatum(sc, hg.GetLower(index))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	if c <= 0 {
 		return prevCount, nil
 	}
-	valueScalar := convertDatumToScalar(&value, hg.Buckets[index].commonPfxLen)
-	frac := calcFraction(hg.Buckets[index].lowerScalar, hg.Buckets[index].upperScalar, valueScalar)
+	frac := hg.calcFraction(index, &value)
 	return prevCount + (lessThanBucketValueCount-prevCount)*frac, nil
 }
 
@@ -314,15 +392,16 @@ func (hg *Histogram) betweenRowCount(sc *stmtctx.StatementContext, a, b types.Da
 }
 
 func (hg *Histogram) totalRowCount() float64 {
-	if len(hg.Buckets) == 0 {
+	if hg.Len() == 0 {
 		return 0
 	}
-	return float64(hg.Buckets[len(hg.Buckets)-1].Count)
+	return float64(hg.Buckets[hg.Len()-1].Count)
 }
 
 func (hg *Histogram) lowerBound(sc *stmtctx.StatementContext, target types.Datum) (index int, match bool, err error) {
-	index = sort.Search(len(hg.Buckets), func(i int) bool {
-		cmp, err1 := hg.Buckets[i].UpperBound.CompareDatum(sc, &target)
+	index = sort.Search(hg.Len(), func(i int) bool {
+		// TODO: We can just binary search on the chunk.
+		cmp, err1 := hg.GetUpper(i).CompareDatum(sc, &target)
 		if err1 != nil {
 			err = errors.Trace(err1)
 			return false
@@ -336,28 +415,29 @@ func (hg *Histogram) lowerBound(sc *stmtctx.StatementContext, target types.Datum
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.
-func (hg *Histogram) mergeBuckets(bucketIdx int64) {
+func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	curBuck := 0
-	for i := int64(0); i+1 <= bucketIdx; i += 2 {
-		hg.Buckets[curBuck] = Bucket{
-			Count:      hg.Buckets[i+1].Count,
-			UpperBound: hg.Buckets[i+1].UpperBound,
-			LowerBound: hg.Buckets[i].LowerBound,
-			Repeats:    hg.Buckets[i+1].Repeats,
-		}
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp}, bucketIdx)
+	for i := 0; i+1 <= bucketIdx; i += 2 {
+		hg.Buckets[curBuck] = hg.Buckets[i+1]
+		c.AppendDatum(0, hg.GetLower(i))
+		c.AppendDatum(0, hg.GetUpper(i+1))
 		curBuck++
 	}
 	if bucketIdx%2 == 0 {
 		hg.Buckets[curBuck] = hg.Buckets[bucketIdx]
+		c.AppendDatum(0, hg.GetLower(bucketIdx))
+		c.AppendDatum(0, hg.GetUpper(bucketIdx))
 		curBuck++
 	}
+	hg.Bounds = c
 	hg.Buckets = hg.Buckets[:curBuck]
 	return
 }
 
 // getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
-	columnCount := hg.Buckets[len(hg.Buckets)-1].Count + hg.NullCount
+	columnCount := int64(hg.totalRowCount()) + hg.NullCount
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
@@ -371,12 +451,12 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 	protoHg := &tipb.Histogram{
 		Ndv: hg.NDV,
 	}
-	for _, bucket := range hg.Buckets {
+	for i := 0; i < hg.Len(); i++ {
 		bkt := &tipb.Bucket{
-			Count:      bucket.Count,
-			LowerBound: bucket.LowerBound.GetBytes(),
-			UpperBound: bucket.UpperBound.GetBytes(),
-			Repeats:    bucket.Repeats,
+			Count:      hg.Buckets[i].Count,
+			LowerBound: hg.GetLower(i).GetBytes(),
+			UpperBound: hg.GetUpper(i).GetBytes(),
+			Repeats:    hg.Buckets[i].Repeat,
 		}
 		protoHg.Buckets = append(protoHg.Buckets, bkt)
 	}
@@ -387,71 +467,69 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 // Note that we will set BytesDatum for the lower/upper bound in the bucket, the decode will
 // be after all histograms merged.
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
-	hg := &Histogram{
-		NDV: protoHg.Ndv,
-	}
+	tp := types.NewFieldType(mysql.TypeBlob)
+	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets))
 	for _, bucket := range protoHg.Buckets {
-		bkt := Bucket{
-			Count:      bucket.Count,
-			LowerBound: types.NewBytesDatum(bucket.LowerBound),
-			UpperBound: types.NewBytesDatum(bucket.UpperBound),
-			Repeats:    bucket.Repeats,
-		}
-		hg.Buckets = append(hg.Buckets, bkt)
+		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
+		hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)
 	}
 	return hg
 }
 
+func (hg *Histogram) popFirstBucket() {
+	hg.Buckets = hg.Buckets[1:]
+	c := chunk.NewChunk([]*types.FieldType{hg.tp, hg.tp})
+	c.Append(hg.Bounds, 2, hg.Bounds.NumRows())
+	hg.Bounds = c
+}
+
 // MergeHistograms merges two histograms.
 func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
-	if len(lh.Buckets) == 0 {
+	if lh.Len() == 0 {
 		return rh, nil
 	}
-	if len(rh.Buckets) == 0 {
+	if rh.Len() == 0 {
 		return lh, nil
 	}
 	lh.NDV += rh.NDV
-	lLen := len(lh.Buckets)
-	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, &rh.Buckets[0].LowerBound)
+	lLen := lh.Len()
+	cmp, err := lh.GetUpper(lLen-1).CompareDatum(sc, rh.GetLower(0))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	offset := int64(0)
 	if cmp == 0 {
 		lh.NDV--
-		lh.Buckets[lLen-1].UpperBound = rh.Buckets[0].UpperBound
-		lh.Buckets[lLen-1].Repeats = rh.Buckets[0].Repeats
-		lh.Buckets[lLen-1].Count += rh.Buckets[0].Count
+		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat)
 		offset = rh.Buckets[0].Count
-		rh.Buckets = rh.Buckets[1:]
+		rh.popFirstBucket()
 	}
-	for len(lh.Buckets) > bucketSize {
-		lh.mergeBuckets(int64(len(lh.Buckets)) - 1)
+	for lh.Len() > bucketSize {
+		lh.mergeBuckets(lh.Len() - 1)
 	}
-	if len(rh.Buckets) == 0 {
+	if rh.Len() == 0 {
 		return lh, nil
 	}
-	for len(rh.Buckets) > bucketSize {
-		rh.mergeBuckets(int64(len(rh.Buckets)) - 1)
+	for rh.Len() > bucketSize {
+		rh.mergeBuckets(rh.Len() - 1)
 	}
-	lCount := lh.Buckets[len(lh.Buckets)-1].Count
-	rCount := rh.Buckets[len(rh.Buckets)-1].Count - offset
-	lAvg := float64(lCount) / float64(len(lh.Buckets))
-	rAvg := float64(rCount) / float64(len(rh.Buckets))
-	for len(lh.Buckets) > 1 && lAvg*2 <= rAvg {
-		lh.mergeBuckets(int64(len(lh.Buckets)) - 1)
+	lCount := lh.Buckets[lh.Len()-1].Count
+	rCount := rh.Buckets[rh.Len()-1].Count - offset
+	lAvg := float64(lCount) / float64(lh.Len())
+	rAvg := float64(rCount) / float64(rh.Len())
+	for lh.Len() > 1 && lAvg*2 <= rAvg {
+		lh.mergeBuckets(lh.Len() - 1)
 		lAvg *= 2
 	}
-	for len(rh.Buckets) > 1 && rAvg*2 <= lAvg {
-		rh.mergeBuckets(int64(len(rh.Buckets)) - 1)
+	for rh.Len() > 1 && rAvg*2 <= lAvg {
+		rh.mergeBuckets(rh.Len() - 1)
 		rAvg *= 2
 	}
-	for _, bkt := range rh.Buckets {
-		bkt.Count = bkt.Count + lCount - offset
-		lh.Buckets = append(lh.Buckets, bkt)
+	for i := 0; i < rh.Len(); i++ {
+		lh.AppendBucket(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat)
 	}
-	for len(lh.Buckets) > bucketSize {
-		lh.mergeBuckets(int64(len(lh.Buckets)) - 1)
+	for lh.Len() > bucketSize {
+		lh.mergeBuckets(lh.Len() - 1)
 	}
 	return lh, nil
 }
@@ -470,7 +548,7 @@ func (c *Column) String() string {
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
 	if c.CMSketch != nil {
-		count, err := c.CMSketch.queryValue(val)
+		count, err := c.CMSketch.queryValue(sc, val)
 		return float64(count), errors.Trace(err)
 	}
 	count, err := c.Histogram.equalRowCount(sc, val)
@@ -581,11 +659,11 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) (float64
 func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
-		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
+		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		rb, err := codec.EncodeKey(nil, indexRange.HighVal...)
+		rb, err := codec.EncodeKey(sc, nil, indexRange.HighVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
