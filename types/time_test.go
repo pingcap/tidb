@@ -653,6 +653,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 func (s *testTimeSuite) TestRoundFrac(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
+	sc.TimeZone = time.Local
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -673,7 +674,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	for _, t := range tbl {
 		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(t.Fsp)
+		nv, err := v.RoundFrac(sc, t.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
@@ -857,16 +858,14 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 
 	for _, test := range tests {
 		t1 := types.Time{
-			Time:     test.t1,
-			Type:     mysql.TypeDatetime,
-			Fsp:      6,
-			TimeZone: nil,
+			Time: test.t1,
+			Type: mysql.TypeDatetime,
+			Fsp:  6,
 		}
 		t2 := types.Time{
-			Time:     test.t2,
-			Type:     mysql.TypeDatetime,
-			Fsp:      6,
-			TimeZone: nil,
+			Time: test.t2,
+			Type: mysql.TypeDatetime,
+			Fsp:  6,
 		}
 		c.Assert(types.TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}

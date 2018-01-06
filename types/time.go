@@ -180,9 +180,6 @@ type Time struct {
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 	Fsp int
-	// TODO: Define a type for timestamp, remove its representation from here.
-	// TimeZone is valid when Type is mysql.Timestamp, it's meaningless for date/datetime.
-	TimeZone *gotime.Location
 }
 
 // MaxMySQLTime returns Time with maximum mysql time type.
@@ -206,7 +203,6 @@ func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
 		converted := raw.In(to)
 		t.Time = FromGoTime(converted)
 	}
-	t.TimeZone = to
 	return nil
 }
 
@@ -351,7 +347,7 @@ func roundTime(t gotime.Time, fsp int) gotime.Time {
 }
 
 // RoundFrac rounds the fraction part of a time-type value according to `fsp`.
-func (t Time) RoundFrac(fsp int) (Time, error) {
+func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 	if t.Type == mysql.TypeDate || t.IsZero() {
 		// date type has no fsp
 		return t, nil
@@ -368,15 +364,7 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 	}
 
 	var nt TimeInternal
-	var loc *gotime.Location
-	if t.Type == mysql.TypeTimestamp {
-		loc = t.TimeZone
-	} else {
-		// TODO: Consider time_zone variable.
-		loc = gotime.Local
-	}
-
-	if t1, err := t.Time.GoTime(loc); err == nil {
+	if t1, err := t.Time.GoTime(sc.TimeZone); err == nil {
 		t1 = roundTime(t1, fsp)
 		nt = FromGoTime(t1)
 	} else {
@@ -395,7 +383,7 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
 	}
 
-	return Time{Time: nt, Type: t.Type, Fsp: fsp, TimeZone: loc}, nil
+	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -457,7 +445,6 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	microsec := int(packed % (1 << 24))
 
 	t.Time = FromDate(year, month, day, hour, minute, second, microsec)
-	t.TimeZone = gotime.UTC
 
 	return nil
 }
@@ -493,9 +480,9 @@ func (t *Time) Check() error {
 func (t *Time) Sub(t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
-		a, err := t.Time.GoTime(t.TimeZone)
+		a, err := t.Time.GoTime(gotime.UTC)
 		terror.Log(errors.Trace(err))
-		b, err := t1.Time.GoTime(t.TimeZone)
+		b, err := t1.Time.GoTime(gotime.UTC)
 		terror.Log(errors.Trace(err))
 		duration = a.Sub(b)
 	} else {
@@ -536,10 +523,9 @@ func (t *Time) Add(d Duration) (Time, error) {
 		fsp = d.Fsp
 	}
 	ret := Time{
-		Time:     tm,
-		Type:     t.Type,
-		Fsp:      fsp,
-		TimeZone: t.TimeZone,
+		Time: tm,
+		Type: t.Type,
+		Fsp:  fsp,
 	}
 	return ret, ret.Check()
 }

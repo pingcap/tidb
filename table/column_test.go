@@ -242,7 +242,6 @@ func (t *testTableSuite) TestCastValue(c *C) {
 func (t *testTableSuite) TestGetDefaultValue(c *C) {
 	ctx := mock.NewContext()
 	zeroTimestamp := types.ZeroTimestamp
-	zeroTimestamp.TimeZone = ctx.GetSessionVars().GetTimeZone()
 	tests := []struct {
 		colInfo *model.ColumnInfo
 		strict  bool
