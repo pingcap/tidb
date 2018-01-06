@@ -311,24 +311,8 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 	}
 }
 
-// IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.
-//
-// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
-// it will cause an error if we convert ENUM/SET to int as a string value.
-//
-// For BinaryLiteral/MysqlBit, we will get a wrong result if we convert it to int as a string value.
-// For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
-func IsHybridType(expr Expression) bool {
-	if expr.GetType().Hybrid() {
-		return true
-	}
-
-	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is BinaryLiteral
-	if con, ok := expr.(*Constant); ok {
-		switch con.Value.Kind() {
-		case types.KindBinaryLiteral:
-			return true
-		}
-	}
-	return false
+// IsBinaryLiteral checks whether an expression is a binary literal
+func IsBinaryLiteral(expr Expression) bool {
+	con, ok := expr.(*Constant)
+	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }

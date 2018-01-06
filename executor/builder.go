@@ -708,6 +708,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, childExec),
 		exprs:            v.Exprs,
+		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 	e.baseExecutor.supportChk = true
