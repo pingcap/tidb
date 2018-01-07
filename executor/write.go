@@ -965,7 +965,8 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError
 				return nil, errors.Trace(err)
 			}
 			var key []byte
-			key, _, err = v.GenIndexKey(colVals, recordIDs[i])
+			key, _, err = v.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, colVals,
+				recordIDs[i])
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -976,6 +977,9 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError
 	return rowWithKeys, nil
 }
 
+// filterDupRows returns rows without duplicate errors.
+// All duplicate rows were filtered and duplicate warnings were appended to
+// statement context.
 func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error) {
 	// get keys need to be checked
 	rowWithKeys, err := e.getKeysNeedCheck(rows)

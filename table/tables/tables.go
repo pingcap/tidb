@@ -409,8 +409,8 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	importData := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
-	if t.meta.PKIsHandle && !importData && !skipHandleCheck {
+	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID); err != nil {
 			return recordID, errors.Trace(err)
 		}
@@ -422,7 +422,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			return 0, errors.Trace(err2)
 		}
 		var dupKeyErr error
-		if !importData && (v.Meta().Unique || v.Meta().Primary) {
+		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
 			entryKey, err1 := t.genIndexKeyStr(colVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
