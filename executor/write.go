@@ -809,7 +809,8 @@ func (e *LoadData) Open(goCtx goctx.Context) error {
 }
 
 type defaultVal struct {
-	val   types.Datum
+	val types.Datum
+	// valid indicates val is a casted default value.
 	valid bool
 }
 
@@ -833,7 +834,7 @@ type InsertValues struct {
 	GenColumns []*ast.ColumnName
 	GenExprs   []expression.Expression
 
-	// colDefaultVals used to store casted default value.
+	// colDefaultVals is used to store casted default value.
 	colDefaultVals []defaultVal
 }
 
@@ -861,8 +862,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 
 	txn := e.ctx.Txn()
 	rowCount := 0
-	tmpMemCap := 64
-	sessVars.BufStore = kv.NewBufferStore(txn, tmpMemCap)
+	sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	defer sessVars.CleanBuffers()
 	for _, row := range rows {
 		if batchInsert && rowCount >= batchSize {
@@ -872,7 +872,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			sessVars.BufStore = kv.NewBufferStore(txn, tmpMemCap)
+			sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)

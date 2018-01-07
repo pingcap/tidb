@@ -22,6 +22,8 @@ var (
 	DefaultTxnMembufCap = 4 * 1024
 	// ImportingTxnMembufCap is the capability of tidb importing data situation.
 	ImportingTxnMembufCap = 32 * 1024
+	// TempTxnMemBufCap is the capability of temporary membuf.
+	TempTxnMemBufCap = 64
 )
 
 // BufferStore wraps a Retriever for read and a MemBuffer for buffered write.

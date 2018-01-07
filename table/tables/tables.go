@@ -310,6 +310,9 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 	return nil
 }
 
+// adjustRowValuesBuf adjust sessVars.AddRowValues length, sessVars.AddRowValues stores the inserting values that is used
+// by tablecodec.EncodeRow, the encoded row format is `id1, colval, id2, colval`, so the correct length is rowLen * 2. If
+// the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
 func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
 	adjustLen := rowLen * 2
 	if sessVars.AddRowValues == nil || cap(sessVars.AddRowValues) < adjustLen {
@@ -337,6 +340,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 
 	txn := ctx.Txn()
 	sessVars := ctx.GetSessionVars()
+	// when ImportingData is true, no needs to check the key constrains, so we names the variable skipCheck.
 	skipCheck := sessVars.ImportingData
 	bs := sessVars.BufStore
 	if bs == nil {
