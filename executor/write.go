@@ -854,7 +854,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	// If number of rows is one, using BatchGet might be slower than not using it in some cases.
 	if e.IgnoreErr {
 		var err error
-		rows, err = e.filterDupRows(rows)
+		rows, err = e.batchFilterRows(rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -977,10 +977,10 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError
 	return rowWithKeys, nil
 }
 
-// filterDupRows returns rows without duplicate errors.
-// All duplicate rows were filtered and duplicate warnings were appended to
-// statement context.
-func (e *InsertExec) filterDupRows(rows [][]types.Datum) ([][]types.Datum, error) {
+// batchFilterRows returns rows without duplicate errors.
+// All duplicate rows were filtered and appended as duplicate warnings
+// to the statement context in batch.
+func (e *InsertExec) batchFilterRows(rows [][]types.Datum) ([][]types.Datum, error) {
 	// get keys need to be checked
 	rowWithKeys, err := e.getKeysNeedCheck(rows)
 
