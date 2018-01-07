@@ -202,7 +202,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expr
 		return nil, errors.Trace(err)
 	}
 
-	argsTp := []types.EvalType{}
+	var argsTp []types.EvalType
 	if len(args) == 1 {
 		argsTp = append(argsTp, types.ETInt)
 	}

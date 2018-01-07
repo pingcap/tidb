@@ -67,9 +67,12 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 		}
 		return types.ETInt
 	}
-	evalTp4Ft := ft.EvalType()
-	if evalTp4Ft != types.ETDecimal && evalTp4Ft != types.ETInt {
-		evalTp4Ft = types.ETReal
+	evalTp4Ft := types.ETReal
+	if !ft.Hybrid() {
+		evalTp4Ft = ft.EvalType()
+		if evalTp4Ft != types.ETDecimal && evalTp4Ft != types.ETInt {
+			evalTp4Ft = types.ETReal
+		}
 	}
 	return evalTp4Ft
 }

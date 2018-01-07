@@ -42,11 +42,16 @@ const (
 
 // NewChunk creates a new chunk with field types.
 func NewChunk(fields []*types.FieldType) *Chunk {
+	return NewChunkWithCapacity(fields, InitialCapacity)
+}
+
+// NewChunkWithCapacity creates a new chunk with field types and capacity.
+func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
 	chk.numVirtualRows = 0
 	for _, f := range fields {
-		chk.addColumnByFieldType(f, InitialCapacity)
+		chk.addColumnByFieldType(f, cap)
 	}
 	return chk
 }
@@ -94,6 +99,16 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	default:
 		c.addVarLenColumn(initCap)
 	}
+}
+
+// MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
+func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
+	c.columns[dstColIdx] = c.columns[srcColIdx]
+}
+
+// SwapColumn swaps column "c.columns[colIdx]" with column "other.columns[otherIdx]".
+func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+	c.columns[colIdx], other.columns[otherIdx] = other.columns[otherIdx], c.columns[colIdx]
 }
 
 // SwapColumns swaps columns with another Chunk.
@@ -284,6 +299,36 @@ func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
 	c.columns[colIdx].appendJSON(j)
 }
 
+// AppendDatum appends a datum into the chunk.
+func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
+	switch d.Kind() {
+	case types.KindNull:
+		c.AppendNull(colIdx)
+	case types.KindInt64:
+		c.AppendInt64(colIdx, d.GetInt64())
+	case types.KindUint64:
+		c.AppendUint64(colIdx, d.GetUint64())
+	case types.KindFloat32:
+		c.AppendFloat32(colIdx, d.GetFloat32())
+	case types.KindFloat64:
+		c.AppendFloat64(colIdx, d.GetFloat64())
+	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindRaw, types.KindMysqlBit:
+		c.AppendBytes(colIdx, d.GetBytes())
+	case types.KindMysqlDecimal:
+		c.AppendMyDecimal(colIdx, d.GetMysqlDecimal())
+	case types.KindMysqlDuration:
+		c.AppendDuration(colIdx, d.GetMysqlDuration())
+	case types.KindMysqlEnum:
+		c.AppendEnum(colIdx, d.GetMysqlEnum())
+	case types.KindMysqlSet:
+		c.AppendSet(colIdx, d.GetMysqlSet())
+	case types.KindMysqlTime:
+		c.AppendTime(colIdx, d.GetMysqlTime())
+	case types.KindMysqlJSON:
+		c.AppendJSON(colIdx, d.GetMysqlJSON())
+	}
+}
+
 type column struct {
 	length     int
 	nullCount  int
@@ -330,7 +375,7 @@ func (c *column) appendNullBitmap(on bool) {
 	}
 	if on {
 		pos := uint(c.length) & 7
-		c.nullBitmap[idx] |= byte((1 << pos))
+		c.nullBitmap[idx] |= byte(1 << pos)
 	} else {
 		c.nullCount++
 	}

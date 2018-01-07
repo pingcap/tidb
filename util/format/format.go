@@ -75,7 +75,7 @@ func IndentFormatter(w io.Writer, indent string) Formatter {
 }
 
 func (f *indentFormatter) format(flat bool, format string, args ...interface{}) (n int, errno error) {
-	buf := []byte{}
+	var buf = make([]byte, 0)
 	for i := 0; i < len(format); i++ {
 		c := format[i]
 		switch f.state {
@@ -184,8 +184,8 @@ func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno
 func OutputFormat(s string) string {
 	var buf bytes.Buffer
 	for _, old := range s {
-		if new, ok := replace[old]; ok {
-			buf.WriteString(new)
+		if newVal, ok := replace[old]; ok {
+			buf.WriteString(newVal)
 			continue
 		}
 		buf.WriteRune(old)
