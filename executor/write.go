@@ -810,7 +810,7 @@ func (e *LoadData) Open(goCtx goctx.Context) error {
 
 type defaultVal struct {
 	val types.Datum
-	// valid indicates val is a casted default value.
+	// We evaluate the default value lazily. The valid indicates whether the val is evaluated.
 	valid bool
 }
 
