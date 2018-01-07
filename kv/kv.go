@@ -109,6 +109,11 @@ type MemBuffer interface {
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
+	// Reset cleanup the MemBuffer
+	Reset()
+	// SetCap sets the MemBuffer capability, to reduce memory allocations.
+	// Please call it before you use the MemBuffer, otherwise it will not works.
+	SetCap(cap int)
 }
 
 // Transaction defines the interface for operations inside a Transaction.

@@ -159,7 +159,8 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 
 // EncodeValue encodes a go value to bytes.
 func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) {
-	v, err := flatten(raw, sc.TimeZone)
+	var v types.Datum
+	err := flatten(raw, sc.TimeZone, &v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -169,29 +170,32 @@ func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) 
 
 // EncodeRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
-func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64) ([]byte, error) {
+// valBuf and values pass by caller, for reducing EncodeRow allocates tempory bufs. If you pass valBuf and values as nil,
+// EncodeRow will allocate it.
+func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
-	values := make([]types.Datum, 2*len(row))
+	valBuf = valBuf[:0]
+	if values == nil {
+		values = make([]types.Datum, len(row)*2)
+	}
 	for i, c := range row {
 		id := colIDs[i]
-		idv := types.NewIntDatum(id)
-		values[2*i] = idv
-		fc, err := flatten(c, sc.TimeZone)
+		values[2*i].SetInt64(id)
+		err := flatten(c, sc.TimeZone, &values[2*i+1])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		values[2*i+1] = fc
 	}
 	if len(values) == 0 {
 		// We could not set nil value into kv.
 		return []byte{codec.NilFlag}, nil
 	}
-	return codec.EncodeValue(sc, nil, values...)
+	return codec.EncodeValue(sc, valBuf, values...)
 }
 
-func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
+func flatten(data types.Datum, loc *time.Location, ret *types.Datum) error {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
@@ -199,31 +203,33 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 		if t.Type == mysql.TypeTimestamp && loc != time.UTC {
 			err := t.ConvertTimeZone(loc, time.UTC)
 			if err != nil {
-				return data, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 		v, err := t.ToPackedUint()
-		return types.NewUintDatum(v), errors.Trace(err)
+		ret.SetUint64(v)
+		return errors.Trace(err)
 	case types.KindMysqlDuration:
 		// for mysql time type
-		data.SetInt64(int64(data.GetMysqlDuration().Duration))
-		return data, nil
+		ret.SetInt64(int64(data.GetMysqlDuration().Duration))
+		return nil
 	case types.KindMysqlEnum:
-		data.SetUint64(data.GetMysqlEnum().Value)
-		return data, nil
+		ret.SetUint64(data.GetMysqlEnum().Value)
+		return nil
 	case types.KindMysqlSet:
-		data.SetUint64(data.GetMysqlSet().Value)
-		return data, nil
+		ret.SetUint64(data.GetMysqlSet().Value)
+		return nil
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		val, err := data.GetBinaryLiteral().ToInt()
 		if err != nil {
-			return data, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		data.SetUint64(val)
-		return data, nil
+		ret.SetUint64(val)
+		return nil
 	default:
-		return data, nil
+		*ret = data
+		return nil
 	}
 }
 
