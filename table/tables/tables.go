@@ -30,12 +30,13 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -215,7 +216,8 @@ func (t *Table) FirstKey() kv.Key {
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	txn := ctx.Txn()
-	bs := kv.NewBufferStore(txn)
+	// TODO: reuse bs, like AddRecord does.
+	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
 
 	// rebuild index
 	err := t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
@@ -255,7 +257,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	}
 
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs)
+	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -308,6 +310,17 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 	return nil
 }
 
+// adjustRowValuesBuf adjust sessVars.AddRowValues length, sessVars.AddRowValues stores the inserting values that is used
+// by tablecodec.EncodeRow, the encoded row format is `id1, colval, id2, colval`, so the correct length is rowLen * 2. If
+// the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
+func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
+	adjustLen := rowLen * 2
+	if sessVars.AddRowValues == nil || cap(sessVars.AddRowValues) < adjustLen {
+		sessVars.AddRowValues = make([]types.Datum, adjustLen)
+	}
+	sessVars.AddRowValues = sessVars.AddRowValues[:adjustLen]
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -326,9 +339,14 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	}
 
 	txn := ctx.Txn()
-	bs := kv.NewBufferStore(txn)
-
-	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	sessVars := ctx.GetSessionVars()
+	// when ImportingData is true, no needs to check the key constrains, so we names the variable skipCheck.
+	skipCheck := sessVars.ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	bs := sessVars.BufStore
+	if bs == nil {
+		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	}
+	bs.Reset()
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
@@ -360,12 +378,14 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 			row = append(row, value)
 		}
 	}
+	adjustRowValuesBuf(sessVars, len(row))
 
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs)
+	sessVars.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, sessVars.RowValBuf, sessVars.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	value := sessVars.RowValBuf
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -381,8 +401,8 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 			return 0, errors.Trace(err)
 		}
 	}
-	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
+	sessVars.StmtCtx.AddAffectedRows(1)
+	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
 	return recordID, nil
 }
 
@@ -526,7 +546,7 @@ func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs)
+	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -537,11 +557,11 @@ func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum,
 }
 
 func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
-	old, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs)
+	old, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newVal, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs)
+	newVal, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -553,7 +573,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datu
 }
 
 func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, r, colIDs)
+	data, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, r, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
