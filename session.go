@@ -29,7 +29,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -53,7 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/kvcache"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
@@ -886,7 +886,6 @@ func (s *session) NewTxn() error {
 			return errors.Trace(err)
 		}
 	}
-
 	txn, err := s.store.Begin()
 	if err != nil {
 		return errors.Trace(err)
