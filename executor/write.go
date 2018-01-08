@@ -878,6 +878,8 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		}
 	}
 	for _, row := range rows {
+		// duplicate row will be marked as nil in batchMarkDupRows if
+		// IgnoreErr is true. For IgnoreErr is false, it is a protection.
 		if row == nil {
 			continue
 		}
@@ -927,10 +929,16 @@ type keyWithDupError struct {
 	dupErr error
 }
 
-func (e *InsertExec) getRecordIDs(rows [][]types.Datum,
-	handleCol *table.Column) ([]int64, error) {
+func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 	recordIDs := make([]int64, 0, len(rows))
-	if handleCol != nil {
+	if e.Table.Meta().PKIsHandle {
+		var handleCol *table.Column
+		for _, col := range e.Table.Cols() {
+			if col.IsPKHandleColumn(e.Table.Meta()) {
+				handleCol = col
+				break
+			}
+		}
 		for _, row := range rows {
 			recordIDs = append(recordIDs, row[handleCol.Offset].GetInt64())
 		}
@@ -959,14 +967,7 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError
 	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
 
 	// get recordIDs
-	var handleCol *table.Column
-	for _, col := range e.Table.Cols() {
-		if col.IsPKHandleColumn(e.Table.Meta()) {
-			handleCol = col
-			break
-		}
-	}
-	recordIDs, err := e.getRecordIDs(rows, handleCol)
+	recordIDs, err := e.getRecordIDs(rows)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -974,7 +975,7 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError
 	for i, row := range rows {
 		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
 		// append record keys and errors
-		if handleCol != nil {
+		if e.Table.Meta().PKIsHandle {
 			keysWithErr = append(keysWithErr, keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i])})
 		}
 
