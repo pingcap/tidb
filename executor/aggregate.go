@@ -427,6 +427,9 @@ func (e *StreamAggExec) meetNewGroup(row types.Row) (bool, error) {
 	if matched {
 		return false, nil
 	}
-	e.curGroupKey = e.tmpGroupKey
+	e.curGroupKey = e.curGroupKey[:0]
+	for _, v := range e.tmpGroupKey {
+		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
+	}
 	return !firstGroup, nil
 }
