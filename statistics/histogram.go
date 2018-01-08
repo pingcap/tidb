@@ -310,7 +310,7 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 
 // greaterAndEqRowCount estimates the row count where the column less than or equal to value.
 func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
-	return hg.greaterRowCount(value) + hg.equalRowCount(value)
+	return hg.totalRowCount() - hg.lessRowCount(value)
 }
 
 // lessRowCount estimates the row count where the column less than value.
