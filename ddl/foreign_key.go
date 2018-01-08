@@ -42,7 +42,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ err
 		// We just support record the foreign key, so we just make it public.
 		// none -> public
 		fkInfo.State = model.StatePublic
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != fkInfo.State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != fkInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -98,7 +98,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error
 		// We just support record the foreign key, so we just make it none.
 		// public -> none
 		fkInfo.State = model.StateNone
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != fkInfo.State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != fkInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

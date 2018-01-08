@@ -103,15 +103,15 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.State = model.StateDeleteOnly
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 	case model.StateDeleteOnly:
 		tblInfo.State = model.StateNone
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -244,7 +244,7 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	ver, err = updateVerionAndTableInfo(t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -266,7 +266,7 @@ func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	tblInfo.ShardRowIDBits = shardRowIDBits
-	ver, err = updateVerionAndTableInfo(t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -359,7 +359,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.
-func updateVerionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
+func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
 	ver int64, err error) {
 	if shouldUpdateVer {
 		ver, err = updateSchemaVersion(t, job)
