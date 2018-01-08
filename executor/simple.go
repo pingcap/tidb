@@ -329,7 +329,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 	h := domain.GetDomain(e.ctx).StatsHandle()
 	if h.Lease <= 0 {
-		err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
+		err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID, false)
 		if err != nil {
 			return errors.Trace(err)
 		}

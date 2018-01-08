@@ -33,7 +33,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	case model.ActionCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionDropTable:
-		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
+		return h.DeleteTableStatsFromKV(t.TableInfo.ID, false)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
 	case model.ActionDropColumn:
@@ -80,14 +80,20 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
-func (h *Handle) DeleteTableStatsFromKV(id int64) error {
+func (h *Handle) DeleteTableStatsFromKV(id int64, deleteAll bool) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(goctx.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// First of all, we update the version.
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), id))
+	var sql string
+	if deleteAll {
+		sql = fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", id)
+	} else {
+		// We only update the version so that other tidb will know that this table is deleted.
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), id)
+	}
+	_, err = exec.Execute(goctx.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
