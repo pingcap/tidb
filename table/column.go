@@ -133,9 +133,6 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 			}
 		}
 		rec[c.Offset] = converted
-		if c.Tp == mysql.TypeString && !types.IsBinaryStr(&c.FieldType) {
-			truncateTrailingSpaces(&rec[c.Offset])
-		}
 	}
 	return nil
 }
@@ -149,6 +146,11 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 	if err != nil {
 		return casted, errors.Trace(err)
 	}
+
+	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
+		truncateTrailingSpaces(&casted)
+	}
+
 	if ctx.GetSessionVars().SkipUTF8Check {
 		return casted, nil
 	}
@@ -169,6 +171,7 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 			break
 		}
 	}
+
 	return casted, errors.Trace(err)
 }
 
