@@ -105,16 +105,16 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.State = model.StateDeleteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteOnly:
 		tblInfo.State = model.StateNone
 		job.SchemaState = model.StateNone
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -249,13 +249,14 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	job.State = model.JobStateDone
-	job.BinlogInfo.AddTableInfo(ver, tblInfo)
-	ver, err = updateTableInfo(t, job, tblInfo, tblInfo.State)
+	ver, err = updateVerionAndTableInfo(t, job, tblInfo, tblInfo.State)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	return ver, nil
 }
 
@@ -272,13 +273,14 @@ func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	tblInfo.ShardRowIDBits = shardRowIDBits
-	job.State = model.JobStateDone
-	job.BinlogInfo.AddTableInfo(ver, tblInfo)
-	ver, err = updateTableInfo(t, job, tblInfo, tblInfo.State)
+	ver, err = updateVerionAndTableInfo(t, job, tblInfo, tblInfo.State)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	return ver, nil
 }
 
@@ -367,7 +369,8 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	return nil
 }
 
-func updateTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, originalState model.SchemaState) (
+// updateVersionAndTableInfo updates the schema version and the table information.
+func updateVerionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, originalState model.SchemaState) (
 	ver int64, err error) {
 	if originalState != job.SchemaState {
 		ver, err = updateSchemaVersion(t, job)
