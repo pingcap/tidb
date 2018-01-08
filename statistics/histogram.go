@@ -283,6 +283,7 @@ func (hg *Histogram) toString(isIndex bool) string {
 // equalRowCount estimates the row count where the column equals to value.
 func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 	index, match := hg.Bounds.LowerBound(0, &value)
+	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
 	if index%2 == 1 {
 		if match {
 			return float64(hg.Buckets[index/2].Repeat)
@@ -319,16 +320,18 @@ func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	if index == hg.Bounds.NumRows() {
 		return hg.totalRowCount()
 	}
-	curCount, curRepeat := float64(hg.Buckets[index/2].Count), float64(hg.Buckets[index/2].Repeat)
+	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
+	bucketIdx := index / 2
+	curCount, curRepeat := float64(hg.Buckets[bucketIdx].Count), float64(hg.Buckets[bucketIdx].Repeat)
 	preCount := float64(0)
-	if index/2 > 0 {
-		preCount = float64(hg.Buckets[index/2-1].Count)
+	if bucketIdx > 0 {
+		preCount = float64(hg.Buckets[bucketIdx-1].Count)
 	}
 	if index%2 == 1 {
 		if match {
 			return curCount - curRepeat
 		}
-		return preCount + hg.calcFraction(index/2, &value)*(curCount-curRepeat-preCount)
+		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount)
 	}
 	return preCount
 }
