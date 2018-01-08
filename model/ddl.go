@@ -144,6 +144,17 @@ type Job struct {
 	Version int64 `json:"version"`
 }
 
+// Finish updates the job's state information and binlog information.
+func (job *Job) Finish(schemaState SchemaState, ver int64, dbInfo *DBInfo, tblInfo *TableInfo) {
+	job.State = JobStateDone
+	job.SchemaState = schemaState
+	if dbInfo == nil {
+		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	} else {
+		job.BinlogInfo.AddDBInfo(ver, dbInfo)
+	}
+}
+
 // startTime gets the job generation time.
 func (job *Job) startTime() time.Time {
 	t := int64(job.StartTS >> 18) // 18 is for the logical time.
