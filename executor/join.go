@@ -278,10 +278,14 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 			return
 		}
 		var outerResource *execWorkerResult
+		ok := true
 		select {
 		case <-e.closeCh:
 			return
-		case outerResource = <-e.outerChkResourceCh:
+		case outerResource, ok = <-e.outerChkResourceCh:
+			if !ok {
+				return
+			}
 		}
 		outerResult := outerResource.chk
 		err := e.outerExec.NextChunk(goCtx, outerResult)
