@@ -454,9 +454,11 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn,
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var pkName model.CIStr
-	pkInfo := table.GetPkColInfo()
-	if pkInfo != nil {
-		pkName = pkInfo.Name
+	if table.PKIsHandle {
+		pkInfo := table.GetPkColInfo()
+		if pkInfo != nil {
+			pkName = pkInfo.Name
+		}
 	}
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
