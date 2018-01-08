@@ -229,7 +229,8 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 			defer func() {
 				secondaryLockCleanupWorkerCounter.Dec()
 				secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds())
-				}()
+			}()
+
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
@@ -584,7 +585,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 				defer func() {
 					secondaryLockCleanupWorkerCounter.Dec()
 					secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds())
-					}()
+				}()
 
 				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
 				if err != nil {
