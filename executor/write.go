@@ -1211,8 +1211,13 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
+		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
+		if err = e.filterErr(err, ignoreErr); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		offset := cols[i].Offset
-		row[offset] = v
+		row[offset] = casted
 		hasValue[offset] = true
 	}
 
@@ -1230,12 +1235,14 @@ func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue
 		if err = e.filterErr(err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
+		val, err = table.CastValue(e.ctx, val, cols[valLen+i].ToInfo())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		offset := cols[valLen+i].Offset
 		row[offset] = val
 	}
-	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
-		return nil, errors.Trace(err)
-	}
+
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1273,7 +1280,6 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (types.Dat
 // initDefaultValues fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
-	var defaultValueCols []*table.Column
 	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
 
 	for i, c := range e.Table.Cols() {
@@ -1298,7 +1304,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			if e.filterErr(err, ignoreErr) != nil {
 				return errors.Trace(err)
 			}
-			defaultValueCols = append(defaultValueCols, c)
 		}
 
 		// Adjust the value if this column has auto increment flag.
@@ -1308,10 +1313,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			}
 		}
 	}
-	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
-		return errors.Trace(err)
-	}
-
 	return nil
 }
 
