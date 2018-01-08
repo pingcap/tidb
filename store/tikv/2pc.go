@@ -645,10 +645,10 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		return errors.Trace(err)
 	}
 
-	//if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
-	//	err = errors.Errorf("txn takes too much time, start: %d, commit: %d", c.startTS, c.commitTS)
-	//	return errors.Annotate(err, txnRetryableMark)
-	//}
+	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
+		err = errors.Errorf("txn takes too much time, start: %d, commit: %d", c.startTS, c.commitTS)
+		return errors.Annotate(err, txnRetryableMark)
+	}
 
 	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
 	if err != nil {
