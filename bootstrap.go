@@ -40,7 +40,7 @@ const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	CreateUserTable = `CREATE TABLE if not exists mysql.user (
 		Host				CHAR(64),
-		User				CHAR(16),
+		User				CHAR(32),
 		Password			CHAR(41),
 		Select_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
