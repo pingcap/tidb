@@ -144,9 +144,12 @@ type Job struct {
 	Version int64 `json:"version"`
 }
 
-// Finish updates the job's state information and binlog information.
-func (job *Job) Finish(schemaState SchemaState, ver int64, dbInfo *DBInfo, tblInfo *TableInfo) {
-	job.State = JobStateDone
+// Finish is called when a job is finished.
+// It updates the job's state information and adds the binlog information.
+// If dbInfo isn't nil, we add dbInfo to binlog.
+// If dbInfo is nil, we add tblInfo to binlog.
+func (job *Job) Finish(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo, tblInfo *TableInfo) {
+	job.State = jobState
 	job.SchemaState = schemaState
 	if dbInfo == nil {
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)

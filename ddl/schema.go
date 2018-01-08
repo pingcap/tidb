@@ -57,15 +57,13 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	switch dbInfo.State {
 	case model.StateNone:
 		// none -> public
-		job.SchemaState = model.StatePublic
 		dbInfo.State = model.StatePublic
 		err = t.CreateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.State = model.JobStateDone
-		job.BinlogInfo.AddDBInfo(ver, dbInfo)
+		job.Finish(model.JobStateDone, model.StatePublic, ver, dbInfo, nil)
 		return ver, nil
 	default:
 		// We can't enter here.
@@ -116,12 +114,10 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 
 		// Finish this job.
-		job.BinlogInfo.AddDBInfo(ver, dbInfo)
 		if len(tables) > 0 {
 			job.Args = append(job.Args, getIDs(tables))
 		}
-		job.State = model.JobStateDone
-		job.SchemaState = model.StateNone
+		job.Finish(model.JobStateDone, model.StateNone, ver, dbInfo, nil)
 		for _, tblInfo := range dbInfo.Tables {
 			d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
 		}

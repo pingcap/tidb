@@ -139,31 +139,29 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// none -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		columnInfo.State = model.StateDeleteOnly
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
 		columnInfo.State = model.StateWriteOnly
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		columnInfo.State = model.StateWriteReorganization
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust column offset.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
 		columnInfo.State = model.StatePublic
-		job.SchemaState = model.StatePublic
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		// Finish this job.
-		job.State = model.JobStateDone
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		job.Finish(model.JobStateDone, model.StatePublic, ver, nil, tblInfo)
 		d.asyncNotifyEvent(&util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
@@ -204,17 +202,17 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, colInfo.Offset, false)
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		colInfo.State = model.StateDeleteOnly
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		colInfo.State = model.StateDeleteReorganization
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
@@ -225,15 +223,14 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			}
 		}
 		tblInfo.Columns = newColumns
-		job.SchemaState = model.StateNone
-		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+		colInfo.State = model.StateNone
+		ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		// Finish this job.
-		job.State = model.JobStateDone
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		job.Finish(model.JobStateDone, model.StateNone, ver, nil, tblInfo)
 		d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
@@ -490,16 +487,13 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		}
 	}
 
-	originalState := job.SchemaState
-	job.SchemaState = model.StatePublic
-	ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+	ver, err = updateVerionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	job.State = model.JobStateDone
-	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	job.Finish(model.JobStateDone, model.StatePublic, ver, nil, tblInfo)
 	return ver, nil
 }
 
@@ -515,16 +509,13 @@ func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInf
 	}
 	*oldCol = *newCol
 
-	originalState := job.SchemaState
-	job.SchemaState = model.StatePublic
-	ver, err = updateVerionAndTableInfo(t, job, tblInfo, originalState)
+	ver, err = updateVerionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	job.State = model.JobStateDone
-	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	job.Finish(model.JobStateDone, model.StatePublic, ver, nil, tblInfo)
 	return ver, nil
 }
 
