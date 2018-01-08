@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 )
 
 type concatFunction struct {
@@ -40,7 +41,11 @@ func (cf *concatFunction) Clone() Aggregation {
 
 // GetType implements Aggregation interface.
 func (cf *concatFunction) GetType() *types.FieldType {
-	return types.NewFieldType(mysql.TypeVarString)
+	retType := types.NewFieldType(mysql.TypeVarString)
+	retType.Charset = charset.CharsetUTF8
+	retType.Collate = charset.CollationUTF8
+	retType.Flen, retType.Decimal = mysql.MaxBlobWidth, 0
+	return retType
 }
 
 func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
