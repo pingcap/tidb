@@ -211,7 +211,7 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(keys []*expression.Column, row chunk
 		if d.IsNull() {
 			return true, nil, nil
 		}
-		keyBuf, err = codec.HashValues(keyBuf, d)
+		keyBuf, err = codec.HashValues(e.ctx.GetSessionVars().StmtCtx, keyBuf, d)
 		if err != nil {
 			return false, nil, errors.Trace(err)
 		}
