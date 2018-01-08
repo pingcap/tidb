@@ -140,8 +140,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		if isAutocommit {
 			vars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
-	case variable.TiDBSkipConstraintCheck:
-		vars.SkipConstraintCheck = tidbOptOn(sVal)
+	case variable.TiDBImportingData:
+		vars.ImportingData = tidbOptOn(sVal)
 	case variable.TiDBSkipUTF8Check:
 		vars.SkipUTF8Check = tidbOptOn(sVal)
 	case variable.TiDBOptAggPushDown:
@@ -162,8 +162,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.BatchInsert = tidbOptOn(sVal)
 	case variable.TiDBBatchDelete:
 		vars.BatchDelete = tidbOptOn(sVal)
-	case variable.TiDBMaxRowCountForINLJ:
-		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
+	case variable.TiDBDMLBatchSize:
+		vars.DMLBatchSize = tidbOptPositiveInt(sVal, variable.DefDMLBatchSize)
 	case variable.TiDBCurrentTS:
 		return variable.ErrReadOnly
 	case variable.TiDBMaxChunkSize:

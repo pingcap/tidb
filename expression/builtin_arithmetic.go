@@ -67,9 +67,12 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 		}
 		return types.ETInt
 	}
-	evalTp4Ft := ft.EvalType()
-	if evalTp4Ft != types.ETDecimal && evalTp4Ft != types.ETInt {
-		evalTp4Ft = types.ETReal
+	evalTp4Ft := types.ETReal
+	if !ft.Hybrid() {
+		evalTp4Ft = ft.EvalType()
+		if evalTp4Ft != types.ETDecimal && evalTp4Ft != types.ETInt {
+			evalTp4Ft = types.ETReal
+		}
 	}
 	return evalTp4Ft
 }
@@ -86,6 +89,9 @@ func setFlenDecimal4Int(retTp, a, b *types.FieldType) {
 func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = a.Decimal + b.Decimal
+		if !isReal && retTp.Decimal > mysql.MaxDecimalScale {
+			retTp.Decimal = mysql.MaxDecimalScale
+		}
 		if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
 			retTp.Flen = types.UnspecifiedLength
 			return
@@ -99,8 +105,11 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
 		return
 	}
-	retTp.Decimal = types.UnspecifiedLength
-	retTp.Flen = types.UnspecifiedLength
+	if isReal {
+		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+	} else {
+		retTp.Flen, retTp.Decimal = mysql.MaxDecimalWidth, mysql.MaxDecimalScale
+	}
 }
 
 func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
@@ -116,7 +125,7 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 		retTp.Decimal = mysql.MaxDecimalScale
 	}
 	if a.Flen == types.UnspecifiedLength {
-		retTp.Flen = types.UnspecifiedLength
+		retTp.Flen = mysql.MaxDecimalWidth
 		return
 	}
 	retTp.Flen = a.Flen + decb + precIncrement

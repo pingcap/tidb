@@ -17,17 +17,17 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
-	indices := p.availableIndices.indices
-	includeTS := p.availableIndices.includeTableScan
+func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
+	indices := ds.availableIndices.indices
+	includeTS := ds.availableIndices.includeTableScan
 	if includeTS {
-		col := p.getPKIsHandleCol()
+		col := ds.getPKIsHandleCol()
 		if col != nil {
 			result = append(result, []*expression.Column{col})
 		}
 	}
 	for _, idx := range indices {
-		cols, _ := expression.IndexInfo2Cols(p.schema.Columns, idx)
+		cols, _ := expression.IndexInfo2Cols(ds.schema.Columns, idx)
 		if len(cols) > 0 {
 			result = append(result, cols)
 		}
@@ -63,7 +63,7 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 	return resultProperties
 }
 
-func (p *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
-	p.possibleProperties = p.children[0].(LogicalPlan).preparePossibleProperties()
+func (la *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
+	la.possibleProperties = la.children[0].(LogicalPlan).preparePossibleProperties()
 	return nil
 }

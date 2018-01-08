@@ -54,7 +54,7 @@ func (e *ExplainExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	numCurRows := mathutil.Min(e.ctx.GetSessionVars().MaxChunkSize, len(e.rows)-e.cursor)
+	numCurRows := mathutil.Min(e.maxChunkSize, len(e.rows)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurRows; i++ {
 		for j := range e.rows[i] {
 			chk.AppendString(j, e.rows[i][j])

@@ -53,6 +53,8 @@ type SelectResult interface {
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch(goctx.Context)
+	// ScanCount gets the total scan row count.
+	ScanCount() int64
 }
 
 // PartialResult is the result from a single region server.
@@ -78,6 +80,8 @@ type selectResult struct {
 
 	selectResp *tipb.SelectResponse
 	respChkIdx int
+
+	scanCount int64
 }
 
 type newResultWithErr struct {
@@ -131,6 +135,11 @@ func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
 	pr := &partialResult{}
 	pr.rowLen = r.rowLen
 	err := pr.unmarshal(re.result)
+	if len(pr.resp.OutputCounts) > 0 {
+		r.scanCount += pr.resp.OutputCounts[0]
+	} else {
+		r.scanCount = -1
+	}
 	return pr, errors.Trace(err)
 }
 
@@ -177,11 +186,20 @@ func (r *selectResult) getSelectResp() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if len(r.selectResp.OutputCounts) > 0 {
+			r.scanCount += r.selectResp.OutputCounts[0]
+		} else {
+			r.scanCount = -1
+		}
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
 		return nil
 	}
+}
+
+func (r *selectResult) ScanCount() int64 {
+	return r.scanCount
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
@@ -230,18 +248,22 @@ func (pr *partialResult) unmarshal(resultSubset []byte) error {
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next(goCtx goctx.Context) (data []types.Datum, err error) {
-	chunk := pr.getChunk()
-	if chunk == nil {
+	nextChunk := pr.getChunk()
+	if nextChunk == nil {
 		return nil, nil
 	}
-	data = make([]types.Datum, pr.rowLen)
-	for i := 0; i < pr.rowLen; i++ {
-		var l []byte
-		l, chunk.RowsData, err = codec.CutOne(chunk.RowsData)
+	return readRowFromChunk(nextChunk, pr.rowLen)
+}
+
+func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err error) {
+	row = make([]types.Datum, numCols)
+	for i := 0; i < numCols; i++ {
+		var raw []byte
+		raw, chunk.RowsData, err = codec.CutOne(chunk.RowsData)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		data[i].SetRaw(l)
+		row[i].SetRaw(raw)
 	}
 	return
 }
@@ -251,9 +273,9 @@ func (pr *partialResult) getChunk() *tipb.Chunk {
 		if pr.chunkIdx >= len(pr.resp.Chunks) {
 			return nil
 		}
-		chunk := &pr.resp.Chunks[pr.chunkIdx]
-		if len(chunk.RowsData) > 0 {
-			return chunk
+		currentChunk := &pr.resp.Chunks[pr.chunkIdx]
+		if len(currentChunk.RowsData) > 0 {
+			return currentChunk
 		}
 		pr.chunkIdx++
 	}
@@ -282,7 +304,17 @@ func SelectDAG(goCtx goctx.Context, ctx context.Context, kvReq *kv.Request, fiel
 		err = errors.New("client returns nil response")
 		return nil, errors.Trace(err)
 	}
-	result := &selectResult{
+
+	if kvReq.Streaming {
+		return &streamResult{
+			resp:       resp,
+			rowLen:     len(fieldTypes),
+			fieldTypes: fieldTypes,
+			ctx:        ctx,
+		}, nil
+	}
+
+	return &selectResult{
 		label:      "dag",
 		resp:       resp,
 		results:    make(chan newResultWithErr, kvReq.Concurrency),
@@ -290,8 +322,7 @@ func SelectDAG(goCtx goctx.Context, ctx context.Context, kvReq *kv.Request, fiel
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
 		ctx:        ctx,
-	}
-	return result, nil
+	}, nil
 }
 
 // Analyze do a analyze request.

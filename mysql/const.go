@@ -59,25 +59,25 @@ const (
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 const (
 	// MaxPayloadLen is the max packet payload length.
-	MaxPayloadLen int = 1<<24 - 1
+	MaxPayloadLen = 1<<24 - 1
 	// MaxTableNameLength is max length of table name identifier.
-	MaxTableNameLength int = 64
+	MaxTableNameLength = 64
 	// MaxDatabaseNameLength is max length of database name identifier.
-	MaxDatabaseNameLength int = 64
+	MaxDatabaseNameLength = 64
 	// MaxColumnNameLength is max length of column name identifier.
-	MaxColumnNameLength int = 64
+	MaxColumnNameLength = 64
 	// MaxKeyParts is max length of key parts.
-	MaxKeyParts int = 16
+	MaxKeyParts = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
-	MaxIndexIdentifierLen int = 64
+	MaxIndexIdentifierLen = 64
 	// MaxConstraintIdentifierLen is max length of constrain identifier.
-	MaxConstraintIdentifierLen int = 64
+	MaxConstraintIdentifierLen = 64
 	// MaxViewIdentifierLen is max length of view identifier.
-	MaxViewIdentifierLen int = 64
+	MaxViewIdentifierLen = 64
 	// MaxAliasIdentifierLen is max length of alias identifier.
-	MaxAliasIdentifierLen int = 256
+	MaxAliasIdentifierLen = 256
 	// MaxUserDefinedVariableLen is max length of user-defined variable.
-	MaxUserDefinedVariableLen int = 64
+	MaxUserDefinedVariableLen = 64
 )
 
 // ErrTextLength error text length limit.

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func TestT(t *testing.T) {
@@ -37,7 +38,7 @@ type testChunkSuite struct{}
 func (s *testChunkSuite) TestChunk(c *check.C) {
 	numCols := 6
 	numRows := 10
-	chk := newChunk(8, 8, 0, 0, 40, -1)
+	chk := newChunk(8, 8, 0, 0, 40, 0)
 	strFmt := "%d.12345"
 	for i := 0; i < numRows; i++ {
 		chk.AppendNull(0)
@@ -46,7 +47,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 		chk.AppendString(2, str)
 		chk.AppendBytes(3, []byte(str))
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		chk.AppendJSON(5, json.CreateJSON(str))
+		chk.AppendJSON(5, json.CreateBinary(str))
 	}
 	c.Assert(chk.NumCols(), check.Equals, numCols)
 	c.Assert(chk.NumRows(), check.Equals, numRows)
@@ -63,13 +64,13 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 		c.Assert(row.IsNull(4), check.IsFalse)
 		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
 		c.Assert(row.IsNull(5), check.IsFalse)
-		c.Assert(row.GetJSON(5).Str, check.Equals, str)
+		c.Assert(hack.String(row.GetJSON(5).GetString()), check.Equals, str)
 	}
 
-	chk2 := newChunk(8, 8, 0, 0, 40, -1)
+	chk2 := newChunk(8, 8, 0, 0, 40, 0)
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
-		chk2.AppendRow(0, row)
+		chk2.AppendRow(row)
 	}
 	for i := 0; i < numCols; i++ {
 		col2, col1 := chk2.columns[i], chk.columns[i]
@@ -98,13 +99,13 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	c.Assert(row.GetEnum(4), check.DeepEquals, enumVal)
 	c.Assert(row.GetSet(5), check.DeepEquals, setVal)
 
-	// AppendRow can be different number of columns, useful for join.
+	// AppendPartialRow can be different number of columns, useful for join.
 	chk = newChunk(8, 8)
 	chk2 = newChunk(8)
 	chk2.AppendInt64(0, 1)
 	chk2.AppendInt64(0, -1)
-	chk.AppendRow(0, chk2.GetRow(0))
-	chk.AppendRow(1, chk2.GetRow(0))
+	chk.AppendPartialRow(0, chk2.GetRow(0))
+	chk.AppendPartialRow(1, chk2.GetRow(0))
 	c.Assert(chk.GetRow(0).GetInt64(0), check.Equals, int64(1))
 	c.Assert(chk.GetRow(0).GetInt64(1), check.Equals, int64(1))
 	c.Assert(chk.NumRows(), check.Equals, 1)
@@ -130,7 +131,7 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
-	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
+	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
 	c.Assert(err, check.IsNil)
 
 	src := NewChunk(fieldTypes)
@@ -171,16 +172,13 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(dst.columns[2].length, check.Equals, 12)
 	c.Assert(dst.columns[2].nullCount, check.Equals, 6)
 	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
-	c.Assert(len(dst.columns[2].offsets), check.Equals, 0)
-	c.Assert(len(dst.columns[2].data), check.Equals, 0)
+	c.Assert(len(dst.columns[2].offsets), check.Equals, 13)
+	c.Assert(len(dst.columns[2].data), check.Equals, 150)
 	c.Assert(len(dst.columns[2].elemBuf), check.Equals, 0)
-	c.Assert(len(dst.columns[2].ifaces), check.Equals, 12)
+	c.Assert(len(dst.columns[2].ifaces), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
-		elem := dst.columns[2].ifaces[i]
-		jsonElem, ok := elem.(json.JSON)
-		c.Assert(ok, check.IsTrue)
-		cmpRes, err := json.CompareJSON(jsonElem, jsonObj)
-		c.Assert(err, check.IsNil)
+		jsonElem := dst.GetRow(i).GetJSON(2)
+		cmpRes := json.CompareBinary(jsonElem, jsonObj)
 		c.Assert(cmpRes, check.Equals, 0)
 	}
 }
@@ -191,7 +189,7 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
-	jsonObj, err := json.ParseFromString("{\"k1\":\"v1\"}")
+	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
 	c.Assert(err, check.IsNil)
 
 	src := NewChunk(fieldTypes)
@@ -230,16 +228,14 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(src.columns[2].length, check.Equals, 12)
 	c.Assert(src.columns[2].nullCount, check.Equals, 6)
 	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
-	c.Assert(len(src.columns[2].offsets), check.Equals, 0)
-	c.Assert(len(src.columns[2].data), check.Equals, 0)
+	c.Assert(len(src.columns[2].offsets), check.Equals, 13)
+	c.Assert(len(src.columns[2].data), check.Equals, 150)
 	c.Assert(len(src.columns[2].elemBuf), check.Equals, 0)
-	c.Assert(len(src.columns[2].ifaces), check.Equals, 12)
+	c.Assert(len(src.columns[2].ifaces), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
-		elem := src.columns[2].ifaces[i]
-		jsonElem, ok := elem.(json.JSON)
-		c.Assert(ok, check.IsTrue)
-		cmpRes, err := json.CompareJSON(jsonElem, jsonObj)
-		c.Assert(err, check.IsNil)
+		row := src.GetRow(i)
+		jsonElem := row.GetJSON(2)
+		cmpRes := json.CompareBinary(jsonElem, jsonObj)
 		c.Assert(cmpRes, check.Equals, 0)
 	}
 }
@@ -338,7 +334,7 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 		case mysql.TypeBit:
 			chunk.AppendBytes(i, []byte{0})
 		case mysql.TypeJSON:
-			chunk.AppendJSON(i, json.CreateJSON(int64(0)))
+			chunk.AppendJSON(i, json.CreateBinary(int64(0)))
 		default:
 			c.FailNow()
 		}
@@ -371,7 +367,7 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 		case mysql.TypeBit:
 			chunk.AppendBytes(i, []byte{1})
 		case mysql.TypeJSON:
-			chunk.AppendJSON(i, json.CreateJSON(int64(1)))
+			chunk.AppendJSON(i, json.CreateBinary(int64(1)))
 		default:
 			c.FailNow()
 		}
@@ -453,7 +449,7 @@ func BenchmarkAppendRow(b *testing.B) {
 func appendRow(chk *Chunk, row Row) {
 	chk.Reset()
 	for i := 0; i < 1000; i++ {
-		chk.AppendRow(0, row)
+		chk.AppendRow(row)
 	}
 }
 

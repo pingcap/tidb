@@ -188,7 +188,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 }
 
 func extractPhysicalTime(ts uint64) time.Time {
-	t := int64(ts >> 18) // 18 for physicalShiftBits
+	t := int64(ts >> 18) // 18 is for the logical time.
 	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 

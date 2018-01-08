@@ -253,7 +253,7 @@ func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, er
 func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	schema, err := rh.schema()
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
@@ -267,10 +267,10 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			cTableName := model.NewCIStr(tableName)
 			data, err := schema.TableByName(cDBName, cTableName)
 			if err != nil {
-				rh.writeError(w, err)
+				writeError(w, err)
 				return
 			}
-			rh.writeData(w, data.Meta())
+			writeData(w, data.Meta())
 			return
 		}
 		// all table schemas in a specified database
@@ -280,10 +280,10 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			for i := range tbsInfo {
 				tbsInfo[i] = tbs[i].Meta()
 			}
-			rh.writeData(w, tbsInfo)
+			writeData(w, tbsInfo)
 			return
 		}
-		rh.writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+		writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
 		return
 	}
 
@@ -291,23 +291,23 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// table schema of a specified tableID
 		tid, err := strconv.Atoi(tableID)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
 		if tid < 0 {
-			rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
 			return
 		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
-			rh.writeData(w, data.Meta())
+			writeData(w, data.Meta())
 			return
 		}
-		rh.writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
 		return
 	}
 
 	// all databases' schemas
-	rh.writeData(w, schema.AllSchemas())
+	writeData(w, schema.AllSchemas())
 	return
 }
 
@@ -319,23 +319,23 @@ func (rh tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	tableName := params[pTableName]
 	schema, err := rh.schema()
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	// get table's schema.
-	table, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
 	switch rh.op {
 	case opTableRegions:
-		rh.handleRegionRequest(schema, table, w, req)
+		rh.handleRegionRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
-		rh.handleDiskUsageRequest(schema, table, w, req)
+		rh.handleDiskUsageRequest(schema, tableVal, w, req)
 	default:
-		rh.writeError(w, errors.New("method not found"))
+		writeError(w, errors.New("method not found"))
 	}
 }
 
@@ -345,12 +345,12 @@ func (rh tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tab
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
 	recordRegionIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
@@ -363,12 +363,12 @@ func (rh tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tab
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(tableID, indexID)
 		rIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
 		indices[i].Regions, err = rh.getRegionsMeta(rIDs)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
 	}
@@ -380,7 +380,7 @@ func (rh tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tab
 		RecordRegions: recordRegions,
 	}
 
-	rh.writeData(w, tableRegions)
+	writeData(w, tableRegions)
 }
 
 // pdRegionStats is the json response from PD.
@@ -399,11 +399,11 @@ func (rh tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl 
 	var pdAddrs []string
 	etcd, ok := rh.store.(domain.EtcdBackend)
 	if !ok {
-		rh.writeError(w, errors.New("not implemented"))
+		writeError(w, errors.New("not implemented"))
 	}
 	pdAddrs = etcd.EtcdAddrs()
 	if len(pdAddrs) < 0 {
-		rh.writeError(w, errors.New("pd unavailable"))
+		writeError(w, errors.New("pd unavailable"))
 	}
 
 	// Include table and index data, because their range located in tableID_i tableID_r
@@ -419,7 +419,7 @@ func (rh tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl 
 
 	resp, err := http.Get(statURL)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	defer func() {
@@ -431,10 +431,10 @@ func (rh tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl 
 	var stats pdRegionStats
 	dec := json.NewDecoder(resp.Body)
 	if err := dec.Decode(&stats); err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
-	rh.writeData(w, stats.StorageSize)
+	writeData(w, stats.StorageSize)
 }
 
 // ServeHTTP handles request of get region by ID.
@@ -447,22 +447,22 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		recordRegionIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
 
 		recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
 		if err != nil {
-			rh.writeError(w, err)
+			writeError(w, err)
 			return
 		}
-		rh.writeData(w, recordRegions)
+		writeData(w, recordRegions)
 		return
 	}
 
 	regionIDInt, err := strconv.ParseInt(params[pRegionID], 0, 64)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	regionID := uint64(regionIDInt)
@@ -470,13 +470,13 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// locate region
 	region, err := rh.regionCache.LocateRegionByID(rh.bo, regionID)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
 	frameRange, err := NewRegionFrameRange(region)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 
@@ -488,7 +488,7 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	schema, err := rh.schema()
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	// Since we need a database's name for each frame, and a table's database name can not
@@ -496,24 +496,24 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// 		`for id in [frameRange.firstTableID,frameRange.endTableID]`
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, db := range schema.AllSchemas() {
-		for _, table := range db.Tables {
-			start, end := frameRange.getIndexRangeForTable(table.ID)
-			regionDetail.addTableInRange(db.Name.String(), table, start, end)
+		for _, tableVal := range db.Tables {
+			start, end := frameRange.getIndexRangeForTable(tableVal.ID)
+			regionDetail.addTableInRange(db.Name.String(), tableVal, start, end)
 		}
 	}
-	rh.writeData(w, regionDetail)
+	writeData(w, regionDetail)
 }
 
-func (rh *regionHandler) writeError(w http.ResponseWriter, err error) {
+func writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_, err = w.Write([]byte(err.Error()))
 	terror.Log(errors.Trace(err))
 }
 
-func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
+func writeData(w http.ResponseWriter, data interface{}) {
 	js, err := json.Marshal(data)
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 		return
 	}
 	log.Info(string(js))
@@ -723,9 +723,9 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		err = errors.NotSupportedf("Operation not supported.")
 	}
 	if err != nil {
-		rh.writeError(w, err)
+		writeError(w, err)
 	} else {
-		rh.writeData(w, data)
+		writeData(w, data)
 	}
 }
 
@@ -867,7 +867,9 @@ func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []
 }
 
 func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	idxRow, err := t.formValue2DatumRow(values, idxCols)
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.UTC
+	idxRow, err := t.formValue2DatumRow(sc, values, idxCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -875,7 +877,7 @@ func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	encodedKey, _, err := idx.GenIndexKey(idxRow, handle)
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -883,10 +885,8 @@ func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
-func (t *regionHandlerTool) formValue2DatumRow(values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+func (t *regionHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
 	data := make([]types.Datum, len(idxCols))
-	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = time.UTC
 	for i, col := range idxCols {
 		colName := col.Name.String()
 		vals, ok := values[colName]
@@ -917,11 +917,11 @@ func (t *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) 
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	table, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return table.Meta().ID, nil
+	return tableVal.Meta().ID, nil
 }
 
 func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {

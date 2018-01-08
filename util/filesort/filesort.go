@@ -581,21 +581,21 @@ func (w *Worker) flushToFile() {
 		return
 	}
 	defer terror.Call(outputFile.Close)
-
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for _, row := range w.buf {
 		prevLen = len(outputByte)
 		outputByte = append(outputByte, w.head...)
-		outputByte, err = codec.EncodeKey(outputByte, row.key...)
+		outputByte, err = codec.EncodeKey(sc, outputByte, row.key...)
 		if err != nil {
 			w.err = errors.Trace(err)
 			return
 		}
-		outputByte, err = codec.EncodeKey(outputByte, row.val...)
+		outputByte, err = codec.EncodeKey(sc, outputByte, row.val...)
 		if err != nil {
 			w.err = errors.Trace(err)
 			return
 		}
-		outputByte, err = codec.EncodeKey(outputByte, types.NewIntDatum(row.handle))
+		outputByte, err = codec.EncodeKey(sc, outputByte, types.NewIntDatum(row.handle))
 		if err != nil {
 			w.err = errors.Trace(err)
 			return

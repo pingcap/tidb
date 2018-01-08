@@ -146,9 +146,9 @@ type BetweenExpr struct {
 // Format the ExprNode into a Writer.
 func (n *BetweenExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	fmt.Fprintf(w, " BETWEEN ")
+	fmt.Fprint(w, " BETWEEN ")
 	n.Left.Format(w)
-	fmt.Fprintf(w, " AND ")
+	fmt.Fprint(w, " AND ")
 	n.Right.Format(w)
 }
 
@@ -195,9 +195,9 @@ type BinaryOperationExpr struct {
 // Format the ExprNode into a Writer.
 func (n *BinaryOperationExpr) Format(w io.Writer) {
 	n.L.Format(w)
-	fmt.Fprintf(w, " ")
+	fmt.Fprint(w, " ")
 	n.Op.Format(w)
-	fmt.Fprintf(w, " ")
+	fmt.Fprint(w, " ")
 	n.R.Format(w)
 }
 
@@ -268,20 +268,20 @@ type CaseExpr struct {
 
 // Format the ExprNode into a Writer.
 func (n *CaseExpr) Format(w io.Writer) {
-	fmt.Fprintf(w, "CASE ")
+	fmt.Fprint(w, "CASE ")
 	n.Value.Format(w)
-	fmt.Fprintf(w, " ")
+	fmt.Fprint(w, " ")
 	for _, clause := range n.WhenClauses {
-		fmt.Fprintf(w, "WHEN ")
+		fmt.Fprint(w, "WHEN ")
 		clause.Expr.Format(w)
-		fmt.Fprintf(w, " THEN ")
+		fmt.Fprint(w, " THEN ")
 		clause.Result.Format(w)
 	}
 	if n.ElseClause != nil {
-		fmt.Fprintf(w, " ELSE ")
+		fmt.Fprint(w, " ELSE ")
 		n.ElseClause.Format(w)
 	}
-	fmt.Fprintf(w, " END")
+	fmt.Fprint(w, " END")
 }
 
 // Accept implements Node Accept interface.
@@ -556,14 +556,14 @@ type PatternInExpr struct {
 // Format the ExprNode into a Writer.
 func (n *PatternInExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	fmt.Fprintf(w, " IN (")
+	fmt.Fprint(w, " IN (")
 	for i, expr := range n.List {
 		expr.Format(w)
 		if i != len(n.List)-1 {
-			fmt.Fprintf(w, ",")
+			fmt.Fprint(w, ",")
 		}
 	}
-	fmt.Fprintf(w, ")")
+	fmt.Fprint(w, ")")
 }
 
 // Accept implements Node Accept interface.
@@ -608,10 +608,10 @@ type IsNullExpr struct {
 func (n *IsNullExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
-		fmt.Fprintf(w, " IS NOT NULL")
+		fmt.Fprint(w, " IS NOT NULL")
 		return
 	}
-	fmt.Fprintf(w, " IS NULL")
+	fmt.Fprint(w, " IS NULL")
 }
 
 // Accept implements Node Accept interface.
@@ -644,14 +644,14 @@ type IsTruthExpr struct {
 func (n *IsTruthExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
-		fmt.Fprintf(w, " IS NOT")
+		fmt.Fprint(w, " IS NOT")
 	} else {
-		fmt.Fprintf(w, " IS")
+		fmt.Fprint(w, " IS")
 	}
 	if n.True > 0 {
-		fmt.Fprintf(w, " TRUE")
+		fmt.Fprint(w, " TRUE")
 	} else {
-		fmt.Fprintf(w, " FALSE")
+		fmt.Fprint(w, " FALSE")
 	}
 }
 
@@ -689,10 +689,10 @@ type PatternLikeExpr struct {
 // Format the ExprNode into a Writer.
 func (n *PatternLikeExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	fmt.Fprintf(w, " LIKE ")
+	fmt.Fprint(w, " LIKE ")
 	n.Pattern.Format(w)
 	if n.Escape != '\\' {
-		fmt.Fprintf(w, " ESCAPE ")
+		fmt.Fprint(w, " ESCAPE ")
 		fmt.Fprintf(w, "'%c'", n.Escape)
 	}
 }
@@ -753,9 +753,9 @@ type ParenthesesExpr struct {
 
 // Format the ExprNode into a Writer.
 func (n *ParenthesesExpr) Format(w io.Writer) {
-	fmt.Fprintf(w, "(")
+	fmt.Fprint(w, "(")
 	n.Expr.Format(w)
-	fmt.Fprintf(w, ")")
+	fmt.Fprint(w, ")")
 }
 
 // Accept implements Node Accept interface.
@@ -821,9 +821,9 @@ type PatternRegexpExpr struct {
 func (n *PatternRegexpExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
 	if n.Not {
-		fmt.Fprintf(w, " NOT REGEXP ")
+		fmt.Fprint(w, " NOT REGEXP ")
 	} else {
-		fmt.Fprintf(w, " REGEXP ")
+		fmt.Fprint(w, " REGEXP ")
 	}
 	n.Pattern.Format(w)
 }

@@ -45,6 +45,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -78,14 +79,21 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
+	status       int32             // dispatching/reading/shutdown/waitshutdown
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
 		cancelFunc goctx.CancelFunc
 	}
-	killed bool
 }
+
+const (
+	connStatusDispatching int32 = iota
+	connStatusReading
+	connStatusShutdown     // Closed by server.
+	connStatusWaitShutdown // Notified by server to close.
+)
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
@@ -279,8 +287,8 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 		}
 		if num, null, off := parseLengthEncodedInt(data[offset:]); !null {
 			offset += off
-			kv := data[offset : offset+int(num)]
-			attrs, err := parseAttrs(kv)
+			row := data[offset : offset+int(num)]
+			attrs, err := parseAttrs(row)
 			if err != nil {
 				log.Warn("parse attrs error:", errors.ErrorStack(err))
 				return nil
@@ -392,6 +400,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run() {
 	const size = 4096
+	closedOutside := false
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -400,20 +409,41 @@ func (cc *clientConn) Run() {
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
-		err := cc.Close()
-		terror.Log(errors.Trace(err))
+		if !closedOutside {
+			err := cc.Close()
+			terror.Log(errors.Trace(err))
+		}
 	}()
 
-	for !cc.killed {
+	// Usually, client connection status changes between [dispatching] <=> [reading].
+	// When some event happens, server may notify this client connection by setting
+	// the status to special values, for example: kill or graceful shutdown.
+	// The client connection would detect the events when it fails to change status
+	// by CAS operation, it would then take some actions accordingly.
+	for {
+		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
+			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
+				closedOutside = true
+			}
+			return
+		}
+
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
-		if err != nil || cc.killed {
+		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Errorf("[%d] read packet error, close this connection %s",
-					cc.connectionID, errors.ErrorStack(err))
+				errStack := errors.ErrorStack(err)
+				if !strings.Contains(errStack, "use of closed network connection") {
+					log.Errorf("[%d] read packet error, close this connection %s",
+						cc.connectionID, errStack)
+				}
 			}
-			if cc.killed {
-				log.Warnf("[%d] session is killed.", cc.connectionID)
+			return
+		}
+
+		if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) == false {
+			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
+				closedOutside = true
 			}
 			return
 		}
@@ -445,6 +475,22 @@ func (cc *clientConn) Run() {
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
 	}
+}
+
+// ShutdownOrNotify will Shutdown this client connection, or do its best to notify.
+func (cc *clientConn) ShutdownOrNotify() bool {
+	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
+		return false
+	}
+	// If the client connection status is reading, it's safe to shutdown it.
+	if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusShutdown) {
+		return true
+	}
+	// If the client connection status is dispatching, we can't shutdown it immediately,
+	// so set the status to WaitShutdown as a notification, the client will detect it
+	// and then exit.
+	atomic.StoreInt32(&cc.status, connStatusWaitShutdown)
+	return false
 }
 
 func queryStrForLog(query string) string {

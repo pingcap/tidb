@@ -45,6 +45,19 @@ func (p *PhysicalHashAgg) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalStreamAgg) ToPB(ctx context.Context) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+	aggExec := &tipb.Aggregation{
+		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
+	}
+	for _, aggFunc := range p.AggFuncs {
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeStreamAgg, Aggregation: aggExec}, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalSelection) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
@@ -89,7 +102,7 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
 // range and index are equal.
-func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.IndexRange) bool {
+func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.NewRange) bool {
 	// If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
 	if !idx.Unique {
 		return false
@@ -141,7 +154,7 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, ctx.GetSessionVars().GetTimeZone())
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, d)
 		if err != nil {
 			return errors.Trace(err)
 		}

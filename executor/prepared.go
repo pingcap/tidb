@@ -159,11 +159,14 @@ func (e *PrepareExec) DoPrepare() error {
 	for i := range prepared.Params {
 		prepared.Params[i].SetDatum(types.NewIntDatum(0))
 	}
-	_, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
+	var p plan.Plan
+	p, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	if _, ok := stmt.(*ast.SelectStmt); ok {
+		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
+	}
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
 	}
@@ -238,23 +241,22 @@ type DeallocateExec struct {
 
 // Next implements the Executor Next interface.
 func (e *DeallocateExec) Next(goCtx goctx.Context) (Row, error) {
+	return nil, errors.Trace(e.run(goCtx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *DeallocateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *DeallocateExec) run(goCtx goctx.Context) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return nil, errors.Trace(plan.ErrStmtNotFound)
+		return errors.Trace(plan.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)
-	return nil, nil
-}
-
-// Close implements Executor Close interface.
-func (e *DeallocateExec) Close() error {
-	return nil
-}
-
-// Open implements Executor Open interface.
-func (e *DeallocateExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 

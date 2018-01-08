@@ -65,13 +65,13 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 }
 
 func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
-	var errors []*kvrpcpb.KeyError
+	var keyErrors = make([]*kvrpcpb.KeyError, 0)
 	for _, err := range errs {
 		if err != nil {
-			errors = append(errors, convertToKeyError(err))
+			keyErrors = append(keyErrors, convertToKeyError(err))
 		}
 	}
-	return errors
+	return keyErrors
 }
 
 func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
@@ -237,9 +237,9 @@ func (h *rpcHandler) handleKvPrewrite(req *kvrpcpb.PrewriteRequest) *kvrpcpb.Pre
 			panic("KvPrewrite: key not in region")
 		}
 	}
-	errors := h.mvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetLockTtl())
+	errs := h.mvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetLockTtl())
 	return &kvrpcpb.PrewriteResponse{
-		Errors: convertToKeyErrors(errors),
+		Errors: convertToKeyErrors(errs),
 	}
 }
 
@@ -352,41 +352,41 @@ func (h *rpcHandler) handleKvDeleteRange(req *kvrpcpb.DeleteRangeRequest) *kvrpc
 }
 
 func (h *rpcHandler) handleKvRawGet(req *kvrpcpb.RawGetRequest) *kvrpcpb.RawGetResponse {
-	kv, ok := h.mvccStore.(RawKV)
+	rawKV, ok := h.mvccStore.(RawKV)
 	if !ok {
 		return &kvrpcpb.RawGetResponse{
 			Error: "not implemented",
 		}
 	}
 	return &kvrpcpb.RawGetResponse{
-		Value: kv.RawGet(req.GetKey()),
+		Value: rawKV.RawGet(req.GetKey()),
 	}
 }
 
 func (h *rpcHandler) handleKvRawPut(req *kvrpcpb.RawPutRequest) *kvrpcpb.RawPutResponse {
-	kv, ok := h.mvccStore.(RawKV)
+	rawKV, ok := h.mvccStore.(RawKV)
 	if !ok {
 		return &kvrpcpb.RawPutResponse{
 			Error: "not implemented",
 		}
 	}
-	kv.RawPut(req.GetKey(), req.GetValue())
+	rawKV.RawPut(req.GetKey(), req.GetValue())
 	return &kvrpcpb.RawPutResponse{}
 }
 
 func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.RawDeleteResponse {
-	kv, ok := h.mvccStore.(RawKV)
+	rawKV, ok := h.mvccStore.(RawKV)
 	if !ok {
 		return &kvrpcpb.RawDeleteResponse{
 			Error: "not implemented",
 		}
 	}
-	kv.RawDelete(req.GetKey())
+	rawKV.RawDelete(req.GetKey())
 	return &kvrpcpb.RawDeleteResponse{}
 }
 
 func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawScanResponse {
-	kv, ok := h.mvccStore.(RawKV)
+	rawKV, ok := h.mvccStore.(RawKV)
 	if !ok {
 		errStr := "not implemented"
 		return &kvrpcpb.RawScanResponse{
@@ -395,7 +395,7 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 			},
 		}
 	}
-	pairs := kv.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+	pairs := rawKV.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
 	return &kvrpcpb.RawScanResponse{
 		Kvs: convertToPbPairs(pairs),
 	}
@@ -614,6 +614,19 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			res = handler.handleCopAnalyzeRequest(r)
 		}
 		resp.Cop = res
+	case tikvrpc.CmdCopStream:
+		r := req.Cop
+		if err := handler.checkRequestContext(reqCtx); err != nil {
+			resp.CopStream = &mockCopStreamErrClient{Error: err}
+			return resp, nil
+		}
+		handler.rawStartKey = MvccKey(handler.startKey).Raw()
+		handler.rawEndKey = MvccKey(handler.endKey).Raw()
+		copStream, err := handler.handleCopStream(r)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.CopStream = copStream
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

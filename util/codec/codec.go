@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -43,18 +44,18 @@ const (
 
 // encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
-func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, error) {
+func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, error) {
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
 		case types.KindInt64:
 			b = encodeSignedInt(b, vals[i].GetInt64(), comparable)
 		case types.KindUint64:
 			if hash {
-				int := vals[i].GetInt64()
-				if int < 0 {
-					b = encodeUnsignedInt(b, uint64(int), comparable)
+				integer := vals[i].GetInt64()
+				if integer < 0 {
+					b = encodeUnsignedInt(b, uint64(integer), comparable)
 				} else {
-					b = encodeSignedInt(b, int, comparable)
+					b = encodeSignedInt(b, integer, comparable)
 				}
 			} else {
 				b = encodeUnsignedInt(b, vals[i].GetUint64(), comparable)
@@ -69,8 +70,8 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			t := vals[i].GetMysqlTime()
 			// Encoding timestamp need to consider timezone.
 			// If it's not in UTC, transform to UTC first.
-			if t.Type == mysql.TypeTimestamp && t.TimeZone != time.UTC {
-				err := t.ConvertTimeZone(t.TimeZone, time.UTC)
+			if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+				err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -109,7 +110,9 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)
-			b = append(b, json.Serialize(vals[i].GetMysqlJSON())...)
+			j := vals[i].GetMysqlJSON()
+			b = append(b, j.TypeCode)
+			b = append(b, j.Value...)
 		case types.KindNull:
 			b = append(b, NilFlag)
 		case types.KindMinNotNull:
@@ -160,20 +163,20 @@ func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 // EncodeKey appends the encoded values to byte slice b, returns the appended
 // slice. It guarantees the encoded value is in ascending order for comparison.
 // For Decimal type, datum must set datum's length and frac.
-func EncodeKey(b []byte, v ...types.Datum) ([]byte, error) {
-	return encode(b, v, true, false)
+func EncodeKey(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
+	return encode(sc, b, v, true, false)
 }
 
 // EncodeValue appends the encoded values to byte slice b, returning the appended
 // slice. It does not guarantee the order for comparison.
-func EncodeValue(b []byte, v ...types.Datum) ([]byte, error) {
-	return encode(b, v, false, false)
+func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
+	return encode(sc, b, v, false, false)
 }
 
 // HashValues appends the encoded values to byte slice b, returning the appended
 // slice. If two datums are equal, they will generate the same bytes.
-func HashValues(b []byte, v ...types.Datum) ([]byte, error) {
-	return encode(b, v, false, true)
+func HashValues(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
+	return encode(sc, b, v, false, true)
 }
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
@@ -254,13 +257,9 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		if err != nil {
 			return b, d, err
 		}
-
-		var j json.JSON
-		j, err = json.Deserialize(b)
-		if err == nil {
-			b = b[size:]
-			d.SetMysqlJSON(j)
-		}
+		j := json.BinaryJSON{TypeCode: b[0], Value: b[1:size]}
+		d.SetMysqlJSON(j)
+		b = b[size:]
 	case NilFlag:
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
@@ -463,13 +462,8 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		var j json.JSON
-		j, err = json.Deserialize(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		chk.AppendJSON(colIdx, json.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
 		b = b[size:]
-		chk.AppendJSON(colIdx, j)
 	case NilFlag:
 		chk.AppendNull(colIdx)
 	default:

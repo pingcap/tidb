@@ -59,9 +59,9 @@ func (t *rootTask) invalid() bool {
 
 func (t *copTask) count() float64 {
 	if t.indexPlanFinished {
-		return t.tablePlan.statsProfile().count
+		return t.tablePlan.StatsInfo().count
 	}
-	return t.indexPlan.statsProfile().count
+	return t.indexPlan.StatsInfo().count
 }
 
 func (t *copTask) addCost(cst float64) {
@@ -107,7 +107,7 @@ func (t *copTask) finishIndexPlan() {
 		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
 		if t.tablePlan != nil {
-			t.tablePlan.(*PhysicalTableScan).profile = t.indexPlan.statsProfile()
+			t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.StatsInfo()
 			t.cst += t.count() * scanFactor
 		}
 	}
@@ -129,6 +129,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.PhysicalJoin.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildJoinSchema(p.PhysicalJoin.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + lTask.count()*rTask.cost(),
@@ -145,6 +146,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(p.innerPlan, outerTask.plan())
 	}
+	p.schema = buildJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: outerTask.cost() + p.getCost(outerTask.count()),
@@ -186,6 +188,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
@@ -203,31 +206,11 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
 	}
-}
-
-func (p *PhysicalHashSemiJoin) getCost(lCnt, rCnt float64) float64 {
-	if rCnt <= 1 {
-		rCnt = 1
-	}
-	return (lCnt + rCnt) * (1 + math.Log2(rCnt))
-}
-
-func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
-	if tasks[0].invalid() || tasks[1].invalid() {
-		return invalidTask
-	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx)
-	p.SetChildren(lTask.plan(), rTask.plan())
-	task := &rootTask{
-		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
-	}
-	return task
 }
 
 // finishCopTask means we close the coprocessor task and create a root task.
@@ -247,15 +230,15 @@ func finishCopTask(task task, ctx context.Context) task {
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(ctx)
-		p.profile = t.tablePlan.statsProfile()
+		p.stats = t.tablePlan.StatsInfo()
 		newTask.p = p
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
-		p.profile = t.indexPlan.statsProfile()
+		p.stats = t.indexPlan.StatsInfo()
 		newTask.p = p
 	} else {
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
-		p.profile = t.tablePlan.statsProfile()
+		p.stats = t.tablePlan.StatsInfo()
 		newTask.p = p
 	}
 	return newTask
@@ -275,7 +258,7 @@ func (t *rootTask) copy() task {
 }
 
 func (t *rootTask) count() float64 {
-	return t.p.statsProfile().count
+	return t.p.StatsInfo().count
 }
 
 func (t *rootTask) addCost(cst float64) {
@@ -300,13 +283,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
 			// When limit be pushed down, it should remove its offset.
-			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx)
-			pushedDownLimit.profile = p.profile
-			if cop.tablePlan != nil {
-				pushedDownLimit.SetSchema(cop.tablePlan.Schema())
-			} else {
-				pushedDownLimit.SetSchema(cop.indexPlan.Schema())
-			}
+			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx, p.stats)
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
 		t = finishCopTask(cop, p.ctx)
@@ -368,8 +345,7 @@ func (p *PhysicalTopN) getPushedDownTopN() *PhysicalTopN {
 	topN := PhysicalTopN{
 		ByItems: newByItems,
 		Count:   p.Offset + p.Count,
-	}.init(p.ctx)
-	topN.profile = p.profile
+	}.init(p.ctx, p.stats)
 	return topN
 }
 
@@ -385,14 +361,12 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
 		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
-			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 			pushedDownTopN.SetChildren(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
 		} else {
 			// FIXME: When we pushed down a top-N plan to table plan branch in case of double reading. The cost should
 			// be more expensive in case of single reading, because we may execute table scan multi times.
 			copTask.finishIndexPlan()
-			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 			pushedDownTopN.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
@@ -448,25 +422,25 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalHashAgg) {
+func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			return nil, p
+			return nil, p.self
 		}
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
-		return nil, p
+		return nil, p.self
 	}
-	partialAgg = p
 	originalSchema := p.schema
-	// TODO: Refactor the way of constructing aggregation functions.
 	partialSchema := expression.NewSchema()
-	partialAgg.SetSchema(partialSchema)
+	p.schema = partialSchema
+	partialAgg = p.self
+	// TODO: Refactor the way of constructing aggregation functions.
 	cursor := 0
 	finalAggFuncs := make([]aggregation.Aggregation, len(p.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
@@ -478,13 +452,13 @@ func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalH
 			ft.Flen = 21
 			ft.Charset = charset.CharsetBin
 			ft.Collate = charset.CollationBin
-			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{FromID: partialAgg.ID(), Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
 			cursor++
 		}
 		if needValue(fun) {
 			ft := originalSchema.Columns[i].GetType()
-			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{FromID: partialAgg.ID(), Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
 			cursor++
 		}
@@ -492,20 +466,32 @@ func (p *PhysicalHashAgg) newPartialAggregate() (partialAgg, finalAgg *PhysicalH
 		fun.SetMode(aggregation.FinalMode)
 		finalAggFuncs[i] = fun
 	}
-	finalAgg = basePhysicalAgg{
-		AggFuncs: finalAggFuncs,
-	}.initForHash(p.ctx)
-	finalAgg.profile = p.profile
-	finalAgg.SetSchema(originalSchema)
+	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
 	// add group by columns
 	for i, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
-			FromID:   partialAgg.id,
+			FromID:   partialAgg.ID(),
 			Position: cursor + i,
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
-		finalAgg.GroupByItems = append(finalAgg.GroupByItems, gbyCol.Clone())
+		groupByItems = append(groupByItems, gbyCol.Clone())
+	}
+
+	if p.tp == TypeStreamAgg {
+		agg := basePhysicalAgg{
+			AggFuncs:     finalAggFuncs,
+			GroupByItems: groupByItems,
+		}.initForStream(p.ctx, p.stats)
+		agg.SetSchema(originalSchema)
+		finalAgg = agg
+	} else {
+		agg := basePhysicalAgg{
+			AggFuncs:     finalAggFuncs,
+			GroupByItems: groupByItems,
+		}.initForHash(p.ctx, p.stats)
+		agg.SetSchema(originalSchema)
+		finalAgg = agg
 	}
 	return
 }
@@ -516,8 +502,24 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		return invalidTask
 	}
 	t := tasks[0].copy()
-	attachPlan2Task(p, t)
-	t.addCost(t.count() * cpuFactor)
+	if cop, ok := t.(*copTask); ok {
+		partialAgg, finalAgg := p.newPartialAggregate()
+		if partialAgg != nil {
+			if cop.tablePlan != nil {
+				partialAgg.SetChildren(cop.tablePlan)
+				cop.tablePlan = partialAgg
+			} else {
+				partialAgg.SetChildren(cop.indexPlan)
+				cop.indexPlan = partialAgg
+			}
+		}
+		t = finishCopTask(cop, p.ctx)
+		attachPlan2Task(finalAgg, t)
+		t.addCost(t.count() * cpuFactor)
+	} else {
+		attachPlan2Task(p, t)
+		t.addCost(t.count() * cpuFactor)
+	}
 	return t
 }
 
@@ -526,7 +528,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	cardinality := p.statsProfile().count
+	cardinality := p.StatsInfo().count
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()

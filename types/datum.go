@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -71,9 +72,12 @@ func (d *Datum) Copy() *Datum {
 		ret.b = make([]byte, len(d.b))
 		copy(ret.b, d.b)
 	}
-	// JSON object requires a deep copy, because it includes map/slice fields.
-	if ret.k == KindMysqlJSON {
-		ret.x = *ret.x.(json.JSON).Copy()
+	switch ret.Kind() {
+	case KindMysqlDecimal:
+		d := *d.GetMysqlDecimal()
+		ret.SetMysqlDecimal(&d)
+	case KindMysqlTime:
+		ret.SetMysqlTime(d.GetMysqlTime())
 	}
 	return &ret
 }
@@ -283,15 +287,16 @@ func (d *Datum) SetMysqlSet(b Set) {
 	d.b = hack.Slice(b.Name)
 }
 
-// GetMysqlJSON gets json.JSON value
-func (d *Datum) GetMysqlJSON() json.JSON {
-	return d.x.(json.JSON)
+// GetMysqlJSON gets json.BinaryJSON value
+func (d *Datum) GetMysqlJSON() json.BinaryJSON {
+	return json.BinaryJSON{TypeCode: byte(d.i), Value: d.b}
 }
 
-// SetMysqlJSON sets json.JSON value
-func (d *Datum) SetMysqlJSON(b json.JSON) {
+// SetMysqlJSON sets json.BinaryJSON value
+func (d *Datum) SetMysqlJSON(b json.BinaryJSON) {
 	d.k = KindMysqlJSON
-	d.x = b
+	d.i = int64(b.TypeCode)
+	d.b = b.Value
 }
 
 // GetMysqlTime gets types.Time value
@@ -389,7 +394,7 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetBinaryLiteral(BinaryLiteral(x))
 	case Set:
 		d.SetMysqlSet(x)
-	case json.JSON:
+	case json.BinaryJSON:
 		d.SetMysqlJSON(x)
 	case Time:
 		d.SetMysqlTime(x)
@@ -623,12 +628,12 @@ func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set) (int, err
 	}
 }
 
-func (d *Datum) compareMysqlJSON(sc *stmtctx.StatementContext, target json.JSON) (int, error) {
+func (d *Datum) compareMysqlJSON(sc *stmtctx.StatementContext, target json.BinaryJSON) (int, error) {
 	origin, err := d.ToMysqlJSON()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return json.CompareJSON(origin, target)
+	return json.CompareBinary(origin, target), nil
 }
 
 func (d *Datum) compareMysqlTime(sc *stmtctx.StatementContext, time Time) (int, error) {
@@ -794,7 +799,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-			characterLen := len([]rune(s))
+			characterLen := utf8.RuneCountInString(s)
 			if characterLen > flen {
 				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
 				//    CREATE TABLE t (a char(0));
@@ -1219,23 +1224,23 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {
 	switch d.k {
 	case KindString, KindBytes:
-		var j json.JSON
-		if j, err = json.ParseFromString(d.GetString()); err == nil {
+		var j json.BinaryJSON
+		if j, err = json.ParseBinaryFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
 	case KindInt64:
 		i64 := d.GetInt64()
-		ret.SetMysqlJSON(json.CreateJSON(i64))
+		ret.SetMysqlJSON(json.CreateBinary(i64))
 	case KindUint64:
 		u64 := d.GetUint64()
-		ret.SetMysqlJSON(json.CreateJSON(u64))
+		ret.SetMysqlJSON(json.CreateBinary(u64))
 	case KindFloat32, KindFloat64:
 		f64 := d.GetFloat64()
-		ret.SetMysqlJSON(json.CreateJSON(f64))
+		ret.SetMysqlJSON(json.CreateBinary(f64))
 	case KindMysqlDecimal:
 		var f64 float64
 		if f64, err = d.GetMysqlDecimal().ToFloat64(); err == nil {
-			ret.SetMysqlJSON(json.CreateJSON(f64))
+			ret.SetMysqlJSON(json.CreateBinary(f64))
 		}
 	case KindMysqlJSON:
 		ret = *d
@@ -1245,7 +1250,7 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 			// TODO: fix precision of MysqlTime. For example,
 			// On MySQL 5.7 CAST(NOW() AS JSON) -> "2011-11-11 11:11:11.111111",
 			// But now we can only return "2011-11-11 11:11:11".
-			ret.SetMysqlJSON(json.CreateJSON(s))
+			ret.SetMysqlJSON(json.CreateBinary(s))
 		}
 	}
 	return ret, errors.Trace(err)
@@ -1258,30 +1263,30 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	isZero := false
 	switch d.Kind() {
 	case KindInt64:
-		isZero = (d.GetInt64() == 0)
+		isZero = d.GetInt64() == 0
 	case KindUint64:
-		isZero = (d.GetUint64() == 0)
+		isZero = d.GetUint64() == 0
 	case KindFloat32:
-		isZero = (RoundFloat(d.GetFloat64()) == 0)
+		isZero = RoundFloat(d.GetFloat64()) == 0
 	case KindFloat64:
-		isZero = (RoundFloat(d.GetFloat64()) == 0)
+		isZero = RoundFloat(d.GetFloat64()) == 0
 	case KindString, KindBytes:
 		iVal, err1 := StrToInt(sc, d.GetString())
-		isZero, err = (iVal == 0), err1
+		isZero, err = iVal == 0, err1
 	case KindMysqlTime:
 		isZero = d.GetMysqlTime().IsZero()
 	case KindMysqlDuration:
-		isZero = (d.GetMysqlDuration().Duration == 0)
+		isZero = d.GetMysqlDuration().Duration == 0
 	case KindMysqlDecimal:
 		v, err1 := d.GetMysqlDecimal().ToFloat64()
-		isZero, err = (RoundFloat(v) == 0), err1
+		isZero, err = RoundFloat(v) == 0, err1
 	case KindMysqlEnum:
-		isZero = (d.GetMysqlEnum().ToNumber() == 0)
+		isZero = d.GetMysqlEnum().ToNumber() == 0
 	case KindMysqlSet:
-		isZero = (d.GetMysqlSet().ToNumber() == 0)
+		isZero = d.GetMysqlSet().ToNumber() == 0
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err1 := d.GetBinaryLiteral().ToInt()
-		isZero, err = (val == 0), err1
+		isZero, err = val == 0, err1
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", d.GetValue(), d.GetValue())
 	}
@@ -1510,11 +1515,11 @@ func (d *Datum) ToBytes() ([]byte, error) {
 
 // ToMysqlJSON is similar to convertToMysqlJSON, except the
 // latter parses from string, but the former uses it as primitive.
-func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
+func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 	var in interface{}
 	switch d.Kind() {
 	case KindMysqlJSON:
-		j = d.x.(json.JSON)
+		j = d.GetMysqlJSON()
 		return
 	case KindInt64:
 		in = d.GetInt64()
@@ -1537,7 +1542,7 @@ func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
 			return
 		}
 	}
-	j = json.CreateJSON(in)
+	j = json.CreateBinary(in)
 	return
 }
 
@@ -1810,10 +1815,5 @@ func DatumsToString(datums []Datum) (string, error) {
 // CopyDatum returns a new copy of the datum.
 // TODO: Abandon this function.
 func CopyDatum(datum Datum) Datum {
-	ret := datum
-	if datum.b != nil {
-		ret.b = make([]byte, len(datum.b))
-		copy(ret.b, datum.b)
-	}
-	return ret
+	return *datum.Copy()
 }

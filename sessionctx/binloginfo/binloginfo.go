@@ -14,6 +14,8 @@
 package binloginfo
 
 import (
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +26,7 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
-	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc"
 )
 
 func init() {
@@ -98,6 +100,7 @@ func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery 
 	if client == nil {
 		return
 	}
+	ddlQuery = addSpecialComment(ddlQuery)
 	info := &BinlogInfo{
 		Data: &binlog.Binlog{
 			Tp:       binlog.BinlogType_Prewrite,
@@ -107,4 +110,20 @@ func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery 
 		Client: client.(binlog.PumpClient),
 	}
 	txn.SetOption(kv.BinlogInfo, info)
+}
+
+const specialPrefix = `/*!90000 `
+
+func addSpecialComment(ddlQuery string) string {
+	if strings.Contains(ddlQuery, specialPrefix) {
+		return ddlQuery
+	}
+	upperQuery := strings.ToUpper(ddlQuery)
+	reg, err := regexp.Compile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
+	terror.Log(err)
+	loc := reg.FindStringIndex(upperQuery)
+	if len(loc) < 2 {
+		return ddlQuery
+	}
+	return ddlQuery[:loc[0]] + specialPrefix + ddlQuery[loc[0]:loc[1]] + ` */` + ddlQuery[loc[1]:]
 }

@@ -110,11 +110,11 @@ func truncateTrailingSpaces(v *types.Datum) {
 		return
 	}
 	b := v.GetBytes()
-	len := len(b)
-	for len > 0 && b[len-1] == ' ' {
-		len--
+	length := len(b)
+	for length > 0 && b[length-1] == ' ' {
+		length--
 	}
-	b = b[:len]
+	b = b[:length]
 	v.SetString(hack.String(b))
 }
 
@@ -185,7 +185,7 @@ type ColDesc struct {
 	Comment      string
 }
 
-const defaultPrivileges string = "select,insert,update,references"
+const defaultPrivileges = "select,insert,update,references"
 
 // GetTypeDesc gets the description for column type.
 func (c *Column) GetTypeDesc() string {
@@ -380,7 +380,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeEnum:
 		d.SetMysqlEnum(types.Enum{})
 	case mysql.TypeJSON:
-		d.SetMysqlJSON(json.CreateJSON(nil))
+		d.SetMysqlJSON(json.CreateBinary(nil))
 	}
 	return d
 }

@@ -18,10 +18,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 )
 
@@ -87,6 +89,7 @@ type TransactionContext struct {
 	Histroy       interface{}
 	SchemaVersion int64
 	StartTS       uint64
+	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 }
 
@@ -200,8 +203,8 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// SkipConstraintCheck is true when importing data.
-	SkipConstraintCheck bool
+	// ImportingData is true when importing data.
+	ImportingData bool
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
@@ -230,6 +233,10 @@ type SessionVars struct {
 	// BatchDelete indicates if we should split delete data into multiple batches.
 	BatchDelete bool
 
+	// DMLBatchSize indicates the size of batches for DML.
+	// It will be used when BatchInsert or BatchDelete is on.
+	DMLBatchSize int
+
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 
@@ -243,6 +250,14 @@ type SessionVars struct {
 	// EnableChunk indicates whether the chunk execution model is enabled.
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
+
+	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
+	RowValBuf []byte
+	// BufStore stores temp KVs for a row when executing insert statement.
+	// We could reuse a BufStore for multiple rows of a session to reduce memory allocations.
+	BufStore *kv.BufferStore
+	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
+	AddRowValues []types.Datum
 }
 
 // NewSessionVars creates a session vars object.
@@ -265,9 +280,16 @@ func NewSessionVars() *SessionVars {
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 		MaxChunkSize:               DefMaxChunkSize,
+		DMLBatchSize:               DefDMLBatchSize,
 	}
+}
+
+// CleanBuffers cleans the temporary bufs
+func (s *SessionVars) CleanBuffers() {
+	s.RowValBuf = nil
+	s.BufStore = nil
+	s.AddRowValues = nil
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -299,7 +321,7 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 		s.Status |= flag
 		return
 	}
-	s.Status &= (^flag)
+	s.Status &= ^flag
 }
 
 // GetStatusFlag gets the session server status variable, returns true if it is on.

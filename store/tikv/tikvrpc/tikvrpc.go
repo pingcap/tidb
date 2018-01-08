@@ -53,6 +53,52 @@ const (
 	CmdSplitRegion
 )
 
+func (t CmdType) String() string {
+	switch t {
+	case CmdGet:
+		return "Get"
+	case CmdScan:
+		return "Scan"
+	case CmdPrewrite:
+		return "Prewrite"
+	case CmdCommit:
+		return "Commit"
+	case CmdCleanup:
+		return "Cleanup"
+	case CmdBatchGet:
+		return "BatchGet"
+	case CmdBatchRollback:
+		return "BatchRollback"
+	case CmdScanLock:
+		return "ScanLock"
+	case CmdResolveLock:
+		return "ResolveLock"
+	case CmdGC:
+		return "GC"
+	case CmdDeleteRange:
+		return "DeleteRange"
+	case CmdRawGet:
+		return "RawGet"
+	case CmdRawPut:
+		return "RawPut"
+	case CmdRawDelete:
+		return "RawDelete"
+	case CmdRawScan:
+		return "RawScan"
+	case CmdCop:
+		return "Cop"
+	case CmdCopStream:
+		return "CopStream"
+	case CmdMvccGetByKey:
+		return "MvccGetByKey"
+	case CmdMvccGetByStartTs:
+		return "MvccGetByStartTS"
+	case CmdSplitRegion:
+		return "SplitRegion"
+	}
+	return "Unknown"
+}
+
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	kvrpcpb.Context
@@ -142,6 +188,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	case CmdRawScan:
 		req.RawScan.Context = ctx
 	case CmdCop:
+		req.Cop.Context = ctx
+	case CmdCopStream:
 		req.Cop.Context = ctx
 	case CmdMvccGetByKey:
 		req.MvccGetByKey.Context = ctx
@@ -279,6 +327,9 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawScan.GetRegionError()
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
+	case CmdCopStream:
+		// Region error will be returned when the first time StreamResponse.Recv() is called.
+		e = nil
 	case CmdMvccGetByKey:
 		e = resp.MvccGetByKey.GetRegionError()
 	case CmdMvccGetByStartTs:

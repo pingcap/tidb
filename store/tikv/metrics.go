@@ -49,7 +49,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_cmd_seconds",
 			Help:      "Bucketed histogram of processing time of txn cmds.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		}, []string{"type"})
 
 	backoffCounter = prometheus.NewCounterVec(
@@ -66,7 +66,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "backoff_seconds",
 			Help:      "total backoff seconds of a single backoffer.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		})
 
 	connPoolHistogram = prometheus.NewHistogramVec(
@@ -75,7 +75,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "get_conn_seconds",
 			Help:      "Bucketed histogram of taking conn from conn pool.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		}, []string{"type"})
 
 	sendReqHistogram = prometheus.NewHistogramVec(
@@ -84,8 +84,8 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
-		}, []string{"type"})
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
+		}, []string{"type", "store"})
 
 	coprocessorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -101,7 +101,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "cop_seconds",
 			Help:      "Run duration of a single coprocessor task, includes backoff time.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		})
 
 	lockResolverCounter = prometheus.NewCounterVec(
@@ -144,7 +144,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "rawkv_cmd_seconds",
 			Help:      "Bucketed histogram of processing time of rawkv cmds.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		}, []string{"type"})
 
 	rawkvSizeHistogram = prometheus.NewHistogramVec(

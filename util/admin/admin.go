@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -101,7 +102,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			err = t.UpdateDDLJob(int64(j), job)
+			err = t.UpdateDDLJob(int64(j), job, true)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 			}
@@ -168,8 +169,8 @@ type RecordData struct {
 
 // GetIndexRecordsCount returns the total number of the index records from startVals.
 // If startVals = nil, returns the total number of the index records.
-func GetIndexRecordsCount(txn kv.Transaction, kvIndex table.Index, startVals []types.Datum) (int64, error) {
-	it, _, err := kvIndex.Seek(txn, startVals)
+func GetIndexRecordsCount(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex table.Index, startVals []types.Datum) (int64, error) {
+	it, _, err := kvIndex.Seek(sc, txn, startVals)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -193,9 +194,9 @@ func GetIndexRecordsCount(txn kv.Transaction, kvIndex table.Index, startVals []t
 // It returns data and the next startVals until it doesn't have data, then returns data is nil and
 // the next startVals is the values which can't get data. If startVals = nil and limit = -1,
 // it returns the index data of the whole.
-func ScanIndexData(txn kv.Transaction, kvIndex table.Index, startVals []types.Datum, limit int64) (
+func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex table.Index, startVals []types.Datum, limit int64) (
 	[]*RecordData, []types.Datum, error) {
-	it, _, err := kvIndex.Seek(txn, startVals)
+	it, _, err := kvIndex.Seek(sc, txn, startVals)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -228,13 +229,13 @@ func ScanIndexData(txn kv.Transaction, kvIndex table.Index, startVals []types.Da
 // CompareIndexData compares index data one by one.
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
-func CompareIndexData(txn kv.Transaction, t table.Table, idx table.Index) error {
+func CompareIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, t table.Table, idx table.Index) error {
 	err := checkIndexAndRecord(txn, t, idx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return checkRecordAndIndex(txn, t, idx)
+	return checkRecordAndIndex(sc, txn, t, idx)
 }
 
 func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) error {
@@ -275,7 +276,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) err
 	return nil
 }
 
-func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) error {
+func checkRecordAndIndex(sc *stmtctx.StatementContext, txn kv.Transaction, t table.Table, idx table.Index) error {
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
@@ -283,7 +284,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) err
 
 	startKey := t.RecordKey(0)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
-		isExist, h2, err := idx.Exist(txn, vals1, h1)
+		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
