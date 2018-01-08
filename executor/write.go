@@ -1374,6 +1374,13 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		row[i].SetInt64(recordID)
 	}
 	retryInfo.AddAutoIncrementID(recordID)
+
+	// the value of row[i] is adjusted by autoid, so we need to cast it again.
+	casted, err := table.CastValue(e.ctx, row[i], c.ToInfo())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	row[i] = casted
 	return nil
 }
 
