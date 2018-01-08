@@ -634,27 +634,27 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			record := types.MakeDatums(
-				catalogVal,      // TABLE_CATALOG
-				schema.Name.O,   // TABLE_SCHEMA
-				table.Name.O,    // TABLE_NAME
-				"BASE TABLE",    // TABLE_TYPE
-				"InnoDB",        // ENGINE
-				uint64(10),      // VERSION
-				"Compact",       // ROW_FORMAT
-				uint64(0),       // TABLE_ROWS
-				uint64(0),       // AVG_ROW_LENGTH
-				uint64(16384),   // DATA_LENGTH
-				uint64(0),       // MAX_DATA_LENGTH
-				uint64(0),       // INDEX_LENGTH
-				uint64(0),       // DATA_FREE
-				table.AutoIncID, // AUTO_INCREMENT
-				nil,             // CREATE_TIME
-				nil,             // UPDATE_TIME
-				nil,             // CHECK_TIME
-				table.Collate,   // TABLE_COLLATION
-				nil,             // CHECKSUM
-				"",              // CREATE_OPTIONS
-				table.Comment,   // TABLE_COMMENT
+				catalogVal,            // TABLE_CATALOG
+				schema.Name.O,         // TABLE_SCHEMA
+				table.Name.O,          // TABLE_NAME
+				"BASE TABLE",          // TABLE_TYPE
+				"InnoDB",              // ENGINE
+				uint64(10),            // VERSION
+				"Compact",             // ROW_FORMAT
+				uint64(0),             // TABLE_ROWS
+				uint64(0),             // AVG_ROW_LENGTH
+				uint64(16384),         // DATA_LENGTH
+				uint64(0),             // MAX_DATA_LENGTH
+				uint64(0),             // INDEX_LENGTH
+				uint64(0),             // DATA_FREE
+				table.AutoIncID,       // AUTO_INCREMENT
+				table.GetUpdateTime(), // CREATE_TIME
+				nil,           // UPDATE_TIME
+				nil,           // CHECK_TIME
+				table.Collate, // TABLE_COLLATION
+				nil,           // CHECKSUM
+				"",            // CREATE_OPTIONS
+				table.Comment, // TABLE_COMMENT
 			)
 			rows = append(rows, record)
 		}
