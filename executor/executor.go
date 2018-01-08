@@ -749,10 +749,7 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			if chk.NumRows() == e.maxChunkSize {
 				return nil
 			}
-			chk.AppendPartialRow(0, e.inputRow)
-			if chk.NumCols() == 0 {
-				chk.SetNumVirtualRows(chk.NumRows() + 1)
-			}
+			chk.AppendRow(e.inputRow)
 		}
 		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
@@ -1130,7 +1127,7 @@ type UnionExec struct {
 	// finished and all the following variables are used for chunk execution.
 	finished      chan struct{}
 	resourcePools []chan *chunk.Chunk
-	resultPool    chan *execWorkerResult
+	resultPool    chan *unionWorkerResult
 	initialized   bool
 }
 
@@ -1139,13 +1136,14 @@ type execResult struct {
 	err  error
 }
 
-// execWorkerResult stores the results from multi-goroutine workers.
-// `cycleChan` is a read-only channel used for Chunk reuse,
-// after `chk` be consumed, it'll be send into `src`.
-type execWorkerResult struct {
-	chk       *chunk.Chunk
-	err       error
-	cycleChan chan<- *chunk.Chunk
+// unionWorkerResult stores the result for a union worker.
+// A "resultPuller" is started for every child to pull result from that child, unionWorkerResult is used to store that pulled result.
+// "src" is used for Chunk reuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
+// enable the corresponding "resultPuller" continue to work.
+type unionWorkerResult struct {
+	chk *chunk.Chunk
+	err error
+	src chan<- *chunk.Chunk
 }
 
 func (e *UnionExec) waitAllFinished(forChunk bool) {
@@ -1206,7 +1204,7 @@ func (e *UnionExec) Open(goCtx goctx.Context) error {
 
 func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 	if forChunk {
-		e.resultPool = make(chan *execWorkerResult, len(e.children))
+		e.resultPool = make(chan *unionWorkerResult, len(e.children))
 		e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
 		for i := range e.children {
 			e.resourcePools[i] = make(chan *chunk.Chunk, 1)
@@ -1227,10 +1225,10 @@ func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 
 func (e *UnionExec) resultPuller(goCtx goctx.Context, childID int) {
 	defer e.wg.Done()
-	result := &execWorkerResult{
-		err:       nil,
-		chk:       nil,
-		cycleChan: e.resourcePools[childID],
+	result := &unionWorkerResult{
+		err: nil,
+		chk: nil,
+		src: e.resourcePools[childID],
 	}
 	for {
 		if e.stopFetchData.Load().(bool) {
@@ -1294,7 +1292,7 @@ func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 
 	chk.SwapColumns(result.chk)
-	result.cycleChan <- result.chk
+	result.src <- result.chk
 	return nil
 }
 
