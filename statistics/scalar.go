@@ -16,9 +16,11 @@ package statistics
 import (
 	"encoding/binary"
 	"math"
+	"time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
@@ -71,7 +73,8 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 				Fsp:  types.DefaultFsp,
 			}
 		}
-		return float64(valueTime.Sub(&minTime).Duration)
+		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		return float64(valueTime.Sub(sc, &minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {

@@ -468,12 +468,12 @@ func (t *Time) Check() error {
 
 // Sub subtracts t1 from t, returns a duration value.
 // Note that sub should not be done on different time types.
-func (t *Time) Sub(t1 *Time) Duration {
+func (t *Time) Sub(sc *stmtctx.StatementContext, t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type == mysql.TypeTimestamp && t1.Type == mysql.TypeTimestamp {
-		a, err := t.Time.GoTime(gotime.UTC)
+		a, err := t.Time.GoTime(sc.TimeZone)
 		terror.Log(errors.Trace(err))
-		b, err := t1.Time.GoTime(gotime.UTC)
+		b, err := t1.Time.GoTime(sc.TimeZone)
 		terror.Log(errors.Trace(err))
 		duration = a.Sub(b)
 	} else {
