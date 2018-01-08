@@ -80,7 +80,7 @@ func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCo
 		}
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(datumBuf)
+		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}

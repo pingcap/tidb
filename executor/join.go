@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -153,9 +154,9 @@ func makeJoinRow(a Row, b Row) Row {
 }
 
 func (e *HashJoinExec) encodeRow(b []byte, row Row) ([]byte, error) {
-	loc := e.ctx.GetSessionVars().GetTimeZone()
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for _, datum := range row {
-		tmp, err := tablecodec.EncodeValue(datum, loc)
+		tmp, err := tablecodec.EncodeValue(sc, datum)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -179,7 +180,7 @@ func (e *HashJoinExec) decodeRow(data []byte) (Row, error) {
 
 // getJoinKey gets the hash key when given a row and hash columns.
 // It will return a boolean value representing if the hash key has null, a byte slice representing the result hash code.
-func getJoinKey(cols []*expression.Column, row Row, vals []types.Datum, bytes []byte) (bool, []byte, error) {
+func getJoinKey(sc *stmtctx.StatementContext, cols []*expression.Column, row Row, vals []types.Datum, bytes []byte) (bool, []byte, error) {
 	var err error
 	for i, col := range cols {
 		vals[i], err = col.Eval(row)
@@ -193,7 +194,7 @@ func getJoinKey(cols []*expression.Column, row Row, vals []types.Datum, bytes []
 	if len(vals) == 0 {
 		return false, nil, nil
 	}
-	bytes, err = codec.HashValues(bytes, vals...)
+	bytes, err = codec.HashValues(sc, bytes, vals...)
 	return false, bytes, errors.Trace(err)
 }
 
@@ -390,7 +391,7 @@ func (e *HashJoinExec) prepare4Row(goCtx goctx.Context) error {
 			continue
 		}
 
-		hasNull, joinKey, err := getJoinKey(e.innerKeys, innerRow, e.hashJoinBuffers[0].data, nil)
+		hasNull, joinKey, err := getJoinKey(e.ctx.GetSessionVars().StmtCtx, e.innerKeys, innerRow, e.hashJoinBuffers[0].data, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -591,7 +592,7 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 // If there are no matching rows and it is outer join, a null filled result row is created.
 func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *execResult) bool {
 	buffer := e.hashJoinBuffers[workerID]
-	hasNull, joinKey, err := getJoinKey(e.outerKeys, outerRow, buffer.data, buffer.bytes[:0:cap(buffer.bytes)])
+	hasNull, joinKey, err := getJoinKey(e.ctx.GetSessionVars().StmtCtx, e.outerKeys, outerRow, buffer.data, buffer.bytes[:0:cap(buffer.bytes)])
 	if err != nil {
 		resultBuffer.err = errors.Trace(err)
 		return false

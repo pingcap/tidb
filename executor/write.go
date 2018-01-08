@@ -466,9 +466,11 @@ func (e *DeleteExec) Open(goCtx goctx.Context) error {
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx), Table: tbl}
+	insertVal.initDefaultValBuf()
 	return &LoadDataInfo{
 		row:       row,
-		insertVal: &InsertValues{baseExecutor: newBaseExecutor(nil, ctx), Table: tbl},
+		insertVal: insertVal,
 		Table:     tbl,
 		Ctx:       ctx,
 		columns:   cols,
@@ -806,6 +808,12 @@ func (e *LoadData) Open(goCtx goctx.Context) error {
 	return nil
 }
 
+type defaultVal struct {
+	val types.Datum
+	// We evaluate the default value lazily. The valid indicates whether the val is evaluated.
+	valid bool
+}
+
 // InsertValues is the data to insert.
 type InsertValues struct {
 	baseExecutor
@@ -825,6 +833,9 @@ type InsertValues struct {
 
 	GenColumns []*ast.ColumnName
 	GenExprs   []expression.Expression
+
+	// colDefaultVals is used to store casted default value.
+	colDefaultVals []defaultVal
 }
 
 // InsertExec represents an insert executor.
@@ -839,13 +850,20 @@ type InsertExec struct {
 	finished bool
 }
 
+func (e *InsertValues) initDefaultValBuf() {
+	e.colDefaultVals = make([]defaultVal, len(e.Table.Cols()))
+}
+
 func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
-	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
-	batchSize := e.ctx.GetSessionVars().DMLBatchSize
+	sessVars := e.ctx.GetSessionVars()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
 
 	txn := e.ctx.Txn()
 	rowCount := 0
+	sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	defer sessVars.CleanBuffers()
 	for _, row := range rows {
 		if batchInsert && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
@@ -854,6 +872,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
+			sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -861,7 +880,9 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		h, err := e.Table.AddRecord(e.ctx, row, false)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
-			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			if !sessVars.ImportingData {
+				getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			}
 			rowCount++
 			continue
 		}
@@ -886,7 +907,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	}
 
 	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+		sessVars.SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil, nil
@@ -1234,6 +1255,21 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 	return nil
 }
 
+func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (types.Datum, error) {
+	if e.colDefaultVals[idx].valid {
+		return e.colDefaultVals[idx].val, nil
+	}
+
+	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	e.colDefaultVals[idx].val = defaultVal
+	e.colDefaultVals[idx].valid = true
+	return defaultVal, nil
+}
+
 // initDefaultValues fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
@@ -1258,7 +1294,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 		}
 		if needDefaultValue {
 			var err error
-			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			row[i], err = e.getColDefaultValue(i, c)
 			if e.filterErr(err, ignoreErr) != nil {
 				return errors.Trace(err)
 			}

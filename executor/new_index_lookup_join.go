@@ -407,7 +407,7 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 			continue
 		}
 		keyBuf = keyBuf[:0]
-		keyBuf, err = codec.EncodeKey(keyBuf, dLookUpKey...)
+		keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dLookUpKey...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -524,7 +524,7 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 			for _, keyCol := range iw.keyCols {
 				d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
 				var err error
-				keyBuf, err = codec.EncodeKey(keyBuf, d)
+				keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, d)
 				if err != nil {
 					return errors.Trace(err)
 				}

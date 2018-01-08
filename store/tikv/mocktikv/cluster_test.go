@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -54,15 +55,16 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	idxID := int64(2)
 	colID := int64(3)
 	handle := int64(1)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	for i := 0; i < 1000; i++ {
 		rowKey := tablecodec.EncodeRowKeyWithHandle(tblID, handle)
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))
 		// TODO: Should use session's TimeZone instead of UTC.
-		rowValue, err1 := tablecodec.EncodeRow([]types.Datum{colValue}, []int64{colID}, time.UTC)
+		rowValue, err1 := tablecodec.EncodeRow(sc, []types.Datum{colValue}, []int64{colID}, nil, nil)
 		c.Assert(err1, IsNil)
 		txn.Set(rowKey, rowValue)
 
-		encodedIndexValue, err1 := codec.EncodeKey(nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
+		encodedIndexValue, err1 := codec.EncodeKey(sc, nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
 		c.Assert(err1, IsNil)
 		idxKey := tablecodec.EncodeIndexSeekKey(tblID, idxID, encodedIndexValue)
 		txn.Set(idxKey, []byte{'0'})

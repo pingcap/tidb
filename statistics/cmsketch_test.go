@@ -15,15 +15,17 @@ package statistics
 
 import (
 	"math/rand"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
-	bytes, err := codec.EncodeValue(nil, *val)
+	bytes, err := codec.EncodeValue(nil, nil, *val)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -47,9 +49,10 @@ func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) 
 }
 
 func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	var total uint64
 	for num, count := range mp {
-		estimate, err := cms.queryValue(types.NewIntDatum(num))
+		estimate, err := cms.queryValue(sc, types.NewIntDatum(num))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
