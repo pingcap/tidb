@@ -39,6 +39,10 @@ func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.C
 	return p.children[0].preparePossibleProperties()
 }
 
+func (p *LogicalProjection) preparePossibleProperties() (result [][]*expression.Column) {
+	return p.children[0].(LogicalPlan).preparePossibleProperties()
+}
+
 func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
 	if len(p.children) > 0 {
 		p.children[0].preparePossibleProperties()

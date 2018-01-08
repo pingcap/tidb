@@ -69,7 +69,7 @@ func (la *LogicalAggregation) canPullUp() bool {
 		return false
 	}
 	for _, f := range la.AggFuncs {
-		for _, arg := range f.GetArgs() {
+		for _, arg := range f.Args {
 			expr := expression.EvaluateExprWithNull(la.ctx, la.children[0].Schema(), arg)
 			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
 				return false
@@ -136,9 +136,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
-				newAggFuncs := make([]aggregation.Aggregation, 0, apply.Schema().Len())
+				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
 				for _, col := range outerPlan.Schema().Columns {
-					first := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					first := aggregation.NewAggFuncDesc(ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					first.TypeInfer(agg.ctx)
 					newAggFuncs = append(newAggFuncs, first)
 				}
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
@@ -149,6 +150,8 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 					return nil, errors.Trace(err)
 				}
 				agg.SetChildren(np)
+				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+				// agg.buildProjectionIfNecessary()
 				agg.collectGroupByColumns()
 				return agg, nil
 			}

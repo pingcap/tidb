@@ -120,7 +120,7 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
 	for _, funcName := range funcNames {
-		aggFunc := NewAggFunction(
+		aggFunc := NewAggFuncDesc(
 			funcName,
 			[]expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
 			true,
@@ -141,7 +141,7 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		"{\"tp\":3006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0}],\"sig\":0}",
 	}
 	for i, funcName := range funcNames {
-		aggFunc := NewAggFunction(
+		aggFunc := NewAggFuncDesc(
 			funcName,
 			[]expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
 			false,

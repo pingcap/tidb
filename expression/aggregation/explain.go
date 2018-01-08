@@ -19,14 +19,14 @@ import (
 )
 
 // ExplainAggFunc generates explain information for a aggregation function.
-func ExplainAggFunc(agg Aggregation) string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.GetName()))
-	if agg.IsDistinct() {
+func ExplainAggFunc(agg *AggFuncDesc) string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.Name))
+	if agg.HasDistinct {
 		buffer.WriteString("distinct ")
 	}
-	for i, arg := range agg.GetArgs() {
+	for i, arg := range agg.Args {
 		buffer.WriteString(arg.ExplainInfo())
-		if i+1 < len(agg.GetArgs()) {
+		if i+1 < len(agg.Args) {
 			buffer.WriteString(", ")
 		}
 	}
