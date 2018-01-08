@@ -360,6 +360,8 @@ func fixRangeDatum(v *types.Datum, length int) {
 	}
 }
 
+// We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
+// Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
 func newFieldType(tp *types.FieldType) *types.FieldType {
 	switch tp.Tp {
 	// To avoid overflow error.
