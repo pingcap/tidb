@@ -53,6 +53,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// none -> public
 		job.SchemaState = model.StatePublic
 		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
 		err = t.CreateTable(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
