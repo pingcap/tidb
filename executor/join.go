@@ -351,7 +351,7 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 
 func (e *HashJoinExec) initializeForProbe() {
 	// e.outerResultChs is for transmitting the chunks which store the data of outerExec,
-	// it'll be written by outer worker goroutine, and read be join workers.
+	// it'll be written by outer worker goroutine, and read by join workers.
 	e.outerResultChs = make([]chan *chunk.Chunk, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		e.outerResultChs[i] = make(chan *chunk.Chunk, 1)
@@ -566,11 +566,9 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 	defer e.workerWaitGroup.Done()
 	var (
 		outerResult *chunk.Chunk
-		joinResult  *hashjoinWorkerResult
 		selected    = make([]bool, 0, chunk.InitialCapacity)
-		ok          bool
 	)
-	ok, joinResult = e.getNewJoinResult(workerID)
+	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
 		return
 	}
@@ -724,28 +722,18 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 		if joinResultChkBuffer.NumRows() == 0 {
 			continue
 		}
-		numRemained := e.maxChunkSize - joinResult.chk.NumRows()
-		numAppended := mathutil.Min(joinResultChkBuffer.NumRows(), numRemained)
-		joinResult.chk.Append(joinResultChkBuffer, 0, numAppended)
-		if joinResult.chk.NumRows() < e.maxChunkSize {
-			continue
-		}
-		e.joinResultCh <- joinResult
-		ok, joinResult = e.getNewJoinResult(workerID)
-		if !ok {
-			return false, joinResult
-		}
+		numAppended := 0
 		for numAppended < joinResultChkBuffer.NumRows() {
-			numBatchSize := mathutil.Min(e.maxChunkSize, joinResultChkBuffer.NumRows()-numAppended)
-			joinResult.chk.Append(joinResultChkBuffer, numAppended, numAppended+numBatchSize)
-			numAppended += numBatchSize
-			if numBatchSize == e.maxChunkSize {
+			if joinResult.chk.NumRows() == e.maxChunkSize {
 				e.joinResultCh <- joinResult
 				ok, joinResult = e.getNewJoinResult(workerID)
 				if !ok {
 					return false, joinResult
 				}
 			}
+			numBatchSize := mathutil.Min(e.maxChunkSize-joinResult.chk.NumRows(), joinResultChkBuffer.NumRows()-numAppended)
+			joinResult.chk.Append(joinResultChkBuffer, numAppended, numAppended+numBatchSize)
+			numAppended += numBatchSize
 		}
 	}
 	return true, joinResult
