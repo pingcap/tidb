@@ -309,9 +309,8 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 		}
 		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
 			return getPseudoRowCountBySignedIntRanges(intRanges, float64(t.Count)), nil
-		} else {
-			return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(t.Count)), nil
 		}
+		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(t.Count)), nil
 	}
 	c := t.Columns[colID]
 	result, err := c.getColumnRowCount(sc, intRanges)
