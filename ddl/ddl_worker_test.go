@@ -59,6 +59,7 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 
 	RunWorker = false
 	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	testCheckOwner(c, d, false)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -92,6 +93,7 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
 	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	testCheckOwner(c, d1, true)
 	defer d1.Stop()
 	asyncNotify(d1.ddlJobCh)
 	<-exitCh
