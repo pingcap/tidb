@@ -105,7 +105,6 @@ func (e *HashJoinExec) Close() error {
 	}
 
 	close(e.closeCh)
-	<-e.closeCh
 	if e.prepared {
 		if e.resultBufferCh != nil {
 			for range e.resultBufferCh {
@@ -298,8 +297,6 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 		var outerResource *outerChkResource
 		ok := true
 		select {
-		case <-e.closeCh:
-			return
 		case outerResource, ok = <-e.outerChkResourceCh:
 			if !ok {
 				return
@@ -583,8 +580,6 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 			break
 		}
 		select {
-		case <-e.closeCh:
-			return
 		case outerResult, ok = <-e.outerResultChs[workerID]:
 		}
 		if !ok {
@@ -689,8 +684,6 @@ func (e *HashJoinExec) getNewJoinResult(workerID int) (bool, *hashjoinWorkerResu
 	}
 	ok := true
 	select {
-	case <-e.closeCh:
-		ok = false
 	case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
 	}
 	return ok, joinResult
