@@ -719,9 +719,6 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 			}
 		}
 		// Splitting the joinResultChkBuffer into chunks that reach e.maxChunkSize.
-		if joinResultChkBuffer.NumRows() == 0 {
-			continue
-		}
 		numAppended := 0
 		for numAppended < joinResultChkBuffer.NumRows() {
 			if joinResult.chk.NumRows() == e.maxChunkSize {
