@@ -16,7 +16,6 @@ package statistics
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -281,113 +280,74 @@ func (hg *Histogram) toString(isIndex bool) string {
 }
 
 // equalRowCount estimates the row count where the column equals to value.
-func (hg *Histogram) equalRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
-	index, match, err := hg.lowerBound(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if index == hg.Len() {
-		return 0, nil
+func (hg *Histogram) equalRowCount(value types.Datum) float64 {
+	index, match := hg.Bounds.LowerBound(0, &value)
+	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
+	if index%2 == 1 {
+		if match {
+			return float64(hg.Buckets[index/2].Repeat)
+		}
+		return hg.totalRowCount() / float64(hg.NDV)
 	}
 	if match {
-		return float64(hg.Buckets[index].Repeat), nil
+		cmp := chunk.GetCompareFunc(hg.tp)
+		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
+			return float64(hg.Buckets[index/2].Repeat)
+		}
+		return hg.totalRowCount() / float64(hg.NDV)
 	}
-	c, err := value.CompareDatum(sc, hg.GetLower(index))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if c < 0 {
-		return 0, nil
-	}
-	return hg.totalRowCount() / float64(hg.NDV), nil
+	return 0
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
-func (hg *Histogram) greaterRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
-	lessCount, err := hg.lessRowCount(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	eqCount, err := hg.equalRowCount(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	gtCount := hg.totalRowCount() - lessCount - eqCount
+func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
+	gtCount := hg.totalRowCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
 	if gtCount < 0 {
 		gtCount = 0
 	}
-	return gtCount, nil
+	return gtCount
 }
 
-// greaterAndEqRowCount estimates the row count where the column less than or equal to value.
-func (hg *Histogram) greaterAndEqRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
-	greaterCount, err := hg.greaterRowCount(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	eqCount, err := hg.equalRowCount(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return greaterCount + eqCount, nil
+// greaterAndEqRowCount estimates the row count where the column greater than or equal to value.
+func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
+	return hg.totalRowCount() - hg.lessRowCount(value)
 }
 
 // lessRowCount estimates the row count where the column less than value.
-func (hg *Histogram) lessRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
-	index, match, err := hg.lowerBound(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
+func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+	index, match := hg.Bounds.LowerBound(0, &value)
+	if index == hg.Bounds.NumRows() {
+		return hg.totalRowCount()
 	}
-	if index == hg.Len() {
-		return hg.totalRowCount(), nil
+	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
+	bucketIdx := index / 2
+	curCount, curRepeat := float64(hg.Buckets[bucketIdx].Count), float64(hg.Buckets[bucketIdx].Repeat)
+	preCount := float64(0)
+	if bucketIdx > 0 {
+		preCount = float64(hg.Buckets[bucketIdx-1].Count)
 	}
-	curCount := float64(hg.Buckets[index].Count)
-	prevCount := float64(0)
-	if index > 0 {
-		prevCount = float64(hg.Buckets[index-1].Count)
+	if index%2 == 1 {
+		if match {
+			return curCount - curRepeat
+		}
+		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount)
 	}
-	lessThanBucketValueCount := curCount - float64(hg.Buckets[index].Repeat)
-	if match {
-		return lessThanBucketValueCount, nil
-	}
-	c, err := value.CompareDatum(sc, hg.GetLower(index))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if c <= 0 {
-		return prevCount, nil
-	}
-	frac := hg.calcFraction(index, &value)
-	return prevCount + (lessThanBucketValueCount-prevCount)*frac, nil
+	return preCount
 }
 
 // lessAndEqRowCount estimates the row count where the column less than or equal to value.
-func (hg *Histogram) lessAndEqRowCount(sc *stmtctx.StatementContext, value types.Datum) (float64, error) {
-	lessCount, err := hg.lessRowCount(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	eqCount, err := hg.equalRowCount(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return lessCount + eqCount, nil
+func (hg *Histogram) lessAndEqRowCount(value types.Datum) float64 {
+	return hg.lessRowCount(value) + hg.equalRowCount(value)
 }
 
 // betweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (hg *Histogram) betweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum) (float64, error) {
-	lessCountA, err := hg.lessRowCount(sc, a)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	lessCountB, err := hg.lessRowCount(sc, b)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
+func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
+	lessCountA := hg.lessRowCount(a)
+	lessCountB := hg.lessRowCount(b)
 	if lessCountA >= lessCountB {
-		return hg.totalRowCount() / float64(hg.NDV), nil
+		return hg.totalRowCount() / float64(hg.NDV)
 	}
-	return lessCountB - lessCountA, nil
+	return lessCountB - lessCountA
 }
 
 func (hg *Histogram) totalRowCount() float64 {
@@ -395,22 +355,6 @@ func (hg *Histogram) totalRowCount() float64 {
 		return 0
 	}
 	return float64(hg.Buckets[hg.Len()-1].Count)
-}
-
-func (hg *Histogram) lowerBound(sc *stmtctx.StatementContext, target types.Datum) (index int, match bool, err error) {
-	index = sort.Search(hg.Len(), func(i int) bool {
-		// TODO: We can just binary search on the chunk.
-		cmp, err1 := hg.GetUpper(i).CompareDatum(sc, &target)
-		if err1 != nil {
-			err = errors.Trace(err1)
-			return false
-		}
-		if cmp == 0 {
-			match = true
-		}
-		return cmp >= 0
-	})
-	return
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.
@@ -550,8 +494,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (f
 		count, err := c.CMSketch.queryValue(sc, val)
 		return float64(count), errors.Trace(err)
 	}
-	count, err := c.Histogram.equalRowCount(sc, val)
-	return count, errors.Trace(err)
+	return c.Histogram.equalRowCount(val), nil
 }
 
 // getColumnRowCount estimates the row count by a slice of NewRange.
@@ -575,10 +518,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			continue
 		}
 		// the interval case.
-		cnt, err := c.betweenRowCount(sc, rg.LowVal[0], rg.HighVal[0])
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+		cnt := c.betweenRowCount(rg.LowVal[0], rg.HighVal[0])
 		if rg.LowExclude {
 			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0])
 			if err != nil {
@@ -614,12 +554,11 @@ func (idx *Index) String() string {
 	return idx.Histogram.toString(true)
 }
 
-func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) (float64, error) {
+func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.queryBytes(b)), nil
+		return float64(idx.CMSketch.queryBytes(b))
 	}
-	count, err := idx.Histogram.equalRowCount(sc, types.NewBytesDatum(b))
-	return count, errors.Trace(err)
+	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
 }
 
 func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange) (float64, error) {
@@ -636,11 +575,7 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if fullLen && bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
-				rowCount, err1 := idx.equalRowCount(sc, lb)
-				if err1 != nil {
-					return 0, errors.Trace(err1)
-				}
-				totalCount += rowCount
+				totalCount += idx.equalRowCount(sc, lb)
 			}
 			continue
 		}
@@ -652,11 +587,7 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
-		rowCount, err := idx.betweenRowCount(sc, l, r)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		totalCount += rowCount
+		totalCount += idx.betweenRowCount(l, r)
 	}
 	if totalCount > idx.totalRowCount() {
 		totalCount = idx.totalRowCount()
