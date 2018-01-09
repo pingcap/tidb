@@ -231,7 +231,8 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges, err := points2TableRanges(sc, rangePoints, tp)
+	newTp := newFieldType(tp)
+	ranges, err := points2TableRanges(sc, rangePoints, newTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

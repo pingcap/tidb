@@ -272,13 +272,13 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a >= 9223372036854775807",
 			accessConds: "[ge(test.t.a, 9223372036854775807)]",
 			filterConds: "[]",
-			resultStr:   "[[9223372036854775807,+inf)]",
+			resultStr:   "[[9223372036854775807,+inf]]",
 		},
 		{
 			exprStr:     "a < -9223372036854775807",
 			accessConds: "[lt(test.t.a, -9223372036854775807)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-9223372036854775808]]",
+			resultStr:   "[[-inf,-9223372036854775807)]",
 		},
 		{
 			exprStr:     "a < -9223372036854775808",
