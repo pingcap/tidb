@@ -178,8 +178,7 @@ type QueryFeedback struct {
 	tableID     int64
 	colID       int64
 	isIndex     bool
-	idxRanges   []*ranger.NewRange
-	intRanges   []*ranger.NewRange
+	ranges      []*ranger.NewRange
 	histVersion uint64 // histVersion is the version of the histogram when we issue the query.
 	expected    int64
 	actual      int64
@@ -200,13 +199,13 @@ func NewQueryFeedback(tableID int64, colID int64, isIndex bool, histVer uint64, 
 
 // SetIndexRanges sets the index ranges.
 func (q *QueryFeedback) SetIndexRanges(ranges []*ranger.NewRange) *QueryFeedback {
-	q.idxRanges = ranges
+	q.ranges = ranges
 	return q
 }
 
 // SetIntRanges sets the int column ranges.
 func (q *QueryFeedback) SetIntRanges(ranges []*ranger.NewRange) *QueryFeedback {
-	q.intRanges = ranges
+	q.ranges = ranges
 	return q
 }
 

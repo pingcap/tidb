@@ -83,7 +83,7 @@ func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
 	return nil, nil
 }
 
-func tableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
+func tableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		var low, high []byte
@@ -99,7 +99,7 @@ func tableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) ([]kv.KeyRange,
 		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
-	return krs, nil
+	return krs
 }
 
 /*
@@ -864,7 +864,7 @@ func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.N
 	if builder.err != nil {
 		return builder
 	}
-	builder.Request.KeyRanges, builder.err = tableRangesToKVRanges(tid, tableRanges)
+	builder.Request.KeyRanges = tableRangesToKVRanges(tid, tableRanges)
 	return builder
 }
 
