@@ -914,33 +914,17 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	if target.Decimal != UnspecifiedLength {
 		fsp = target.Decimal
 	}
-	loc := sc.TimeZone
 	switch d.k {
 	case KindMysqlTime:
 		t = d.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp {
-			switch {
-			case t.TimeZone == nil:
-				t.TimeZone = loc
-			case t.TimeZone == time.UTC:
-				// Convert to session timezone.
-				err = t.ConvertTimeZone(time.UTC, loc)
-				if err != nil {
-					return ret, errors.Trace(err)
-				}
-			case t.TimeZone == sc.TimeZone:
-			default:
-				return ret, errors.New("get a wrong input")
-			}
-		}
-		t, err = t.RoundFrac(fsp)
+		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
 		t, err = d.GetMysqlDuration().ConvertToTime(mysql.TypeTimestamp)
 		if err != nil {
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
-		t, err = t.RoundFrac(fsp)
+		t, err = t.RoundFrac(sc, fsp)
 	case KindString, KindBytes:
 		t, err = ParseTime(sc, d.GetString(), mysql.TypeTimestamp, fsp)
 	case KindInt64:
@@ -949,7 +933,6 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
 	t.Type = mysql.TypeTimestamp
-	t.TimeZone = loc
 	ret.SetMysqlTime(t)
 	if err != nil {
 		return ret, errors.Trace(err)
@@ -975,14 +958,14 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
-		t, err = t.RoundFrac(fsp)
+		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
 		t, err = d.GetMysqlDuration().ConvertToTime(tp)
 		if err != nil {
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
-		t, err = t.RoundFrac(fsp)
+		t, err = t.RoundFrac(sc, fsp)
 	case KindString, KindBytes:
 		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
@@ -1378,7 +1361,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 	case KindMysqlTime:
 		// 2011-11-10 11:11:11.999999 -> 20111110111112
 		// 2011-11-10 11:59:59.999999 -> 20111110120000
-		t, err := d.GetMysqlTime().RoundFrac(DefaultFsp)
+		t, err := d.GetMysqlTime().RoundFrac(sc, DefaultFsp)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
