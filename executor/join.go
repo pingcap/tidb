@@ -707,16 +707,12 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 		joinResultChkBuffer.Reset()
 		if !selected[i] { // process unmatched outer rows
 			err = e.resultGenerators[workerID].emitToChunk(outerChk.GetRow(i), nil, joinResultChkBuffer)
-			if err != nil {
-				joinResult.err = errors.Trace(err)
-				return false, joinResult
-			}
 		} else { // process matched outer rows
 			err = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResultChkBuffer)
-			if err != nil {
-				joinResult.err = errors.Trace(err)
-				return false, joinResult
-			}
+		}
+		if err != nil {
+			joinResult.err = errors.Trace(err)
+			return false, joinResult
 		}
 		// Splitting the joinResultChkBuffer into chunks that reach e.maxChunkSize.
 		numAppended := 0
