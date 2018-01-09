@@ -682,6 +682,9 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 	startTS := time.Now()
 	recordSet, err := runStmt(goCtx, s, stmt)
 	if err != nil {
+		// NOTE that if we're in transaction, and runStmt returns error, there should be
+		// no side effect, i.e, tikv or union store should not touched by runStmt.
+		// Fortunately, this requirement seems always hold.
 		if !kv.ErrKeyExists.Equal(err) {
 			log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
 		}
@@ -762,7 +765,6 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			stmt, err := compiler.Compile(goCtx, stmtNode)
 			if err != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
-				terror.Log(errors.Trace(s.RollbackTxn(goCtx)))
 				return nil, errors.Trace(err)
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
