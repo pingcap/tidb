@@ -517,7 +517,6 @@ func (b *builtinCastIntAsTimeSig) evalTime(row types.Row) (res types.Time, isNul
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	res.TimeZone = sc.TimeZone
 	return res, false, nil
 }
 
@@ -711,7 +710,6 @@ func (b *builtinCastRealAsTimeSig) evalTime(row types.Row) (types.Time, bool, er
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	res.TimeZone = sc.TimeZone
 	return res, false, nil
 }
 
@@ -822,7 +820,6 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row types.Row) (res types.Time, i
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -986,7 +983,6 @@ func (b *builtinCastStringAsTimeSig) evalTime(row types.Row) (res types.Time, is
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -1025,13 +1021,12 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row types.Row) (res types.Time, isNu
 	if res, err = res.Convert(sc, b.tp.Tp); err != nil {
 		return res, true, errors.Trace(err)
 	}
-	res, err = res.RoundFrac(b.tp.Decimal)
+	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 		res.Type = b.tp.Tp
 	}
-	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -1040,11 +1035,12 @@ type builtinCastTimeAsIntSig struct {
 }
 
 func (b *builtinCastTimeAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	t, err := val.RoundFrac(types.DefaultFsp)
+	t, err := val.RoundFrac(sc, types.DefaultFsp)
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
@@ -1195,8 +1191,7 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row types.Row) (res types.Time, 
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
-	res, err = res.RoundFrac(b.tp.Decimal)
-	res.TimeZone = sc.TimeZone
+	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -1289,7 +1284,6 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row types.Row) (res types.Time, isNu
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	res.TimeZone = sc.TimeZone
 	return
 }
 

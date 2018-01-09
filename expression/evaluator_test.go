@@ -43,6 +43,7 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
+	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
