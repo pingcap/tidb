@@ -377,6 +377,8 @@ func updateTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, ori
 		}
 	}
 
-	tblInfo.UpdateTS = t.StartTS
+	if tblInfo.State == model.StatePublic {
+		tblInfo.UpdateTS = t.StartTS
+	}
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
