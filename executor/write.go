@@ -898,7 +898,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		h, err := e.Table.AddRecord(e.ctx, row, false)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
-			if !(sessVars.ImportingData || sessVars.StmtCtx.BatchCheck) {
+			if !sessVars.ImportingData {
 				getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
 			}
 			rowCount++
