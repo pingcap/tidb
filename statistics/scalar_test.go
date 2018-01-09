@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"math"
-	gotime "time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -40,9 +39,6 @@ func getTime(year, month, day int, timeType byte) types.Time {
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
 		Type: timeType,
 		Fsp:  types.DefaultFsp}
-	if timeType == mysql.TypeTimestamp {
-		ret.TimeZone = gotime.UTC
-	}
 	return ret
 }
 
