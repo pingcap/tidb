@@ -51,6 +51,8 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, tableID int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// The table has already been deleted in stats and acknowledged to all tidb,
+	// we can safely remove the meta info now.
 	if len(rows) == 0 {
 		sql := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", tableID)
 		_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
