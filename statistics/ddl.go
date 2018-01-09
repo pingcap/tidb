@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -32,16 +31,8 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	switch t.Tp {
 	case model.ActionCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
-	case model.ActionDropTable:
-		return h.DeleteTableStatsFromKV(t.TableInfo.ID, false)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
-	case model.ActionDropColumn:
-		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.ColumnInfo.ID, 0)
-	case model.ActionDropIndex:
-		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.IndexInfo.ID, 1)
-	default:
-		log.Warnf("Unsupported ddl event for statistic %s", t)
 	}
 	return nil
 }
@@ -74,36 +65,6 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-	_, err = exec.Execute(goctx.Background(), "commit")
-	return errors.Trace(err)
-}
-
-// DeleteTableStatsFromKV deletes table statistics from kv.
-func (h *Handle) DeleteTableStatsFromKV(id int64, deleteAll bool) error {
-	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goctx.Background(), "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	var sql string
-	if deleteAll {
-		sql = fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", id)
-	} else {
-		// We only update the version so that other tidb will know that this table is deleted.
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), id)
-	}
-	_, err = exec.Execute(goctx.Background(), sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", id))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", id))
-	if err != nil {
-		return errors.Trace(err)
 	}
 	_, err = exec.Execute(goctx.Background(), "commit")
 	return errors.Trace(err)
@@ -167,31 +128,5 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		}
 	}
 	_, err = exec.Execute(goCtx, "commit")
-	return errors.Trace(err)
-}
-
-// deleteHistStatsFromKV deletes all records about a column or an index and updates version.
-func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int) error {
-	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goctx.Background(), "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// delete histogram meta
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// delete all buckets
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(goctx.Background(), "commit")
 	return errors.Trace(err)
 }

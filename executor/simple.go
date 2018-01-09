@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -329,12 +328,11 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 	h := domain.GetDomain(e.ctx).StatsHandle()
 	if h.Lease <= 0 {
-		err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID, false)
+		err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
 	}
-	h.DDLEventCh() <- &util.Event{Tp: model.ActionDropTable, TableInfo: s.Table.TableInfo}
 	return nil
 }

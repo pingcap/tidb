@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -200,70 +198,6 @@ func (h *Handle) LoadNeededHistograms() error {
 		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, CMSketch: cms, Count: int64(hg.totalRowCount())}
 		h.UpdateTableStats([]*Table{tbl}, nil)
 		histogramNeededColumns.delete(col)
-	}
-	return nil
-}
-
-func (h *Handle) gcHistograms(tbl *model.TableInfo) error {
-	sql := fmt.Sprintf("select is_index, hist_id from mysql.stats_histograms where table_id = %d", tbl.ID)
-	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, row := range rows {
-		isIndex, histID := row.GetInt64(0), row.GetInt64(1)
-		find := false
-		if isIndex == 1 {
-			for _, idx := range tbl.Indices {
-				if idx.ID == histID {
-					find = true
-					break
-				}
-			}
-		} else {
-			for _, col := range tbl.Columns {
-				if col.ID == histID {
-					find = true
-					break
-				}
-			}
-		}
-		if !find {
-			if err := h.deleteHistStatsFromKV(tbl.ID, histID, int(isIndex)); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
-}
-
-// GCStats will garbage collect the useless stats info.
-func (h *Handle) GCStats(is infoschema.InfoSchema) error {
-	// To make sure that all the deleted tables have been acknowledged to all tidb,
-	// we only garbage collect version before 10 lease.
-	offset := oracle.ComposeTS(10*int64(h.Lease), 0)
-	if h.PrevLastVersion < offset || h.PrevLastVersion-offset < h.LastGCVersion {
-		return nil
-	}
-	sql := fmt.Sprintf("select table_id, version from mysql.stats_meta where version > %d and version < %d order by version", h.LastGCVersion, h.PrevLastVersion-offset)
-	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, row := range rows {
-		tableID, version := row.GetInt64(0), row.GetUint64(1)
-		tbl, ok := is.TableByID(tableID)
-		if !ok {
-			if err := h.DeleteTableStatsFromKV(tableID, true); err != nil {
-				return errors.Trace(err)
-			}
-			h.LastGCVersion = version
-			continue
-		}
-		if err := h.gcHistograms(tbl.Meta()); err != nil {
-			return errors.Trace(err)
-		}
-		h.LastGCVersion = version
 	}
 	return nil
 }

@@ -15,7 +15,6 @@ package statistics_test
 
 import (
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -401,32 +400,6 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	stat = h.GetTableStats(tableInfo.ID)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
-}
-
-func (s *testStatsUpdateSuite) TestGCStats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t(a int, b int, index idx(a, b))")
-	testKit.MustExec("insert into t values (1,1),(2,2),(3,3)")
-	testKit.MustExec("analyze table t")
-	testKit.MustExec("alter table t drop index idx")
-	c.Assert(len(testKit.MustQuery("select * from mysql.stats_histograms").Rows()), Equals, 3)
-	c.Assert(len(testKit.MustQuery("select * from mysql.stats_buckets").Rows()), Equals, 9)
-	h := s.do.StatsHandle()
-	h.PrevLastVersion = math.MaxUint64
-	c.Assert(h.GCStats(s.do.InfoSchema()), IsNil)
-	c.Assert(len(testKit.MustQuery("select * from mysql.stats_histograms").Rows()), Equals, 2)
-	c.Assert(len(testKit.MustQuery("select * from mysql.stats_buckets").Rows()), Equals, 6)
-	<-h.DDLEventCh()
-
-	testKit.MustExec("drop table t")
-	h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(len(testKit.MustQuery("select * from mysql.stats_meta").Rows()), Equals, 1)
-	c.Assert(h.GCStats(s.do.InfoSchema()), IsNil)
-	c.Assert(len(testKit.MustQuery("select * from mysql.stats_meta").Rows()), Equals, 0)
-	c.Assert(len(testKit.MustQuery("select * from mysql.stats_histograms").Rows()), Equals, 0)
-	c.Assert(len(testKit.MustQuery("select * from mysql.stats_buckets").Rows()), Equals, 0)
 }
 
 func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
