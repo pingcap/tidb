@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 func (s *testChunkSuite) TestMutRow(c *check.C) {
@@ -64,6 +65,18 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	row = mutRow.ToRow()
 	c.Assert(row.IsNull(0), check.IsTrue)
 	c.Assert(row.IsNull(1), check.IsFalse)
+
+	j, err := json.ParseBinaryFromString("true")
+	t := types.Time{
+		Time: types.FromDate(2000, 1, 1, 1, 0, 0, 0),
+		Type: mysql.TypeDatetime,
+		Fsp:  types.MaxFsp,
+	}
+	c.Assert(err, check.IsNil)
+	mutRow = MutRowFromValues(j, t)
+	row = mutRow.ToRow()
+	c.Assert(row.GetJSON(0), check.DeepEquals, j)
+	c.Assert(row.GetTime(1), check.DeepEquals, t)
 }
 
 func BenchmarkMutRowSetRow(b *testing.B) {
