@@ -365,10 +365,12 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	rowStr2 := fmt.Sprintf("%v %v", "3", "4")
 	r.Check(testkit.Rows(rowStr, rowStr1, rowStr2))
 
+	tk.MustExec("begin")
 	tk.MustExec("insert ignore into t values (4, 4), (4, 5), (4, 6)")
 	r = tk.MustQuery("select * from t;")
 	rowStr3 := fmt.Sprintf("%v %v", "4", "5")
 	r.Check(testkit.Rows(rowStr, rowStr1, rowStr2, rowStr3))
+	tk.MustExec("commit")
 
 	cfg.SetGetError(errors.New("foo"))
 	_, err := tk.Exec("insert ignore into t values (1, 3)")
