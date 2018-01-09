@@ -260,13 +260,13 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(6 in (select c2 from t2)) from t1",
 			[]string{
-				"TableScan_22   cop table:t1, range:(-inf,+inf), keep order:true 8000",
-				"TableReader_23 HashSemiJoin_20  root data:TableScan_22 8000",
+				"TableScan_11   cop table:t1, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_12 HashSemiJoin_10  root data:TableScan_11 8000",
 				"TableScan_13 Selection_14  cop table:t2, range:(-inf,+inf), keep order:false 10",
 				"Selection_14  TableScan_13 cop eq(6, test.t2.c2) 10",
-				"TableReader_15 HashSemiJoin_20  root data:Selection_14 10",
-				"HashSemiJoin_20 StreamAgg_9 TableReader_23,TableReader_15 root right:TableReader_15, aux 8000",
-				"StreamAgg_9  HashSemiJoin_20 root type:stream, funcs:sum(5_aux_0) 1",
+				"TableReader_15 HashSemiJoin_10  root data:Selection_14 10",
+				"HashSemiJoin_10 HashAgg_8 TableReader_12,TableReader_15 root right:TableReader_15, aux 8000",
+				"HashAgg_8  HashSemiJoin_10 root type:complete, funcs:sum(5_aux_0) 1",
 			},
 		},
 	}
