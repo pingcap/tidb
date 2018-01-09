@@ -175,6 +175,11 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
+
+	if len(key) < 512 {
+		// save the growed slice, to eliminate runtime.growslice
+		c.buffer = key
+	}
 	return
 }
 
