@@ -101,6 +101,8 @@ type index struct {
 	prefix  kv.Key
 
 	buffer []byte // It's used reduce the number of new slice when multiple index keys are created.
+	// indexValsBuf is used to reduce memory allocations in index.FetchValues.
+	indexValsBuf []types.Datum
 }
 
 // NewIndexWithBuffer builds a new Index object whit the buffer.
@@ -302,7 +304,10 @@ func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, inde
 }
 
 func (c *index) FetchValues(r []types.Datum) ([]types.Datum, error) {
-	vals := make([]types.Datum, len(c.idxInfo.Columns))
+	if c.indexValsBuf == nil {
+		c.indexValsBuf = make([]types.Datum, len(c.idxInfo.Columns))
+	}
+	vals := c.indexValsBuf
 	for i, ic := range c.idxInfo.Columns {
 		if ic.Offset < 0 || ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.Gen("Index column %s offset out of bound, offset: %d, row: %v",
