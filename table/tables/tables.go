@@ -29,12 +29,14 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -47,6 +49,7 @@ type Table struct {
 
 	publicColumns   []*table.Column
 	writableColumns []*table.Column
+	writableIndices []table.Index
 	indices         []table.Index
 	recordPrefix    kv.Key
 	indexPrefix     kv.Key
@@ -120,6 +123,7 @@ func newTable(tableID int64, cols []*table.Column, alloc autoid.Allocator) *Tabl
 
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.WritableCols()
+	t.writableIndices = t.WritableIndices()
 	return t
 }
 
@@ -130,6 +134,9 @@ func (t *Table) Indices() []table.Index {
 
 // WritableIndices implements table.Table WritableIndices interface.
 func (t *Table) WritableIndices() []table.Index {
+	if len(t.writableIndices) > 0 {
+		return t.writableIndices
+	}
 	writable := make([]table.Index, 0, len(t.indices))
 	for _, index := range t.indices {
 		s := index.Meta().State
@@ -214,7 +221,8 @@ func (t *Table) FirstKey() kv.Key {
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	txn := ctx.Txn()
-	bs := kv.NewBufferStore(txn)
+	// TODO: reuse bs, like AddRecord does.
+	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
 
 	// rebuild index
 	err := t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
@@ -254,7 +262,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	}
 
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -283,7 +291,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err = t.removeRowIndex(rm, h, oldVs, idx); err != nil {
+			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx); err != nil {
 				return errors.Trace(err)
 			}
 			break
@@ -307,6 +315,17 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 	return nil
 }
 
+// adjustRowValuesBuf adjust sessVars.AddRowValues length, sessVars.AddRowValues stores the inserting values that is used
+// by tablecodec.EncodeRow, the encoded row format is `id1, colval, id2, colval`, so the correct length is rowLen * 2. If
+// the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
+func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
+	adjustLen := rowLen * 2
+	if sessVars.AddRowValues == nil || cap(sessVars.AddRowValues) < adjustLen {
+		sessVars.AddRowValues = make([]types.Datum, adjustLen)
+	}
+	sessVars.AddRowValues = sessVars.AddRowValues[:adjustLen]
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -325,9 +344,14 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	}
 
 	txn := ctx.Txn()
-	bs := kv.NewBufferStore(txn)
-
-	skipCheck := ctx.GetSessionVars().ImportingData
+	sessVars := ctx.GetSessionVars()
+	// when ImportingData is true, no needs to check the key constrains, so we names the variable skipCheck.
+	skipCheck := sessVars.ImportingData
+	bs := sessVars.BufStore
+	if bs == nil {
+		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	}
+	bs.Reset()
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
@@ -359,12 +383,14 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 			row = append(row, value)
 		}
 	}
+	adjustRowValuesBuf(sessVars, len(row))
 
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	sessVars.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, sessVars.RowValBuf, sessVars.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	value := sessVars.RowValBuf
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -380,8 +406,8 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 			return 0, errors.Trace(err)
 		}
 	}
-	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
+	sessVars.StmtCtx.AddAffectedRows(1)
+	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
 	return recordID, nil
 }
 
@@ -521,11 +547,11 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 
 func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
-	pk, err := codec.EncodeValue(nil, types.NewIntDatum(h))
+	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, types.NewIntDatum(h))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -536,15 +562,15 @@ func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum,
 }
 
 func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
-	old, err := tablecodec.EncodeRow(oldRow, colIDs, ctx.GetSessionVars().GetTimeZone())
+	old, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	new, err := tablecodec.EncodeRow(newRow, colIDs, ctx.GetSessionVars().GetTimeZone())
+	newVal, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bin := append(old, new...)
+	bin := append(old, newVal...)
 	mutation := t.getMutation(ctx)
 	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Update)
@@ -552,7 +578,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datu
 }
 
 func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone())
+	data, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, r, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -579,7 +605,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
 			return errors.Trace(err)
 		}
-		if err = v.Delete(ctx.Txn(), vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -593,8 +619,8 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 }
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if err := idx.Delete(rm, vals, h); err != nil {
+func (t *Table) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
+	if err := idx.Delete(sc, rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

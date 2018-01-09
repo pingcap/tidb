@@ -57,14 +57,14 @@ func NewBinaryLiteralFromUint(value uint64, byteSize int) BinaryLiteral {
 	if byteSize != -1 && (byteSize < 1 || byteSize > 8) {
 		panic("Invalid byteSize")
 	}
-	bytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(bytes, value)
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, value)
 	if byteSize == -1 {
-		bytes = trimLeadingZeroBytes(bytes)
+		buf = trimLeadingZeroBytes(buf)
 	} else {
-		bytes = bytes[8-byteSize:]
+		buf = buf[8-byteSize:]
 	}
-	return bytes
+	return buf
 }
 
 // String implements fmt.Stringer interface.
@@ -101,8 +101,8 @@ func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
 
 // ToInt returns the int value for the literal.
 func (b BinaryLiteral) ToInt() (uint64, error) {
-	bytes := trimLeadingZeroBytes(b)
-	length := len(bytes)
+	buf := trimLeadingZeroBytes(b)
+	length := len(buf)
 	if length == 0 {
 		return 0, nil
 	}
@@ -110,9 +110,9 @@ func (b BinaryLiteral) ToInt() (uint64, error) {
 		return math.MaxUint64, ErrTruncated
 	}
 	// Note: the byte-order is BigEndian.
-	val := uint64(bytes[0])
+	val := uint64(buf[0])
 	for i := 1; i < length; i++ {
-		val = (val << 8) | uint64(bytes[i])
+		val = (val << 8) | uint64(buf[i])
 	}
 	return val, nil
 }
@@ -142,7 +142,7 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 	alignedLength := (len(s) + 7) &^ 7
 	s = ("00000000" + s)[len(s)+8-alignedLength:] // Pad with zero (slice from `-alignedLength`)
 	byteLength := len(s) >> 3
-	bytes := make([]byte, byteLength)
+	buf := make([]byte, byteLength)
 
 	for i := 0; i < byteLength; i++ {
 		strPosition := i << 3
@@ -150,10 +150,10 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		bytes[i] = byte(val)
+		buf[i] = byte(val)
 	}
 
-	return bytes, nil
+	return buf, nil
 }
 
 // NewBitLiteral parses bit string as BitLiteral type.
@@ -192,11 +192,11 @@ func ParseHexStr(s string) (BinaryLiteral, error) {
 	if len(s)%2 != 0 {
 		s = "0" + s
 	}
-	bytes, err := hex.DecodeString(s)
+	buf, err := hex.DecodeString(s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return bytes, nil
+	return buf, nil
 }
 
 // NewHexLiteral parses hexadecimal string as HexLiteral type.

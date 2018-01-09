@@ -19,7 +19,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -130,8 +129,6 @@ func main() {
 		printer.PrintRawTiDBInfo()
 		os.Exit(0)
 	}
-
-	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	registerStores()
 	loadConfig()

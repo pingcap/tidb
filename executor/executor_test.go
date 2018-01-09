@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
-	mocktikv "github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -1042,6 +1042,11 @@ func (s *testSuite) TestIndexScan(c *C) {
 	// Test for double read and top n.
 	result = tk.MustQuery("select a from t where c >= 2 order by b desc limit 1")
 	result.Check(testkit.Rows("5"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(50) primary key, b int, c int, index idx(b))")
+	tk.MustExec("insert into t values('aa', 1, 1)")
+	tk.MustQuery("select * from t use index(idx) where a > 'a'").Check(testkit.Rows("aa 1 1"))
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {

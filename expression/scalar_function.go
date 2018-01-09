@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -251,21 +250,6 @@ func (sf *ScalarFunction) EvalDuration(row types.Row, sc *stmtctx.StatementConte
 // EvalJSON implements Expression interface.
 func (sf *ScalarFunction) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
-}
-
-// HashCode implements Expression interface.
-func (sf *ScalarFunction) HashCode() []byte {
-	v := make([]types.Datum, 0, len(sf.GetArgs())+1)
-	bytes, err := codec.EncodeValue(nil, types.NewStringDatum(sf.FuncName.L))
-	terror.Log(errors.Trace(err))
-	v = append(v, types.NewBytesDatum(bytes))
-	for _, arg := range sf.GetArgs() {
-		v = append(v, types.NewBytesDatum(arg.HashCode()))
-	}
-	bytes = bytes[:0]
-	bytes, err = codec.EncodeValue(bytes, v...)
-	terror.Log(errors.Trace(err))
-	return bytes
 }
 
 // ResolveIndices implements Expression interface.

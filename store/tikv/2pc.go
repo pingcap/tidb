@@ -402,8 +402,8 @@ func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 }
 
 func getTxnSyncLog(txn *tikvTxn) bool {
-	if sync := txn.us.GetOption(kv.SyncLog); sync != nil {
-		return sync.(bool)
+	if syncOption := txn.us.GetOption(kv.SyncLog); syncOption != nil {
+		return syncOption.(bool)
 	}
 	return false
 }
