@@ -53,8 +53,6 @@ type Handle struct {
 	feedback []*QueryFeedback
 
 	Lease time.Duration
-	// LastGCVersion is the latest garbage collection version.
-	LastGCVersion uint64
 }
 
 // Clear the statsCache, only for test.

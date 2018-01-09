@@ -29,20 +29,18 @@ func (h *Handle) GCStats(is infoschema.InfoSchema) error {
 	// To make sure that all the deleted tables have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	offset := oracle.ComposeTS(10*int64(h.Lease), 0)
-	if h.PrevLastVersion < offset || h.PrevLastVersion-offset < h.LastGCVersion {
+	if h.PrevLastVersion < offset {
 		return nil
 	}
-	sql := fmt.Sprintf("select table_id, version from mysql.stats_meta where version > %d and version < %d order by version", h.LastGCVersion, h.PrevLastVersion-offset)
+	sql := fmt.Sprintf("select table_id from mysql.stats_meta where version < %d", h.PrevLastVersion-offset)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		tableID, version := row.GetInt64(0), row.GetUint64(1)
-		if err := h.gcTableStats(is, tableID); err != nil {
+		if err := h.gcTableStats(is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
-		h.LastGCVersion = version
 	}
 	return nil
 }
