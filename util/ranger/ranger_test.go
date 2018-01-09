@@ -518,7 +518,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b double)")
+	testKit.MustExec("create table t(a int, b double, c float(3, 2), d varchar(3), e bigint unsigned)")
 
 	tests := []struct {
 		colPos      int
@@ -720,6 +720,34 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[in(test.t.b, 1, 2.1)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2.1,2.1]]",
+		},
+		{
+			colPos:      0,
+			exprStr:     `a > 9223372036854775807`,
+			accessConds: "[gt(test.t.a, 9223372036854775807)]",
+			filterConds: "[]",
+			resultStr:   "[(9223372036854775807,+inf]]",
+		},
+		{
+			colPos:      2,
+			exprStr:     `c > 111.11111111`,
+			accessConds: "[gt(test.t.c, 111.11111111)]",
+			filterConds: "[]",
+			resultStr:   "[[111.111115,+inf]]",
+		},
+		{
+			colPos:      3,
+			exprStr:     `d > 'aaaaaaaaaaaaaa'`,
+			accessConds: "[gt(test.t.d, aaaaaaaaaaaaaa)]",
+			filterConds: "[]",
+			resultStr:   "[(aaaaaaaaaaaaaa,+inf]]",
+		},
+		{
+			colPos:      4,
+			exprStr:     `e > 18446744073709500000`,
+			accessConds: "[gt(test.t.e, 18446744073709500000)]",
+			filterConds: "[]",
+			resultStr:   "[(18446744073709500000,+inf]]",
 		},
 	}
 
