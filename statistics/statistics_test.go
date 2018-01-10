@@ -501,47 +501,47 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
-	ran := []ranger.IntColumnRange{{
-		LowVal:  math.MinInt64,
-		HighVal: math.MaxInt64,
+	ran := []*ranger.NewRange{{
+		LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
+		HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
 	}}
 	count, err := tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 2000
+	ran[0].LowVal[0].SetInt64(1000)
+	ran[0].HighVal[0].SetInt64(2000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1000)
-	ran[0].LowVal = 1001
-	ran[0].HighVal = 1999
+	ran[0].LowVal[0].SetInt64(1001)
+	ran[0].HighVal[0].SetInt64(1999)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 998)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 1000
+	ran[0].LowVal[0].SetInt64(1000)
+	ran[0].HighVal[0].SetInt64(1000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100)
 
 	tbl.Columns[0] = col
-	ran[0].LowVal = math.MinInt64
-	ran[0].HighVal = math.MaxInt64
+	ran[0].LowVal[0].SetInt64(math.MinInt64)
+	ran[0].HighVal[0].SetInt64(math.MaxInt64)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 2000
+	ran[0].LowVal[0].SetInt64(1000)
+	ran[0].HighVal[0].SetInt64(2000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 1000)
-	ran[0].LowVal = 1001
-	ran[0].HighVal = 1999
+	c.Assert(int(count), Equals, 1001)
+	ran[0].LowVal[0].SetInt64(1001)
+	ran[0].HighVal[0].SetInt64(1999)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 998)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 1000
+	c.Assert(int(count), Equals, 999)
+	ran[0].LowVal[0].SetInt64(1000)
+	ran[0].HighVal[0].SetInt64(1000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
