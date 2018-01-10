@@ -150,7 +150,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []ranger.IntColumnRange
+	Ranges  []*ranger.NewRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr

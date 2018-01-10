@@ -27,7 +27,7 @@ import (
 // points2NewRanges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2NewRanges.
 func points2NewRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*NewRange, error) {
-	indexRanges := make([]*NewRange, 0, len(rangePoints)/2)
+	ranges := make([]*NewRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], tp)
 		if err != nil {
@@ -44,15 +44,19 @@ func points2NewRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *typ
 		if !less {
 			continue
 		}
-		ir := &NewRange{
+		// If column has not null flag, [null, null] should be removed.
+		if mysql.HasNotNullFlag(tp.Flag) && endPoint.value.Kind() == types.KindNull {
+			continue
+		}
+		ran := &NewRange{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
 		}
-		indexRanges = append(indexRanges, ir)
+		ranges = append(ranges, ran)
 	}
-	return indexRanges, nil
+	return ranges, nil
 }
 
 func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType) (point, error) {
@@ -161,65 +165,61 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *NewRange, ran
 	return newRanges, nil
 }
 
-// points2TableRanges will construct the range slice with the given range points
-func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point) ([]IntColumnRange, error) {
-	tableRanges := make([]IntColumnRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint := rangePoints[i]
-		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
-			if startPoint.value.IsNull() {
-				startPoint.excl = false
-			}
-			startPoint.value.SetInt64(math.MinInt64)
-		}
-		startInt, err := startPoint.value.ToInt64(sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		startDatum := types.NewDatum(startInt)
-		cmp, err := startDatum.CompareDatum(sc, &startPoint.value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cmp < 0 || (cmp == 0 && startPoint.excl) {
-			if startInt == math.MaxInt64 {
-				continue
-			}
-			startInt++
-		}
-		endPoint := rangePoints[i+1]
-		if endPoint.value.IsNull() {
-			continue
-		} else if endPoint.value.Kind() == types.KindMaxValue {
-			endPoint.value.SetInt64(math.MaxInt64)
-		}
-		endInt, err := endPoint.value.ToInt64(sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		endDatum := types.NewDatum(endInt)
-		cmp, err = endDatum.CompareDatum(sc, &endPoint.value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cmp > 0 || (cmp == 0 && endPoint.excl) {
-			if endInt == math.MinInt64 {
-				continue
-			}
-			endInt--
-		}
-		if startInt > endInt {
-			continue
-		}
-		tableRanges = append(tableRanges, IntColumnRange{LowVal: startInt, HighVal: endInt})
+// points2TableRanges build ranges for table scan from range points.
+// It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
+func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*NewRange, error) {
+	ranges := make([]*NewRange, 0, len(rangePoints)/2)
+	var minValueDatum, maxValueDatum types.Datum
+	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
+	if mysql.HasUnsignedFlag(tp.Flag) {
+		minValueDatum.SetUint64(0)
+		maxValueDatum.SetUint64(math.MaxUint64)
+	} else {
+		minValueDatum.SetInt64(math.MinInt64)
+		maxValueDatum.SetInt64(math.MaxInt64)
 	}
-	return tableRanges, nil
+	for i := 0; i < len(rangePoints); i += 2 {
+		startPoint, err := convertPoint(sc, rangePoints[i], tp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if startPoint.value.Kind() == types.KindNull {
+			startPoint.value = minValueDatum
+			startPoint.excl = false
+		} else if startPoint.value.Kind() == types.KindMinNotNull {
+			startPoint.value = minValueDatum
+		}
+		endPoint, err := convertPoint(sc, rangePoints[i+1], tp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if endPoint.value.Kind() == types.KindMaxValue {
+			endPoint.value = maxValueDatum
+		} else if endPoint.value.Kind() == types.KindNull {
+			continue
+		}
+		less, err := rangePointLess(sc, startPoint, endPoint)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !less {
+			continue
+		}
+		ran := &NewRange{
+			LowVal:      []types.Datum{startPoint.value},
+			LowExclude:  startPoint.excl,
+			HighVal:     []types.Datum{endPoint.value},
+			HighExclude: endPoint.excl,
+		}
+		ranges = append(ranges, ran)
+	}
+	return ranges, nil
 }
 
 // BuildTableRange will build range of pk for PhysicalTableScan
-func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext) ([]IntColumnRange, error) {
+func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*NewRange, error) {
 	if len(accessConditions) == 0 {
-		return FullIntRange(), nil
+		return FullIntNewRange(), nil
 	}
 
 	rb := builder{sc: sc}
@@ -230,7 +230,8 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges, err := points2TableRanges(sc, rangePoints)
+	newTp := newFieldType(tp)
+	ranges, err := points2TableRanges(sc, rangePoints, newTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
