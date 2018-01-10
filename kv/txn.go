@@ -18,9 +18,9 @@ import (
 	"math/rand"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 

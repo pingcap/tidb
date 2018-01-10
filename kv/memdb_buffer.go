@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
+// memDBBuffer implements the MemBuffer interface.
 type memDbBuffer struct {
 	db              *memdb.DB
 	entrySizeLimit  int
@@ -40,9 +41,9 @@ type memDbIter struct {
 }
 
 // NewMemDbBuffer creates a new memDbBuffer.
-func NewMemDbBuffer() MemBuffer {
+func NewMemDbBuffer(cap int) MemBuffer {
 	return &memDbBuffer{
-		db:              memdb.New(comparer.DefaultComparer, 4*1024),
+		db:              memdb.New(comparer.DefaultComparer, cap),
 		entrySizeLimit:  TxnEntrySizeLimit,
 		bufferLenLimit:  atomic.LoadUint64(&TxnEntryCountLimit),
 		bufferSizeLimit: TxnTotalSizeLimit,
@@ -62,6 +63,10 @@ func (m *memDbBuffer) Seek(k Key) (Iterator, error) {
 		return nil, errors.Trace(err)
 	}
 	return i, nil
+}
+
+func (m *memDbBuffer) SetCap(cap int) {
+
 }
 
 func (m *memDbBuffer) SeekReverse(k Key) (Iterator, error) {
@@ -117,6 +122,11 @@ func (m *memDbBuffer) Size() int {
 // Len returns the number of entries in the DB.
 func (m *memDbBuffer) Len() int {
 	return m.db.Len()
+}
+
+// Reset cleanup the MemBuffer.
+func (m *memDbBuffer) Reset() {
+	m.db.Reset()
 }
 
 // Next implements the Iterator Next.

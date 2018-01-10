@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-binlog"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -402,8 +402,8 @@ func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 }
 
 func getTxnSyncLog(txn *tikvTxn) bool {
-	if sync := txn.us.GetOption(kv.SyncLog); sync != nil {
-		return sync.(bool)
+	if syncOption := txn.us.GetOption(kv.SyncLog); syncOption != nil {
+		return syncOption.(bool)
 	}
 	return false
 }

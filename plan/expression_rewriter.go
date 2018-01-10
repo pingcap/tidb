@@ -67,31 +67,45 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
 func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (
 	expression.Expression, LogicalPlan, error) {
-	er := &expressionRewriter{
-		p:          p,
-		aggrMap:    aggMapper,
-		b:          b,
-		asScalar:   asScalar,
-		ctx:        b.ctx,
-		preprocess: preprocess,
+	b.rewriterCounter++
+	var rewriter *expressionRewriter
+	if len(b.rewriterPool) < b.rewriterCounter {
+		rewriter = &expressionRewriter{
+			p:          p,
+			aggrMap:    aggMapper,
+			b:          b,
+			asScalar:   asScalar,
+			ctx:        b.ctx,
+			preprocess: preprocess,
+		}
+		b.rewriterPool = append(b.rewriterPool, rewriter)
+	} else {
+		// If rewriter.err is not nil, the planner will fail and won't continue. So don't need to reset the rewriter.err's value to nil.
+		rewriter = b.rewriterPool[b.rewriterCounter-1]
+		rewriter.p = p
+		rewriter.aggrMap = aggMapper
+		rewriter.asScalar = asScalar
+		rewriter.preprocess = preprocess
+		rewriter.ctxStack = rewriter.ctxStack[:0]
 	}
 	if p != nil {
-		er.schema = p.Schema()
+		rewriter.schema = p.Schema()
 	}
-	expr.Accept(er)
-	if er.err != nil {
-		return nil, nil, errors.Trace(er.err)
+	expr.Accept(rewriter)
+	if rewriter.err != nil {
+		return nil, nil, errors.Trace(rewriter.err)
 	}
-	if !asScalar && len(er.ctxStack) == 0 {
-		return nil, er.p, nil
+	if !asScalar && len(rewriter.ctxStack) == 0 {
+		return nil, rewriter.p, nil
 	}
-	if len(er.ctxStack) != 1 {
-		return nil, nil, errors.Errorf("context len %v is invalid", len(er.ctxStack))
+	if len(rewriter.ctxStack) != 1 {
+		return nil, nil, errors.Errorf("context len %v is invalid", len(rewriter.ctxStack))
 	}
-	if getRowLen(er.ctxStack[0]) != 1 {
+	if getRowLen(rewriter.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	return er.ctxStack[0], er.p, nil
+	b.rewriterCounter--
+	return rewriter.ctxStack[0], rewriter.p, nil
 }
 
 type expressionRewriter struct {
@@ -354,60 +368,67 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 // handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
+	agg := LogicalAggregation{}.init(er.ctx)
+	agg.SetChildren(np)
+
+	// Create a "max" or "min" aggregation.
 	funcName := ast.AggFuncMax
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	aggFunc := aggregation.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
-	agg := LogicalAggregation{
-		AggFuncs: []aggregation.Aggregation{aggFunc},
-	}.init(er.ctx)
-	setParentAndChildren(agg, np)
-	aggCol0 := &expression.Column{
+	funcMaxOrMin := aggregation.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
+
+	// Create a column and append it to the schema of that aggregation.
+	colMaxOrMin := &expression.Column{
 		ColName:  model.NewCIStr("agg_Col_0"),
 		FromID:   agg.id,
 		Position: 0,
-		RetType:  aggFunc.GetType(),
+		RetType:  funcMaxOrMin.GetType(),
 	}
-	schema := expression.NewSchema(aggCol0)
+	schema := expression.NewSchema(colMaxOrMin)
+
 	agg.SetSchema(schema)
-	cond := expression.NewFunctionInternal(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
+	agg.AggFuncs = []aggregation.Aggregation{funcMaxOrMin}
+
+	cond := expression.NewFunctionInternal(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, colMaxOrMin.Clone())
 	er.buildQuantifierPlan(agg, cond, rexpr, all)
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
 func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond, rexpr expression.Expression, all bool) {
-	isNullFunc := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
-	sumFunc := aggregation.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
-	countFuncNull := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
-	agg.AggFuncs = append(agg.AggFuncs, sumFunc, countFuncNull)
-	posID := agg.schema.Len()
-	aggColSum := &expression.Column{
+	funcIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
+
+	funcSum := aggregation.NewAggFunction(ast.AggFuncSum, []expression.Expression{funcIsNull}, false)
+	colSum := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_sum"),
 		FromID:   agg.id,
-		Position: posID,
-		RetType:  sumFunc.GetType(),
+		Position: agg.schema.Len(),
+		RetType:  funcSum.GetType(),
 	}
-	agg.schema.Append(aggColSum)
+	agg.AggFuncs = append(agg.AggFuncs, funcSum)
+	agg.schema.Append(colSum)
+
 	if all {
-		aggColCountNull := &expression.Column{
+		funcCount := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{funcIsNull.Clone()}, false)
+		colCount := &expression.Column{
 			ColName:  model.NewCIStr("agg_col_cnt"),
 			FromID:   agg.id,
-			Position: posID + 1,
-			RetType:  countFuncNull.GetType(),
+			Position: agg.schema.Len(),
+			RetType:  funcCount.GetType(),
 		}
-		agg.schema.Append(aggColCountNull)
+		agg.AggFuncs = append(agg.AggFuncs, funcCount)
+		agg.schema.Append(colCount)
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
 		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) = 0, true, null).
-		hasNotNull := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
+		hasNotNull := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), colSum.Clone(), expression.Zero)
 		nullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNotNull, expression.One, expression.Null)
 		cond = expression.ComposeCNFCondition(er.ctx, cond, nullChecker)
 		// If the set is empty, it should always return true.
-		checkEmpty := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), expression.Zero)
+		checkEmpty := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), colCount.Clone(), expression.Zero)
 		cond = expression.ComposeDNFCondition(er.ctx, cond, checkEmpty)
 	} else {
 		// For "any" expression, if the record set has null and the cond return false, the result should be NULL.
-		hasNull := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
+		hasNull := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum.Clone(), expression.Zero)
 		nullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNull, expression.Null, expression.Zero)
 		cond = expression.ComposeDNFCondition(er.ctx, cond, nullChecker)
 	}
@@ -432,7 +453,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 		IsAggOrSubq: true,
 		RetType:     cond.GetType(),
 	})
-	setParentAndChildren(proj, er.p)
+	proj.SetChildren(er.p)
 	er.p = proj
 }
 
@@ -445,7 +466,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.ctx)
-	setParentAndChildren(agg, np)
+	agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
@@ -473,7 +494,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	agg := LogicalAggregation{
 		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.ctx)
-	setParentAndChildren(agg, np)
+	agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,

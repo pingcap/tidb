@@ -27,7 +27,7 @@ import (
 
 // UnspecifiedLength is unspecified length.
 const (
-	UnspecifiedLength int = -1
+	UnspecifiedLength = -1
 )
 
 // FieldType records field type information.
@@ -280,46 +280,46 @@ func (ft *FieldType) FormatAsCastType(w io.Writer) {
 	switch ft.Tp {
 	case mysql.TypeVarString:
 		if ft.Charset == charset.CharsetBin && ft.Collate == charset.CollationBin {
-			fmt.Fprintf(w, "BINARY")
+			fmt.Fprint(w, "BINARY")
 		} else {
-			fmt.Fprintf(w, "CHAR")
+			fmt.Fprint(w, "CHAR")
 		}
 		if ft.Flen != UnspecifiedLength {
 			fmt.Fprintf(w, "(%d)", ft.Flen)
 		}
 		if ft.Flag&mysql.BinaryFlag != 0 {
-			fmt.Fprintf(w, " BINARY")
+			fmt.Fprint(w, " BINARY")
 		}
 		if ft.Charset != charset.CharsetBin && ft.Charset != charset.CharsetUTF8 {
 			fmt.Fprintf(w, " %s", ft.Charset)
 		}
 	case mysql.TypeDate:
-		fmt.Fprintf(w, "DATE")
+		fmt.Fprint(w, "DATE")
 	case mysql.TypeDatetime:
-		fmt.Fprintf(w, "DATETIME")
+		fmt.Fprint(w, "DATETIME")
 		if ft.Decimal > 0 {
 			fmt.Fprintf(w, "(%d)", ft.Decimal)
 		}
 	case mysql.TypeNewDecimal:
-		fmt.Fprintf(w, "DECIMAL")
+		fmt.Fprint(w, "DECIMAL")
 		if ft.Flen > 0 && ft.Decimal > 0 {
 			fmt.Fprintf(w, "(%d, %d)", ft.Flen, ft.Decimal)
 		} else if ft.Flen > 0 {
 			fmt.Fprintf(w, "(%d)", ft.Flen)
 		}
 	case mysql.TypeDuration:
-		fmt.Fprintf(w, "TIME")
+		fmt.Fprint(w, "TIME")
 		if ft.Decimal > 0 {
 			fmt.Fprintf(w, "(%d)", ft.Decimal)
 		}
 	case mysql.TypeLonglong:
 		if ft.Flag&mysql.UnsignedFlag != 0 {
-			fmt.Fprintf(w, "UNSIGNED")
+			fmt.Fprint(w, "UNSIGNED")
 		} else {
-			fmt.Fprintf(w, "SIGNED")
+			fmt.Fprint(w, "SIGNED")
 		}
 	case mysql.TypeJSON:
-		fmt.Fprintf(w, "JSON")
+		fmt.Fprint(w, "JSON")
 	}
 }
 
@@ -438,7 +438,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flen = len(x.Name)
 		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
-	case json.JSON:
+	case json.BinaryJSON:
 		tp.Tp = mysql.TypeJSON
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = 0

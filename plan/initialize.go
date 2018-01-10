@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 const (
@@ -51,8 +50,6 @@ const (
 	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
-	// TypeHashSemiJoin is the type of hash semi join.
-	TypeHashSemiJoin = "HashSemiJoin"
 	// TypeHashLeftJoin is the type of left hash join.
 	TypeHashLeftJoin = "HashLeftJoin"
 	// TypeHashRightJoin is the type of right hash join.
@@ -85,249 +82,247 @@ const (
 	TypeIndexReader = "IndexReader"
 )
 
-func (p LogicalAggregation) init(ctx context.Context) *LogicalAggregation {
-	p.basePlan = newBasePlan(TypeAgg, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	return &p
+func (la LogicalAggregation) init(ctx context.Context) *LogicalAggregation {
+	la.baseLogicalPlan = newBaseLogicalPlan(TypeAgg, ctx, &la)
+	return &la
 }
 
 func (p LogicalJoin) init(ctx context.Context) *LogicalJoin {
-	p.basePlan = newBasePlan(TypeJoin, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeJoin, ctx, &p)
 	return &p
 }
 
-func (p DataSource) init(ctx context.Context) *DataSource {
-	p.basePlan = newBasePlan(TypeTableScan, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	return &p
+func (ds DataSource) init(ctx context.Context) *DataSource {
+	ds.baseLogicalPlan = newBaseLogicalPlan(TypeTableScan, ctx, &ds)
+	return &ds
 }
 
-func (p LogicalApply) init(ctx context.Context) *LogicalApply {
-	p.basePlan = newBasePlan(TypeApply, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	return &p
+func (la LogicalApply) init(ctx context.Context) *LogicalApply {
+	la.baseLogicalPlan = newBaseLogicalPlan(TypeApply, ctx, &la)
+	return &la
 }
 
 func (p LogicalSelection) init(ctx context.Context) *LogicalSelection {
-	p.basePlan = newBasePlan(TypeSel, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeSel, ctx, &p)
 	return &p
 }
 
-func (p PhysicalSelection) init(ctx context.Context) *PhysicalSelection {
-	p.basePlan = newBasePlan(TypeSel, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalSelection) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalSelection {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeSel, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
 func (p LogicalUnionScan) init(ctx context.Context) *LogicalUnionScan {
-	p.basePlan = newBasePlan(TypeUnionScan, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeUnionScan, ctx, &p)
 	return &p
 }
 
 func (p LogicalProjection) init(ctx context.Context) *LogicalProjection {
-	p.basePlan = newBasePlan(TypeProj, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeProj, ctx, &p)
 	return &p
 }
 
-func (p PhysicalProjection) init(ctx context.Context) *PhysicalProjection {
-	p.basePlan = newBasePlan(TypeProj, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalProjection) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalProjection {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeProj, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
 func (p LogicalUnionAll) init(ctx context.Context) *LogicalUnionAll {
-	p.basePlan = newBasePlan(TypeUnion, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeUnion, ctx, &p)
 	return &p
 }
 
-func (p PhysicalUnionAll) init(ctx context.Context) *PhysicalUnionAll {
-	p.basePlan = newBasePlan(TypeUnion, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalUnionAll) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalUnionAll {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeUnion, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
-func (p LogicalSort) init(ctx context.Context) *LogicalSort {
-	p.basePlan = newBasePlan(TypeSort, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+func (ls LogicalSort) init(ctx context.Context) *LogicalSort {
+	ls.baseLogicalPlan = newBaseLogicalPlan(TypeSort, ctx, &ls)
+	return &ls
+}
+
+func (p PhysicalSort) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalSort {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeSort, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
-func (p PhysicalSort) init(ctx context.Context) *PhysicalSort {
-	p.basePlan = newBasePlan(TypeSort, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p NominalSort) init(ctx context.Context, props ...*requiredProp) *NominalSort {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeSort, ctx, &p)
+	p.childrenReqProps = props
 	return &p
 }
 
-func (p LogicalTopN) init(ctx context.Context) *LogicalTopN {
-	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	return &p
+func (lt LogicalTopN) init(ctx context.Context) *LogicalTopN {
+	lt.baseLogicalPlan = newBaseLogicalPlan(TypeTopN, ctx, &lt)
+	return &lt
 }
 
-func (p PhysicalTopN) init(ctx context.Context) *PhysicalTopN {
-	p.basePlan = newBasePlan(TypeTopN, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalTopN) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalTopN {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeTopN, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
 func (p LogicalLimit) init(ctx context.Context) *LogicalLimit {
-	p.basePlan = newBasePlan(TypeLimit, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeLimit, ctx, &p)
 	return &p
 }
 
-func (p PhysicalLimit) init(ctx context.Context) *PhysicalLimit {
-	p.basePlan = newBasePlan(TypeLimit, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalLimit) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalLimit {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeLimit, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
 func (p LogicalTableDual) init(ctx context.Context) *LogicalTableDual {
-	p.basePlan = newBasePlan(TypeDual, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeDual, ctx, &p)
 	return &p
 }
 
-func (p PhysicalTableDual) init(ctx context.Context) *PhysicalTableDual {
-	p.basePlan = newBasePlan(TypeDual, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalTableDual) init(ctx context.Context, stats *statsInfo) *PhysicalTableDual {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeDual, ctx, &p)
+	p.stats = stats
 	return &p
 }
 
 func (p LogicalExists) init(ctx context.Context) *LogicalExists {
-	p.basePlan = newBasePlan(TypeExists, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeExists, ctx, &p)
 	return &p
 }
 
-func (p PhysicalExists) init(ctx context.Context) *PhysicalExists {
-	p.basePlan = newBasePlan(TypeExists, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalExists) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalExists {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeExists, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
 func (p LogicalMaxOneRow) init(ctx context.Context) *LogicalMaxOneRow {
-	p.basePlan = newBasePlan(TypeMaxOneRow, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeMaxOneRow, ctx, &p)
 	return &p
 }
 
-func (p PhysicalMaxOneRow) init(ctx context.Context) *PhysicalMaxOneRow {
-	p.basePlan = newBasePlan(TypeMaxOneRow, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalMaxOneRow) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalMaxOneRow {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeMaxOneRow, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
 func (p Update) init(ctx context.Context) *Update {
-	p.basePlan = *newBasePlan(TypeUpdate, ctx, &p)
+	p.basePlan = newBasePlan(TypeUpdate, ctx)
 	return &p
 }
 
 func (p Delete) init(ctx context.Context) *Delete {
-	p.basePlan = *newBasePlan(TypeDelete, ctx, &p)
+	p.basePlan = newBasePlan(TypeDelete, ctx)
 	return &p
 }
 
 func (p Insert) init(ctx context.Context) *Insert {
-	p.basePlan = *newBasePlan(TypeInsert, ctx, &p)
+	p.basePlan = newBasePlan(TypeInsert, ctx)
 	return &p
 }
 
 func (p Show) init(ctx context.Context) *Show {
-	p.basePlan = *newBasePlan(TypeShow, ctx, &p)
+	p.basePlan = newBasePlan(TypeShow, ctx)
 	return &p
 }
 
 func (p LogicalLock) init(ctx context.Context) *LogicalLock {
-	p.basePlan = newBasePlan(TypeLock, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.baseLogicalPlan = newBaseLogicalPlan(TypeLock, ctx, &p)
 	return &p
 }
 
-func (p PhysicalLock) init(ctx context.Context) *PhysicalLock {
-	p.basePlan = newBasePlan(TypeLock, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalLock) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalLock {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeLock, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
 func (p PhysicalTableScan) init(ctx context.Context) *PhysicalTableScan {
-	p.basePlan = newBasePlan(TypeTableScan, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeTableScan, ctx, &p)
 	return &p
 }
 
 func (p PhysicalIndexScan) init(ctx context.Context) *PhysicalIndexScan {
-	p.basePlan = newBasePlan(TypeIdxScan, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeIdxScan, ctx, &p)
 	return &p
 }
 
-func (p PhysicalMemTable) init(ctx context.Context) *PhysicalMemTable {
-	p.basePlan = newBasePlan(TypeMemTableScan, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalMemTable) init(ctx context.Context, stats *statsInfo) *PhysicalMemTable {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeMemTableScan, ctx, &p)
+	p.stats = stats
 	return &p
 }
 
-func (p PhysicalHashJoin) init(ctx context.Context) *PhysicalHashJoin {
+func (p PhysicalHashJoin) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalHashJoin {
 	tp := TypeHashRightJoin
 	if p.SmallChildIdx == 1 {
 		tp = TypeHashLeftJoin
 	}
-	p.basePlan = newBasePlan(tp, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(tp, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
-func (p PhysicalHashSemiJoin) init(ctx context.Context) *PhysicalHashSemiJoin {
-	p.basePlan = newBasePlan(TypeHashSemiJoin, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalMergeJoin) init(ctx context.Context, stats *statsInfo) *PhysicalMergeJoin {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeMergeJoin, ctx, &p)
+	p.stats = stats
 	return &p
 }
 
-func (p PhysicalMergeJoin) init(ctx context.Context) *PhysicalMergeJoin {
-	p.basePlan = newBasePlan(TypeMergeJoin, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
+func (base basePhysicalAgg) init(ctx context.Context, stats *statsInfo) *basePhysicalAgg {
+	base.basePhysicalPlan = newBasePhysicalPlan(TypeHashAgg, ctx, &base)
+	base.stats = stats
+	return &base
 }
 
-func (base basePhysicalAgg) initForHash(ctx context.Context) *PhysicalHashAgg {
+func (base basePhysicalAgg) initForHash(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalHashAgg {
 	p := &PhysicalHashAgg{base}
-	p.basePlan = newBasePlan(TypeHashAgg, ctx, p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeHashAgg, ctx, p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return p
 }
 
-func (base basePhysicalAgg) initForStream(ctx context.Context, keys []*expression.Column, inputCnt float64) *PhysicalStreamAgg {
-	p := &PhysicalStreamAgg{
-		basePhysicalAgg: base,
-		propKeys:        keys,
-		inputCount:      inputCnt,
-	}
-	p.basePlan = newBasePlan(TypeStreamAgg, ctx, p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (base basePhysicalAgg) initForStream(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalStreamAgg {
+	p := &PhysicalStreamAgg{base}
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeStreamAgg, ctx, p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return p
 }
 
-func (p PhysicalApply) init(ctx context.Context) *PhysicalApply {
-	p.basePlan = newBasePlan(TypeApply, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalApply) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalApply {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeApply, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
-func (p PhysicalUnionScan) init(ctx context.Context) *PhysicalUnionScan {
-	p.basePlan = newBasePlan(TypeUnionScan, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+func (p PhysicalUnionScan) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalUnionScan {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeUnionScan, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
 func (p PhysicalIndexLookUpReader) init(ctx context.Context) *PhysicalIndexLookUpReader {
-	p.basePlan = newBasePlan(TypeIndexLookUp, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeIndexLookUp, ctx, &p)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 	p.schema = p.tablePlan.Schema()
@@ -335,20 +330,19 @@ func (p PhysicalIndexLookUpReader) init(ctx context.Context) *PhysicalIndexLookU
 }
 
 func (p PhysicalTableReader) init(ctx context.Context) *PhysicalTableReader {
-	p.basePlan = newBasePlan(TypeTableReader, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeTableReader, ctx, &p)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
 func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
-	p.basePlan = newBasePlan(TypeIndexReader, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeIndexReader, ctx, &p)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	if _, ok := p.indexPlan.(*PhysicalHashAgg); ok {
+	switch p.indexPlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
 		p.schema = p.indexPlan.Schema()
-	} else {
+	default:
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
 		p.schema = is.dataSourceSchema
 	}
@@ -356,10 +350,10 @@ func (p PhysicalIndexReader) init(ctx context.Context) *PhysicalIndexReader {
 	return &p
 }
 
-func (p PhysicalIndexJoin) init(ctx context.Context, children ...Plan) *PhysicalIndexJoin {
-	p.basePlan = newBasePlan(TypeIndexJoin, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	p.children = children
+func (p PhysicalIndexJoin) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalIndexJoin {
+	p.basePhysicalPlan = newBasePhysicalPlan(TypeIndexJoin, ctx, &p)
+	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 

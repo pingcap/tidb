@@ -44,36 +44,36 @@ func (visitor1) Enter(in Node) (Node, bool) {
 
 func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 	stmts := []Node{
-		(&AdminStmt{}),
-		(&AlterUserStmt{}),
-		(&BeginStmt{}),
-		(&BinlogStmt{}),
-		(&CommitStmt{}),
-		(&CreateUserStmt{}),
-		(&DeallocateStmt{}),
-		(&DoStmt{}),
-		(&ExecuteStmt{UsingVars: []ExprNode{&ValueExpr{}}}),
-		(&ExplainStmt{Stmt: &ShowStmt{}}),
-		(&GrantStmt{}),
-		(&PrepareStmt{SQLVar: &VariableExpr{Value: &ValueExpr{}}}),
-		(&RollbackStmt{}),
-		(&SetPwdStmt{}),
-		(&SetStmt{Variables: []*VariableAssignment{
+		&AdminStmt{},
+		&AlterUserStmt{},
+		&BeginStmt{},
+		&BinlogStmt{},
+		&CommitStmt{},
+		&CreateUserStmt{},
+		&DeallocateStmt{},
+		&DoStmt{},
+		&ExecuteStmt{UsingVars: []ExprNode{&ValueExpr{}}},
+		&ExplainStmt{Stmt: &ShowStmt{}},
+		&GrantStmt{},
+		&PrepareStmt{SQLVar: &VariableExpr{Value: &ValueExpr{}}},
+		&RollbackStmt{},
+		&SetPwdStmt{},
+		&SetStmt{Variables: []*VariableAssignment{
 			{
 				Value: &ValueExpr{},
 			},
-		}}),
-		(&UseStmt{}),
-		(&AnalyzeTableStmt{
+		}},
+		&UseStmt{},
+		&AnalyzeTableStmt{
 			TableNames: []*TableName{
 				{},
 			},
-		}),
-		(&FlushStmt{}),
-		(&PrivElem{}),
-		(&VariableAssignment{Value: &ValueExpr{}}),
-		(&KillStmt{}),
-		(&DropStatsStmt{Table: &TableName{}}),
+		},
+		&FlushStmt{},
+		&PrivElem{},
+		&VariableAssignment{Value: &ValueExpr{}},
+		&KillStmt{},
+		&DropStatsStmt{Table: &TableName{}},
 	}
 
 	for _, v := range stmts {
@@ -97,8 +97,8 @@ jobAbbr char(4) not null,
 constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cascade on update cascade
 );
 `
-	parser := parser.New()
-	stmts, err := parser.Parse(sql, "", "")
+	parse := parser.New()
+	stmts, err := parse.Parse(sql, "", "")
 	c.Assert(err, IsNil)
 	for _, stmt := range stmts {
 		stmt.Accept(visitor{})

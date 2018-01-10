@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -46,36 +47,71 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
-// replaceChild replaces p's child with some plan else.
-func replaceChild(p, child, replace Plan) {
-	for i, ch := range p.Children() {
-		if ch.ID() == child.ID() {
-			p.Children()[i] = replace
-		}
-	}
+// logicalSchemaProducer stores the schema for the logical plans who can produce schema directly.
+type logicalSchemaProducer struct {
+	schema *expression.Schema
+	baseLogicalPlan
 }
 
-// setParentAndChildren sets parent and children relationship.
-func setParentAndChildren(parent Plan, children ...Plan) {
-	if children == nil || parent == nil {
-		return
+// Schema implements the Plan.Schema interface.
+func (s *logicalSchemaProducer) Schema() *expression.Schema {
+	if s.schema == nil {
+		s.schema = expression.NewSchema()
 	}
-	for _, child := range children {
-		child.SetParents(parent)
-	}
-	parent.SetChildren(children...)
+	return s.schema
 }
 
-// removePlan removes a plan from its parent and child.
-func removePlan(p Plan) {
-	parents := p.Parents()
-	children := p.Children()
-	if len(parents) == 0 {
-		child := children[0]
-		child.SetParents()
-		return
+// SetSchema implements the Plan.SetSchema interface.
+func (s *logicalSchemaProducer) SetSchema(schema *expression.Schema) {
+	s.schema = schema
+}
+
+// physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
+type physicalSchemaProducer struct {
+	schema *expression.Schema
+	basePhysicalPlan
+}
+
+// Schema implements the Plan.Schema interface.
+func (s *physicalSchemaProducer) Schema() *expression.Schema {
+	if s.schema == nil {
+		s.schema = expression.NewSchema()
 	}
-	parent, child := parents[0], children[0]
-	replaceChild(parent, p, child)
-	child.SetParents(parent)
+	return s.schema
+}
+
+// SetSchema implements the Plan.SetSchema interface.
+func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
+	s.schema = schema
+}
+
+// baseSchemaProducer stores the schema for the base plans who can produce schema directly.
+type baseSchemaProducer struct {
+	schema *expression.Schema
+	basePlan
+}
+
+// Schema implements the Plan.Schema interface.
+func (s *baseSchemaProducer) Schema() *expression.Schema {
+	if s.schema == nil {
+		s.schema = expression.NewSchema()
+	}
+	return s.schema
+}
+
+// SetSchema implements the Plan.SetSchema interface.
+func (s *baseSchemaProducer) SetSchema(schema *expression.Schema) {
+	s.schema = schema
+}
+
+func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
+	switch joinType {
+	case SemiJoin, AntiSemiJoin:
+		return join.Children()[0].Schema().Clone()
+	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		newSchema := join.Children()[0].Schema().Clone()
+		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
+		return newSchema
+	}
+	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
 }

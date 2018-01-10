@@ -17,10 +17,10 @@ import (
 	"math/bits"
 	"sort"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	log "github.com/sirupsen/logrus"
 )
 
 // tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
@@ -190,7 +190,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 		reordered: true,
 	}.init(e.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-	setParentAndChildren(join, lChild, rChild)
+	join.SetChildren(lChild, rChild)
 	return join
 }
 

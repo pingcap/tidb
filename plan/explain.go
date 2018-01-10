@@ -21,42 +21,6 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 )
 
-func setParents4FinalPlan(plan PhysicalPlan) {
-	allPlans := []PhysicalPlan{plan}
-	planMark := map[int]bool{}
-	planMark[plan.ID()] = true
-	for pID := 0; pID < len(allPlans); pID++ {
-		allPlans[pID].SetParents()
-		switch copPlan := allPlans[pID].(type) {
-		case *PhysicalTableReader:
-			setParents4FinalPlan(copPlan.tablePlan)
-		case *PhysicalIndexReader:
-			setParents4FinalPlan(copPlan.indexPlan)
-		case *PhysicalIndexLookUpReader:
-			setParents4FinalPlan(copPlan.indexPlan)
-			setParents4FinalPlan(copPlan.tablePlan)
-		}
-		for _, p := range allPlans[pID].Children() {
-			if !planMark[p.ID()] {
-				allPlans = append(allPlans, p.(PhysicalPlan))
-				planMark[p.ID()] = true
-			}
-		}
-	}
-
-	allPlans = allPlans[0:1]
-	planMark[plan.ID()] = false
-	for pID := 0; pID < len(allPlans); pID++ {
-		for _, p := range allPlans[pID].Children() {
-			p.SetParents(allPlans[pID])
-			if planMark[p.ID()] {
-				planMark[p.ID()] = false
-				allPlans = append(allPlans, p.(PhysicalPlan))
-			}
-		}
-	}
-}
-
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalLock) ExplainInfo() string {
 	return p.Lock.String()
@@ -88,7 +52,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			}
 		}
 	}
-	buffer.WriteString(fmt.Sprintf(", out of order:%v", p.OutOfOrder))
+	buffer.WriteString(fmt.Sprintf(", keep order:%v", p.KeepOrder))
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
@@ -234,32 +198,6 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 func (p *PhysicalHashJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	buffer.WriteString(fmt.Sprintf(", small:%s", p.Children()[p.SmallChildIdx].ExplainID()))
-	if len(p.EqualConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", equal:%s", p.EqualConditions))
-	}
-	if len(p.LeftConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", left cond:%s", p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", right cond:%s",
-			expression.ExplainExpressionList(p.RightConditions)))
-	}
-	if len(p.OtherConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", other cond:%s",
-			expression.ExplainExpressionList(p.OtherConditions)))
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements PhysicalPlan interface.
-func (p *PhysicalHashSemiJoin) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("right:%s", p.Children()[1].ExplainID()))
-	if p.WithAux {
-		buffer.WriteString(", aux")
-	}
-	if p.Anti {
-		buffer.WriteString(", anti")
-	}
 	if len(p.EqualConditions) > 0 {
 		buffer.WriteString(fmt.Sprintf(", equal:%s", p.EqualConditions))
 	}

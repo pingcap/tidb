@@ -35,8 +35,12 @@ var (
 	ErrTooBigDisplayWidth = terror.ClassTypes.New(codeTooBigDisplayWidth, "Too Big Display width")
 	// ErrTooBigFieldLength is return when column length too big for column.
 	ErrTooBigFieldLength = terror.ClassTypes.New(codeTooBigFieldLength, "Too Big Field length")
-	// ErrTooBigSet is return when too many strings for column.
+	// ErrTooBigSet is returned when too many strings for column.
 	ErrTooBigSet = terror.ClassTypes.New(codeTooBigSet, "Too Big Set")
+	// ErrTooBigScale is returned when type DECIMAL/NUMERIC scale is bigger than mysql.MaxDecimalScale.
+	ErrTooBigScale = terror.ClassTypes.New(codeTooBigScale, mysql.MySQLErrName[mysql.ErrTooBigScale])
+	// ErrTooBigPrecision is returned when type DECIMAL/NUMERIC precision is bigger than mysql.MaxDecimalWidth
+	ErrTooBigPrecision = terror.ClassTypes.New(codeTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 	// ErrWrongFieldSpec is return when incorrect column specifier for column.
 	ErrWrongFieldSpec = terror.ClassTypes.New(codeWrongFieldSpec, "Wrong Field Spec")
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
@@ -54,19 +58,21 @@ var (
 const (
 	codeBadNumber terror.ErrCode = 1
 
-	codeDataTooLong         terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
-	codeIllegalValueForType terror.ErrCode = terror.ErrCode(mysql.ErrIllegalValueForType)
-	codeTruncated           terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
-	codeOverflow            terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
-	codeDivByZero           terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
-	codeTooBigDisplayWidth  terror.ErrCode = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
-	codeTooBigFieldLength   terror.ErrCode = terror.ErrCode(mysql.ErrTooBigFieldlength)
-	codeTooBigSet           terror.ErrCode = terror.ErrCode(mysql.ErrTooBigSet)
-	codeWrongFieldSpec      terror.ErrCode = terror.ErrCode(mysql.ErrWrongFieldSpec)
-	codeTruncatedWrongValue terror.ErrCode = terror.ErrCode(mysql.ErrTruncatedWrongValue)
-	codeUnknown             terror.ErrCode = terror.ErrCode(mysql.ErrUnknown)
-	codeInvalidDefault      terror.ErrCode = terror.ErrCode(mysql.ErrInvalidDefault)
-	codeMBiggerThanD        terror.ErrCode = terror.ErrCode(mysql.ErrMBiggerThanD)
+	codeDataTooLong         = terror.ErrCode(mysql.ErrDataTooLong)
+	codeIllegalValueForType = terror.ErrCode(mysql.ErrIllegalValueForType)
+	codeTruncated           = terror.ErrCode(mysql.WarnDataTruncated)
+	codeOverflow            = terror.ErrCode(mysql.ErrDataOutOfRange)
+	codeDivByZero           = terror.ErrCode(mysql.ErrDivisionByZero)
+	codeTooBigDisplayWidth  = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
+	codeTooBigFieldLength   = terror.ErrCode(mysql.ErrTooBigFieldlength)
+	codeTooBigSet           = terror.ErrCode(mysql.ErrTooBigSet)
+	codeTooBigScale         = terror.ErrCode(mysql.ErrTooBigScale)
+	codeTooBigPrecision     = terror.ErrCode(mysql.ErrTooBigPrecision)
+	codeWrongFieldSpec      = terror.ErrCode(mysql.ErrWrongFieldSpec)
+	codeTruncatedWrongValue = terror.ErrCode(mysql.ErrTruncatedWrongValue)
+	codeUnknown             = terror.ErrCode(mysql.ErrUnknown)
+	codeInvalidDefault      = terror.ErrCode(mysql.ErrInvalidDefault)
+	codeMBiggerThanD        = terror.ErrCode(mysql.ErrMBiggerThanD)
 )
 
 var (
@@ -86,6 +92,8 @@ func init() {
 		codeTooBigDisplayWidth:  mysql.ErrTooBigDisplaywidth,
 		codeTooBigFieldLength:   mysql.ErrTooBigFieldlength,
 		codeTooBigSet:           mysql.ErrTooBigSet,
+		codeTooBigScale:         mysql.ErrTooBigScale,
+		codeTooBigPrecision:     mysql.ErrTooBigPrecision,
 		codeWrongFieldSpec:      mysql.ErrWrongFieldSpec,
 		codeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 		codeUnknown:             mysql.ErrUnknown,

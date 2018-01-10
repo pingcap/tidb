@@ -15,8 +15,8 @@ package plan
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -26,39 +26,40 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
-	basePlan
+	baseSchemaProducer
 }
 
 // ShowDDLJobs is for showing DDL job list.
 type ShowDDLJobs struct {
-	basePlan
+	baseSchemaProducer
 }
 
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
-	basePlan
+	baseSchemaProducer
 
 	Tables []*ast.TableName
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
 type CancelDDLJobs struct {
-	basePlan
+	baseSchemaProducer
 
 	JobIDs []int64
 }
 
 // Prepare represents prepare plan.
 type Prepare struct {
-	basePlan
+	baseSchemaProducer
 
 	Name    string
 	SQLText string
@@ -74,7 +75,7 @@ type Prepared struct {
 
 // Execute represents prepare plan.
 type Execute struct {
-	basePlan
+	baseSchemaProducer
 
 	Name      string
 	UsingVars []expression.Expression
@@ -134,7 +135,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema,
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
-			return cacheValue.(*PSTMTPlanCacheValue).Plan, nil
+			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
+			err := e.rebuildRange(plan)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return plan, nil
 		}
 	}
 	p, err := Optimize(ctx, prepared.Stmt, is)
@@ -147,16 +153,77 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema,
 	return p, err
 }
 
+func (e *Execute) rebuildRange(p Plan) error {
+	sc := p.context().GetSessionVars().StmtCtx
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		ts := x.TablePlans[0].(*PhysicalTableScan)
+		cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
+		var pkCol *expression.Column
+		if ts.Table.PKIsHandle {
+			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+				pkCol = expression.ColInfo2Col(cols, pkColInfo)
+			}
+		}
+		newRanges := ranger.FullIntNewRange()
+		if pkCol != nil {
+			ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newRanges = ranges
+		}
+		ts.Ranges = newRanges
+	case *PhysicalIndexReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		var err error
+		is.Ranges, err = e.buildRangeForIndexScan(sc, is)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	case *PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		var err error
+		is.Ranges, err = e.buildRangeForIndexScan(sc, is)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	default:
+		var err error
+		for _, child := range x.Children() {
+			err = e.rebuildRange(child)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *PhysicalIndexScan) ([]*ranger.NewRange, error) {
+	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
+	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
+	newRanges := ranger.FullNewRange()
+	if len(idxCols) > 0 {
+		ranges, err := ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newRanges = ranges
+	}
+	return newRanges, nil
+}
+
 // Deallocate represents deallocate plan.
 type Deallocate struct {
-	basePlan
+	baseSchemaProducer
 
 	Name string
 }
 
 // Show represents a show plan.
 type Show struct {
-	basePlan
+	baseSchemaProducer
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -174,14 +241,14 @@ type Show struct {
 
 // Set represents a plan for set stmt.
 type Set struct {
-	basePlan
+	baseSchemaProducer
 
 	VarAssigns []*expression.VarAssignment
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.
 type Simple struct {
-	basePlan
+	baseSchemaProducer
 
 	Statement ast.StmtNode
 }
@@ -196,7 +263,7 @@ type InsertGeneratedColumns struct {
 
 // Insert represents an insert plan.
 type Insert struct {
-	basePlan
+	baseSchemaProducer
 
 	Table       table.Table
 	tableSchema *expression.Schema
@@ -219,7 +286,7 @@ type Insert struct {
 
 // Update represents Update plan.
 type Update struct {
-	basePlan
+	baseSchemaProducer
 
 	OrderedList []*expression.Assignment
 	IgnoreErr   bool
@@ -229,7 +296,7 @@ type Update struct {
 
 // Delete represents a delete plan.
 type Delete struct {
-	basePlan
+	baseSchemaProducer
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
@@ -252,7 +319,7 @@ type AnalyzeIndexTask struct {
 
 // Analyze represents an analyze plan
 type Analyze struct {
-	basePlan
+	baseSchemaProducer
 
 	ColTasks []AnalyzeColumnsTask
 	IdxTasks []AnalyzeIndexTask
@@ -260,7 +327,7 @@ type Analyze struct {
 
 // LoadData represents a loaddata plan.
 type LoadData struct {
-	basePlan
+	baseSchemaProducer
 
 	IsLocal    bool
 	Path       string
@@ -274,76 +341,54 @@ type LoadData struct {
 
 // DDL represents a DDL statement plan.
 type DDL struct {
-	basePlan
+	baseSchemaProducer
 
 	Statement ast.DDLNode
 }
 
 // Explain represents a explain plan.
 type Explain struct {
-	basePlan
+	baseSchemaProducer
 
 	StmtPlan       Plan
-	Rows           [][]types.Datum
+	Rows           [][]string
 	explainedPlans map[int]bool
-}
-
-func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
-	for _, child := range p.Children() {
-		err := e.prepareExplainInfo(child, p)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	explain, err := json.MarshalIndent(p, "", "    ")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	parentStr := ""
-	if parent != nil {
-		parentStr = parent.ExplainID()
-	}
-	row := types.MakeDatums(p.ExplainID(), string(explain), parentStr)
-	e.Rows = append(e.Rows, row)
-	return nil
 }
 
 // prepareExplainInfo4DAGTask generates the following information for every plan:
 // ["id", "parents", "task", "operator info"].
-func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
-	parents := p.Parents()
-	parentIDs := make([]string, 0, len(parents))
-	for _, parent := range parents {
-		parentIDs = append(parentIDs, parent.ExplainID())
-	}
+func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, parentID string) {
 	childrenIDs := make([]string, 0, len(p.Children()))
 	for _, ch := range p.Children() {
 		childrenIDs = append(childrenIDs, ch.ExplainID())
 	}
-	parentInfo := strings.Join(parentIDs, ",")
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
-	count := p.statsProfile().count
-	row := types.MakeDatums(p.ExplainID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
+	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', -1, 64))
+	row := []string{p.ExplainID(), parentID, childrenInfo, taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }
 
 // prepareCopTaskInfo generates explain information for cop-tasks.
 // Only PhysicalTableReader, PhysicalIndexReader and PhysicalIndexLookUpReader have cop-tasks currently.
 func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan) {
-	for _, p := range plans {
-		e.prepareExplainInfo4DAGTask(p, "cop")
+	for i, p := range plans {
+		var parentID string
+		if i+1 < len(plans) {
+			parentID = plans[i+1].ExplainID()
+		}
+		e.prepareExplainInfo4DAGTask(p, "cop", parentID)
 	}
 }
 
 // prepareRootTaskInfo generates explain information for root-tasks.
-func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
+func (e *Explain) prepareRootTaskInfo(p PhysicalPlan, parentID string) {
 	e.explainedPlans[p.ID()] = true
 	for _, child := range p.Children() {
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.prepareRootTaskInfo(child.(PhysicalPlan))
+		e.prepareRootTaskInfo(child.(PhysicalPlan), p.ExplainID())
 	}
 	switch copPlan := p.(type) {
 	case *PhysicalTableReader:
@@ -354,7 +399,7 @@ func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
 		e.prepareCopTaskInfo(copPlan.IndexPlans)
 		e.prepareCopTaskInfo(copPlan.TablePlans)
 	}
-	e.prepareExplainInfo4DAGTask(p, "root")
+	e.prepareExplainInfo4DAGTask(p, "root", parentID)
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
@@ -363,8 +408,7 @@ func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	e.prepareTaskDot(p, "root", buffer)
 	buffer.WriteString(fmt.Sprintln("}"))
 
-	row := types.MakeDatums(buffer.String())
-	e.Rows = append(e.Rows, row)
+	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
 func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
@@ -378,8 +422,8 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 		return
 	}
 
-	copTasks := []Plan{}
-	pipelines := []string{}
+	var copTasks []Plan
+	var pipelines []string
 
 	for planQueue := []Plan{p}; len(planQueue) > 0; planQueue = planQueue[1:] {
 		curPlan := planQueue[0]

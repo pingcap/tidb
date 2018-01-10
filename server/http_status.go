@@ -19,13 +19,13 @@ import (
 	"net/http"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 )
 
 var once sync.Once
@@ -43,6 +43,9 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/status", s.handleStatus)
 	// HTTP path for prometheus.
 	router.Handle("/metrics", prometheus.Handler())
+
+	// HTTP path for dump statistics.
+	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler())
 
 	if s.cfg.Store == "tikv" {
 		tikvHandler := s.newRegionHandler()

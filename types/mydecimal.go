@@ -18,6 +18,7 @@ import (
 	"strconv"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -45,7 +46,6 @@ const (
 	wordMax       = wordBase - 1
 	notFixedDec   = 31
 
-	MaxFraction = 30
 	DivFracIncr = 4
 
 	// ModeHalfEven rounds normally.
@@ -702,8 +702,8 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 // RETURN VALUE
 //  eDecOK/eDecTruncated
 func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err error) {
-	if frac > MaxFraction {
-		frac = MaxFraction
+	if frac > mysql.MaxDecimalScale {
+		frac = mysql.MaxDecimalScale
 	}
 	// wordsFracTo is the number of fraction words in buffer.
 	wordsFracTo := (frac + 1) / digitsPerWord
@@ -1077,7 +1077,7 @@ with the correct -1/0/+1 result
                 7E F2 04 C7 2D FB 2D
 */
 func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
-	if precision > digitsPerWord*maxWordBufLen || precision < 0 || frac > MaxFraction || frac < 0 {
+	if precision > digitsPerWord*maxWordBufLen || precision < 0 || frac > mysql.MaxDecimalScale || frac < 0 {
 		return nil, ErrBadNumber
 	}
 	var err error
@@ -1725,7 +1725,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 		tmp1        = wordsIntTo
 		tmp2        = wordsFracTo
 	)
-	to.resultFrac = myMinInt8(from1.resultFrac+from2.resultFrac, MaxFraction)
+	to.resultFrac = myMinInt8(from1.resultFrac+from2.resultFrac, mysql.MaxDecimalScale)
 	wordsIntTo, wordsFracTo, err = fixWordCntError(wordsIntTo, wordsFracTo)
 	to.negative = from1.negative != from2.negative
 	to.digitsFrac = from1.digitsFrac + from2.digitsFrac
@@ -1767,7 +1767,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 	stop2 := 0
 	to.wordBuf = zeroMyDecimal.wordBuf
 
-	for idx1 += (wordsFrac1 - 1); idx1 >= stop1; idx1-- {
+	for idx1 += wordsFrac1 - 1; idx1 >= stop1; idx1-- {
 		carry := int32(0)
 		idxTo = startTo
 		idx2 = start2
@@ -1839,7 +1839,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 // to       - quotient
 // fracIncr - increment of fraction
 func DecimalDiv(from1, from2, to *MyDecimal, fracIncr int) error {
-	to.resultFrac = myMinInt8(from1.resultFrac+int8(fracIncr), MaxFraction)
+	to.resultFrac = myMinInt8(from1.resultFrac+int8(fracIncr), mysql.MaxDecimalScale)
 	return doDivMod(from1, from2, to, nil, fracIncr)
 }
 

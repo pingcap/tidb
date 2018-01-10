@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -92,7 +92,8 @@ var (
 	}
 	stores = make(map[string]kv.Driver)
 	// store.UUID()-> IfBootstrapped
-	storeBootstrapped = make(map[string]bool)
+	storeBootstrapped     = make(map[string]bool)
+	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is the time for re-updating remote schema.
 	// In online DDL, we must wait 2 * SchemaLease time to guarantee
@@ -249,24 +250,24 @@ func NewStore(path string) (kv.Storage, error) {
 }
 
 func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
-	url, err := url.Parse(path)
+	storeURL, err := url.Parse(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	name := strings.ToLower(url.Scheme)
+	name := strings.ToLower(storeURL.Scheme)
 	d, ok := stores[name]
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
 	var s kv.Storage
-	err1 := util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
+	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		log.Infof("new store")
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
-	return s, errors.Trace(err1)
+	return s, errors.Trace(err)
 }
 
 // DialPumpClientWithRetry tries to dial to binlogSocket,

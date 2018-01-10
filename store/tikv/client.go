@@ -15,6 +15,7 @@
 package tikv
 
 import (
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,9 +46,6 @@ const (
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
-
-	rpcLabelKV  = "kv"
-	rpcLabelCop = "cop"
 )
 
 // Client is a client that sends RPC.
@@ -197,11 +195,9 @@ func (c *rpcClient) closeConns() {
 // SendReq sends a Request to server and receives Response.
 func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	start := time.Now()
-	var label = rpcLabelKV
-	if req.Type == tikvrpc.CmdCop {
-		label = rpcLabelCop
-	}
-	defer func() { sendReqHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds()) }()
+	reqType := req.Type.String()
+	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
+	defer func() { sendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds()) }()
 
 	conn, err := c.getConn(addr)
 	if err != nil {

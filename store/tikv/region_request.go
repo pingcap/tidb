@@ -16,12 +16,12 @@ package tikv
 import (
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -104,9 +104,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	context, cancel := goctx.WithTimeout(bo, timeout)
-	defer cancel()
-	resp, err = s.client.SendReq(context, ctx.Addr, req)
+	if timeout > 0 {
+		context, cancel := goctx.WithTimeout(bo, timeout)
+		defer cancel()
+		resp, err = s.client.SendReq(context, ctx.Addr, req)
+	} else {
+		resp, err = s.client.SendReq(bo, ctx.Addr, req)
+	}
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {

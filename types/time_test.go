@@ -653,6 +653,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 func (s *testTimeSuite) TestRoundFrac(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
+	sc.TimeZone = time.Local
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -673,7 +674,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	for _, t := range tbl {
 		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(t.Fsp)
+		nv, err := v.RoundFrac(sc, t.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
@@ -842,8 +843,8 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	tests := []struct {
 		unit   string
-		t1     types.TimeInternal
-		t2     types.TimeInternal
+		t1     types.MysqlTime
+		t2     types.MysqlTime
 		expect int64
 	}{
 		{"MONTH", types.FromDate(2002, 5, 30, 0, 0, 0, 0), types.FromDate(2001, 1, 1, 0, 0, 0, 0), -16},
@@ -857,18 +858,14 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 
 	for _, test := range tests {
 		t1 := types.Time{
-			Time:     test.t1,
-			Type:     mysql.TypeDatetime,
-			Fsp:      6,
-			TimeZone: nil,
-			Negative: false,
+			Time: test.t1,
+			Type: mysql.TypeDatetime,
+			Fsp:  6,
 		}
 		t2 := types.Time{
-			Time:     test.t2,
-			Type:     mysql.TypeDatetime,
-			Fsp:      6,
-			TimeZone: nil,
-			Negative: false,
+			Time: test.t2,
+			Type: mysql.TypeDatetime,
+			Fsp:  6,
 		}
 		c.Assert(types.TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
@@ -893,10 +890,10 @@ func (s *testTimeSuite) TestDateFSP(c *C) {
 func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tests := []struct {
-		input  types.TimeInternal
+		input  types.MysqlTime
 		from   *time.Location
 		to     *time.Location
-		expect types.TimeInternal
+		expect types.MysqlTime
 	}{
 		{types.FromDate(2017, 1, 1, 0, 0, 0, 0), time.UTC, loc, types.FromDate(2017, 1, 1, 8, 0, 0, 0)},
 		{types.FromDate(2017, 1, 1, 8, 0, 0, 0), loc, time.UTC, types.FromDate(2017, 1, 1, 0, 0, 0, 0)},
@@ -934,7 +931,7 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		c.Assert(err, IsNil)
 		v2, err := v1.Add(dur)
 		c.Assert(err, IsNil)
-		c.Assert(v2.Compare(result), Equals, 0)
+		c.Assert(v2.Compare(result), Equals, 0, Commentf("%v %v", v2.Time, result.Time))
 	}
 }
 

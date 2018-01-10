@@ -33,14 +33,13 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
-				row := types.MakeDatums(
+				e.appendRow([]interface{}{
 					db.Name.O,
 					tbl.Name.O,
 					e.versionToTime(statsTbl.Version),
 					statsTbl.ModifyCount,
 					statsTbl.Count,
-				)
-				e.rows = append(e.rows, row)
+				})
 			}
 		}
 	}
@@ -56,10 +55,10 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
-					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram))
+					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
 				}
 				for _, idx := range statsTbl.Indices {
-					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram))
+					e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram)
 				}
 			}
 		}
@@ -67,8 +66,8 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	return nil
 }
 
-func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) Row {
-	return types.MakeDatums(
+func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) {
+	e.appendRow([]interface{}{
 		dbName,
 		tblName,
 		colName,
@@ -76,7 +75,7 @@ func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string,
 		e.versionToTime(hist.LastUpdateVersion),
 		hist.NDV,
 		hist.NullCount,
-	)
+	})
 }
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
@@ -93,18 +92,16 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
-					rows, err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
+					err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					e.rows = append(e.rows, rows...)
 				}
 				for _, idx := range statsTbl.Indices {
-					rows, err := e.bucketsToRows(db.Name.O, tbl.Name.O, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
+					err := e.bucketsToRows(db.Name.O, tbl.Name.O, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					e.rows = append(e.rows, rows...)
 				}
 			}
 		}
@@ -114,40 +111,38 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 
 // bucketsToRows converts histogram buckets to rows. If the histogram is built from index, then numOfCols equals to number
 // of index columns, else numOfCols is 0.
-func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram) ([]Row, error) {
+func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram) error {
 	isIndex := 0
 	if numOfCols > 0 {
 		isIndex = 1
 	}
-	var rows []Row
-	for i, bkt := range hist.Buckets {
-		lowerBoundStr, err := e.valueToString(bkt.LowerBound, numOfCols)
+	for i := 0; i < hist.Len(); i++ {
+		lowerBoundStr, err := e.valueToString(hist.GetLower(i), numOfCols)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		upperBoundStr, err := e.valueToString(bkt.UpperBound, numOfCols)
+		upperBoundStr, err := e.valueToString(hist.GetUpper(i), numOfCols)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		row := types.MakeDatums(
+		e.appendRow([]interface{}{
 			dbName,
 			tblName,
 			colName,
 			isIndex,
 			i,
-			bkt.Count,
-			bkt.Repeats,
+			hist.Buckets[i].Count,
+			hist.Buckets[i].Repeat,
 			lowerBoundStr,
 			upperBoundStr,
-		)
-		rows = append(rows, row)
+		})
 	}
-	return rows, nil
+	return nil
 }
 
 // valueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // size equals to number of origin values, else size is 0.
-func (e *ShowExec) valueToString(value types.Datum, size int) (string, error) {
+func (e *ShowExec) valueToString(value *types.Datum, size int) (string, error) {
 	if size == 0 {
 		return value.ToString()
 	}

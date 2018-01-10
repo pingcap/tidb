@@ -68,14 +68,17 @@ func (l *List) AppendRow(row Row) RowPtr {
 	}
 	chk := l.chunks[chkIdx]
 	rowIdx := chk.NumRows()
-	chk.AppendRow(0, row)
+	chk.AppendRow(row)
 	l.length++
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 }
 
 // Add adds a chunk to the List, the chunk may be modified later by the list.
-// Caller must make sure the input chk is not used any more and has the same field types.
+// Caller must make sure the input chk is not empty and not used any more and has the same field types.
 func (l *List) Add(chk *Chunk) {
+	if chk.NumRows() == 0 {
+		panic(" add empty chunk")
+	}
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
 	return

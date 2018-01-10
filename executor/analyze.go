@@ -14,11 +14,9 @@
 package executor
 
 import (
-	"math"
 	"strconv"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -30,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -52,21 +52,20 @@ const (
 	defaultCMSketchWidth = 2048
 )
 
-// Open implements the Executor Open interface.
-func (e *AnalyzeExec) Open(goctx.Context) error {
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *AnalyzeExec) Close() error {
-	return nil
-}
-
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
+	return nil, errors.Trace(e.run(goCtx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *AnalyzeExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *AnalyzeExec) run(goCtx goctx.Context) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultCh := make(chan statistics.AnalyzeResult, len(e.tasks))
@@ -92,7 +91,7 @@ func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
 		}
 		// We sleep two lease to make sure other tidb node has updated this node.
 		time.Sleep(lease * 2)
-		return nil, errors.Trace(err1)
+		return errors.Trace(err1)
 	}
 	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
 	var err1 error
@@ -106,21 +105,21 @@ func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
 		results = append(results, result)
 	}
 	if err1 != nil {
-		return nil, errors.Trace(err1)
+		return errors.Trace(err1)
 	}
 	for _, result := range results {
 		for i, hg := range result.Hist {
 			err = statistics.SaveStatsToStorage(e.ctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i])
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 	}
 	err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return nil, nil
+	return nil
 }
 
 func getBuildStatsConcurrency(ctx context.Context) (int, error) {
@@ -168,8 +167,8 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		Cms:     []*statistics.CMSketch{cms},
 		IsIndex: 1,
 	}
-	if len(hist.Buckets) > 0 {
-		result.Count = hist.Buckets[len(hist.Buckets)-1].Count
+	if hist.Len() > 0 {
+		result.Count = hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }
@@ -186,9 +185,9 @@ type AnalyzeIndexExec struct {
 }
 
 func (e *AnalyzeIndexExec) open() error {
-	idxRange := &ranger.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
+	idxRange := &ranger.NewRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	var builder requestBuilder
-	kvReq, err := builder.SetIndexRanges(e.tblInfo.ID, e.idxInfo.ID, []*ranger.IndexRange{idxRange}).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		SetPriority(e.priority).
@@ -257,8 +256,8 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
-	if len(hist.Buckets) > 0 {
-		result.Count += hist.Buckets[len(hist.Buckets)-1].Count
+	if hist.Len() > 0 {
+		result.Count += hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }
@@ -277,7 +276,7 @@ type AnalyzeColumnsExec struct {
 }
 
 func (e *AnalyzeColumnsExec) open() error {
-	ranges := []ranger.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+	ranges := ranger.FullIntNewRange()
 	var builder requestBuilder
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).
@@ -332,28 +331,23 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
 		}
 		for i, rc := range resp.Collectors {
-			collectors[i].MergeSampleCollector(statistics.SampleCollectorFromProto(rc))
+			collectors[i].MergeSampleCollector(sc, statistics.SampleCollectorFromProto(rc))
 		}
 	}
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
-		for i, bkt := range pkHist.Buckets {
-			pkHist.Buckets[i].LowerBound, err = tablecodec.DecodeColumnValue(bkt.LowerBound.GetBytes(), &e.pkInfo.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			pkHist.Buckets[i].UpperBound, err = tablecodec.DecodeColumnValue(bkt.UpperBound.GetBytes(), &e.pkInfo.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
+		err := pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 		hists = append(hists, pkHist)
 		cms = append(cms, nil)
@@ -365,7 +359,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i])
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

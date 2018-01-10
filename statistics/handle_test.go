@@ -114,7 +114,7 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 	c.Assert(len(a.Columns), Equals, len(b.Columns))
 	for i := range a.Columns {
 		c.Assert(a.Columns[i].Count, Equals, b.Columns[i].Count)
-		assertHistogramEqual(c, a.Columns[i].Histogram, b.Columns[i].Histogram)
+		c.Assert(statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false), IsTrue)
 		if a.Columns[i].CMSketch == nil {
 			c.Assert(b.Columns[i].CMSketch, IsNil)
 		} else {
@@ -123,21 +123,12 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
-		assertHistogramEqual(c, a.Indices[i].Histogram, b.Indices[i].Histogram)
+		c.Assert(statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false), IsTrue)
 		if a.Columns[i].CMSketch == nil {
 			c.Assert(b.Columns[i].CMSketch, IsNil)
 		} else {
 			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 		}
-	}
-}
-
-func assertHistogramEqual(c *C, a, b statistics.Histogram) {
-	c.Assert(a.ID, Equals, b.ID)
-	c.Assert(a.NDV, Equals, b.NDV)
-	c.Assert(len(a.Buckets), Equals, len(b.Buckets))
-	for j := 0; j < len(a.Buckets); j++ {
-		c.Assert(a.Buckets[j], DeepEquals, b.Buckets[j])
 	}
 }
 
@@ -165,7 +156,6 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo.ID)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Count, Equals, int64(recordCount))
-
 	assertTableEqual(c, statsTbl1, statsTbl2)
 }
 
@@ -182,8 +172,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
 	sc := new(stmtctx.StatementContext)
-	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0].ID)
-	c.Assert(err, IsNil)
+	count := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, 0.0)
 }
 
@@ -201,8 +190,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
 	sc := new(stmtctx.StatementContext)
-	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
-	c.Assert(err, IsNil)
+	count := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, float64(1))
 
 	// Drop a column and the offset changed,
@@ -215,8 +203,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
 	// At that time, we should get c2's stats instead of c1's.
-	count, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
-	c.Assert(err, IsNil)
+	count = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, 0.0)
 }
 
@@ -393,15 +380,15 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	time.Sleep(1 * time.Second)
 	stat := h.GetTableStats(tableInfo.ID)
 	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	c.Assert(len(hg.Buckets), Greater, 0)
+	c.Assert(hg.Len(), Greater, 0)
 	cms := stat.Columns[tableInfo.Columns[0].ID].CMSketch
 	c.Assert(cms, IsNil)
 	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
-	c.Assert(len(hg.Buckets), Greater, 0)
+	c.Assert(hg.Len(), Greater, 0)
 	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
 	c.Assert(cms.TotalCount(), Greater, uint64(0))
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	c.Assert(len(hg.Buckets), Equals, 0)
+	c.Assert(hg.Len(), Equals, 0)
 	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch
 	c.Assert(cms, IsNil)
 	_, err = stat.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo.Columns[2].ID)
@@ -409,7 +396,7 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	time.Sleep(1 * time.Second)
 	stat = h.GetTableStats(tableInfo.ID)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	c.Assert(len(hg.Buckets), Greater, 0)
+	c.Assert(hg.Len(), Greater, 0)
 }
 
 func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {

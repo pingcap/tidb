@@ -31,6 +31,7 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagMaxMinEliminate
 	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
@@ -41,6 +42,7 @@ const (
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&maxMinEliminator{},
 	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
@@ -146,13 +148,12 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (Logic
 
 func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
-	logic.prepareStatsProfile()
+	logic.deriveStats()
 	t, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	p := t.plan()
-	rebuildSchema(p)
 	p.ResolveIndices()
 	return p, nil
 }

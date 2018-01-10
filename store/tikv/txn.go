@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -63,6 +63,16 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		startTime: time.Now(),
 		valid:     true,
 	}, nil
+}
+
+// SetMemBufCap sets the transaction's MemBuffer capability, to reduce memory allocations.
+func (txn *tikvTxn) SetCap(cap int) {
+	txn.us.SetCap(cap)
+}
+
+// Reset reset tikvTxn's membuf.
+func (txn *tikvTxn) Reset() {
+	txn.us.Reset()
 }
 
 // Get implements transaction interface.

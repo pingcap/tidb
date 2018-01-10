@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
@@ -31,14 +30,15 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
 const (
 	insertDeleteRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
 
-	delBatchSize int = 65536
-	delBackLog       = 128
+	delBatchSize = 65536
+	delBackLog   = 128
 )
 
 type delRangeManager interface {

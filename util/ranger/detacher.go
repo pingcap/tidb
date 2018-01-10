@@ -200,42 +200,29 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return filterConds
 }
 
-// DetachCondsForSelectivity detaches the conditions used for range calculation from other useless conditions.
-func DetachCondsForSelectivity(conds []expression.Expression, rangeType int, cols []*expression.Column,
-	lengths []int) (accessConditions, otherConditions []expression.Expression) {
-	if rangeType == IntRangeType || rangeType == ColumnRangeType {
-		return detachColumnConditions(conds, cols[0].ColName)
-	} else if rangeType == IndexRangeType {
-		return DetachIndexConditions(conds, cols, lengths)
+// ExtractAccessConditions detaches the access conditions used for range calculation.
+func ExtractAccessConditions(conds []expression.Expression, rangeType RangeType, cols []*expression.Column,
+	lengths []int) []expression.Expression {
+	switch rangeType {
+	case IntRangeType, ColumnRangeType:
+		return extractColumnConditions(conds, cols[0].ColName)
+	case IndexRangeType:
+		accessConds, _ := DetachIndexConditions(conds, cols, lengths)
+		return accessConds
 	}
-	return nil, conds
+	return nil
 }
 
-// detachColumnConditions distinguishes between access conditions and filter conditions from conditions.
-func detachColumnConditions(conditions []expression.Expression, colName model.CIStr) ([]expression.Expression, []expression.Expression) {
+func extractColumnConditions(conds []expression.Expression, colName model.CIStr) []expression.Expression {
 	if colName.L == "" {
-		return nil, conditions
+		return nil
 	}
-
-	var accessConditions, filterConditions []expression.Expression
 	checker := conditionChecker{
 		colName: colName,
 		length:  types.UnspecifiedLength,
 	}
-	for _, cond := range conditions {
-		if !checker.check(cond) {
-			filterConditions = append(filterConditions, cond)
-			continue
-		}
-		accessConditions = append(accessConditions, cond)
-		// TODO: it will lead to repeated computation cost.
-		if checker.shouldReserve {
-			filterConditions = append(filterConditions, cond)
-			checker.shouldReserve = checker.length != types.UnspecifiedLength
-		}
-	}
-
-	return accessConditions, filterConditions
+	accessConds := make([]expression.Expression, 0, 8)
+	return expression.Filter(accessConds, conds, checker.check)
 }
 
 // DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for

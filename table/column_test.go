@@ -30,7 +30,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func (s *testTableSuite) TestString(c *C) {
+func (t *testTableSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
 	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
@@ -81,7 +81,7 @@ func (s *testTableSuite) TestString(c *C) {
 	c.Assert(col.GetTypeDesc(), Equals, "datetime")
 }
 
-func (s *testTableSuite) TestFind(c *C) {
+func (t *testTableSuite) TestFind(c *C) {
 	defer testleak.AfterTest(c)()
 	cols := []*Column{
 		newCol("a"),
@@ -94,7 +94,7 @@ func (s *testTableSuite) TestFind(c *C) {
 	FindOnUpdateCols(cols)
 }
 
-func (s *testTableSuite) TestCheck(c *C) {
+func (t *testTableSuite) TestCheck(c *C) {
 	defer testleak.AfterTest(c)()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
@@ -107,7 +107,7 @@ func (s *testTableSuite) TestCheck(c *C) {
 	CheckOnce([]*Column{})
 }
 
-func (s *testTableSuite) TestDesc(c *C) {
+func (t *testTableSuite) TestDesc(c *C) {
 	defer testleak.AfterTest(c)()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag | mysql.NotNullFlag | mysql.PriKeyFlag
@@ -129,7 +129,7 @@ func (s *testTableSuite) TestDesc(c *C) {
 	ColDescFieldNames(true)
 }
 
-func (s *testTableSuite) TestGetZeroValue(c *C) {
+func (t *testTableSuite) TestGetZeroValue(c *C) {
 	tests := []struct {
 		ft    *types.FieldType
 		value types.Datum
@@ -205,7 +205,7 @@ func (s *testTableSuite) TestGetZeroValue(c *C) {
 	}
 }
 
-func (s *testTableSuite) TestCastValue(c *C) {
+func (t *testTableSuite) TestCastValue(c *C) {
 	ctx := mock.NewContext()
 	colInfo := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeLong),
@@ -239,10 +239,9 @@ func (s *testTableSuite) TestCastValue(c *C) {
 	c.Assert(val, NotNil)
 }
 
-func (s *testTableSuite) TestGetDefaultValue(c *C) {
+func (t *testTableSuite) TestGetDefaultValue(c *C) {
 	ctx := mock.NewContext()
 	zeroTimestamp := types.ZeroTimestamp
-	zeroTimestamp.TimeZone = ctx.GetSessionVars().GetTimeZone()
 	tests := []struct {
 		colInfo *model.ColumnInfo
 		strict  bool

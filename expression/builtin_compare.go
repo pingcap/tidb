@@ -145,7 +145,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 			}
 			argIntLen := argTp.Flen
 			if argTp.Decimal > 0 {
-				argIntLen -= (argTp.Decimal + 1)
+				argIntLen -= argTp.Decimal + 1
 			}
 
 			// Reduce the sign bit if it is a signed integer/decimal
@@ -845,10 +845,10 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	}
 	if lhs.IsStringKind() && rhs.IsStringKind() {
 		return types.ETString
-	} else if lhs == types.ETInt && rhs == types.ETInt {
+	} else if (lhs == types.ETInt || lft.Hybrid()) && (rhs == types.ETInt || rft.Hybrid()) {
 		return types.ETInt
-	} else if (lhs == types.ETInt || lhs == types.ETDecimal) &&
-		(rhs == types.ETInt || rhs == types.ETDecimal) {
+	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
+		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
 		return types.ETDecimal
 	}
 	return types.ETReal
@@ -1729,10 +1729,7 @@ func (s *builtinNullEQJSONSig) evalInt(row types.Row) (val int64, isNull bool, e
 	case isNull0 != isNull1:
 		break
 	default:
-		cmpRes, err := json.CompareJSON(arg0, arg1)
-		if err != nil {
-			return 0, true, errors.Trace(err)
-		}
+		cmpRes := json.CompareBinary(arg0, arg1)
 		if cmpRes == 0 {
 			res = 1
 		}
@@ -1923,6 +1920,5 @@ func compareJSON(args []Expression, row types.Row, ctx context.Context) (int64, 
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
 	}
-	res, err := json.CompareJSON(arg0, arg1)
-	return int64(res), err != nil, errors.Trace(err)
+	return int64(json.CompareBinary(arg0, arg1)), false, nil
 }

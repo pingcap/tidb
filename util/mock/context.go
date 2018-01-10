@@ -111,6 +111,7 @@ func (c *Context) NewTxn() error {
 			return errors.Trace(err)
 		}
 	}
+
 	txn, err := c.Store.Begin()
 	if err != nil {
 		return errors.Trace(err)
@@ -145,10 +146,15 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
+		membufCap := kv.DefaultTxnMembufCap
+		if c.sessionVars.ImportingData {
+			membufCap = kv.ImportingTxnMembufCap
+		}
 		txn, err := c.Store.BeginWithStartTS(startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		txn.SetCap(membufCap)
 		c.txn = txn
 	}
 	return nil
@@ -178,6 +184,9 @@ func (c *Context) Cancel() {
 func (c *Context) GoCtx() goctx.Context {
 	return c.ctx
 }
+
+// StoreQueryFeedback stores the query feedback.
+func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {

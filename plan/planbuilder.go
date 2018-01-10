@@ -164,6 +164,11 @@ type planBuilder struct {
 	optFlag       uint64
 
 	curClause clauseCode
+
+	// rewriterPool stores the expressionRewriter we have created to reuse it if it has been released.
+	// rewriterCounter counts how many rewriter is being used.
+	rewriterPool    []*expressionRewriter
+	rewriterCounter int
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -220,26 +225,31 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 		vars = append(vars, newExpr)
 	}
 	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
-	exe.SetSchema(expression.NewSchema())
 	return exe
 }
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
-	exprs := make([]expression.Expression, 0, len(v.Exprs))
 	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
+
+	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		exprs = append(exprs, expr)
+		p.Exprs = append(p.Exprs, expr)
+		schema.Append(&expression.Column{
+			FromID:   p.id,
+			Position: schema.Len() + 1,
+			RetType:  expr.GetType(),
+		})
 	}
-	dual.SetSchema(expression.NewSchema())
-	p := LogicalProjection{Exprs: exprs}.init(b.ctx)
-	setParentAndChildren(p, dual)
+	p.SetChildren(dual)
 	p.self = p
-	p.SetSchema(expression.NewSchema())
+	p.SetSchema(schema)
+	p.calculateNoDelay = true
 	return p
 }
 
@@ -257,7 +267,6 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
 			}
 			mockTablePlan := LogicalTableDual{}.init(b.ctx)
-			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
 				return nil
@@ -273,7 +282,6 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -381,8 +389,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
-	setParentAndChildren(selectLock, src)
-	selectLock.SetSchema(src.Schema())
+	selectLock.SetChildren(src)
 	return selectLock
 }
 
@@ -395,30 +402,32 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	} else {
 		p.SQLText = x.SQLText
 	}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
 func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
-	var p Plan
+	var ret Plan
 
 	switch as.Tp {
 	case ast.AdminCheckTable:
-		p = &CheckTable{Tables: as.Tables}
-		p.SetSchema(expression.NewSchema())
+		p := &CheckTable{Tables: as.Tables}
+		ret = p
 	case ast.AdminShowDDL:
-		p = &ShowDDL{}
+		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
+		ret = p
 	case ast.AdminShowDDLJobs:
-		p = &ShowDDLJobs{}
+		p := &ShowDDLJobs{}
 		p.SetSchema(buildShowDDLJobsFields())
+		ret = p
 	case ast.AdminCancelDDLJobs:
-		p = &CancelDDLJobs{JobIDs: as.JobIDs}
+		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
+		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
-	return p
+	return ret
 }
 
 // getColsInfo returns the info of index columns, normal columns and primary key.
@@ -469,7 +478,6 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
 		}
 	}
-	p.SetSchema(&expression.Schema{})
 	return p
 }
 
@@ -484,15 +492,28 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 		}
 		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
 	}
-	p.SetSchema(&expression.Schema{})
+	return p
+}
+
+func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
+	p := &Analyze{}
+	tblInfo := as.TableNames[0].TableInfo
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+		}
+	}
 	return p
 }
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
-	if len(as.IndexNames) == 0 {
-		return b.buildAnalyzeTable(as)
+	if as.IndexFlag {
+		if len(as.IndexNames) == 0 {
+			return b.buildAnalyzeAllIndex(as)
+		}
+		return b.buildAnalyzeIndex(as)
 	}
-	return b.buildAnalyzeIndex(as)
+	return b.buildAnalyzeTable(as)
 }
 
 func buildShowDDLFields() *expression.Schema {
@@ -627,7 +648,6 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	p := &Simple{Statement: node}
-	p.SetSchema(expression.NewSchema())
 
 	switch raw := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
@@ -925,7 +945,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
-	insertPlan.SetSchema(expression.NewSchema())
 	return insertPlan
 }
 
@@ -949,7 +968,6 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -997,11 +1015,11 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			table:     v.Table.Name.L,
 		})
 	case *ast.DropTableStmt:
-		for _, table := range v.Tables {
+		for _, tableVal := range v.Tables {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.DropPriv,
-				db:        table.Schema.L,
-				table:     table.Name.L,
+				db:        tableVal.Schema.L,
+				table:     tableVal.Name.L,
 			})
 		}
 	case *ast.TruncateTableStmt:
@@ -1024,7 +1042,6 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	}
 
 	p := &DDL{Statement: node}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -1054,19 +1071,17 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			return nil
 		}
 	}
-	setParents4FinalPlan(pp)
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
-		retFields := []string{"id", "parents", "children", "task", "operator info"}
+		retFields := []string{"id", "parents", "children", "task", "operator info", "count"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
 		}
-		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
 		p.SetSchema(schema)
 		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan), "")
 	case ast.ExplainFormatDOT:
 		retFields := []string{"dot contents"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
