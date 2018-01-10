@@ -362,6 +362,7 @@ var tokenMap = map[string]int{
 	"QUICK":               quick,
 	"SHARD_ROW_ID_BITS":   shardRowIDBits,
 	"RANGE":               rangeKwd,
+	"PACK_KEYS":           packKeys,
 	"READ":                read,
 	"REAL":                realType,
 	"REDUNDANT":           redundant,
