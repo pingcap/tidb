@@ -109,6 +109,30 @@ func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
 }
 
+// InsertValuesBufs is buffers used by insert statement.
+type InsertValuesBufs struct {
+	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
+	RowValBuf []byte
+	// BufStore stores temp KVs for a row when executing insert statement.
+	// We could reuse a BufStore for multiple rows of a session to reduce memory allocations.
+	BufStore *kv.BufferStore
+	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
+	AddRowValues []types.Datum
+
+	// IndexValsBuf is used by index.FetchValues
+	IndexValsBuf []types.Datum
+	// IndexKeyBuf is used by index.GenIndexKey
+	IndexKeyBuf []byte
+}
+
+func (ib *InsertValuesBufs) clean() {
+	ib.BufStore = nil
+	ib.RowValBuf = nil
+	ib.AddRowValues = nil
+	ib.IndexValsBuf = nil
+	ib.IndexKeyBuf = nil
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	// UsersLock is a lock for user defined variables.
@@ -251,13 +275,7 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
 
-	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
-	RowValBuf []byte
-	// BufStore stores temp KVs for a row when executing insert statement.
-	// We could reuse a BufStore for multiple rows of a session to reduce memory allocations.
-	BufStore *kv.BufferStore
-	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
-	AddRowValues []types.Datum
+	insertBufs InsertValuesBufs
 }
 
 // NewSessionVars creates a session vars object.
@@ -285,11 +303,16 @@ func NewSessionVars() *SessionVars {
 	}
 }
 
+// GetInsertBufs get pointer of SessionVars.InsertBufs.
+func (s *SessionVars) GetInsertBufs() *InsertValuesBufs {
+	return &s.insertBufs
+}
+
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	s.RowValBuf = nil
-	s.BufStore = nil
-	s.AddRowValues = nil
+	if !s.ImportingData {
+		s.GetInsertBufs().clean()
+	}
 }
 
 // GetCharsetInfo gets charset and collation for current context.

@@ -857,13 +857,14 @@ func (e *InsertValues) initDefaultValBuf() {
 func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
+	defer sessVars.CleanBuffers()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 
 	txn := e.ctx.Txn()
 	rowCount := 0
-	sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
-	defer sessVars.CleanBuffers()
+	insertBufs := sessVars.GetInsertBufs()
+	insertBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	for _, row := range rows {
 		if batchInsert && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
@@ -872,7 +873,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			insertBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
