@@ -564,7 +564,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert into t values(1), (2)")
 	tk.MustExec("insert into s values(2), (2)")
 	result = tk.MustQuery("select *, (select count(id) from s where id = t.id) from t")
-	result.Check(testkit.Rows("1 0", "2 2"))
+	result.Sort().Check(testkit.Rows("1 0", "2 2"))
 	result = tk.MustQuery("select *, 0 < any (select count(id) from s where id = t.id) from t")
 	result.Check(testkit.Rows("1 0", "2 1"))
 	result = tk.MustQuery("select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1")

@@ -235,7 +235,8 @@ func executeToString(sc *stmtctx.StatementContext, expr Expression, fieldType *t
 	return nil
 }
 
-// VectorizedFilter applys a list of filters to a Chunk and returns a bool slice, which indicates whether a row is passed the filters.
+// VectorizedFilter applies a list of filters to a Chunk and
+// returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
 func VectorizedFilter(ctx context.Context, filters []Expression, input *chunk.Chunk, selected []bool) ([]bool, error) {
 	selected = selected[:0]
