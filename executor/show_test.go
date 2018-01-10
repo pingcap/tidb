@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -540,48 +541,24 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, d0, d1, d2, d3, d4, d5, d6, d7, d8, d9;`)
-	tk.MustExec(`create table a0(a bigint);`)
-	tk.MustExec(`create table a1(a bigint);`)
-	tk.MustExec(`create table a2(a bigint);`)
-	tk.MustExec(`create table a3(a bigint);`)
-	tk.MustExec(`create table a4(a bigint);`)
-	tk.MustExec(`create table a5(a bigint);`)
-	tk.MustExec(`create table a6(a bigint);`)
-	tk.MustExec(`create table a7(a bigint);`)
-	tk.MustExec(`create table a8(a bigint);`)
-	tk.MustExec(`create table a9(a bigint);`)
-	tk.MustExec(`create table b0(a bigint);`)
-	tk.MustExec(`create table b1(a bigint);`)
-	tk.MustExec(`create table b2(a bigint);`)
-	tk.MustExec(`create table b3(a bigint);`)
-	tk.MustExec(`create table b4(a bigint);`)
-	tk.MustExec(`create table b5(a bigint);`)
-	tk.MustExec(`create table b6(a bigint);`)
-	tk.MustExec(`create table b7(a bigint);`)
-	tk.MustExec(`create table b8(a bigint);`)
-	tk.MustExec(`create table b9(a bigint);`)
-	tk.MustExec(`create table c0(a bigint);`)
-	tk.MustExec(`create table c1(a bigint);`)
-	tk.MustExec(`create table c2(a bigint);`)
-	tk.MustExec(`create table c3(a bigint);`)
-	tk.MustExec(`create table c4(a bigint);`)
-	tk.MustExec(`create table c5(a bigint);`)
-	tk.MustExec(`create table c6(a bigint);`)
-	tk.MustExec(`create table c7(a bigint);`)
-	tk.MustExec(`create table c8(a bigint);`)
-	tk.MustExec(`create table c9(a bigint);`)
-	tk.MustExec(`create table d0(a bigint);`)
-	tk.MustExec(`create table d1(a bigint);`)
-	tk.MustExec(`create table d2(a bigint);`)
-	tk.MustExec(`create table d3(a bigint);`)
-	tk.MustExec(`create table d4(a bigint);`)
-	tk.MustExec(`create table d5(a bigint);`)
-	tk.MustExec(`create table d6(a bigint);`)
-	tk.MustExec(`create table d7(a bigint);`)
-	tk.MustExec(`create table d8(a bigint);`)
-	tk.MustExec(`create table d9(a bigint);`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint);`)
 
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
+	rs, err := tk.Exec("show table status;")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err := tidb.GetRows4Test(goctx.Background(), rs)
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	err = rs.Close()
+	c.Assert(errors.ErrorStack(err), Equals, "")
+
+	for i := range rows {
+		row := rows[i]
+		c.Assert(row.GetString(0), Equals, "t")
+		c.Assert(row.GetString(1), Equals, "InnoDB")
+		c.Assert(row.GetInt64(2), Equals, int64(10))
+		c.Assert(row.GetString(3), Equals, "Compact")
+	}
 }
