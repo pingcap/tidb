@@ -314,9 +314,11 @@ func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, inde
 }
 
 func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
-	if vals == nil {
-		vals = make([]types.Datum, len(c.idxInfo.Columns))
+	needLength := len(c.idxInfo.Columns)
+	if vals == nil || cap(vals) < needLength {
+		vals = make([]types.Datum, needLength)
 	}
+	vals = vals[:needLength]
 	for i, ic := range c.idxInfo.Columns {
 		if ic.Offset < 0 || ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.Gen("Index column %s offset out of bound, offset: %d, row: %v",
