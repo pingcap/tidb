@@ -297,6 +297,8 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 		var outerResource *outerChkResource
 		ok := true
 		select {
+		case <-e.closeCh:
+			return
 		case outerResource, ok = <-e.outerChkResourceCh:
 			if !ok {
 				return
@@ -684,6 +686,8 @@ func (e *HashJoinExec) getNewJoinResult(workerID int) (bool, *hashjoinWorkerResu
 	}
 	ok := true
 	select {
+	case <-e.closeCh:
+		ok = false
 	case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
 	}
 	return ok, joinResult
