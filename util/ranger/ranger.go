@@ -195,15 +195,14 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 		}
 		if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value = maxValueDatum
+		} else if endPoint.value.Kind() == types.KindNull {
+			continue
 		}
 		less, err := rangePointLess(sc, startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if !less {
-			continue
-		}
-		if endPoint.value.Kind() == types.KindNull {
 			continue
 		}
 		ran := &NewRange{
