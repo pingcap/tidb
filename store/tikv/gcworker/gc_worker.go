@@ -300,6 +300,10 @@ func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier st
 	return nil
 }
 
+func (w *GCWorker) resolveLocksParallel(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) {
+
+}
+
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
