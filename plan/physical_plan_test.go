@@ -76,8 +76,13 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		},
 		// Test Null Range
 		{
+			sql:  "select * from t where t.e_str is null",
+			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[<nil>,<nil>]], Table(t))",
+		},
+		// Test Null Range but the column has not null flag.
+		{
 			sql:  "select * from t where t.c is null",
-			best: "IndexLookUp(Index(t.c_d_e)[[<nil>,<nil>]], Table(t))",
+			best: "IndexLookUp(Index(t.c_d_e)[], Table(t))",
 		},
 		// Test TopN to index branch in double read.
 		{

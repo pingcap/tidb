@@ -161,7 +161,7 @@ func extractAccessAndFilterConds(conditions, accessConds, filterConds []expressi
 	return accessConds, filterConds
 }
 
-// DetachCNFIndexConditions will detach the index filters from table filters.
+// DetachCNFIndexConditions will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // Simple is true means it will not take a deep look into the DNF conditions.
 func DetachCNFIndexConditions(conditions []expression.Expression, cols []*expression.Column,
@@ -234,6 +234,7 @@ func detachDNFIndexConditions(condition *expression.ScalarFunction, cols []*expr
 	return []expression.Expression{access}, hasResidual
 }
 
+// DetachIndexConditions will detach the index filters from table filters.
 func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accessConds, filterConds []expression.Expression) {
 	if len(conditions) == 1 {
@@ -241,9 +242,8 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 			access, hasResidual := detachDNFIndexConditions(sf, cols, lengths)
 			if hasResidual {
 				return access, conditions
-			} else {
-				return access, nil
 			}
+			return access, nil
 		}
 	}
 	return DetachCNFIndexConditions(conditions, cols, lengths, false)

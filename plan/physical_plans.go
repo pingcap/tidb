@@ -90,13 +90,13 @@ type PhysicalIndexScan struct {
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
 
-	Table      *model.TableInfo
-	Index      *model.IndexInfo
-	Ranges     []*ranger.NewRange
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
-	Desc       bool
-	OutOfOrder bool
+	Table     *model.TableInfo
+	Index     *model.IndexInfo
+	Ranges    []*ranger.NewRange
+	Columns   []*model.ColumnInfo
+	DBName    model.CIStr
+	Desc      bool
+	KeepOrder bool
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -150,7 +150,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []ranger.IntColumnRange
+	Ranges  []*ranger.NewRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
