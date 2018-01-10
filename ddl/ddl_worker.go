@@ -34,9 +34,6 @@ var RunWorker = true
 // then wait or pull the job queue to handle a schema change job.
 func (d *ddl) onDDLWorker() {
 	defer d.wait.Done()
-	if !RunWorker {
-		return
-	}
 
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
 	// every 2 * lease time. If lease is 0, we will use default 1s.
