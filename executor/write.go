@@ -467,7 +467,6 @@ func (e *DeleteExec) Open(goCtx goctx.Context) error {
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
 	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx), Table: tbl}
-	insertVal.initDefaultValBuf()
 	return &LoadDataInfo{
 		row:       row,
 		insertVal: insertVal,
@@ -835,6 +834,7 @@ type InsertValues struct {
 	GenExprs   []expression.Expression
 
 	// colDefaultVals is used to store casted default value.
+	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals []defaultVal
 }
 
@@ -848,10 +848,6 @@ type InsertExec struct {
 	IgnoreErr bool
 
 	finished bool
-}
-
-func (e *InsertValues) initDefaultValBuf() {
-	e.colDefaultVals = make([]defaultVal, len(e.Table.Cols()))
 }
 
 func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
@@ -1029,6 +1025,21 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	}
 
 	return cols, nil
+}
+
+func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
+	if e.colDefaultVals != nil {
+		return true
+	}
+
+	// only if values count of insert statement is more than one, use colDefaultVals to store
+	// casted default values has benefits.
+	if len(e.Lists) > 1 {
+		e.colDefaultVals = make([]defaultVal, len(e.Table.Cols()))
+		return true
+	}
+
+	return false
 }
 
 func (e *InsertValues) fillValueList() error {
@@ -1262,8 +1273,8 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 	return nil
 }
 
-func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (types.Datum, error) {
-	if e.colDefaultVals[idx].valid {
+func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
+	if e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
 
@@ -1271,9 +1282,11 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (types.Dat
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
+	if initialized := e.lazilyInitColDefaultValBuf(); initialized {
+		e.colDefaultVals[idx].val = defaultVal
+		e.colDefaultVals[idx].valid = true
+	}
 
-	e.colDefaultVals[idx].val = defaultVal
-	e.colDefaultVals[idx].valid = true
 	return defaultVal, nil
 }
 
