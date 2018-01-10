@@ -139,9 +139,9 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 
 	if c.buffer != nil {
 		return c.buffer[:0]
-	} else {
-		return make([]byte, 0, defaultCap)
 	}
+
+	return make([]byte, 0, defaultCap)
 }
 
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the

@@ -444,7 +444,8 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	insertBufs := ctx.GetSessionVars().GetInsertBufs()
 	indexVals := insertBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
-		indexVals, err2 := v.FetchValues(r, indexVals)
+		var err2 error
+		indexVals, err2 = v.FetchValues(r, indexVals)
 		if err2 != nil {
 			return 0, errors.Trace(err2)
 		}
