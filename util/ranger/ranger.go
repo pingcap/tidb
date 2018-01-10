@@ -14,13 +14,17 @@
 package ranger
 
 import (
+	"bytes"
 	"math"
+	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 // points2NewRanges build index ranges from range points.
@@ -257,8 +261,8 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	return ranges, nil
 }
 
-// BuildIndexRange builds the range for index.
-func BuildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
+// BuildCNFIndexRange builds the range for index.
+func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
 	accessCondition []expression.Expression) ([]*NewRange, error) {
 	rb := builder{sc: sc}
 	var (
@@ -323,6 +327,84 @@ func BuildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, le
 		}
 	}
 	return ranges, nil
+}
+
+// BuildDNFIndexRange builds the range for index.
+func BuildDNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
+	accessCondition []expression.Expression) ([]*NewRange, error) {
+	sf := accessCondition[0].(*expression.ScalarFunction)
+	totalRanges := make([]*NewRange, 0, len(sf.GetArgs()))
+	var err error
+	for _, arg := range sf.GetArgs() {
+		var partRanges []*NewRange
+		if sf, ok := arg.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+			cnfItems := expression.FlattenCNFConditions(sf)
+			partRanges, err = BuildCNFIndexRange(sc, cols, lengths, cnfItems)
+		} else {
+			partRanges, err = BuildCNFIndexRange(sc, cols, lengths, []expression.Expression{arg})
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		totalRanges = append(totalRanges, partRanges...)
+	}
+	return unionNewRanges(totalRanges)
+}
+
+type sortObject struct {
+	originalValue *NewRange
+	encodedStart  []byte
+	encodedEnd    []byte
+}
+
+func unionNewRanges(rangesInternal []*NewRange) ([]*NewRange, error) {
+	objects := make([]*sortObject, 0, len(rangesInternal))
+	for _, ran := range rangesInternal {
+		left, err := codec.EncodeKey(nil, ran.LowVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if ran.LowExclude {
+			left = kv.Key(left).PrefixNext()
+		}
+		right, err := codec.EncodeKey(nil, ran.HighVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ran.HighExclude {
+			right = kv.Key(right).PrefixNext()
+		}
+		objects = append(objects, &sortObject{originalValue: ran, encodedStart: left, encodedEnd: right})
+	}
+	sort.Slice(objects, func(i, j int) bool {
+		return bytes.Compare(objects[i].encodedStart, objects[j].encodedStart) < 0
+	})
+	rangesInternal = rangesInternal[:0]
+	curObject := objects[0]
+	for i := 1; i < len(objects); i++ {
+		if bytes.Compare(curObject.encodedEnd, objects[i].encodedStart) >= 0 {
+			if bytes.Compare(curObject.encodedEnd, objects[i].encodedEnd) < 0 {
+				curObject.encodedEnd = objects[i].encodedEnd
+				curObject.originalValue.HighVal = objects[i].originalValue.HighVal
+				curObject.originalValue.HighExclude = objects[i].originalValue.HighExclude
+			}
+		} else {
+			rangesInternal = append(rangesInternal, curObject.originalValue)
+			curObject = objects[i]
+		}
+	}
+	rangesInternal = append(rangesInternal, curObject.originalValue)
+	return rangesInternal, nil
+}
+
+func BuildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
+	accessConditions []expression.Expression) ([]*NewRange, error) {
+	if len(accessConditions) == 1 {
+		if sf, ok := accessConditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			return BuildDNFIndexRange(sc, cols, lengths, accessConditions)
+		}
+	}
+	return BuildCNFIndexRange(sc, cols, lengths, accessConditions)
 }
 
 func hasPrefix(lengths []int) bool {

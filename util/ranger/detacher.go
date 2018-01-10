@@ -155,9 +155,9 @@ func extractAccessAndFilterConds(conditions, accessConds, filterConds []expressi
 	return accessConds, filterConds
 }
 
-// DetachIndexConditions will detach the index filters from table filters.
+// DetachCNFIndexConditions will detach the index filters from table filters.
 // It will first find the point query column and then extract the range query column.
-func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
+func DetachCNFIndexConditions(conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accessConds []expression.Expression, filterConds []expression.Expression) {
 	accessConds = make([]expression.Expression, len(cols))
 	var equalOrInCount int
@@ -190,6 +190,56 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 	return extractAccessAndFilterConds(conditions, accessConds, filterConds, cols[equalOrInCount], lengths[equalOrInCount])
 }
 
+func DetachDNFIndexConditions(condition *expression.ScalarFunction, cols []*expression.Column,
+	lengths []int) (accessConds []expression.Expression, hasResidual bool) {
+	newAccessItems := make([]expression.Expression, 0, len(condition.GetArgs()))
+	firstColumnChecker := &conditionChecker{
+		colName:       cols[0].ColName,
+		shouldReserve: lengths[0] != types.UnspecifiedLength,
+		length:        lengths[0],
+	}
+	for _, item := range condition.GetArgs() {
+		if sf, ok := item.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+			cnfItems := expression.FlattenCNFConditions(sf)
+			accesses, filters := DetachCNFIndexConditions(cnfItems, cols, lengths)
+			// If one part of DNF has no access condition. Then this DNF cannot get range.
+			if len(accesses) == 0 {
+				return nil, true
+			}
+			if len(filters) > 0 {
+				hasResidual = true
+			}
+			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(nil, accesses...))
+		} else if ok := firstColumnChecker.check(item); ok {
+			newAccessItems = append(newAccessItems, item)
+			if firstColumnChecker.shouldReserve {
+				hasResidual = true
+				firstColumnChecker.shouldReserve = lengths[0] != types.UnspecifiedLength
+			}
+		} else {
+			return nil, true
+		}
+	}
+	access := expression.ComposeDNFCondition(nil, newAccessItems...)
+
+	return []expression.Expression{access}, hasResidual
+}
+
+func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
+	lengths []int) (accessConds, filterConds []expression.Expression) {
+	if len(conditions) == 1 {
+		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			access, hasResidual := DetachDNFIndexConditions(sf, cols, lengths)
+			if hasResidual {
+				return access, conditions
+			} else {
+				return access, nil
+			}
+		}
+	}
+	return DetachCNFIndexConditions(conditions, cols, lengths)
+}
+
 func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
 	filterConds := make([]expression.Expression, 0, len(conditions))
 	for _, cond := range conditions {
@@ -207,7 +257,7 @@ func ExtractAccessConditions(conds []expression.Expression, rangeType RangeType,
 	case IntRangeType, ColumnRangeType:
 		return extractColumnConditions(conds, cols[0].ColName)
 	case IndexRangeType:
-		accessConds, _ := DetachIndexConditions(conds, cols, lengths)
+		accessConds, _ := DetachCNFIndexConditions(conds, cols, lengths)
 		return accessConds
 	}
 	return nil

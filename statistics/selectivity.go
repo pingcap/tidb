@@ -158,7 +158,7 @@ func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeT
 	case ranger.ColumnRangeType:
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType)
 	case ranger.IndexRangeType:
-		ranges, err = ranger.BuildIndexRange(sc, cols, lengths, accessConds)
+		ranges, err = ranger.BuildCNFIndexRange(sc, cols, lengths, accessConds)
 	default:
 		panic("should never be here")
 	}
