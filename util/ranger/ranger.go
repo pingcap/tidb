@@ -263,7 +263,7 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	return ranges, nil
 }
 
-// BuildCNFIndexRange builds the range for index.
+// BuildCNFIndexRange builds the range for index where the top layer is CNF.
 func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
 	accessCondition []expression.Expression) ([]*NewRange, error) {
 	rb := builder{sc: sc}
@@ -335,10 +335,10 @@ func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 	return ranges, nil
 }
 
-// BuildDNFIndexRange builds the range for index.
-func BuildDNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
-	accessCondition []expression.Expression) ([]*NewRange, error) {
-	sf := accessCondition[0].(*expression.ScalarFunction)
+// buildDNFIndexRange builds the range for index where the top layer is DNF.
+// it will constructs range for every item and union them.
+func buildDNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
+	sf *expression.ScalarFunction) ([]*NewRange, error) {
 	totalRanges := make([]*NewRange, 0, len(sf.GetArgs()))
 	var err error
 	for _, arg := range sf.GetArgs() {
@@ -407,7 +407,7 @@ func BuildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, le
 	accessConditions []expression.Expression) ([]*NewRange, error) {
 	if len(accessConditions) == 1 {
 		if sf, ok := accessConditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			return BuildDNFIndexRange(sc, cols, lengths, accessConditions)
+			return buildDNFIndexRange(sc, cols, lengths, sf)
 		}
 	}
 	return BuildCNFIndexRange(sc, cols, lengths, accessConditions)

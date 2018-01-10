@@ -310,8 +310,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	is.Ranges = ranger.FullNewRange()
 	if len(ds.pushedDownConds) > 0 {
 		if len(idxCols) > 0 {
-			is.AccessCondition, is.filterCondition = ranger.DetachCNFIndexConditions(ds.pushedDownConds, idxCols, colLengths)
-			is.Ranges, err = ranger.BuildCNFIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(ds.pushedDownConds, idxCols, colLengths)
+			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

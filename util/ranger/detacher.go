@@ -134,31 +134,38 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 }
 
 func extractAccessAndFilterConds(conditions, accessConds, filterConds []expression.Expression,
-	col *expression.Column, length int) ([]expression.Expression, []expression.Expression) {
+	col *expression.Column, length int, simple bool) ([]expression.Expression, []expression.Expression) {
 	checker := &conditionChecker{
 		colName:       col.ColName,
 		length:        length,
 		shouldReserve: length != types.UnspecifiedLength,
 	}
-	for _, cond := range conditions {
-		if !checker.check(cond) {
-			filterConds = append(filterConds, cond)
-			continue
+	if simple {
+		for _, cond := range conditions {
+			if !checker.check(cond) {
+				filterConds = append(filterConds, cond)
+				continue
+			}
+			accessConds = append(accessConds, cond)
+			// TODO: It will lead to repeated computation cost.
+			if checker.shouldReserve {
+				filterConds = append(filterConds, cond)
+				checker.shouldReserve = checker.length != types.UnspecifiedLength
+			}
 		}
-		accessConds = append(accessConds, cond)
-		// TODO: It will lead to repeated computation cost.
-		if checker.shouldReserve {
-			filterConds = append(filterConds, cond)
-			checker.shouldReserve = checker.length != types.UnspecifiedLength
-		}
+		return accessConds, filterConds
 	}
+	accesses, filters := detachColumnCNFConditions(conditions, checker)
+	accessConds = append(accessConds, accesses...)
+	filterConds = append(filterConds, filters...)
 	return accessConds, filterConds
 }
 
 // DetachCNFIndexConditions will detach the index filters from table filters.
 // It will first find the point query column and then extract the range query column.
+// Simple is true means it will not take a deep look into the DNF conditions.
 func DetachCNFIndexConditions(conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) (accessConds []expression.Expression, filterConds []expression.Expression) {
+	lengths []int, simple bool) (accessConds []expression.Expression, filterConds []expression.Expression) {
 	accessConds = make([]expression.Expression, len(cols))
 	var equalOrInCount int
 	for _, cond := range conditions {
@@ -187,10 +194,12 @@ func DetachCNFIndexConditions(conditions []expression.Expression, cols []*expres
 		filterConds = append(filterConds, conditions...)
 		return accessConds, filterConds
 	}
-	return extractAccessAndFilterConds(conditions, accessConds, filterConds, cols[equalOrInCount], lengths[equalOrInCount])
+	return extractAccessAndFilterConds(conditions, accessConds, filterConds, cols[equalOrInCount], lengths[equalOrInCount], simple)
 }
 
-func DetachDNFIndexConditions(condition *expression.ScalarFunction, cols []*expression.Column,
+// detachDNFIndexConditions will detach the index filters from table filters where it's a DNF.
+// We will detach the conditions of every DNF items, then compose them to a DNF.
+func detachDNFIndexConditions(condition *expression.ScalarFunction, cols []*expression.Column,
 	lengths []int) (accessConds []expression.Expression, hasResidual bool) {
 	newAccessItems := make([]expression.Expression, 0, len(condition.GetArgs()))
 	firstColumnChecker := &conditionChecker{
@@ -201,7 +210,7 @@ func DetachDNFIndexConditions(condition *expression.ScalarFunction, cols []*expr
 	for _, item := range condition.GetArgs() {
 		if sf, ok := item.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfItems := expression.FlattenCNFConditions(sf)
-			accesses, filters := DetachCNFIndexConditions(cnfItems, cols, lengths)
+			accesses, filters := DetachCNFIndexConditions(cnfItems, cols, lengths, false)
 			// If one part of DNF has no access condition. Then this DNF cannot get range.
 			if len(accesses) == 0 {
 				return nil, true
@@ -229,7 +238,7 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 	lengths []int) (accessConds, filterConds []expression.Expression) {
 	if len(conditions) == 1 {
 		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			access, hasResidual := DetachDNFIndexConditions(sf, cols, lengths)
+			access, hasResidual := detachDNFIndexConditions(sf, cols, lengths)
 			if hasResidual {
 				return access, conditions
 			} else {
@@ -237,7 +246,7 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 			}
 		}
 	}
-	return DetachCNFIndexConditions(conditions, cols, lengths)
+	return DetachCNFIndexConditions(conditions, cols, lengths, false)
 }
 
 func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
@@ -257,7 +266,7 @@ func ExtractAccessConditions(conds []expression.Expression, rangeType RangeType,
 	case IntRangeType, ColumnRangeType:
 		return extractColumnConditions(conds, cols[0].ColName)
 	case IndexRangeType:
-		accessConds, _ := DetachCNFIndexConditions(conds, cols, lengths)
+		accessConds, _ := DetachCNFIndexConditions(conds, cols, lengths, true)
 		return accessConds
 	}
 	return nil
