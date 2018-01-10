@@ -621,7 +621,7 @@ func (e *HashJoinExec) join2Chunk(outerChk *chunk.Chunk) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.resultChunk = e.newChunk()
+	e.resultChunk.Reset()
 	for i := range e.outerSelected {
 		if !e.outerSelected[i] { // process unmatched outer rows
 			err = e.resultGenerator.emitToChunk(outerChk.GetRow(i), nil, e.resultChunk)
