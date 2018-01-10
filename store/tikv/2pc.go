@@ -228,7 +228,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 			secondaryLockCleanupWorkerGauge.Inc()
 			defer func() {
 				secondaryLockCleanupWorkerGauge.Dec()
-				secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds())
+				secondaryLockCleanupHistogram.WithLabelValues("commit_cleanup_locks").Observe(time.Since(start).Seconds())
 			}()
 
 			e := c.doActionOnBatches(bo, action, batches)
@@ -584,7 +584,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 				secondaryLockCleanupWorkerGauge.Inc()
 				defer func() {
 					secondaryLockCleanupWorkerGauge.Dec()
-					secondaryLockCleanupHistogram.WithLabelValues("secondary_lock_cleanup").Observe(time.Since(start).Seconds())
+					secondaryLockCleanupHistogram.WithLabelValues("rollback_cleanup_locks").Observe(time.Since(start).Seconds())
 				}()
 
 				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
