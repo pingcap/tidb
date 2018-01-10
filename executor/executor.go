@@ -1138,7 +1138,7 @@ type execResult struct {
 
 // unionWorkerResult stores the result for a union worker.
 // A "resultPuller" is started for every child to pull result from that child, unionWorkerResult is used to store that pulled result.
-// "src" is used for Chunk resuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
+// "src" is used for Chunk reuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
 // enable the corresponding "resultPuller" continue to work.
 type unionWorkerResult struct {
 	chk *chunk.Chunk
