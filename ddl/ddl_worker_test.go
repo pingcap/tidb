@@ -52,7 +52,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	c.Assert(d1.GetLease(), Equals, 2*time.Second)
 }
 
-// TestRunWorker tests whether the RunWorker workers when the value of RunWorker is false.
+// TestRunWorker tests no job is handled when the value of RunWorker is false.
 func (s *testDDLSuite) TestRunWorker(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_run_worker")
