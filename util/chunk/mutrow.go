@@ -336,7 +336,9 @@ func setMutRowJSON(col *column, j json.BinaryJSON) {
 	if len(col.data) >= dataLen {
 		col.data = col.data[:dataLen]
 	} else {
-		buf := make([]byte, dataLen)
+		// In MutRow, there always exists 1 data in every column,
+		// we should allocate one more byte for null bitmap.
+		buf := make([]byte, dataLen+1)
 		col.data = buf[:dataLen]
 		col.nullBitmap = buf[dataLen:]
 	}
