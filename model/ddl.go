@@ -144,18 +144,20 @@ type Job struct {
 	Version int64 `json:"version"`
 }
 
-// Finish is called when a job is finished.
-// It updates the job's state information and adds the binlog information.
-// If dbInfo isn't nil, we add dbInfo to binlog.
-// If dbInfo is nil, we add tblInfo to binlog.
-func (job *Job) Finish(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo, tblInfo *TableInfo) {
+// FinishTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfo to the binlog.
+func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfo *TableInfo) {
 	job.State = jobState
 	job.SchemaState = schemaState
-	if dbInfo == nil {
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-	} else {
-		job.BinlogInfo.AddDBInfo(ver, dbInfo)
-	}
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+}
+
+// FinishDBJob is called when a job is finished.
+// It updates the job's state information and adds dbInfo the binlog.
+func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddDBInfo(ver, dbInfo)
 }
 
 // startTime gets the job generation time.

@@ -303,7 +303,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.Finish(model.JobStateDone, model.StatePublic, ver, nil, tblInfo)
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
 		err = ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
 	}
@@ -388,9 +388,9 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		// Finish this job.
 		if job.IsRollingback() {
-			job.Finish(model.JobStateRollbackDone, model.StateNone, ver, nil, tblInfo)
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		} else {
-			job.Finish(model.JobStateDone, model.StateNone, ver, nil, tblInfo)
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			d.asyncNotifyEvent(&ddlutil.Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 		}
 		job.Args = append(job.Args, indexInfo.ID)

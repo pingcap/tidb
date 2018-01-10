@@ -47,7 +47,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ err
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.Finish(model.JobStateDone, model.StatePublic, ver, nil, tblInfo)
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		return ver, nil
 	default:
 		return ver, ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
@@ -103,7 +103,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.Finish(model.JobStateDone, model.StateNone, ver, nil, tblInfo)
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		return ver, nil
 	default:
 		return ver, ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
