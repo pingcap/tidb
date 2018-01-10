@@ -523,7 +523,7 @@ func (b *builtinStringDurationTimeDiffSig) evalDuration(row types.Row) (d types.
 
 // calculateTimeDiff calculates interval difference of two types.Time.
 func calculateTimeDiff(sc *stmtctx.StatementContext, lhs, rhs types.Time) (d types.Duration, isNull bool, err error) {
-	d = lhs.Sub(&rhs)
+	d = lhs.Sub(sc, &rhs)
 	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
@@ -3246,7 +3246,7 @@ func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	tmpDuration := arg0.Sub(&arg1time)
+	tmpDuration := arg0.Sub(sc, &arg1time)
 	fsp := types.MaxFsp
 	if tmpDuration.MicroSecond() == 0 {
 		fsp = types.MinFsp
@@ -4117,7 +4117,7 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(row types.Row) (types.Time, 
 	if err != nil {
 		return arg1time, true, errors.Trace(err)
 	}
-	tmpDuration := arg0.Sub(&arg1time)
+	tmpDuration := arg0.Sub(sc, &arg1time)
 	result, err := tmpDuration.ConvertToTime(arg0.Type)
 	return result, err != nil, errors.Trace(err)
 }
@@ -4152,7 +4152,7 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row types.Row) (types.Time, bo
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
 	}
-	tmpDuration := arg0.Sub(&arg1time)
+	tmpDuration := arg0.Sub(sc, &arg1time)
 	result, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
 	return result, err != nil, errors.Trace(err)
 }

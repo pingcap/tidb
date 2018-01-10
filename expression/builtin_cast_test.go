@@ -740,7 +740,6 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
-		c.Assert(res.TimeZone, Equals, sc.TimeZone)
 		c.Assert(res.String(), Equals, t.after.String())
 	}
 
@@ -823,7 +822,6 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
-		c.Assert(res.TimeZone, Equals, sc.TimeZone)
 		resAfter := t.after.String()
 		if t.fsp > 0 {
 			resAfter += "."
