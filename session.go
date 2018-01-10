@@ -135,6 +135,14 @@ type session struct {
 	statsCollector *statistics.SessionStatsCollector
 }
 
+func (s *session) getMembufCap() int {
+	if s.sessionVars.ImportingData {
+		return kv.ImportingTxnMembufCap
+	}
+
+	return kv.DefaultTxnMembufCap
+}
+
 func (s *session) cleanRetryInfo() {
 	if !s.sessionVars.RetryInfo.Retrying {
 		retryInfo := s.sessionVars.RetryInfo
@@ -732,11 +740,11 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			return nil, errors.Trace(err)
 		}
 
-		charset, collation := s.sessionVars.GetCharsetInfo()
+		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
 		// Step1: Compile query string to abstract syntax trees(ASTs).
 		startTS := time.Now()
-		stmtNodes, err := s.ParseSQL(goCtx, sql, charset, collation)
+		stmtNodes, err := s.ParseSQL(goCtx, sql, charsetInfo, collation)
 		if err != nil {
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
@@ -882,6 +890,7 @@ func (s *session) NewTxn() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	txn.SetCap(s.getMembufCap())
 	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
 	return nil
@@ -1121,7 +1130,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 16
+	currentBootstrapVersion = 17
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1231,8 +1240,8 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 
 func (s *session) getTxnFuture(ctx goctx.Context) *txnFuture {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
-	oracle := s.store.GetOracle()
-	tsFuture := oracle.GetTimestampAsync(ctx)
+	oracleStore := s.store.GetOracle()
+	tsFuture := oracleStore.GetTimestampAsync(ctx)
 	return &txnFuture{tsFuture, s.store, span}
 }
 
@@ -1276,10 +1285,12 @@ func (s *session) ActivePendingTxn() error {
 	}
 	future := s.txnFuture
 	s.txnFuture = nil
+
 	txn, err := future.wait()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	txn.SetCap(s.getMembufCap())
 	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
@@ -1296,10 +1307,16 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if s.txnFuture == nil {
 		return errors.New("transaction channel is not set")
 	}
+
 	// no need to get txn from txnFutureCh since txn should init with startTs
 	s.txnFuture = nil
 	var err error
 	s.txn, err = s.store.BeginWithStartTS(startTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.txn.SetCap(s.getMembufCap())
+	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)
 	}

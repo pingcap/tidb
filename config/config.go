@@ -82,7 +82,7 @@ type Security struct {
 func (s *Security) ToTLSConfig() (*tls.Config, error) {
 	var tlsConfig *tls.Config
 	if len(s.ClusterSSLCA) != 0 {
-		certificates := []tls.Certificate{}
+		var certificates = make([]tls.Certificate, 0)
 		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
 			// Load the client certificates from disk
 			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)

@@ -401,7 +401,7 @@ func (s *testKVSuite) TestRollback(c *C) {
 
 func (s *testKVSuite) TestSeekMin(c *C) {
 	defer testleak.AfterTest(c)()
-	kvs := []struct {
+	rows := []struct {
 		key   string
 		value string
 	}{
@@ -415,8 +415,8 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
-	for _, kv := range kvs {
-		txn.Set([]byte(kv.key), []byte(kv.value))
+	for _, row := range rows {
+		txn.Set([]byte(row.key), []byte(row.value))
 	}
 
 	it, err := txn.Seek(nil)
@@ -429,8 +429,8 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 
-	for _, kv := range kvs {
-		txn.Delete([]byte(kv.key))
+	for _, row := range rows {
+		txn.Delete([]byte(row.key))
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -254,7 +255,8 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges, err := points2NewRanges(sc, rangePoints, tp)
+	newTp := newFieldType(tp)
+	ranges, err := points2NewRanges(sc, rangePoints, newTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -270,6 +272,10 @@ func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 		eqAndInCount int
 		err          error
 	)
+	newTp := make([]*types.FieldType, 0, len(cols))
+	for _, col := range cols {
+		newTp = append(newTp, newFieldType(col.RetType))
+	}
 	for eqAndInCount = 0; eqAndInCount < len(accessCondition) && eqAndInCount < len(cols); eqAndInCount++ {
 		if sf, ok := accessCondition[eqAndInCount].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
 			break
@@ -280,9 +286,9 @@ func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 			return nil, errors.Trace(rb.err)
 		}
 		if eqAndInCount == 0 {
-			ranges, err = points2NewRanges(sc, point, cols[eqAndInCount].RetType)
+			ranges, err = points2NewRanges(sc, point, newTp[eqAndInCount])
 		} else {
-			ranges, err = appendPoints2NewRanges(sc, ranges, point, cols[eqAndInCount].RetType)
+			ranges, err = appendPoints2NewRanges(sc, ranges, point, newTp[eqAndInCount])
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -297,9 +303,9 @@ func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 		}
 	}
 	if eqAndInCount == 0 {
-		ranges, err = points2NewRanges(sc, rangePoints, cols[0].RetType)
+		ranges, err = points2NewRanges(sc, rangePoints, newTp[0])
 	} else if eqAndInCount < len(accessCondition) {
-		ranges, err = appendPoints2NewRanges(sc, ranges, rangePoints, cols[eqAndInCount].RetType)
+		ranges, err = appendPoints2NewRanges(sc, ranges, rangePoints, newTp[eqAndInCount])
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -348,7 +354,7 @@ func BuildDNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 		}
 		totalRanges = append(totalRanges, partRanges...)
 	}
-	return unionNewRanges(totalRanges)
+	return unionNewRanges(sc, totalRanges)
 }
 
 type sortObject struct {
@@ -357,17 +363,17 @@ type sortObject struct {
 	encodedEnd    []byte
 }
 
-func unionNewRanges(rangesInternal []*NewRange) ([]*NewRange, error) {
+func unionNewRanges(sc *stmtctx.StatementContext, rangesInternal []*NewRange) ([]*NewRange, error) {
 	objects := make([]*sortObject, 0, len(rangesInternal))
 	for _, ran := range rangesInternal {
-		left, err := codec.EncodeKey(nil, ran.LowVal...)
+		left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if ran.LowExclude {
 			left = kv.Key(left).PrefixNext()
 		}
-		right, err := codec.EncodeKey(nil, ran.HighVal...)
+		right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -433,5 +439,23 @@ func fixRangeDatum(v *types.Datum, length int) {
 	// If this column is prefix and the prefix length is smaller than the range, cut it.
 	if length != types.UnspecifiedLength && length < len(v.GetBytes()) {
 		v.SetBytes(v.GetBytes()[:length])
+	}
+}
+
+// We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
+// Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
+func newFieldType(tp *types.FieldType) *types.FieldType {
+	switch tp.Tp {
+	// To avoid overflow error.
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		newTp := types.NewFieldType(mysql.TypeLonglong)
+		newTp.Flag = tp.Flag
+		return newTp
+	// To avoid data truncate error.
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+		return types.NewFieldType(tp.Tp)
+	default:
+		return tp
 	}
 }

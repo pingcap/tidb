@@ -93,8 +93,8 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 					sumLength += col.Flen
 				}
 			} else {
-				if len, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
-					sumLength += len
+				if length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
+					sumLength += length
 				} else {
 					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
 				}
@@ -102,8 +102,8 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 				// Special case for time fraction.
 				if types.IsTypeFractionable(col.FieldType.Tp) &&
 					col.FieldType.Decimal != types.UnspecifiedLength {
-					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
-						sumLength += len
+					if length, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
+						sumLength += length
 					} else {
 						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 					}

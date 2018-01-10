@@ -252,7 +252,7 @@ func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err 
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
-	constraints := []*ast.Constraint{}
+	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
 		Name:      colDef.Name.Name,
@@ -269,12 +269,12 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	setOnUpdateNow := false
 	hasDefaultValue := false
 	if colDef.Options != nil {
-		len := types.UnspecifiedLength
+		length := types.UnspecifiedLength
 
 		keys := []*ast.IndexColName{
 			{
 				Column: colDef.Name,
-				Length: len,
+				Length: length,
 			},
 		}
 

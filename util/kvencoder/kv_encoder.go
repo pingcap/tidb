@@ -226,6 +226,7 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 
 	se.GetSessionVars().IDAllocator = idAlloc
 	se.GetSessionVars().ImportingData = true
+	se.GetSessionVars().SkipUTF8Check = true
 	e.se = se
 	e.store = store
 	e.dom = dom

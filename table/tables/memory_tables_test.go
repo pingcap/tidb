@@ -97,9 +97,9 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	err = tb.RebaseAutoID(nil, 0, false)
 	c.Assert(err, IsNil)
 
-	autoid, err := tb.AllocAutoID(nil)
+	autoID, err := tb.AllocAutoID(nil)
 	c.Assert(err, IsNil)
-	c.Assert(autoid, Greater, int64(0))
+	c.Assert(autoID, Greater, int64(0))
 
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)

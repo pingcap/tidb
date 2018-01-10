@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"encoding/binary"
 	"unsafe"
 
 	"github.com/pingcap/tidb/mysql"
@@ -42,11 +43,16 @@ const (
 
 // NewChunk creates a new chunk with field types.
 func NewChunk(fields []*types.FieldType) *Chunk {
+	return NewChunkWithCapacity(fields, InitialCapacity)
+}
+
+// NewChunkWithCapacity creates a new chunk with field types and capacity.
+func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
 	chk.numVirtualRows = 0
 	for _, f := range fields {
-		chk.addColumnByFieldType(f, InitialCapacity)
+		chk.addColumnByFieldType(f, cap)
 	}
 	return chk
 }
@@ -69,14 +75,6 @@ func (c *Chunk) addVarLenColumn(initCap int) {
 	})
 }
 
-// addInterfaceColumn adds an interface column which holds element as interface.
-func (c *Chunk) addInterfaceColumn(initCap int) {
-	c.columns = append(c.columns, &column{
-		ifaces:     make([]interface{}, 0, initCap),
-		nullBitmap: make([]byte, 0, initCap>>3),
-	})
-}
-
 // addColumnByFieldType adds a column by field type.
 func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	switch fieldTp.Tp {
@@ -90,10 +88,20 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 	case mysql.TypeNewDecimal:
 		c.addFixedLenColumn(types.MyDecimalStructSize, initCap)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		c.addInterfaceColumn(initCap)
+		c.addFixedLenColumn(16, initCap)
 	default:
 		c.addVarLenColumn(initCap)
 	}
+}
+
+// MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
+func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
+	c.columns[dstColIdx] = c.columns[srcColIdx]
+}
+
+// SwapColumn swaps column "c.columns[colIdx]" with column "other.columns[otherIdx]".
+func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+	c.columns[colIdx], other.columns[otherIdx] = other.columns[otherIdx], c.columns[colIdx]
 }
 
 // SwapColumns swaps columns with another Chunk.
@@ -146,7 +154,13 @@ func (c *Chunk) End() Row {
 }
 
 // AppendRow appends a row to the chunk.
-func (c *Chunk) AppendRow(colIdx int, row Row) {
+func (c *Chunk) AppendRow(row Row) {
+	c.AppendPartialRow(0, row)
+	c.numVirtualRows++
+}
+
+// AppendPartialRow appends a row to the chunk.
+func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
 		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
@@ -154,12 +168,10 @@ func (c *Chunk) AppendRow(colIdx int, row Row) {
 			elemLen := len(rowCol.elemBuf)
 			offset := row.idx * elemLen
 			chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
-		} else if rowCol.isVarlen() {
+		} else {
 			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
 			chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
 			chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
-		} else {
-			chkCol.ifaces = append(chkCol.ifaces, rowCol.ifaces[row.idx])
 		}
 		chkCol.length++
 	}
@@ -172,14 +184,12 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 		if src.isFixed() {
 			elemLen := len(src.elemBuf)
 			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
-		} else if src.isVarlen() {
+		} else {
 			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
 			dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
 			for i := begin; i < end; i++ {
 				dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
 			}
-		} else {
-			dst.ifaces = append(dst.ifaces, src.ifaces[begin:end]...)
 		}
 		for i := begin; i < end; i++ {
 			dst.appendNullBitmap(!src.isNull(i))
@@ -195,11 +205,9 @@ func (c *Chunk) TruncateTo(numRows int) {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
 			col.data = col.data[:numRows*elemLen]
-		} else if col.isVarlen() {
+		} else {
 			col.data = col.data[:col.offsets[numRows]]
 			col.offsets = col.offsets[:numRows+1]
-		} else {
-			col.ifaces = col.ifaces[:numRows]
 		}
 		for i := numRows; i < col.length; i++ {
 			if col.isNull(i) {
@@ -250,7 +258,7 @@ func (c *Chunk) AppendBytes(colIdx int, b []byte) {
 // AppendTime appends a Time value to the chunk.
 // TODO: change the time structure so it can be directly written to memory.
 func (c *Chunk) AppendTime(colIdx int, t types.Time) {
-	c.columns[colIdx].appendInterface(t)
+	c.columns[colIdx].appendTime(t)
 }
 
 // AppendDuration appends a Duration value to the chunk.
@@ -278,6 +286,36 @@ func (c *Chunk) AppendJSON(colIdx int, j json.BinaryJSON) {
 	c.columns[colIdx].appendJSON(j)
 }
 
+// AppendDatum appends a datum into the chunk.
+func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
+	switch d.Kind() {
+	case types.KindNull:
+		c.AppendNull(colIdx)
+	case types.KindInt64:
+		c.AppendInt64(colIdx, d.GetInt64())
+	case types.KindUint64:
+		c.AppendUint64(colIdx, d.GetUint64())
+	case types.KindFloat32:
+		c.AppendFloat32(colIdx, d.GetFloat32())
+	case types.KindFloat64:
+		c.AppendFloat64(colIdx, d.GetFloat64())
+	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindRaw, types.KindMysqlBit:
+		c.AppendBytes(colIdx, d.GetBytes())
+	case types.KindMysqlDecimal:
+		c.AppendMyDecimal(colIdx, d.GetMysqlDecimal())
+	case types.KindMysqlDuration:
+		c.AppendDuration(colIdx, d.GetMysqlDuration())
+	case types.KindMysqlEnum:
+		c.AppendEnum(colIdx, d.GetMysqlEnum())
+	case types.KindMysqlSet:
+		c.AppendSet(colIdx, d.GetMysqlSet())
+	case types.KindMysqlTime:
+		c.AppendTime(colIdx, d.GetMysqlTime())
+	case types.KindMysqlJSON:
+		c.AppendJSON(colIdx, d.GetMysqlJSON())
+	}
+}
+
 type column struct {
 	length     int
 	nullCount  int
@@ -285,19 +323,10 @@ type column struct {
 	offsets    []int32
 	data       []byte
 	elemBuf    []byte
-	ifaces     []interface{}
 }
 
 func (c *column) isFixed() bool {
 	return c.elemBuf != nil
-}
-
-func (c *column) isVarlen() bool {
-	return c.offsets != nil
-}
-
-func (c *column) isInterface() bool {
-	return c.ifaces != nil
 }
 
 func (c *column) reset() {
@@ -309,7 +338,6 @@ func (c *column) reset() {
 		c.offsets = c.offsets[:1]
 	}
 	c.data = c.data[:0]
-	c.ifaces = c.ifaces[:0]
 }
 
 func (c *column) isNull(rowIdx int) bool {
@@ -324,7 +352,7 @@ func (c *column) appendNullBitmap(on bool) {
 	}
 	if on {
 		pos := uint(c.length) & 7
-		c.nullBitmap[idx] |= byte((1 << pos))
+		c.nullBitmap[idx] |= byte(1 << pos)
 	} else {
 		c.nullCount++
 	}
@@ -334,10 +362,8 @@ func (c *column) appendNull() {
 	c.appendNullBitmap(false)
 	if c.isFixed() {
 		c.data = append(c.data, c.elemBuf...)
-	} else if c.isVarlen() {
-		c.offsets = append(c.offsets, c.offsets[c.length])
 	} else {
-		c.ifaces = append(c.ifaces, nil)
+		c.offsets = append(c.offsets, c.offsets[c.length])
 	}
 	c.length++
 }
@@ -384,10 +410,21 @@ func (c *column) appendBytes(b []byte) {
 	c.finishAppendVar()
 }
 
-func (c *column) appendInterface(o interface{}) {
-	c.ifaces = append(c.ifaces, o)
-	c.appendNullBitmap(true)
-	c.length++
+func (c *column) appendTime(t types.Time) {
+	writeTime(c.elemBuf, t)
+	c.finishAppendFixed()
+}
+
+func writeTime(buf []byte, t types.Time) {
+	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
+	buf[2] = uint8(t.Time.Month())
+	buf[3] = uint8(t.Time.Day())
+	buf[4] = uint8(t.Time.Hour())
+	buf[5] = uint8(t.Time.Minute())
+	buf[6] = uint8(t.Time.Second())
+	binary.BigEndian.PutUint32(buf[8:], uint32(t.Time.Microsecond()))
+	buf[12] = t.Type
+	buf[13] = uint8(t.Fsp)
 }
 
 func (c *column) appendDuration(dur types.Duration) {
@@ -474,10 +511,27 @@ func (r Row) GetBytes(colIdx int) []byte {
 }
 
 // GetTime returns the Time value with the colIdx.
+// TODO: use Time structure directly.
 func (r Row) GetTime(colIdx int) types.Time {
 	col := r.c.columns[colIdx]
-	t, _ := col.ifaces[r.idx].(types.Time)
-	return t
+	return readTime(col.data[r.idx*16:])
+}
+
+func readTime(buf []byte) types.Time {
+	year := int(binary.BigEndian.Uint16(buf))
+	month := int(buf[2])
+	day := int(buf[3])
+	hour := int(buf[4])
+	minute := int(buf[5])
+	second := int(buf[6])
+	microseconds := int(binary.BigEndian.Uint32(buf[8:]))
+	tp := buf[12]
+	fsp := int(buf[13])
+	return types.Time{
+		Time: types.FromDate(year, month, day, hour, minute, second, microseconds),
+		Type: tp,
+		Fsp:  fsp,
+	}
 }
 
 // GetDuration returns the Duration value with the colIdx.

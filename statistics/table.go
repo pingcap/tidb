@@ -93,7 +93,7 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -124,7 +124,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-		needNotLoad := col == nil || (len(col.Buckets) == 0 && col.LastUpdateVersion < histVer)
+		needNotLoad := col == nil || (col.Len() == 0 && col.LastUpdateVersion < histVer)
 		if h.Lease > 0 && !isHandle && needNotLoad && !loadAll {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
@@ -250,44 +250,38 @@ func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool 
 		return true
 	}
 	col, ok := t.Columns[colID]
-	if ok && col.NDV > 0 && len(col.Buckets) == 0 {
+	if ok && col.NDV > 0 && col.Len() == 0 {
 		sc.SetHistogramsNotLoad()
 		histogramNeededColumns.insert(tableColumnID{tableID: t.TableID, columnID: colID})
 	}
-	return !ok || len(col.Buckets) == 0
+	return !ok || col.Len() == 0
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	if t.ColumnIsInvalid(sc, colID) {
-		return float64(t.Count) / pseudoLessRate, nil
+		return float64(t.Count) / pseudoLessRate
 	}
 	hist := t.Columns[colID]
-	result, err := hist.greaterRowCount(sc, value)
-	result *= hist.getIncreaseFactor(t.Count)
-	return result, errors.Trace(err)
+	return hist.greaterRowCount(value) * hist.getIncreaseFactor(t.Count)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
-func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	if t.ColumnIsInvalid(sc, colID) {
-		return float64(t.Count) / pseudoLessRate, nil
+		return float64(t.Count) / pseudoLessRate
 	}
 	hist := t.Columns[colID]
-	result, err := hist.lessRowCount(sc, value)
-	result *= hist.getIncreaseFactor(t.Count)
-	return result, errors.Trace(err)
+	return hist.lessRowCount(value) * hist.getIncreaseFactor(t.Count)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) float64 {
 	if t.ColumnIsInvalid(sc, colID) {
-		return float64(t.Count) / pseudoBetweenRate, nil
+		return float64(t.Count) / pseudoBetweenRate
 	}
 	hist := t.Columns[colID]
-	result, err := hist.betweenRowCount(sc, a, b)
-	result *= hist.getIncreaseFactor(t.Count)
-	return result, errors.Trace(err)
+	return hist.betweenRowCount(a, b) * hist.getIncreaseFactor(t.Count)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -326,7 +320,7 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 // GetRowCountByIndexRanges estimates the row count by a slice of NewRange.
 func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.NewRange) (float64, error) {
 	idx := t.Indices[idxID]
-	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
+	if t.Pseudo || idx == nil || idx.Len() == 0 {
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
 	}
 	result, err := idx.getRowCount(sc, indexRanges)

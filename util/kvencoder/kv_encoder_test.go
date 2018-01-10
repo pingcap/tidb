@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/meta/autoid"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/tablecodec"
@@ -118,15 +120,15 @@ func (s *testKvEncoderSuite) runTestSQL(c *C, tkExpect *testkit.TestKit, encoder
 		}
 
 		emptyValCount := 0
-		for i, kv := range kvPairs {
+		for i, row := range kvPairs {
 			expectKey := kvPairsExpect[i].Key
-			if bytes.HasPrefix(kv.Key, tablecodec.TablePrefix()) {
+			if bytes.HasPrefix(row.Key, tablecodec.TablePrefix()) {
 				expectKey = tablecodec.ReplaceRecordKeyTableID(expectKey, tableID)
 			}
-			c.Assert(bytes.Compare(kv.Key, expectKey), Equals, 0, Commentf(comment))
-			c.Assert(bytes.Compare(kv.Val, kvPairsExpect[i].Val), Equals, 0, Commentf(comment))
+			c.Assert(bytes.Compare(row.Key, expectKey), Equals, 0, Commentf(comment))
+			c.Assert(bytes.Compare(row.Val, kvPairsExpect[i].Val), Equals, 0, Commentf(comment))
 
-			if len(kv.Val) == 0 {
+			if len(row.Val) == 0 {
 				emptyValCount++
 			}
 		}
@@ -367,22 +369,22 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
-		for i, kv := range kvPairs {
-			c.Assert(bytes.Compare(kv.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
-			c.Assert(bytes.Compare(kv.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
+		for i, row := range kvPairs {
+			c.Assert(bytes.Compare(row.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
+			c.Assert(bytes.Compare(row.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
 		}
 	}
 
-	// specify id, it must be the same kv
+	// specify id, it must be the same row
 	sql := "insert into t(id, a) values(5, 'test')"
 	kvPairs, _, err := encoder.Encode(sql, tableID)
 	c.Assert(err, IsNil, Commentf("sql:%s", sql))
 	retryKvPairs, _, err := encoder.Encode(sql, tableID)
 	c.Assert(err, IsNil, Commentf("sql:%s", sql))
 	c.Assert(len(kvPairs), Equals, len(retryKvPairs))
-	for i, kv := range kvPairs {
-		c.Assert(bytes.Compare(kv.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
-		c.Assert(bytes.Compare(kv.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
+	for i, row := range kvPairs {
+		c.Assert(bytes.Compare(row.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
+		c.Assert(bytes.Compare(row.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
 	}
 
 	schemaSQL = `create table t1(
@@ -413,9 +415,9 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
-		for i, kv := range kvPairs {
-			c.Assert(bytes.Compare(kv.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
-			c.Assert(bytes.Compare(kv.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
+		for i, row := range kvPairs {
+			c.Assert(bytes.Compare(row.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
+			c.Assert(bytes.Compare(row.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
 		}
 	}
 }
@@ -445,23 +447,24 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	handle := int64(1)
 	expectRecordKey := tablecodec.EncodeRecordKey(tablePrefix, handle)
 
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-	expectIdxKey := []byte{}
+	expectIdxKey := make([]byte, 0)
 	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum([]byte("a")))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum([]byte("a")))
 	c.Assert(err, IsNil)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum(handle))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum(handle))
 	c.Assert(err, IsNil)
 
-	for _, kv := range kvPairs {
-		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(kv.Key)
+	for _, row := range kvPairs {
+		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(row.Key)
 		c.Assert(err1, IsNil)
 		c.Assert(tID, Equals, tableID)
 		if isRecordKey {
-			c.Assert(bytes.Compare(kv.Key, expectRecordKey), Equals, 0)
+			c.Assert(bytes.Compare(row.Key, expectRecordKey), Equals, 0)
 		} else {
 			c.Assert(iID, Equals, indexID)
-			c.Assert(bytes.Compare(kv.Key, expectIdxKey), Equals, 0)
+			c.Assert(bytes.Compare(row.Key, expectIdxKey), Equals, 0)
 		}
 	}
 
@@ -487,18 +490,18 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	indexPrefix = tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	expectIdxKey = []byte{}
 	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum([]byte("a")))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum([]byte("a")))
 	c.Assert(err, IsNil)
 
-	for _, kv := range kvPairs {
-		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(kv.Key)
+	for _, row := range kvPairs {
+		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(row.Key)
 		c.Assert(err1, IsNil)
 		c.Assert(tID, Equals, tableID)
 		if isRecordKey {
-			c.Assert(bytes.Compare(kv.Key, expectRecordKey), Equals, 0)
+			c.Assert(bytes.Compare(row.Key, expectRecordKey), Equals, 0)
 		} else {
 			c.Assert(iID, Equals, indexID)
-			c.Assert(bytes.Compare(kv.Key, expectIdxKey), Equals, 0)
+			c.Assert(bytes.Compare(row.Key, expectIdxKey), Equals, 0)
 		}
 	}
 }

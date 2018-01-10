@@ -82,7 +82,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	tests := []struct {
 		input  string
 		format string
-		expect types.TimeInternal
+		expect types.MysqlTime
 	}{
 		{`01,05,2013`, `%d,%m,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
