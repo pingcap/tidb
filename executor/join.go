@@ -67,9 +67,15 @@ type HashJoinExec struct {
 	resultBuffer   []Row
 	resultCursor   int
 
-	innerResult   *chunk.List
-	resultChunk   *chunk.Chunk
-	outerSelected []bool
+	// for chunk
+	innerResult      *chunk.List
+	resultChunk      *chunk.Chunk
+	outerSelected    []bool
+	innerKeyColIdx   []int
+	innerKeyColTypes []*types.FieldType
+	outerKeyColIdx   []int
+	outerKeyColTypes []*types.FieldType
+	innerRows        []chunk.Row
 }
 
 type hashJoinBuffer struct {
@@ -174,13 +180,17 @@ func getJoinKey(sc *stmtctx.StatementContext, cols []*expression.Column, row Row
 	return false, bytes, errors.Trace(err)
 }
 
-func (e *HashJoinExec) getJoinKeyFromChkRow(keys []*expression.Column, row chunk.Row, keyBuf []byte) (hasNull bool, _ []byte, err error) {
-	keyColIdx := make([]int, len(keys))
-	keyColTypes := make([]*types.FieldType, len(keys))
-	for i, col := range keys {
-		keyColIdx[i] = col.Index
-		keyColTypes[i] = col.RetType
+func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKeys bool, row chunk.Row, keyBuf []byte) (hasNull bool, _ []byte, err error) {
+	var keyColIdx []int
+	var keyColTypes []*types.FieldType
+	if isOuterKeys {
+		keyColIdx = e.outerKeyColIdx
+		keyColTypes = e.outerKeyColTypes
+	} else {
+		keyColIdx = e.innerKeyColIdx
+		keyColTypes = e.innerKeyColTypes
 	}
+
 	keyBuf = keyBuf[:0]
 	for i, colIdx := range keyColIdx {
 		d := row.GetDatum(colIdx, keyColTypes[i])
@@ -512,13 +522,26 @@ func (e *HashJoinExec) Next(goCtx goctx.Context) (Row, error) {
 // NextChunk implements Executor interface.
 func (e *HashJoinExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
+		e.outerKeyColIdx = make([]int, len(e.outerKeys))
+		e.outerKeyColTypes = make([]*types.FieldType, len(e.outerKeys))
+		e.innerKeyColIdx = make([]int, len(e.innerKeys))
+		e.innerKeyColTypes = make([]*types.FieldType, len(e.innerKeys))
+		for i := range e.outerKeys {
+			e.outerKeyColIdx[i] = e.outerKeys[i].Index
+			e.outerKeyColTypes[i] = e.outerKeys[i].RetType
+			e.innerKeyColIdx[i] = e.innerKeys[i].Index
+			e.innerKeyColTypes[i] = e.innerKeys[i].RetType
+		}
+
 		if err = e.fetchSelectedInnerRows(goCtx); err != nil {
 			return errors.Trace(err)
 		}
 		if err = e.buildHashTableForList(); err != nil {
 			return errors.Trace(err)
 		}
+
 		e.outerSelected = make([]bool, 0, e.maxChunkSize)
+		e.innerRows = make([]chunk.Row, 0, e.maxChunkSize)
 		e.resultChunk = e.newChunk()
 		e.prepared = true
 	}
@@ -560,7 +583,7 @@ func (e *HashJoinExec) joinToResultChunk(goCtx goctx.Context) (hasMore bool, err
 
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(outerRow chunk.Row, chk *chunk.Chunk) error {
 	buffer := e.hashJoinBuffers[0]
-	hasNull, joinKey, err := e.getJoinKeyFromChkRow(e.outerKeys, outerRow, buffer.bytes)
+	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -579,14 +602,14 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(outerRow chunk.Row, chk *chunk.
 		}
 		return nil
 	}
-	innerRows := make([]chunk.Row, 0, len(innerPtrs))
+	e.innerRows = e.innerRows[:0]
 	for _, b := range innerPtrs {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
 		matchedInner := e.innerResult.GetRow(ptr)
-		innerRows = append(innerRows, matchedInner)
+		e.innerRows = append(e.innerRows, matchedInner)
 	}
 
-	err = e.resultGenerator.emitToChunk(outerRow, chunk.NewSliceIterator(innerRows), chk)
+	err = e.resultGenerator.emitToChunk(outerRow, chunk.NewSliceIterator(e.innerRows), chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -818,7 +841,7 @@ func (e *HashJoinExec) buildHashTableForList() error {
 	for i := 0; i < e.innerResult.NumChunks(); i++ {
 		chk := e.innerResult.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
-			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(e.innerKeys, chk.GetRow(j), keyBuf)
+			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
 			if err != nil {
 				return errors.Trace(err)
 			}
