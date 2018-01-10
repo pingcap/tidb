@@ -259,7 +259,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		Index:            idx,
 		dataSourceSchema: ds.schema,
 		Ranges:           ranger.FullNewRange(),
-		OutOfOrder:       true,
+		KeepOrder:        false,
 	}.init(ds.ctx)
 	is.filterCondition = remainedConds
 	is.stats = ds.stats
@@ -373,9 +373,9 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 		}
 		cop.keepOrder = true
+		is.KeepOrder = true
 		is.addPushedDownSelection(cop, ds, prop.expectedCnt)
 	} else {
-		is.OutOfOrder = true
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
 			expectedCnt = prop.expectedCnt
