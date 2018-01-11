@@ -102,12 +102,12 @@ type hashJoinBuffer struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
+	close(e.closeCh)
 	e.finished.Store(true)
 	if err := e.baseExecutor.Close(); err != nil {
 		return errors.Trace(err)
 	}
 
-	close(e.closeCh)
 	if e.prepared {
 		if e.resultBufferCh != nil {
 			for range e.resultBufferCh {
@@ -594,6 +594,8 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 			break
 		}
 		select {
+		case <-e.closeCh:
+			return
 		case outerResult, ok = <-e.outerResultChs[workerID]:
 		}
 		if !ok {
