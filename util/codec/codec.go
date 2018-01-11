@@ -173,15 +173,15 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 	return encode(sc, b, v, false, false)
 }
 
-func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row *chunk.Row, colTypes []*types.FieldType, cols []int, comparable, hash bool) ([]byte, error) {
-	for _, i := range cols {
+func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int, comparable, hash bool) ([]byte, error) {
+	for _, i := range colIdx {
 		if row.IsNull(i) {
 			b = append(b, NilFlag)
 			continue
 		}
-		switch colTypes[i].Tp {
+		switch allTypes[i].Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			if !mysql.HasUnsignedFlag(colTypes[i].Flag) {
+			if !mysql.HasUnsignedFlag(allTypes[i].Flag) {
 				b = encodeSignedInt(b, row.GetInt64(i), comparable)
 				break
 			}
@@ -236,7 +236,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row *chunk.Row, colT
 				}
 				b = append(b, bin...)
 			} else {
-				b = EncodeDecimal(b, row.GetMyDecimal(i), colTypes[i].Flen, colTypes[i].Decimal)
+				b = EncodeDecimal(b, row.GetMyDecimal(i), allTypes[i].Flen, allTypes[i].Decimal)
 			}
 		case mysql.TypeEnum:
 			b = encodeUnsignedInt(b, uint64(row.GetEnum(i).ToNumber()), comparable)
@@ -253,7 +253,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row *chunk.Row, colT
 			b = append(b, j.TypeCode)
 			b = append(b, j.Value...)
 		default:
-			return nil, errors.Errorf("unsupport column type for encode %d", colTypes[i].Tp)
+			return nil, errors.Errorf("unsupport column type for encode %d", allTypes[i].Tp)
 		}
 	}
 	return b, nil
@@ -263,6 +263,10 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row *chunk.Row, colT
 // slice. If two datums are equal, they will generate the same bytes.
 func HashValues(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
 	return encode(sc, b, v, false, true)
+}
+
+func HashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int) ([]byte, error) {
+	return encodeChunkRow(sc, b, row, allTypes, colIdx, false, true)
 }
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
