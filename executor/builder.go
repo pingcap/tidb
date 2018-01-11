@@ -265,15 +265,17 @@ func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
 }
 
 func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
-	return &ExecuteExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
-		IS:           b.is,
-		Name:         v.Name,
-		UsingVars:    v.UsingVars,
-		ID:           v.ExecID,
-		Stmt:         v.Stmt,
-		Plan:         v.Plan,
+	e := &ExecuteExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		is:           b.is,
+		name:         v.Name,
+		usingVars:    v.UsingVars,
+		id:           v.ExecID,
+		stmt:         v.Stmt,
+		plan:         v.Plan,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildShow(v *plan.Show) Executor {
