@@ -265,6 +265,8 @@ func HashValues(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byt
 	return encode(sc, b, v, false, true)
 }
 
+// HashChunkRow appends the encoded values to byte slice "b", returning the appended slice.
+// If two rows are equal, it will generate the same bytes.
 func HashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int) ([]byte, error) {
 	return encodeChunkRow(sc, b, row, allTypes, colIdx, false, true)
 }
