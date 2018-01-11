@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -340,7 +340,8 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 
 	txn := ctx.Txn()
 	sessVars := ctx.GetSessionVars()
-	// when ImportingData is true, no needs to check the key constrains, so we names the variable skipCheck.
+	// when ImportingData or BatchCheck is true,
+	// no needs to check the key constrains, so we names the variable skipCheck.
 	skipCheck := sessVars.ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
 	bs := sessVars.BufStore
 	if bs == nil {

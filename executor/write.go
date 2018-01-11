@@ -959,10 +959,9 @@ func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError, error) {
 	nUnique := 0
 	for _, v := range e.Table.WritableIndices() {
-		if !v.Meta().Unique && !v.Meta().Primary {
-			continue
+		if v.Meta().Unique {
+			nUnique++
 		}
-		nUnique++
 	}
 	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
 
