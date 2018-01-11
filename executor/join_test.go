@@ -214,6 +214,20 @@ func (s *testSuite) TestJoin(c *C) {
 	  ON (table2.c = table1.c)
 	) `)
 	result.Check(testkit.Rows("<nil>"))
+
+	// This case is for testing:
+	// when the main thread calls Executor.Close() while the out data fetch worker and join workers are still working,
+	// we need to stop the goroutines as soon as possible to avoid unexpected error.
+	savedConcurrency := plan.JoinConcurrency
+	plan.JoinConcurrency = 5
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t value(1)")
+	}
+	result = tk.MustQuery("select /*+ TIDB_HJ(s, r) */ * from t as s join t as r on s.a = r.a limit 1;")
+	result.Check(testkit.Rows("1 1"))
+	plan.JoinConcurrency = savedConcurrency
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
