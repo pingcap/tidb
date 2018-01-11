@@ -49,6 +49,7 @@ type Table struct {
 
 	publicColumns   []*table.Column
 	writableColumns []*table.Column
+	writableIndices []table.Index
 	indices         []table.Index
 	recordPrefix    kv.Key
 	indexPrefix     kv.Key
@@ -122,6 +123,7 @@ func newTable(tableID int64, cols []*table.Column, alloc autoid.Allocator) *Tabl
 
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.WritableCols()
+	t.writableIndices = t.WritableIndices()
 	return t
 }
 
@@ -132,6 +134,9 @@ func (t *Table) Indices() []table.Index {
 
 // WritableIndices implements table.Table WritableIndices interface.
 func (t *Table) WritableIndices() []table.Index {
+	if len(t.writableIndices) > 0 {
+		return t.writableIndices
+	}
 	writable := make([]table.Index, 0, len(t.indices))
 	for _, index := range t.indices {
 		s := index.Meta().State

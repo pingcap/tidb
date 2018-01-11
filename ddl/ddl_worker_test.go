@@ -52,6 +52,54 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	c.Assert(d1.GetLease(), Equals, 2*time.Second)
 }
 
+// TestRunWorker tests no job is handled when the value of RunWorker is false.
+func (s *testDDLSuite) TestRunWorker(c *C) {
+	defer testleak.AfterTest(c)()
+	store := testCreateStore(c, "test_run_worker")
+	defer store.Close()
+
+	RunWorker = false
+	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	testCheckOwner(c, d, false)
+	defer d.Stop()
+	ctx := testNewContext(d)
+
+	dbInfo := testSchemaInfo(c, d, "test")
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
+	}
+
+	exitCh := make(chan struct{})
+	go func(ch chan struct{}) {
+		err := d.doDDLJob(ctx, job)
+		c.Assert(err, IsNil)
+		close(ch)
+	}(exitCh)
+	// Make sure the DDL job is in the DDL job queue.
+	// The reason for doing it twice is to eliminate the operation in the start function.
+	<-d.ddlJobCh
+	<-d.ddlJobCh
+	// Make sure the DDL job doesn't be handled.
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		job, err := d.getFirstDDLJob(t)
+		c.Assert(err, IsNil)
+		c.Assert(job, NotNil)
+		c.Assert(job.SchemaID, Equals, dbInfo.ID, Commentf("job %s", job))
+		return nil
+	})
+	// Make sure the DDL job can be done and exit that goroutine.
+	RunWorker = true
+	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	testCheckOwner(c, d1, true)
+	defer d1.Stop()
+	asyncNotify(d1.ddlJobCh)
+	<-exitCh
+}
+
 func (s *testDDLSuite) TestSchemaError(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_error")

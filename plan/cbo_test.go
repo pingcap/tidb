@@ -56,9 +56,9 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	h.DumpStatsDeltaToKV()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"TableScan_10   cop table:t1, range:(-inf,+inf), keep order:false 6",
+		"TableScan_10   cop table:t1, range:[-inf,+inf], keep order:false 6",
 		"TableReader_11 HashLeftJoin_8  root data:TableScan_10 6",
-		"TableScan_12   cop table:t2, range:(-inf,+inf), keep order:false 6",
+		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:false 6",
 		"TableReader_13 HashLeftJoin_8  root data:TableScan_12 6",
 		"HashLeftJoin_8  TableReader_11,TableReader_13 root inner join, small:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
 	))
@@ -87,7 +87,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	h.DumpStatsDeltaToKV()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"TableScan_8 HashAgg_5  cop table:t, range:(-inf,+inf), keep order:false 8",
+		"TableScan_8 HashAgg_5  cop table:t, range:[-inf,+inf], keep order:false 8",
 		"HashAgg_5  TableScan_8 cop group by:test.t.a, funcs:count(1) 2",
 		"TableReader_10 HashAgg_9  root data:HashAgg_5 2",
 		"HashAgg_9  TableReader_10 root group by:, funcs:count(col_0) 2",
@@ -386,7 +386,7 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	// FIXME: The count for table scan is wrong.
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableScan_5 Selection_6  cop table:t, range:(-inf,+inf), keep order:false 28.799999999999997",
+		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 28.799999999999997",
 		"Selection_6  TableScan_5 cop le(test.t.a, 5), le(test.t.b, 5) 28.799999999999997",
 		"TableReader_7   root data:Selection_6 28.799999999999997",
 	))
