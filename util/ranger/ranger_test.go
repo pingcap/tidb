@@ -98,67 +98,67 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a != 1",
 			accessConds: "[ne(test.t.a, 1)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,0] [2,+inf)]",
+			resultStr:   "[[-inf,1) (1,+inf]]",
 		},
 		{
 			exprStr:     "1 != a",
 			accessConds: "[ne(1, test.t.a)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,0] [2,+inf)]",
+			resultStr:   "[[-inf,1) (1,+inf]]",
 		},
 		{
 			exprStr:     "a > 1",
 			accessConds: "[gt(test.t.a, 1)]",
 			filterConds: "[]",
-			resultStr:   "[[2,+inf)]",
+			resultStr:   "[(1,+inf]]",
 		},
 		{
 			exprStr:     "1 < a",
 			accessConds: "[lt(1, test.t.a)]",
 			filterConds: "[]",
-			resultStr:   "[[2,+inf)]",
+			resultStr:   "[(1,+inf]]",
 		},
 		{
 			exprStr:     "a >= 1",
 			accessConds: "[ge(test.t.a, 1)]",
 			filterConds: "[]",
-			resultStr:   "[[1,+inf)]",
+			resultStr:   "[[1,+inf]]",
 		},
 		{
 			exprStr:     "1 <= a",
 			accessConds: "[le(1, test.t.a)]",
 			filterConds: "[]",
-			resultStr:   "[[1,+inf)]",
+			resultStr:   "[[1,+inf]]",
 		},
 		{
 			exprStr:     "a < 1",
 			accessConds: "[lt(test.t.a, 1)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,0]]",
+			resultStr:   "[[-inf,1)]",
 		},
 		{
 			exprStr:     "1 > a",
 			accessConds: "[gt(1, test.t.a)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,0]]",
+			resultStr:   "[[-inf,1)]",
 		},
 		{
 			exprStr:     "a <= 1",
 			accessConds: "[le(test.t.a, 1)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,1]]",
+			resultStr:   "[[-inf,1]]",
 		},
 		{
 			exprStr:     "1 >= test.t.a",
 			accessConds: "[ge(1, test.t.a)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,1]]",
+			resultStr:   "[[-inf,1]]",
 		},
 		{
 			exprStr:     "(a)",
 			accessConds: "[test.t.a]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-1] [1,+inf)]",
+			resultStr:   "[[-inf,0) (0,+inf]]",
 		},
 		{
 			exprStr:     "a in (1, 3, NULL, 2)",
@@ -182,17 +182,8 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a not between 1 and 2",
 			accessConds: "[or(lt(test.t.a, 1), gt(test.t.a, 2))]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,0] [3,+inf)]",
+			resultStr:   "[[-inf,1) (2,+inf]]",
 		},
-		// TODO:deal with the case that when compare to null we'll add a cast function.
-		/*
-			{
-				exprStr:   "a not between null and 0",
-				accessConds: "",
-				filterConds: "[]",
-				resultStr: "[(-inf,+inf)]",
-			},
-		*/
 		{
 			exprStr:     "a between 2 and 1",
 			accessConds: "[ge(test.t.a, 2) le(test.t.a, 1)]",
@@ -203,7 +194,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a not between 2 and 1",
 			accessConds: "[or(lt(test.t.a, 2), gt(test.t.a, 1))]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,+inf)]",
+			resultStr:   "[[-inf,+inf]]",
 		},
 		{
 			exprStr:     "a IS NULL",
@@ -215,13 +206,13 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a IS NOT NULL",
 			accessConds: "[not(isnull(test.t.a))]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,+inf)]",
+			resultStr:   "[[-inf,+inf]]",
 		},
 		{
 			exprStr:     "a IS TRUE",
 			accessConds: "[istrue(test.t.a)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-1] [1,+inf)]",
+			resultStr:   "[[-inf,0) (0,+inf]]",
 		},
 		{
 			exprStr:     "a IS NOT TRUE",
@@ -239,7 +230,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a IS NOT FALSE",
 			accessConds: "[not(isfalse(test.t.a))]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-1] [1,+inf)]",
+			resultStr:   "[[-inf,0) (0,+inf]]",
 		},
 		{
 			exprStr:     "a = 1 or a = 3 or a = 4 or (a > 1 and (a = -1 or a = 5))",
@@ -269,7 +260,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a not in (1, 2, 3)",
 			accessConds: "[not(in(test.t.a, 1, 2, 3))]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,0] [4,+inf)]",
+			resultStr:   "[[-inf,1) (1,2) (2,3) (3,+inf]]",
 		},
 		{
 			exprStr:     "a > 9223372036854775807",
@@ -281,13 +272,13 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a >= 9223372036854775807",
 			accessConds: "[ge(test.t.a, 9223372036854775807)]",
 			filterConds: "[]",
-			resultStr:   "[[9223372036854775807,+inf)]",
+			resultStr:   "[[9223372036854775807,+inf]]",
 		},
 		{
 			exprStr:     "a < -9223372036854775807",
 			accessConds: "[lt(test.t.a, -9223372036854775807)]",
 			filterConds: "[]",
-			resultStr:   "[(-inf,-9223372036854775808]]",
+			resultStr:   "[[-inf,-9223372036854775807)]",
 		},
 		{
 			exprStr:     "a < -9223372036854775808",
@@ -320,8 +311,8 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		conds, filter = ranger.DetachCondsForTableRange(ctx, conds, col)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildTableRange(conds, new(stmtctx.StatementContext))
-		c.Assert(err, IsNil)
+		result, err := ranger.BuildTableRange(conds, new(stmtctx.StatementContext), col.RetType)
+		c.Assert(err, IsNil, Commentf("failed to build table range for expr %s", tt.exprStr))
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
@@ -518,7 +509,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b double)")
+	testKit.MustExec("create table t(a int, b double, c float(3, 2), d varchar(3), e bigint unsigned)")
 
 	tests := []struct {
 		colPos      int
@@ -720,6 +711,34 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			accessConds: "[in(test.t.b, 1, 2.1)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1] [2.1,2.1]]",
+		},
+		{
+			colPos:      0,
+			exprStr:     `a > 9223372036854775807`,
+			accessConds: "[gt(test.t.a, 9223372036854775807)]",
+			filterConds: "[]",
+			resultStr:   "[(9223372036854775807,+inf]]",
+		},
+		{
+			colPos:      2,
+			exprStr:     `c > 111.11111111`,
+			accessConds: "[gt(test.t.c, 111.11111111)]",
+			filterConds: "[]",
+			resultStr:   "[[111.111115,+inf]]",
+		},
+		{
+			colPos:      3,
+			exprStr:     `d > 'aaaaaaaaaaaaaa'`,
+			accessConds: "[gt(test.t.d, aaaaaaaaaaaaaa)]",
+			filterConds: "[]",
+			resultStr:   "[(aaaaaaaaaaaaaa,+inf]]",
+		},
+		{
+			colPos:      4,
+			exprStr:     `e > 18446744073709500000`,
+			accessConds: "[gt(test.t.e, 18446744073709500000)]",
+			filterConds: "[]",
+			resultStr:   "[(18446744073709500000,+inf]]",
 		},
 	}
 

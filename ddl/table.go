@@ -127,7 +127,6 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		job.Args = append(job.Args, startKey)
-		d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
