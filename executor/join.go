@@ -69,9 +69,7 @@ type HashJoinExec struct {
 
 	// for chunk execution
 	outerKeyColIdx     []int
-	outerKeyColTypes   []*types.FieldType
 	innerKeyColIdx     []int
-	innerKeyColTypes   []*types.FieldType
 	innerResult        *chunk.List
 	outerChkResourceCh chan *outerChkResource
 	outerResultChs     []chan *chunk.Chunk
@@ -104,12 +102,12 @@ type hashJoinBuffer struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
+	close(e.closeCh)
 	e.finished.Store(true)
 	if err := e.baseExecutor.Close(); err != nil {
 		return errors.Trace(err)
 	}
 
-	close(e.closeCh)
 	if e.prepared {
 		if e.resultBufferCh != nil {
 			for range e.resultBufferCh {
@@ -222,27 +220,27 @@ func getJoinKey(sc *stmtctx.StatementContext, cols []*expression.Column, row Row
 
 func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyBuf []byte) (hasNull bool, _ []byte, err error) {
 	var keyColIdx []int
-	var keyColTypes []*types.FieldType
+	var allTypes []*types.FieldType
 	if isOuterKey {
 		keyColIdx = e.outerKeyColIdx
-		keyColTypes = e.outerKeyColTypes
+		allTypes = e.outerExec.Schema().GetTypes()
 	} else {
 		keyColIdx = e.innerKeyColIdx
-		keyColTypes = e.innerKeyColTypes
+		allTypes = e.innerExec.Schema().GetTypes()
+	}
+
+	for _, i := range keyColIdx {
+		if row.IsNull(i) {
+			return true, keyBuf, nil
+		}
 	}
 
 	keyBuf = keyBuf[:0]
-	for i, colIdx := range keyColIdx {
-		d := row.GetDatum(colIdx, keyColTypes[i])
-		if d.IsNull() {
-			return true, nil, nil
-		}
-		keyBuf, err = codec.HashValues(e.ctx.GetSessionVars().StmtCtx, keyBuf, d)
-		if err != nil {
-			return false, nil, errors.Trace(err)
-		}
+	keyBuf, err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, keyBuf, row, allTypes, keyColIdx)
+	if err != nil {
+		err = errors.Trace(err)
 	}
-	return false, keyBuf, nil
+	return false, keyBuf, err
 }
 
 // fetchOuterRows fetches rows from the big table in a background goroutine
@@ -386,10 +384,8 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
 
 	e.outerKeyColIdx = make([]int, len(e.outerKeys))
-	e.outerKeyColTypes = make([]*types.FieldType, len(e.outerKeys))
 	for i := range e.outerKeys {
 		e.outerKeyColIdx[i] = e.outerKeys[i].Index
-		e.outerKeyColTypes[i] = e.outerKeys[i].RetType
 	}
 }
 
@@ -598,6 +594,8 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 			break
 		}
 		select {
+		case <-e.closeCh:
+			return
 		case outerResult, ok = <-e.outerResultChs[workerID]:
 		}
 		if !ok {
@@ -1007,10 +1005,8 @@ func (e *NestedLoopApplyExec) Next(goCtx goctx.Context) (Row, error) {
 func (e *HashJoinExec) buildHashTableForList() error {
 	e.hashTable = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
-	e.innerKeyColTypes = make([]*types.FieldType, len(e.innerKeys))
 	for i := range e.innerKeys {
 		e.innerKeyColIdx[i] = e.innerKeys[i].Index
-		e.innerKeyColTypes[i] = e.innerKeys[i].RetType
 	}
 	var (
 		hasNull bool
