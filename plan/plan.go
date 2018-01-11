@@ -148,11 +148,11 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
-	// convert2NewPhysicalPlan converts the logical plan to the physical plan. It's a new interface.
+	// convert2PhysicalPlan converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
-	convert2NewPhysicalPlan(prop *requiredProp) (task, error)
+	convert2PhysicalPlan(prop *requiredProp) (task, error)
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()

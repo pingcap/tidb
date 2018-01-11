@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -333,6 +334,7 @@ func validateConfig() {
 func setGlobalVars() {
 	ddlLeaseDuration := parseLease(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
+	runtime.GOMAXPROCS(cfg.Performance.MaxProcs)
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
