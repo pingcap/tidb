@@ -63,4 +63,11 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustExec("insert t values (0, 1)")
 	tk.MustQuery("select * from t where b = 3").Check(testkit.Rows("2 3"))
 	tk.MustExec("commit")
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a json, b bigint);`)
+	tk.MustExec(`begin;`)
+	tk.MustExec(`insert into t values("\"1\"", 1);`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows(`"1" 1`))
+	tk.MustExec(`commit;`)
 }

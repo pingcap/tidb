@@ -523,7 +523,7 @@ func (la *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan
 	return []PhysicalPlan{apply}
 }
 
-// genPhysPlansByReqProp is only for implementing interface. DataSource and Dual generate task in `convert2NewPhysicalPlan` directly.
+// genPhysPlansByReqProp is only for implementing interface. DataSource and Dual generate task in `convert2PhysicalPlan` directly.
 func (p *baseLogicalPlan) genPhysPlansByReqProp(_ *requiredProp) []PhysicalPlan {
 	panic("This function should not be called")
 }
