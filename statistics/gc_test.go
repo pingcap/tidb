@@ -15,10 +15,10 @@ package statistics_test
 
 import (
 	"math"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
-	"time"
 )
 
 func (s *testStatsUpdateSuite) TestGCStats(c *C) {
