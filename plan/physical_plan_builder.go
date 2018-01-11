@@ -259,7 +259,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		Index:            idx,
 		dataSourceSchema: ds.schema,
 		Ranges:           ranger.FullNewRange(),
-		OutOfOrder:       true,
+		KeepOrder:        false,
 	}.init(ds.ctx)
 	is.filterCondition = remainedConds
 	is.stats = ds.stats
@@ -373,9 +373,9 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 		}
 		cop.keepOrder = true
+		is.KeepOrder = true
 		is.addPushedDownSelection(cop, ds, prop.expectedCnt)
 	} else {
-		is.OutOfOrder = true
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
 			expectedCnt = prop.expectedCnt
@@ -454,9 +454,11 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn,
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var pkName model.CIStr
-	pkInfo := table.GetPkColInfo()
-	if pkInfo != nil {
-		pkName = pkInfo.Name
+	if table.PKIsHandle {
+		pkInfo := table.GetPkColInfo()
+		if pkInfo != nil {
+			pkName = pkInfo.Name
+		}
 	}
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
@@ -496,7 +498,7 @@ func (ds *DataSource) forceToTableScan() PhysicalPlan {
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
-		Ranges:      ranger.FullIntRange(),
+		Ranges:      ranger.FullIntNewRange(),
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = ds.stats
@@ -525,7 +527,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	ts.Ranges = ranger.FullIntRange()
+	ts.Ranges = ranger.FullIntNewRange()
 	var pkCol *expression.Column
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -540,7 +542,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	if len(ds.pushedDownConds) > 0 {
 		if pkCol != nil {
 			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

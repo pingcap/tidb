@@ -467,7 +467,6 @@ func (e *DeleteExec) Open(goCtx goctx.Context) error {
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
 	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx), Table: tbl}
-	insertVal.initDefaultValBuf()
 	return &LoadDataInfo{
 		row:       row,
 		insertVal: insertVal,
@@ -835,6 +834,7 @@ type InsertValues struct {
 	GenExprs   []expression.Expression
 
 	// colDefaultVals is used to store casted default value.
+	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals []defaultVal
 }
 
@@ -848,10 +848,6 @@ type InsertExec struct {
 	IgnoreErr bool
 
 	finished bool
-}
-
-func (e *InsertValues) initDefaultValBuf() {
-	e.colDefaultVals = make([]defaultVal, len(e.Table.Cols()))
 }
 
 func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
@@ -1029,6 +1025,21 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	}
 
 	return cols, nil
+}
+
+func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
+	if e.colDefaultVals != nil {
+		return true
+	}
+
+	// only if values count of insert statement is more than one, use colDefaultVals to store
+	// casted default values has benefits.
+	if len(e.Lists) > 1 {
+		e.colDefaultVals = make([]defaultVal, len(e.Table.Cols()))
+		return true
+	}
+
+	return false
 }
 
 func (e *InsertValues) fillValueList() error {
@@ -1211,8 +1222,13 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
+		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
+		if err = e.filterErr(err, ignoreErr); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		offset := cols[i].Offset
-		row[offset] = v
+		row[offset] = casted
 		hasValue[offset] = true
 	}
 
@@ -1230,12 +1246,14 @@ func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue
 		if err = e.filterErr(err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
+		val, err = table.CastValue(e.ctx, val, cols[valLen+i].ToInfo())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		offset := cols[valLen+i].Offset
 		row[offset] = val
 	}
-	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
-		return nil, errors.Trace(err)
-	}
+
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1255,8 +1273,8 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 	return nil
 }
 
-func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (types.Datum, error) {
-	if e.colDefaultVals[idx].valid {
+func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
+	if e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
 
@@ -1264,16 +1282,17 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (types.Dat
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
+	if initialized := e.lazilyInitColDefaultValBuf(); initialized {
+		e.colDefaultVals[idx].val = defaultVal
+		e.colDefaultVals[idx].valid = true
+	}
 
-	e.colDefaultVals[idx].val = defaultVal
-	e.colDefaultVals[idx].valid = true
 	return defaultVal, nil
 }
 
 // initDefaultValues fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
-	var defaultValueCols []*table.Column
 	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
 
 	for i, c := range e.Table.Cols() {
@@ -1298,7 +1317,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			if e.filterErr(err, ignoreErr) != nil {
 				return errors.Trace(err)
 			}
-			defaultValueCols = append(defaultValueCols, c)
 		}
 
 		// Adjust the value if this column has auto increment flag.
@@ -1308,10 +1326,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			}
 		}
 	}
-	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
-		return errors.Trace(err)
-	}
-
 	return nil
 }
 
@@ -1373,6 +1387,13 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 		row[i].SetInt64(recordID)
 	}
 	retryInfo.AddAutoIncrementID(recordID)
+
+	// the value of row[i] is adjusted by autoid, so we need to cast it again.
+	casted, err := table.CastValue(e.ctx, row[i], c.ToInfo())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	row[i] = casted
 	return nil
 }
 

@@ -535,7 +535,6 @@ func (s *testCodecSuite) TestTime(c *C) {
 		var t types.Time
 		t.Type = mysql.TypeDatetime
 		t.FromPackedUint(v[0].GetUint64())
-		t.TimeZone = nil
 		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
 
@@ -895,9 +894,8 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{types.CurrentTime(mysql.TypeDatetime), types.NewFieldType(mysql.TypeDatetime)},
 		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
 		{types.Time{
-			Time:     types.FromGoTime(time.Now()),
-			Type:     mysql.TypeTimestamp,
-			TimeZone: time.Local,
+			Time: types.FromGoTime(time.Now()),
+			Type: mysql.TypeTimestamp,
 		}, types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
 		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},

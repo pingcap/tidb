@@ -258,36 +258,30 @@ func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool 
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	if t.ColumnIsInvalid(sc, colID) {
-		return float64(t.Count) / pseudoLessRate, nil
+		return float64(t.Count) / pseudoLessRate
 	}
 	hist := t.Columns[colID]
-	result, err := hist.greaterRowCount(sc, value)
-	result *= hist.getIncreaseFactor(t.Count)
-	return result, errors.Trace(err)
+	return hist.greaterRowCount(value) * hist.getIncreaseFactor(t.Count)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
-func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	if t.ColumnIsInvalid(sc, colID) {
-		return float64(t.Count) / pseudoLessRate, nil
+		return float64(t.Count) / pseudoLessRate
 	}
 	hist := t.Columns[colID]
-	result, err := hist.lessRowCount(sc, value)
-	result *= hist.getIncreaseFactor(t.Count)
-	return result, errors.Trace(err)
+	return hist.lessRowCount(value) * hist.getIncreaseFactor(t.Count)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
+func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) float64 {
 	if t.ColumnIsInvalid(sc, colID) {
-		return float64(t.Count) / pseudoBetweenRate, nil
+		return float64(t.Count) / pseudoBetweenRate
 	}
 	hist := t.Columns[colID]
-	result, err := hist.betweenRowCount(sc, a, b)
-	result *= hist.getIncreaseFactor(t.Count)
-	return result, errors.Trace(err)
+	return hist.betweenRowCount(a, b) * hist.getIncreaseFactor(t.Count)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -302,12 +296,18 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []ranger.IntColumnRange) (float64, error) {
+func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.NewRange) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
-		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
+		if len(intRanges) == 0 {
+			return float64(t.Count), nil
+		}
+		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
+			return getPseudoRowCountBySignedIntRanges(intRanges, float64(t.Count)), nil
+		}
+		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(t.Count)), nil
 	}
 	c := t.Columns[colID]
-	result, err := c.getIntColumnRowCount(sc, intRanges)
+	result, err := c.getColumnRowCount(sc, intRanges)
 	result *= c.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -414,25 +414,57 @@ func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 	return rowCount, nil
 }
 
-func getPseudoRowCountByIntRanges(intRanges []ranger.IntColumnRange, tableRowCount float64) float64 {
+func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.NewRange, tableRowCount float64) float64 {
 	var rowCount float64
 	for _, rg := range intRanges {
 		var cnt float64
-		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
+		low := rg.LowVal[0].GetInt64()
+		high := rg.HighVal[0].GetInt64()
+		if low == math.MinInt64 && high == math.MaxInt64 {
 			cnt = tableRowCount
-		} else if rg.LowVal == math.MinInt64 {
+		} else if low == math.MinInt64 {
 			cnt = tableRowCount / pseudoLessRate
-		} else if rg.HighVal == math.MaxInt64 {
+		} else if high == math.MaxInt64 {
 			cnt = tableRowCount / pseudoLessRate
 		} else {
-			if rg.LowVal == rg.HighVal {
+			if low == high {
 				cnt = tableRowCount / pseudoEqualRate
 			} else {
 				cnt = tableRowCount / pseudoBetweenRate
 			}
 		}
-		if rg.HighVal-rg.LowVal > 0 && cnt > float64(rg.HighVal-rg.LowVal) {
-			cnt = float64(rg.HighVal - rg.LowVal)
+		if high-low > 0 && cnt > float64(high-low) {
+			cnt = float64(high - low)
+		}
+		rowCount += cnt
+	}
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
+	}
+	return rowCount
+}
+
+func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.NewRange, tableRowCount float64) float64 {
+	var rowCount float64
+	for _, rg := range intRanges {
+		var cnt float64
+		low := rg.LowVal[0].GetUint64()
+		high := rg.HighVal[0].GetUint64()
+		if low == 0 && high == math.MaxUint64 {
+			cnt = tableRowCount
+		} else if low == 0 {
+			cnt = tableRowCount / pseudoLessRate
+		} else if high == math.MaxUint64 {
+			cnt = tableRowCount / pseudoLessRate
+		} else {
+			if low == high {
+				cnt = tableRowCount / pseudoEqualRate
+			} else {
+				cnt = tableRowCount / pseudoBetweenRate
+			}
+		}
+		if high > low && cnt > float64(high-low) {
+			cnt = float64(high - low)
 		}
 		rowCount += cnt
 	}
