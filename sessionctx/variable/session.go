@@ -110,6 +110,7 @@ func (tc *TransactionContext) ClearDelta() {
 }
 
 // InsertValuesBufs is buffers used by insert statement.
+// TODO: use a common memory pool to replace this.
 type InsertValuesBufs struct {
 	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
 	RowValBuf []byte
