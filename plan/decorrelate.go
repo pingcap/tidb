@@ -154,9 +154,9 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 			}
 		}
 	}
-	newChildren := make([]Plan, 0, len(p.Children()))
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, err := s.optimize(child.(LogicalPlan), nil)
+		np, err := s.optimize(child, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

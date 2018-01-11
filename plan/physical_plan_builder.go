@@ -102,9 +102,9 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 }
 
 func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
-	tasks := make([]task, 0, len(p.basePlan.children))
-	for i, child := range p.basePlan.children {
-		childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(pp.getChildReqProps(i))
+	tasks := make([]task, 0, len(p.children))
+	for i, child := range p.children {
+		childTask, err := child.convert2NewPhysicalPlan(pp.getChildReqProps(i))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

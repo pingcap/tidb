@@ -952,9 +952,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), s.ctx)
+		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), s.ctx)
 		c.Assert(err, IsNil)
-		checkDataSourceCols(p, c, tt.ans, comment)
+		checkDataSourceCols(lp, c, tt.ans, comment)
 	}
 }
 
@@ -965,7 +965,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	c.Assert(pA.id+1, Equals, pB.id)
 }
 
-func checkDataSourceCols(p Plan, c *C, ans map[int][]string, comment CommentInterface) {
+func checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *DataSource:
 		colList, ok := ans[p.ID()]
@@ -1118,7 +1118,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}
 }
 
-func checkUniqueKeys(p Plan, c *C, ans map[int][][]string, sql string) {
+func checkUniqueKeys(p LogicalPlan, c *C, ans map[int][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
 	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
 	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
@@ -1207,9 +1207,9 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), s.ctx)
+		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), s.ctx)
 		c.Assert(err, IsNil)
-		checkUniqueKeys(p, c, tt.ans, tt.sql)
+		checkUniqueKeys(lp, c, tt.ans, tt.sql)
 	}
 }
 

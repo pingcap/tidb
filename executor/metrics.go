@@ -279,9 +279,11 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 		}
 		pa.hasIndexDouble = true
 	}
-	children := p.Children()
-	for _, child := range children {
-		pa.fromPlan(child)
+	if pp, ok := p.(plan.PhysicalPlan); ok {
+		children := pp.Children()
+		for _, child := range children {
+			pa.fromPlan(child)
+		}
 	}
 }
 

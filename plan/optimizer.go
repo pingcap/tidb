@@ -81,7 +81,6 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	if logic, ok := p.(LogicalPlan); ok {
 		return doOptimize(builder.optFlag, logic, ctx)
 	}
-	p.ResolveIndices()
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
 		return p, errors.Trace(err)
