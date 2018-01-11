@@ -64,7 +64,7 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
 func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
-	buf := make([]byte, 0, recordRowKeyLen+idLen)
+	buf := make([]byte, 0, recordRowKeyLen)
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = codec.EncodeInt(buf, handle)
 	return buf
@@ -72,7 +72,7 @@ func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
 
 // EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
 func EncodeRecordKey(recordPrefix kv.Key, h int64) kv.Key {
-	buf := make([]byte, 0, len(recordPrefix)+16)
+	buf := make([]byte, 0, len(recordPrefix)+idLen)
 	buf = append(buf, recordPrefix...)
 	buf = codec.EncodeInt(buf, h)
 	return buf

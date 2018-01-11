@@ -49,11 +49,9 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 	tableInfo = tbl.Meta()
 
 	sc := new(stmtctx.StatementContext)
-	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
-	c.Assert(err, IsNil)
+	count := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, 0.0)
-	count, err = statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
-	c.Assert(err, IsNil)
+	count = statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
 	c.Assert(int(count), Equals, 333)
 }
 
