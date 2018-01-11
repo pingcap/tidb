@@ -185,6 +185,7 @@ func (c *index) Create(ctx context.Context, rm kv.RetrieverMutator, indexedValue
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+
 	if !distinct {
 		// non-unique index doesn't need store value, write a '0' to reduce space
 		err = rm.Set(key, []byte{'0'})

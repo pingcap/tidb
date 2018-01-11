@@ -326,6 +326,19 @@ func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
 	sessVars.AddRowValues = sessVars.AddRowValues[:adjustLen]
 }
 
+func (t *Table) getRollbackableMemStore(ctx context.Context) kv.RetrieverMutator {
+	if ctx.GetSessionVars().ImportingData {
+		return ctx.Txn()
+	}
+
+	bs := ctx.GetSessionVars().BufStore
+	if bs == nil {
+		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	}
+	bs.Reset()
+	return bs
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -347,17 +360,13 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	sessVars := ctx.GetSessionVars()
 	// when ImportingData is true, no needs to check the key constrains, so we names the variable skipCheck.
 	skipCheck := sessVars.ImportingData
-	bs := sessVars.BufStore
-	if bs == nil {
-		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	}
-	bs.Reset()
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
 
+	rm := t.getRollbackableMemStore(ctx)
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, bs, skipHandleCheck)
+	h, err := t.addIndices(ctx, recordID, r, rm, skipHandleCheck)
 	if err != nil {
 		return h, errors.Trace(err)
 	}
@@ -394,8 +403,10 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
-	if err = bs.SaveTo(txn); err != nil {
-		return 0, errors.Trace(err)
+	if !sessVars.ImportingData {
+		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
+			return 0, errors.Trace(err)
+		}
 	}
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
@@ -430,7 +441,7 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 }
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
-func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore, skipHandleCheck bool) (int64, error) {
+func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator, skipHandleCheck bool) (int64, error) {
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
@@ -455,7 +466,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, bs, colVals, recordID); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, colVals, recordID); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, errors.Trace(dupKeyErr)
 			}
