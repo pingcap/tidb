@@ -373,11 +373,11 @@ func (w *GCWorker) resolveLocksParallel(ctx goctx.Context, safePoint uint64) err
 		case <-ctx.Done():
 			return errors.New("[gc worker] gc job canceled")
 		case res := <-w.resolveLockResChan:
-			remained--
 			if res.err != nil {
 				return res.err
 			}
 
+			remained--
 			if remained == 0 {
 				return nil
 			}
