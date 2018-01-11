@@ -503,7 +503,7 @@ type PhysicalIndexJoin struct {
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
-	outerIndex      int
+	OuterIndex      int
 	KeepOrder       bool
 	outerSchema     *expression.Schema
 	innerPlan       PhysicalPlan
