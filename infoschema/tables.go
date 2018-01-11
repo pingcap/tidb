@@ -631,14 +631,12 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 
 func dataForTables(ctx context.Context, schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
-	tz := ctx.GetSessionVars().TimeZone
 	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			createTime := types.Time{
-				Time:     types.FromGoTime(table.GetUpdateTime()),
-				Type:     createTimeTp,
-				TimeZone: tz,
+				Time: types.FromGoTime(table.GetUpdateTime()),
+				Type: createTimeTp,
 			}
 			record := types.MakeDatums(
 				catalogVal,      // TABLE_CATALOG
