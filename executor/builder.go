@@ -354,7 +354,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 
 	ivs.Table = v.Table
-	ivs.initDefaultValBuf()
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}
@@ -381,7 +380,6 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		GenColumns:   v.GenCols.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
-	insertVal.initDefaultValBuf()
 	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
@@ -574,13 +572,17 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
-		defaultValues = make([]types.Datum, rightExec.Schema().Len())
+		if v.JoinType == plan.RightOuterJoin {
+			defaultValues = make([]types.Datum, leftExec.Schema().Len())
+		} else {
+			defaultValues = make([]types.Datum, rightExec.Schema().Len())
+		}
 	}
 	lhsColTypes := leftExec.Schema().GetTypes()
 	rhsColTypes := rightExec.Schema().GetTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
 		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
 		// left is the outer side by default.
 		outerIdx:  0,
@@ -600,7 +602,6 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		e.outerFilter = e.outerIter.filter
 		e.outerIter.filter = nil
 	}
-
 	e.supportChk = true
 	return e
 }
@@ -623,9 +624,11 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
+		innerIdx:     v.SmallChildIdx,
 	}
 
 	defaultValues := v.DefaultValues
+	lhsTypes, rhsTypes := leftExec.Schema().GetTypes(), rightExec.Schema().GetTypes()
 	if v.SmallChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
@@ -636,8 +639,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
-		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
-			v.OtherConditions, nil, nil)
 	} else {
 		e.innerExec = rightExec
 		e.outerExec = leftExec
@@ -648,10 +649,13 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
-		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-			defaultValues, v.OtherConditions, nil, nil)
 	}
-
+	e.resultGenerators = make([]joinResultGenerator, e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		e.resultGenerators[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
+			v.OtherConditions, lhsTypes, rhsTypes)
+	}
+	e.supportChk = true
 	return e
 }
 
@@ -1038,7 +1042,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		return nil
 	}
 	if outerExec.supportChunk() {
-		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReadfer),
+		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReader),
 		// we only need to check outer.
 		return b.buildNewIndexLookUpJoin(v, outerExec)
 	}
@@ -1191,7 +1195,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		tableID:      is.Table.ID,
 		table:        table,
 		index:        is.Index,
-		keepOrder:    !is.OutOfOrder,
+		keepOrder:    is.KeepOrder,
 		desc:         is.Desc,
 		columns:      is.Columns,
 		priority:     b.priority,
@@ -1245,7 +1249,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		tableID:           is.Table.ID,
 		table:             table,
 		index:             is.Index,
-		keepOrder:         !is.OutOfOrder,
+		keepOrder:         is.KeepOrder,
 		desc:              is.Desc,
 		tableRequest:      tableReq,
 		columns:           is.Columns,
