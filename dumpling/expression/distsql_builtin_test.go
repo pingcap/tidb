@@ -327,7 +327,7 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
-		expr.Val = codec.EncodeDecimal(nil, d)
+		expr.Val = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
