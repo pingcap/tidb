@@ -1127,14 +1127,20 @@ func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 	if !v.KeepOrder {
 		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
 	}
+	outerConditions := v.LeftConditions
+	innerConditions := v.RightConditions
+	if v.OuterIndex == 1 {
+		outerConditions, innerConditions = innerConditions, outerConditions
+	}
 	return &IndexLookUpJoin{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		innerExec:       b.build(v.Children()[1]).(DataReader),
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[v.OuterIndex])),
+		innerExec:       b.build(v.Children()[1-v.OuterIndex]).(DataReader),
+		leftIsOuter:     v.OuterIndex == 0,
 		outerJoinKeys:   v.OuterJoinKeys,
 		innerJoinKeys:   v.InnerJoinKeys,
 		outer:           v.Outer,
-		leftConditions:  v.LeftConditions,
-		rightConditions: v.RightConditions,
+		outerConditions: outerConditions,
+		innerConditions: innerConditions,
 		otherConditions: v.OtherConditions,
 		defaultValues:   v.DefaultValues,
 		batchSize:       batchSize,

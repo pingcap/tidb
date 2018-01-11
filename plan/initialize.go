@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 const (
@@ -315,7 +314,6 @@ func (p PhysicalIndexJoin) init(allocator *idAllocator, ctx context.Context, chi
 	p.basePlan = newBasePlan(TypeIndexJoin, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.children = children
-	p.schema = expression.MergeSchema(p.children[0].Schema(), p.children[1].Schema())
 	return &p
 }
 

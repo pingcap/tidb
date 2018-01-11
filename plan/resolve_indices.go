@@ -112,8 +112,8 @@ func (p *PhysicalIndexJoin) ResolveIndices() {
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
 	for i := range p.InnerJoinKeys {
-		p.OuterJoinKeys[i].ResolveIndices(lSchema)
-		p.InnerJoinKeys[i].ResolveIndices(rSchema)
+		p.OuterJoinKeys[i].ResolveIndices(p.children[p.OuterIndex].Schema())
+		p.InnerJoinKeys[i].ResolveIndices(p.children[1-p.OuterIndex].Schema())
 	}
 	for _, expr := range p.LeftConditions {
 		expr.ResolveIndices(lSchema)

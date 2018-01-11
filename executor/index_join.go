@@ -59,10 +59,11 @@ type IndexLookUpJoin struct {
 	innerDatums orderedRows // innerDatums are extracted by innerRows and innerJoinKeys
 	exhausted   bool        // exhausted means whether all data has been extracted
 
+	leftIsOuter     bool
 	outerJoinKeys   []*expression.Column
 	innerJoinKeys   []*expression.Column
-	leftConditions  expression.CNFExprs
-	rightConditions expression.CNFExprs
+	outerConditions expression.CNFExprs
+	innerConditions expression.CNFExprs
 	otherConditions expression.CNFExprs
 	defaultValues   []types.Datum
 	outer           bool
@@ -111,7 +112,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 				e.exhausted = true
 				break
 			}
-			match, err := expression.EvalBool(e.leftConditions, outerRow, e.ctx)
+			match, err := expression.EvalBool(e.outerConditions, outerRow, e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -151,7 +152,11 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 }
 
 func (e *IndexLookUpJoin) fillDefaultValues(row Row) Row {
-	row = append(row, e.defaultValues...)
+	if e.leftIsOuter {
+		row = append(row, e.defaultValues...)
+	} else {
+		row = append(e.defaultValues, row...)
+	}
 	return row
 }
 
@@ -182,7 +187,7 @@ func (e *IndexLookUpJoin) doJoin() error {
 		if innerRow == nil {
 			break
 		}
-		match, err1 := expression.EvalBool(e.rightConditions, innerRow, e.ctx)
+		match, err1 := expression.EvalBool(e.innerConditions, innerRow, e.ctx)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -237,7 +242,12 @@ func (e *IndexLookUpJoin) doMergeJoin() error {
 				outerRow := e.outerRows[i].row
 				for j := innerBeginCursor; j < innerEndCursor; j++ {
 					innerRow := e.innerRows[j].row
-					joinedRow := makeJoinRow(outerRow, innerRow)
+					var joinedRow Row
+					if e.leftIsOuter {
+						joinedRow = makeJoinRow(outerRow, innerRow)
+					} else {
+						joinedRow = makeJoinRow(innerRow, outerRow)
+					}
 					match, err := expression.EvalBool(e.otherConditions, joinedRow, e.ctx)
 					if err != nil {
 						return errors.Trace(err)
