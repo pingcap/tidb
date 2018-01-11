@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
+	"time"
 )
 
 func (s *testStatsUpdateSuite) TestGCStats(c *C) {
@@ -33,20 +34,21 @@ func (s *testStatsUpdateSuite) TestGCStats(c *C) {
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("9"))
 	h := s.do.StatsHandle()
 	h.PrevLastVersion = math.MaxUint64
-	c.Assert(h.GCStats(s.do.InfoSchema()), IsNil)
+	ddlLease := time.Duration(0)
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("6"))
 
 	testKit.MustExec("alter table t drop column a")
-	c.Assert(h.GCStats(s.do.InfoSchema()), IsNil)
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("3"))
 
 	testKit.MustExec("drop table t")
-	c.Assert(h.GCStats(s.do.InfoSchema()), IsNil)
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
-	c.Assert(h.GCStats(s.do.InfoSchema()), IsNil)
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 }

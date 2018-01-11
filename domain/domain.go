@@ -586,16 +586,15 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
-	lease := do.statsLease
-	if lease <= 0 {
+	if do.statsLease <= 0 {
 		return nil
 	}
 	owner := do.newStatsOwner()
 	do.wg.Add(1)
-	go do.updateStatsWorker(ctx, lease, owner)
+	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
 		do.wg.Add(1)
-		go do.autoAnalyzeWorker(lease, owner)
+		go do.autoAnalyzeWorker(owner)
 	}
 	return nil
 }
@@ -617,7 +616,8 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration, owner owner.Manager) {
+func (do *Domain) updateStatsWorker(ctx context.Context, owner owner.Manager) {
+	lease := do.statsLease
 	deltaUpdateDuration := lease * 5
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
@@ -669,7 +669,7 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration, ow
 			if !owner.IsOwner() {
 				continue
 			}
-			err := statsHandle.GCStats(do.InfoSchema())
+			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
 				log.Error("[stats] gc stats fail: ", errors.ErrorStack(err))
 			}
@@ -677,9 +677,9 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration, ow
 	}
 }
 
-func (do *Domain) autoAnalyzeWorker(lease time.Duration, owner owner.Manager) {
+func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	statsHandle := do.StatsHandle()
-	analyzeTicker := time.NewTicker(lease)
+	analyzeTicker := time.NewTicker(do.statsLease)
 	defer analyzeTicker.Stop()
 	for {
 		select {
