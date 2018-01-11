@@ -327,8 +327,8 @@ func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
 }
 
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
-// we just add the kv to transaction's membuf is ok.
-// the returned *kv.BufferStore avoids type assert in bs.SaveTo(txn).
+// Just add the kv to transaction's membuf directly. the returned *kv.BufferStore avoids
+// type assert in bs.SaveTo(txn).
 func (t *Table) getRollbackableMemStore(ctx context.Context) (kv.RetrieverMutator, *kv.BufferStore) {
 	if ctx.GetSessionVars().ImportingData {
 		return ctx.Txn(), nil
