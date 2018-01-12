@@ -123,6 +123,7 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
+	MaxProcs        int    `toml:"max-procs" json:"max-procs"`
 	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	RetryLimit      int    `toml:"retry-limit" json:"retry-limit"`
 	JoinConcurrency int    `toml:"join-concurrency" json:"join-concurrency"`
