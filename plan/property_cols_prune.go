@@ -36,19 +36,19 @@ func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column
 }
 
 func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.Column) {
-	return p.children[0].(LogicalPlan).preparePossibleProperties()
+	return p.children[0].preparePossibleProperties()
 }
 
 func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
-	if len(p.basePlan.children) > 0 {
-		p.basePlan.children[0].(LogicalPlan).preparePossibleProperties()
+	if len(p.children) > 0 {
+		p.children[0].preparePossibleProperties()
 	}
 	return nil
 }
 
 func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
-	leftProperties := p.children[0].(LogicalPlan).preparePossibleProperties()
-	rightProperties := p.children[1].(LogicalPlan).preparePossibleProperties()
+	leftProperties := p.children[0].preparePossibleProperties()
+	rightProperties := p.children[1].preparePossibleProperties()
 	// TODO: We should consider properties propagation.
 	p.leftProperties = leftProperties
 	p.rightProperties = rightProperties
@@ -64,6 +64,6 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 }
 
 func (la *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
-	la.possibleProperties = la.children[0].(LogicalPlan).preparePossibleProperties()
+	la.possibleProperties = la.children[0].preparePossibleProperties()
 	return nil
 }

@@ -995,7 +995,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		tasks:        make([]*analyzeTask, 0, len(v.Children())),
+		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{

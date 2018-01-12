@@ -29,7 +29,7 @@ func (s *pushDownTopNOptimizer) optimize(p LogicalPlan, ctx context.Context) (Lo
 func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	p := s.self
 	for i, child := range p.Children() {
-		p.Children()[i] = child.(LogicalPlan).pushDownTopN(nil)
+		p.Children()[i] = child.pushDownTopN(nil)
 	}
 	if topN != nil {
 		return topN.setChild(p, false)
@@ -62,10 +62,10 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	} else if topN.isLimit() {
 		topN.ByItems = ls.ByItems
 		// If a Limit is pushed down, the LogicalSort should be converted to topN and be pushed again.
-		return ls.children[0].(LogicalPlan).pushDownTopN(topN)
+		return ls.children[0].pushDownTopN(topN)
 	}
 	// If a TopN is pushed down, this sort is useless.
-	return ls.children[0].(LogicalPlan).pushDownTopN(topN)
+	return ls.children[0].pushDownTopN(topN)
 }
 
 func (p *LogicalLimit) convertToTopN() *LogicalTopN {
@@ -73,7 +73,7 @@ func (p *LogicalLimit) convertToTopN() *LogicalTopN {
 }
 
 func (p *LogicalLimit) pushDownTopN(topN *LogicalTopN) LogicalPlan {
-	child := p.children[0].(LogicalPlan).pushDownTopN(p.convertToTopN())
+	child := p.children[0].pushDownTopN(p.convertToTopN())
 	if topN != nil {
 		return topN.setChild(child, false)
 	}
@@ -89,7 +89,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 				newTopN.ByItems = append(newTopN.ByItems, &ByItems{by.Expr.Clone(), by.Desc})
 			}
 		}
-		p.children[i] = child.(LogicalPlan).pushDownTopN(newTopN)
+		p.children[i] = child.pushDownTopN(newTopN)
 	}
 	if topN != nil {
 		return topN.setChild(p, true)
@@ -103,7 +103,7 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 			by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)
 		}
 	}
-	p.children[0] = p.children[0].(LogicalPlan).pushDownTopN(topN)
+	p.children[0] = p.children[0].pushDownTopN(topN)
 	return p
 }
 
@@ -132,24 +132,23 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 			}
 		}
 	}
-	return p.children[idx].(LogicalPlan).pushDownTopN(newTopN)
+	return p.children[idx].pushDownTopN(newTopN)
 }
 
 func (p *LogicalJoin) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		p.children[0] = p.pushDownTopNToChild(topN, 0)
-		p.children[1] = p.children[1].(LogicalPlan).pushDownTopN(nil)
+		p.children[1] = p.children[1].pushDownTopN(nil)
 	case RightOuterJoin:
-		p.children[0] = p.children[0].(LogicalPlan).pushDownTopN(nil)
+		p.children[0] = p.children[0].pushDownTopN(nil)
 		p.children[1] = p.pushDownTopNToChild(topN, 1)
 	default:
 		return p.baseLogicalPlan.pushDownTopN(topN)
 	}
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
-	self := p.self.(LogicalPlan)
 	if topN != nil {
-		return topN.setChild(self, true)
+		return topN.setChild(p.self, true)
 	}
-	return self
+	return p.self
 }
