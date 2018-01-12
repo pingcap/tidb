@@ -486,7 +486,7 @@ func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTa
 		return errors.Trace(err)
 	}
 	defer terror.Call(innerExec.Close)
-	innerResult := chunk.NewList(innerExec.Schema().GetTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(innerExec.RetTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
 	for {
 		err := innerExec.NextChunk(goCtx, iw.executorChk)
 		if err != nil {

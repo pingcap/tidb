@@ -119,7 +119,7 @@ func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return chunk.NewChunk(a.executor.Schema().GetTypes())
+	return chunk.NewChunk(a.executor.RetTypes())
 }
 
 func (a *recordSet) SupportChunk() bool {

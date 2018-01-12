@@ -88,7 +88,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		innerFilter:     []expression.Expression{innerFilter},
 		resultGenerator: generator,
 	}
-	join.innerList = chunk.NewList(innerExec.Schema().GetTypes(), innerExec.maxChunkSize)
+	join.innerList = chunk.NewList(innerExec.RetTypes(), innerExec.maxChunkSize)
 	join.innerChunk = innerExec.newChunk()
 	row, err := join.Next(goCtx)
 	c.Check(err, IsNil)
