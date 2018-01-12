@@ -580,8 +580,8 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 			defaultValues = make([]types.Datum, rightExec.Schema().Len())
 		}
 	}
-	lhsColTypes := leftExec.RetTypes()
-	rhsColTypes := rightExec.RetTypes()
+	lhsColTypes := leftExec.retTypes()
+	rhsColTypes := rightExec.retTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
@@ -630,7 +630,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 
 	defaultValues := v.DefaultValues
-	lhsTypes, rhsTypes := leftExec.RetTypes(), rightExec.RetTypes()
+	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
 	if v.SmallChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
@@ -822,7 +822,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
 	}
 	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-		defaultValues, otherConditions, leftChild.RetTypes(), rightChild.RetTypes())
+		defaultValues, otherConditions, leftChild.retTypes(), rightChild.retTypes())
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.SmallChildIdx == 0 {
@@ -842,7 +842,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		innerChunk:      innerExec.newChunk(),
 		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
-	e.innerList = chunk.NewList(innerExec.RetTypes(), e.maxChunkSize)
+	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	e.supportChk = true
 	return e
 }
@@ -1082,7 +1082,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 
 func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, outerExec Executor) Executor {
 	innerPlan := v.Children()[1-v.OuterIndex]
-	outerTypes, innerTypes := outerExec.RetTypes(), innerPlan.Schema().GetTypes()
+	outerTypes, innerTypes := outerExec.retTypes(), innerPlan.Schema().GetTypes()
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	leftTypes, rightTypes := outerTypes, innerTypes
 

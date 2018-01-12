@@ -144,7 +144,7 @@ func (e *baseExecutor) newChunk() *chunk.Chunk {
 	return chunk.NewChunk(e.RetTypes())
 }
 
-// RetTypes implements the Executor RetTypes interface.
+// retTypes implements the Executor retTypes interface.
 func (e *baseExecutor) RetTypes() []*types.FieldType {
 	return e.retTypes
 }
@@ -184,7 +184,7 @@ type Executor interface {
 	Close() error
 	Open(goctx.Context) error
 	Schema() *expression.Schema
-	RetTypes() []*types.FieldType
+	retTypes() []*types.FieldType
 	supportChunk() bool
 	newChunk() *chunk.Chunk
 	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
