@@ -37,6 +37,7 @@ type StatementContext struct {
 	InShowWarning          bool
 	UseCache               bool
 	PadCharToFullLength    bool
+	BatchCheck             bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
