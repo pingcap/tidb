@@ -337,8 +337,9 @@ func (t *Table) getRollbackableMemStore(ctx context.Context) (kv.RetrieverMutato
 	bs := ctx.GetSessionVars().BufStore
 	if bs == nil {
 		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+	} else {
+		bs.Reset()
 	}
-	bs.Reset()
 	return bs, bs
 }
 
