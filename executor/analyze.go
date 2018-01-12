@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"math"
 	"strconv"
 	"time"
 
@@ -277,7 +276,7 @@ type AnalyzeColumnsExec struct {
 }
 
 func (e *AnalyzeColumnsExec) open() error {
-	ranges := []ranger.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+	ranges := ranger.FullIntNewRange()
 	var builder requestBuilder
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).

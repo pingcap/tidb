@@ -734,7 +734,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		d.SetLength(20)
 		d.SetFrac(6)
 		d.SetMysqlDecimal(dec)
-		decs = append(decs, EncodeDecimal(nil, d))
+		decs = append(decs, EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac()))
 	}
 	for i := 0; i < len(decs)-1; i++ {
 		cmp := bytes.Compare(decs[i], decs[i+1])
