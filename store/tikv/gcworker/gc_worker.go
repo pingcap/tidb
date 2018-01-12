@@ -357,6 +357,7 @@ func (w *GCWorker) resolveLockSingleGap(ctx goctx.Context, bo *tikv.Backoffer, r
 	}
 }
 
+//
 func (w *GCWorker) resolveLocksParallel(ctx goctx.Context, safePoint uint64) error {
 	var lastKey kv.Key
 	remained := 0
