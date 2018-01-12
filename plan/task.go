@@ -129,7 +129,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.PhysicalJoin.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildJoinSchema(p.PhysicalJoin.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.PhysicalJoin.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + lTask.count()*rTask.cost(),
@@ -146,7 +146,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(p.innerPlan, outerTask.plan())
 	}
-	p.schema = buildJoinSchema(p.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: outerTask.cost() + p.getCost(outerTask.count()),
@@ -188,7 +188,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildJoinSchema(p.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
@@ -206,7 +206,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildJoinSchema(p.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
@@ -399,7 +399,7 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	newTask := &rootTask{p: p}
-	newChildren := make([]Plan, 0, len(p.children))
+	newChildren := make([]PhysicalPlan, 0, len(p.children))
 	for _, task := range tasks {
 		if task.invalid() {
 			return invalidTask

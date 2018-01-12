@@ -74,7 +74,7 @@ func (p *baseLogicalPlan) deriveStats() *statsInfo {
 		p.stats = profile
 		return profile
 	}
-	p.stats = p.children[0].(LogicalPlan).deriveStats()
+	p.stats = p.children[0].deriveStats()
 	return p.stats
 }
 
@@ -110,7 +110,7 @@ func (ds *DataSource) deriveStats() *statsInfo {
 }
 
 func (p *LogicalSelection) deriveStats() *statsInfo {
-	childProfile := p.children[0].(LogicalPlan).deriveStats()
+	childProfile := p.children[0].deriveStats()
 	p.stats = childProfile.scale(selectionFactor)
 	return p.stats
 }
@@ -120,7 +120,7 @@ func (p *LogicalUnionAll) deriveStats() *statsInfo {
 		cardinality: make([]float64, p.Schema().Len()),
 	}
 	for _, child := range p.children {
-		childProfile := child.(LogicalPlan).deriveStats()
+		childProfile := child.deriveStats()
 		p.stats.count += childProfile.count
 		for i := range p.stats.cardinality {
 			p.stats.cardinality[i] += childProfile.cardinality[i]
@@ -130,7 +130,7 @@ func (p *LogicalUnionAll) deriveStats() *statsInfo {
 }
 
 func (p *LogicalLimit) deriveStats() *statsInfo {
-	childProfile := p.children[0].(LogicalPlan).deriveStats()
+	childProfile := p.children[0].deriveStats()
 	p.stats = &statsInfo{
 		count:       float64(p.Count),
 		cardinality: make([]float64, len(childProfile.cardinality)),
@@ -148,7 +148,7 @@ func (p *LogicalLimit) deriveStats() *statsInfo {
 }
 
 func (lt *LogicalTopN) deriveStats() *statsInfo {
-	childProfile := lt.children[0].(LogicalPlan).deriveStats()
+	childProfile := lt.children[0].deriveStats()
 	lt.stats = &statsInfo{
 		count:       float64(lt.Count),
 		cardinality: make([]float64, len(childProfile.cardinality)),
@@ -184,7 +184,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 }
 
 func (p *LogicalProjection) deriveStats() *statsInfo {
-	childProfile := p.children[0].(LogicalPlan).deriveStats()
+	childProfile := p.children[0].deriveStats()
 	p.stats = &statsInfo{
 		count:       childProfile.count,
 		cardinality: make([]float64, len(p.Exprs)),
@@ -197,7 +197,7 @@ func (p *LogicalProjection) deriveStats() *statsInfo {
 }
 
 func (la *LogicalAggregation) deriveStats() *statsInfo {
-	childProfile := la.children[0].(LogicalPlan).deriveStats()
+	childProfile := la.children[0].deriveStats()
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
@@ -224,8 +224,8 @@ func (la *LogicalAggregation) deriveStats() *statsInfo {
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
 func (p *LogicalJoin) deriveStats() *statsInfo {
-	leftProfile := p.children[0].(LogicalPlan).deriveStats()
-	rightProfile := p.children[1].(LogicalPlan).deriveStats()
+	leftProfile := p.children[0].deriveStats()
+	rightProfile := p.children[1].deriveStats()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &statsInfo{
 			count:       leftProfile.count * selectionFactor,
@@ -280,8 +280,8 @@ func (p *LogicalJoin) deriveStats() *statsInfo {
 }
 
 func (la *LogicalApply) deriveStats() *statsInfo {
-	leftProfile := la.children[0].(LogicalPlan).deriveStats()
-	_ = la.children[1].(LogicalPlan).deriveStats()
+	leftProfile := la.children[0].deriveStats()
+	_ = la.children[1].deriveStats()
 	la.stats = &statsInfo{
 		count:       leftProfile.count,
 		cardinality: make([]float64, la.schema.Len()),
@@ -310,13 +310,13 @@ func getSingletonStats(len int) *statsInfo {
 }
 
 func (p *LogicalExists) deriveStats() *statsInfo {
-	p.children[0].(LogicalPlan).deriveStats()
+	p.children[0].deriveStats()
 	p.stats = getSingletonStats(1)
 	return p.stats
 }
 
 func (p *LogicalMaxOneRow) deriveStats() *statsInfo {
-	p.children[0].(LogicalPlan).deriveStats()
+	p.children[0].deriveStats()
 	p.stats = getSingletonStats(p.Schema().Len())
 	return p.stats
 }
