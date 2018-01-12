@@ -81,6 +81,6 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 	}
 
 	for _, child := range p.Children() {
-		a.eliminateMaxMin(child.(LogicalPlan))
+		a.eliminateMaxMin(child)
 	}
 }

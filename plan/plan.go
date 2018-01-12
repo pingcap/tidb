@@ -28,23 +28,16 @@ import (
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
-	// Get all the children.
-	Children() []Plan
 	// Get the schema.
 	Schema() *expression.Schema
 	// Get the ID.
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() string
-	// SetChildren sets the children for the plan.
-	SetChildren(...Plan)
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() context.Context
-
-	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
 }
 
 // taskType is the type of execution task.
@@ -185,6 +178,12 @@ type LogicalPlan interface {
 	// findColumn finds the column in basePlan's schema.
 	// If the column is not in the schema, returns an error.
 	findColumn(*ast.ColumnName) (*expression.Column, int, error)
+
+	// Get all the children.
+	Children() []LogicalPlan
+
+	// SetChildren sets the children for the plan.
+	SetChildren(...LogicalPlan)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -206,6 +205,15 @@ type PhysicalPlan interface {
 
 	// StatsInfo will return the statsInfo for this plan.
 	StatsInfo() *statsInfo
+
+	// Get all the children.
+	Children() []PhysicalPlan
+
+	// SetChildren sets the children for the plan.
+	SetChildren(...PhysicalPlan)
+
+	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
+	ResolveIndices()
 }
 
 type baseLogicalPlan struct {
@@ -214,6 +222,7 @@ type baseLogicalPlan struct {
 	taskMap   map[string]task
 	self      LogicalPlan
 	maxOneRow bool
+	children  []LogicalPlan
 }
 
 func (p *baseLogicalPlan) MaxOneRow() bool {
@@ -225,6 +234,7 @@ type basePhysicalPlan struct {
 
 	childrenReqProps []*requiredProp
 	self             PhysicalPlan
+	children         []PhysicalPlan
 }
 
 func (p *basePhysicalPlan) getChildReqProps(idx int) *requiredProp {
@@ -247,12 +257,12 @@ func (p *baseLogicalPlan) storeTask(prop *requiredProp, task task) {
 }
 
 func (p *baseLogicalPlan) buildKeyInfo() {
-	for _, child := range p.basePlan.children {
-		child.(LogicalPlan).buildKeyInfo()
+	for _, child := range p.children {
+		child.buildKeyInfo()
 	}
 	switch p.self.(type) {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
-		p.maxOneRow = p.children[0].(LogicalPlan).MaxOneRow()
+		p.maxOneRow = p.children[0].MaxOneRow()
 	case *LogicalMaxOneRow, *LogicalExists:
 		p.maxOneRow = true
 	}
@@ -284,9 +294,9 @@ func newBasePhysicalPlan(tp string, ctx context.Context, self PhysicalPlan) base
 }
 
 func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.basePlan.children))
-	for _, child := range p.basePlan.children {
-		corCols = append(corCols, child.(LogicalPlan).extractCorrelatedCols()...)
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.children))
+	for _, child := range p.children {
+		corCols = append(corCols, child.extractCorrelatedCols()...)
 	}
 	return corCols
 }
@@ -303,8 +313,6 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	children []Plan
-
 	tp    string
 	id    int
 	ctx   context.Context
@@ -324,17 +332,32 @@ func (p *basePlan) ExplainID() string {
 }
 
 // Schema implements Plan Schema interface.
-func (p *basePlan) Schema() *expression.Schema {
+func (p *baseLogicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
 }
 
-// Children implements Plan Children interface.
-func (p *basePlan) Children() []Plan {
+// Schema implements Plan Schema interface.
+func (p *basePhysicalPlan) Schema() *expression.Schema {
+	return p.children[0].Schema()
+}
+
+// Children implements LogicalPlan Children interface.
+func (p *baseLogicalPlan) Children() []LogicalPlan {
 	return p.children
 }
 
-// SetChildren implements Plan SetChildren interface.
-func (p *basePlan) SetChildren(children ...Plan) {
+// Children implements PhysicalPlan Children interface.
+func (p *basePhysicalPlan) Children() []PhysicalPlan {
+	return p.children
+}
+
+// SetChildren implements LogicalPlan SetChildren interface.
+func (p *baseLogicalPlan) SetChildren(children ...LogicalPlan) {
+	p.children = children
+}
+
+// SetChildren implements PhysicalPlan SetChildren interface.
+func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
 	p.children = children
 }
 
