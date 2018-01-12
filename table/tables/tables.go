@@ -407,7 +407,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !sessVars.ImportingData && bs != nil {
+	if !sessVars.ImportingData {
 		if err = bs.SaveTo(txn); err != nil {
 			return 0, errors.Trace(err)
 		}
