@@ -276,7 +276,7 @@ type AnalyzeColumnsExec struct {
 }
 
 func (e *AnalyzeColumnsExec) open() error {
-	ranges := ranger.FullIntNewRange()
+	ranges := ranger.FullIntNewRange(nil)
 	var builder requestBuilder
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).

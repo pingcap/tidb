@@ -165,7 +165,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 				pkCol = expression.ColInfo2Col(cols, pkColInfo)
 			}
 		}
-		newRanges := ranger.FullIntNewRange()
+		newRanges := ranger.FullIntNewRange(pkCol)
 		if pkCol != nil {
 			ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {

@@ -1330,11 +1330,13 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
+	e.resultHandler = &tableResultHandler{}
+	result, err := distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result.Fetch(goCtx)
+	result.Fetch(goCtx)
+	e.resultHandler.open(nil, result)
 	return e, nil
 }
 

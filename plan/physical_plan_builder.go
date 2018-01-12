@@ -498,7 +498,7 @@ func (ds *DataSource) forceToTableScan() PhysicalPlan {
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
-		Ranges:      ranger.FullIntNewRange(),
+		Ranges:      ranger.FullIntNewRange(nil),
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = ds.stats
@@ -527,7 +527,6 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	ts.Ranges = ranger.FullIntNewRange()
 	var pkCol *expression.Column
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -537,6 +536,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 			}
 		}
 	}
+	ts.Ranges = ranger.FullIntNewRange(pkCol)
 	statsTbl := ds.statisticTable
 	rowCount := float64(statsTbl.Count)
 	if len(ds.pushedDownConds) > 0 {
