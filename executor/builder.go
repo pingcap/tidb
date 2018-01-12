@@ -1331,7 +1331,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.RetTypes())
+	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.retTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

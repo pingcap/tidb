@@ -102,7 +102,7 @@ type baseExecutor struct {
 	maxChunkSize    int
 	children        []Executor
 	childrenResults []*chunk.Chunk
-	retTypes        []*types.FieldType
+	retFieldTypes   []*types.FieldType
 }
 
 // Open implements the Executor Open interface.
@@ -141,12 +141,12 @@ func (e *baseExecutor) Schema() *expression.Schema {
 }
 
 func (e *baseExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunk(e.RetTypes())
+	return chunk.NewChunk(e.retTypes())
 }
 
 // retTypes implements the Executor retTypes interface.
-func (e *baseExecutor) RetTypes() []*types.FieldType {
-	return e.retTypes
+func (e *baseExecutor) retTypes() []*types.FieldType {
+	return e.retFieldTypes
 }
 
 func (e *baseExecutor) supportChunk() bool {
@@ -874,7 +874,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	mutableRow := chunk.MutRowFromTypes(e.RetTypes())
+	mutableRow := chunk.MutRowFromTypes(e.retTypes())
 	for chk.NumRows() < e.maxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
@@ -890,12 +890,12 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(e.RetTypes(), e.maxChunkSize)
+		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
 		}
-		mutableRow := chunk.MutRowFromTypes(e.RetTypes())
+		mutableRow := chunk.MutRowFromTypes(e.retTypes())
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
