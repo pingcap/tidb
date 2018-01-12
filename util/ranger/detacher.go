@@ -197,7 +197,7 @@ func DetachCNFIndexConditions(conditions []expression.Expression, cols []*expres
 	return extractAccessAndFilterConds(conditions, accessConds, filterConds, cols[equalOrInCount], lengths[equalOrInCount], simple)
 }
 
-// detachDNFIndexConditions will detach the index filters from table filters where it's a DNF.
+// detachDNFIndexConditions will detach the index filters from table filters when it's a DNF.
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func detachDNFIndexConditions(condition *expression.ScalarFunction, cols []*expression.Column,
 	lengths []int) (accessConds []expression.Expression, hasResidual bool) {
@@ -240,6 +240,7 @@ func DetachIndexConditions(conditions []expression.Expression, cols []*expressio
 	if len(conditions) == 1 {
 		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			access, hasResidual := detachDNFIndexConditions(sf, cols, lengths)
+			// If this DNF have something cannot be to calculate range, then all this DNF should be pushed as filter condition.
 			if hasResidual {
 				return access, conditions
 			}

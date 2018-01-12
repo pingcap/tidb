@@ -312,7 +312,7 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	ranges, err := ranger.BuildCNFIndexRange(p.ctx.GetSessionVars().StmtCtx, idxCols, colLengths, accesses)
+	ranges, err := ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, idxCols, colLengths, accesses)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
@@ -346,7 +346,7 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
 	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
 	// So DetachCNFIndexConditions won't miss the equal conditions we generate.
-	accesses, remained = ranger.DetachCNFIndexConditions(conds, idxCols, colLengths, false)
+	accesses, remained = ranger.DetachIndexConditions(conds, idxCols, colLengths)
 
 	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
 	// Here the last means that the corresponding index column's position is maximum.

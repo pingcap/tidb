@@ -337,7 +337,7 @@ func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 }
 
 // buildDNFIndexRange builds the range for index where the top layer is DNF.
-// it will constructs range for every item and union them.
+// it will construct range for every item and union them.
 func buildDNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
 	sf *expression.ScalarFunction) ([]*NewRange, error) {
 	totalRanges := make([]*NewRange, 0, len(sf.GetArgs()))
@@ -358,15 +358,15 @@ func buildDNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 	return unionNewRanges(sc, totalRanges)
 }
 
-type sortObject struct {
+type sortRange struct {
 	originalValue *NewRange
 	encodedStart  []byte
 	encodedEnd    []byte
 }
 
-func unionNewRanges(sc *stmtctx.StatementContext, rangesInternal []*NewRange) ([]*NewRange, error) {
-	objects := make([]*sortObject, 0, len(rangesInternal))
-	for _, ran := range rangesInternal {
+func unionNewRanges(sc *stmtctx.StatementContext, ranges []*NewRange) ([]*NewRange, error) {
+	objects := make([]*sortRange, 0, len(ranges))
+	for _, ran := range ranges {
 		left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -381,27 +381,30 @@ func unionNewRanges(sc *stmtctx.StatementContext, rangesInternal []*NewRange) ([
 		if !ran.HighExclude {
 			right = kv.Key(right).PrefixNext()
 		}
-		objects = append(objects, &sortObject{originalValue: ran, encodedStart: left, encodedEnd: right})
+		objects = append(objects, &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right})
 	}
 	sort.Slice(objects, func(i, j int) bool {
 		return bytes.Compare(objects[i].encodedStart, objects[j].encodedStart) < 0
 	})
-	rangesInternal = rangesInternal[:0]
-	curObject := objects[0]
+	ranges = ranges[:0]
+	lastRange := objects[0]
 	for i := 1; i < len(objects); i++ {
-		if bytes.Compare(curObject.encodedEnd, objects[i].encodedStart) >= 0 {
-			if bytes.Compare(curObject.encodedEnd, objects[i].encodedEnd) < 0 {
-				curObject.encodedEnd = objects[i].encodedEnd
-				curObject.originalValue.HighVal = objects[i].originalValue.HighVal
-				curObject.originalValue.HighExclude = objects[i].originalValue.HighExclude
+		// For two intervals [a, b], [c, d], we have guaranteed that a >= c. If b >= c. Then two intervals are overlapped.
+		// And this two can be merged as [a, max(b, d)].
+		// Otherwise they aren't overlapped.
+		if bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0 {
+			if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0 {
+				lastRange.encodedEnd = objects[i].encodedEnd
+				lastRange.originalValue.HighVal = objects[i].originalValue.HighVal
+				lastRange.originalValue.HighExclude = objects[i].originalValue.HighExclude
 			}
 		} else {
-			rangesInternal = append(rangesInternal, curObject.originalValue)
-			curObject = objects[i]
+			ranges = append(ranges, lastRange.originalValue)
+			lastRange = objects[i]
 		}
 	}
-	rangesInternal = append(rangesInternal, curObject.originalValue)
-	return rangesInternal, nil
+	ranges = append(ranges, lastRange.originalValue)
+	return ranges, nil
 }
 
 // BuildIndexRange builds the range for index.
