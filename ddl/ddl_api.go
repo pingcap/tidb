@@ -633,8 +633,9 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			continue
 		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
+			var col *table.Column
 			for _, key := range constr.Keys {
-				col := table.FindCol(cols, key.Column.Name.O)
+				col = table.FindCol(cols, key.Column.Name.O)
 				if col == nil {
 					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
 				}
@@ -644,11 +645,6 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 				}
 			}
 			if len(constr.Keys) == 1 {
-				key := constr.Keys[0]
-				col := table.FindCol(cols, key.Column.Name.O)
-				if col == nil {
-					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
-				}
 				switch col.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
