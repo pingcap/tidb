@@ -829,10 +829,6 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerExec, innerExec = rightChild, leftChild
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
-	resultChunkType := make([]*types.FieldType, v.Schema().Len())
-	for i, col := range v.Schema().Columns {
-		resultChunkType[i] = col.GetType()
-	}
 	e := &NestedLoopApplyExec{
 		baseExecutor:    newBaseExecutor(apply.Schema(), b.ctx, outerExec, innerExec),
 		innerExec:       innerExec,
@@ -844,7 +840,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerSchema:     apply.OuterSchema,
 		outerChunk:      outerExec.newChunk(),
 		innerChunk:      innerExec.newChunk(),
-		resultChunk:     chunk.NewChunk(resultChunkType),
+		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
 	e.innerList = chunk.NewList(innerExec.RetTypes(), e.maxChunkSize)
 	e.supportChk = true
@@ -1085,14 +1081,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 }
 
 func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, outerExec Executor) Executor {
-	outerTypes := outerExec.RetTypes()
 	innerPlan := v.Children()[1-v.OuterIndex]
-	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
-	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType
-	}
+	outerTypes, innerTypes := outerExec.RetTypes(), innerPlan.Schema().GetTypes()
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	leftTypes, rightTypes := outerTypes, innerTypes
+
 	if v.OuterIndex == 1 {
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter, innerFilter = innerFilter, outerFilter

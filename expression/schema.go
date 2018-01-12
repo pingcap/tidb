@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/types"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -205,6 +206,15 @@ func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
 		cols = append(cols, s.Columns[offset])
 	}
 	return cols
+}
+
+// GetTypes creates a field type slice.
+func (s *Schema) GetTypes() []*types.FieldType {
+	fields := make([]*types.FieldType, len(s.Columns))
+	for i := range fields {
+		fields[i] = s.Columns[i].RetType
+	}
+	return fields
 }
 
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.
