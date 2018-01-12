@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -345,8 +345,9 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 
 	txn := ctx.Txn()
 	sessVars := ctx.GetSessionVars()
-	// when ImportingData is true, no needs to check the key constrains, so we names the variable skipCheck.
-	skipCheck := sessVars.ImportingData
+	// when ImportingData or BatchCheck is true,
+	// no needs to check the key constrains, so we names the variable skipCheck.
+	skipCheck := sessVars.ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
 	bs := sessVars.BufStore
 	if bs == nil {
 		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
@@ -434,8 +435,8 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	importData := ctx.GetSessionVars().ImportingData
-	if t.meta.PKIsHandle && !importData && !skipHandleCheck {
+	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID); err != nil {
 			return recordID, errors.Trace(err)
 		}
@@ -447,7 +448,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			return 0, errors.Trace(err2)
 		}
 		var dupKeyErr error
-		if !importData && (v.Meta().Unique || v.Meta().Primary) {
+		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
 			entryKey, err1 := t.genIndexKeyStr(colVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
