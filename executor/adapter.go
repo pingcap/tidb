@@ -349,10 +349,10 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.Text = executorExec.Stmt.Text()
+		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true
-		a.Plan = executorExec.Plan
-		e = executorExec.StmtExec
+		a.Plan = executorExec.plan
+		e = executorExec.stmtExec
 	}
 	return e, nil
 }

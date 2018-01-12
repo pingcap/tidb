@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -122,9 +121,6 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 		job.State = model.JobStateDone
 		job.SchemaState = model.StateNone
-		for _, tblInfo := range dbInfo.Tables {
-			d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
-		}
 	default:
 		// We can't enter here.
 		err = errors.Errorf("invalid db state %v", dbInfo.State)

@@ -75,11 +75,10 @@ export PATH=$PATH:$GOPATH/bin
 
 #### Dependency management
 
-TiDB build/test scripts use [`glide`](https://github.com/Masterminds/glide) to
-manage dependencies.
+TiDB uses [`dep`](https://github.com/golang/dep) to manage dependencies.
 
 ```sh
-go get -u  github.com/Masterminds/glide
+go get -u  github.com/golang/dep/cmd/dep
 ```
 
 ## Workflow
