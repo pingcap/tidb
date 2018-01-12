@@ -349,10 +349,10 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.Text = executorExec.Stmt.Text()
+		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true
-		a.Plan = executorExec.Plan
-		e = executorExec.StmtExec
+		a.Plan = executorExec.plan
+		e = executorExec.stmtExec
 	}
 	return e, nil
 }
@@ -413,7 +413,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	case *plan.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
 	default:
 		return false
 	}

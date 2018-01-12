@@ -203,7 +203,8 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 
 	plan.PreparedPlanCacheEnabled = true
 	plan.PreparedPlanCacheCapacity = 10
-
+	// disable stats update.
+	tidb.SetStatsLease(0)
 	store, dom, err = newMockTikvWithBootstrap()
 	if err != nil {
 		err = errors.Trace(err)

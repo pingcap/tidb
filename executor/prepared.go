@@ -183,29 +183,23 @@ func (e *PrepareExec) DoPrepare() error {
 type ExecuteExec struct {
 	baseExecutor
 
-	IS        infoschema.InfoSchema
-	Name      string
-	UsingVars []expression.Expression
-	ID        uint32
-	StmtExec  Executor
-	Stmt      ast.StmtNode
-	Plan      plan.Plan
+	is        infoschema.InfoSchema
+	name      string
+	usingVars []expression.Expression
+	id        uint32
+	stmtExec  Executor
+	stmt      ast.StmtNode
+	plan      plan.Plan
 }
 
 // Next implements the Executor Next interface.
+// It will never be called.
 func (e *ExecuteExec) Next(goCtx goctx.Context) (Row, error) {
-	// Will never be called.
 	return nil, nil
 }
 
-// Open implements the Executor Open interface.
-func (e *ExecuteExec) Open(goCtx goctx.Context) error {
-	return nil
-}
-
-// Close implements Executor Close interface.
-func (e *ExecuteExec) Close() error {
-	// Will never be called.
+// NextChunk implements the Executor NextChunk interface.
+func (e *ExecuteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -213,7 +207,7 @@ func (e *ExecuteExec) Close() error {
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
 	var err error
-	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.Plan) {
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan) {
 		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
 	} else {
 		err = e.ctx.ActivePendingTxn()
@@ -221,14 +215,14 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := newExecutorBuilder(e.ctx, e.IS, kv.PriorityNormal)
-	stmtExec := b.build(e.Plan)
+	b := newExecutorBuilder(e.ctx, e.is, kv.PriorityNormal)
+	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		return errors.Trace(b.err)
 	}
-	e.StmtExec = stmtExec
-	ResetStmtCtx(e.ctx, e.Stmt)
-	stmtCount(e.Stmt, e.Plan, e.ctx.GetSessionVars().InRestrictedSQL)
+	e.stmtExec = stmtExec
+	ResetStmtCtx(e.ctx, e.stmt)
+	stmtCount(e.stmt, e.plan, e.ctx.GetSessionVars().InRestrictedSQL)
 	return nil
 }
 

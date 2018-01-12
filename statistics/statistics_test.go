@@ -226,32 +226,23 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(col.Len(), Equals, 232)
-	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
-	c.Check(err, IsNil)
+	count := col.equalRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 0)
-	count, err = col.lessRowCount(sc, types.NewIntDatum(1000))
-	c.Check(err, IsNil)
+	count = col.lessRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 10000)
-	count, err = col.lessRowCount(sc, types.NewIntDatum(2000))
-	c.Check(err, IsNil)
+	count = col.lessRowCount(types.NewIntDatum(2000))
 	c.Check(int(count), Equals, 19995)
-	count, err = col.greaterRowCount(sc, types.NewIntDatum(2000))
-	c.Check(err, IsNil)
+	count = col.greaterRowCount(types.NewIntDatum(2000))
 	c.Check(int(count), Equals, 80003)
-	count, err = col.lessRowCount(sc, types.NewIntDatum(200000000))
-	c.Check(err, IsNil)
+	count = col.lessRowCount(types.NewIntDatum(200000000))
 	c.Check(int(count), Equals, 100000)
-	count, err = col.greaterRowCount(sc, types.NewIntDatum(200000000))
-	c.Check(err, IsNil)
+	count = col.greaterRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
-	count, err = col.equalRowCount(sc, types.NewIntDatum(200000000))
-	c.Check(err, IsNil)
+	count = col.equalRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
-	count, err = col.betweenRowCount(sc, types.NewIntDatum(3000), types.NewIntDatum(3500))
-	c.Check(err, IsNil)
+	count = col.betweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(int(count), Equals, 5008)
-	count, err = col.lessRowCount(sc, types.NewIntDatum(1))
-	c.Check(err, IsNil)
+	count = col.lessRowCount(types.NewIntDatum(1))
 	c.Check(int(count), Equals, 9)
 
 	builder := SampleBuilder{
@@ -274,17 +265,13 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
-	count, err = col.equalRowCount(sc, encodeKey(types.NewIntDatum(10000)))
-	c.Check(err, IsNil)
+	count = col.equalRowCount(encodeKey(types.NewIntDatum(10000)))
 	c.Check(int(count), Equals, 1)
-	count, err = col.lessRowCount(sc, encodeKey(types.NewIntDatum(20000)))
-	c.Check(err, IsNil)
+	count = col.lessRowCount(encodeKey(types.NewIntDatum(20000)))
 	c.Check(int(count), Equals, 19999)
-	count, err = col.betweenRowCount(sc, encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
-	c.Check(err, IsNil)
+	count = col.betweenRowCount(encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 	c.Check(int(count), Equals, 4999)
-	count, err = col.lessRowCount(sc, encodeKey(types.NewIntDatum(0)))
-	c.Check(err, IsNil)
+	count = col.lessRowCount(encodeKey(types.NewIntDatum(0)))
 	c.Check(int(count), Equals, 0)
 
 	s.pk.(*recordSet).cursor = 0
@@ -293,29 +280,21 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
-	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
-	c.Check(err, IsNil)
+	count = col.equalRowCount(types.NewIntDatum(10000))
 	c.Check(int(count), Equals, 1)
-	count, err = col.lessRowCount(sc, types.NewIntDatum(20000))
-	c.Check(err, IsNil)
+	count = col.lessRowCount(types.NewIntDatum(20000))
 	c.Check(int(count), Equals, 20000)
-	count, err = col.betweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
-	c.Check(err, IsNil)
+	count = col.betweenRowCount(types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(int(count), Equals, 5000)
-	count, err = col.greaterAndEqRowCount(sc, types.NewIntDatum(1001))
-	c.Check(err, IsNil)
+	count = col.greaterAndEqRowCount(types.NewIntDatum(1001))
 	c.Check(int(count), Equals, 98999)
-	count, err = col.lessAndEqRowCount(sc, types.NewIntDatum(99999))
-	c.Check(err, IsNil)
+	count = col.lessAndEqRowCount(types.NewIntDatum(99999))
 	c.Check(int(count), Equals, 100000)
-	count, err = col.lessAndEqRowCount(sc, types.Datum{})
-	c.Check(err, IsNil)
+	count = col.lessAndEqRowCount(types.Datum{})
 	c.Check(int(count), Equals, 0)
-	count, err = col.greaterRowCount(sc, types.NewIntDatum(1001))
-	c.Check(err, IsNil)
+	count = col.greaterRowCount(types.NewIntDatum(1001))
 	c.Check(int(count), Equals, 98998)
-	count, err = col.lessRowCount(sc, types.NewIntDatum(99999))
-	c.Check(err, IsNil)
+	count = col.lessRowCount(types.NewIntDatum(99999))
 	c.Check(int(count), Equals, 99999)
 
 	datum := types.Datum{}
@@ -418,14 +397,12 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	tbl := PseudoTable(ti.ID)
 	c.Assert(tbl.Count, Greater, int64(0))
 	sc := new(stmtctx.StatementContext)
-	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
-	c.Assert(err, IsNil)
+	count := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
 	c.Assert(int(count), Equals, 3333)
-	count, err = tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo.ID)
+	count, err := tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 10)
-	count, err = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
-	c.Assert(err, IsNil)
+	count = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	c.Assert(int(count), Equals, 250)
 }
 
@@ -524,47 +501,47 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
-	ran := []ranger.IntColumnRange{{
-		LowVal:  math.MinInt64,
-		HighVal: math.MaxInt64,
+	ran := []*ranger.NewRange{{
+		LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
+		HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
 	}}
 	count, err := tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 2000
+	ran[0].LowVal[0].SetInt64(1000)
+	ran[0].HighVal[0].SetInt64(2000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1000)
-	ran[0].LowVal = 1001
-	ran[0].HighVal = 1999
+	ran[0].LowVal[0].SetInt64(1001)
+	ran[0].HighVal[0].SetInt64(1999)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 998)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 1000
+	ran[0].LowVal[0].SetInt64(1000)
+	ran[0].HighVal[0].SetInt64(1000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100)
 
 	tbl.Columns[0] = col
-	ran[0].LowVal = math.MinInt64
-	ran[0].HighVal = math.MaxInt64
+	ran[0].LowVal[0].SetInt64(math.MinInt64)
+	ran[0].HighVal[0].SetInt64(math.MaxInt64)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 2000
+	ran[0].LowVal[0].SetInt64(1000)
+	ran[0].HighVal[0].SetInt64(2000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 1000)
-	ran[0].LowVal = 1001
-	ran[0].HighVal = 1999
+	c.Assert(int(count), Equals, 1001)
+	ran[0].LowVal[0].SetInt64(1001)
+	ran[0].HighVal[0].SetInt64(1999)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 998)
-	ran[0].LowVal = 1000
-	ran[0].HighVal = 1000
+	c.Assert(int(count), Equals, 999)
+	ran[0].LowVal[0].SetInt64(1000)
+	ran[0].HighVal[0].SetInt64(1000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)

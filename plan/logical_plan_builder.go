@@ -639,7 +639,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := LogicalUnionAll{}.init(b.ctx)
-	u.children = make([]Plan, len(union.SelectList.Selects))
+	u.children = make([]LogicalPlan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
 		if b.err != nil {
@@ -1859,6 +1859,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	}.init(b.ctx)
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, b.err = doOptimize(b.optFlag, p, b.ctx)
+	updt.ResolveIndices()
 	return updt
 }
 
@@ -1945,7 +1946,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 }
 
 // extractTableAsNameForUpdate extracts tables' alias names for update.
-func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.CIStr) {
+func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*model.CIStr) {
 	switch x := p.(type) {
 	case *DataSource:
 		alias := extractTableAlias(p.(LogicalPlan))

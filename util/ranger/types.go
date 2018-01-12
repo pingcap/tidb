@@ -102,11 +102,11 @@ func (ran *NewRange) IsPoint(sc *stmtctx.StatementContext) bool {
 func (ran *NewRange) String() string {
 	lowStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.LowVal {
-		lowStrs = append(lowStrs, formatDatum(d))
+		lowStrs = append(lowStrs, formatDatum(d, true))
 	}
 	highStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.HighVal {
-		highStrs = append(highStrs, formatDatum(d))
+		highStrs = append(highStrs, formatDatum(d, false))
 	}
 	l, r := "[", "]"
 	if ran.LowExclude {
@@ -134,12 +134,29 @@ func (ran *NewRange) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	return len(ran.LowVal), nil
 }
 
-func formatDatum(d types.Datum) string {
-	if d.Kind() == types.KindMinNotNull {
+func formatDatum(d types.Datum, isLeftSide bool) string {
+	switch d.Kind() {
+	case types.KindNull:
+		return "<nil>"
+	case types.KindMinNotNull:
 		return "-inf"
-	}
-	if d.Kind() == types.KindMaxValue {
+	case types.KindMaxValue:
 		return "+inf"
+	case types.KindInt64:
+		switch d.GetInt64() {
+		case math.MinInt64:
+			if isLeftSide {
+				return "-inf"
+			}
+		case math.MaxInt64:
+			if !isLeftSide {
+				return "+inf"
+			}
+		}
+	case types.KindUint64:
+		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
+			return "+inf"
+		}
 	}
 	return fmt.Sprintf("%v", d.GetValue())
 }

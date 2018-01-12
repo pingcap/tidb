@@ -135,7 +135,9 @@ func makeMutRowColumn(in interface{}) *column {
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *x
 		return col
 	case types.Time:
-		return makeMutRowInterfaceColumn(x)
+		col := newMutRowFixedLenColumn(16)
+		writeTime(col.data, x)
+		return col
 	case json.BinaryJSON:
 		col := newMutRowVarLenColumn(len(x.Value) + 1)
 		col.data[0] = x.TypeCode
@@ -156,7 +158,7 @@ func makeMutRowColumn(in interface{}) *column {
 		copy(col.data[8:], x.Name)
 		return col
 	default:
-		return makeMutRowInterfaceColumn(x)
+		return nil
 	}
 }
 
@@ -197,15 +199,6 @@ func makeMutRowBytesColumn(bin []byte) *column {
 	return col
 }
 
-func makeMutRowInterfaceColumn(in interface{}) *column {
-	col := &column{
-		length:     1,
-		nullBitmap: []byte{1},
-		ifaces:     []interface{}{in},
-	}
-	return col
-}
-
 // SetRow sets the MutRow with Row.
 func (mr MutRow) SetRow(row Row) {
 	for colIdx, rCol := range row.c.columns {
@@ -217,10 +210,8 @@ func (mr MutRow) SetRow(row Row) {
 		elemLen := len(rCol.elemBuf)
 		if elemLen > 0 {
 			copy(mrCol.data, rCol.data[row.idx*elemLen:(row.idx+1)*elemLen])
-		} else if len(rCol.offsets) > 0 {
-			setMutRowBytes(mrCol, rCol.data[rCol.offsets[row.idx]:rCol.offsets[row.idx+1]])
 		} else {
-			mrCol.ifaces[0] = rCol.ifaces[row.idx]
+			setMutRowBytes(mrCol, rCol.data[rCol.offsets[row.idx]:rCol.offsets[row.idx+1]])
 		}
 		mrCol.nullBitmap[0] = 1
 	}
@@ -262,7 +253,7 @@ func (mr MutRow) SetValue(colIdx int, val interface{}) {
 	case *types.MyDecimal:
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *x
 	case types.Time:
-		col.ifaces[0] = x
+		writeTime(col.data, x)
 	case types.Enum:
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.Set:
@@ -295,13 +286,13 @@ func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 		setMutRowBytes(col, d.GetBytes())
 	case types.KindMysqlTime:
-		col.ifaces[0] = d.GetMysqlTime()
+		writeTime(col.data, d.GetMysqlTime())
 	case types.KindMysqlDuration:
 		*(*types.Duration)(unsafe.Pointer(&col.data[0])) = d.GetMysqlDuration()
 	case types.KindMysqlDecimal:
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *d.GetMysqlDecimal()
 	case types.KindMysqlJSON:
-		col.ifaces[0] = d.GetMysqlJSON()
+		setMutRowJSON(col, d.GetMysqlJSON())
 	case types.KindMysqlEnum:
 		e := d.GetMysqlEnum()
 		setMutRowNameValue(col, e.Name, e.Value)
@@ -345,7 +336,9 @@ func setMutRowJSON(col *column, j json.BinaryJSON) {
 	if len(col.data) >= dataLen {
 		col.data = col.data[:dataLen]
 	} else {
-		buf := make([]byte, dataLen)
+		// In MutRow, there always exists 1 data in every column,
+		// we should allocate one more byte for null bitmap.
+		buf := make([]byte, dataLen+1)
 		col.data = buf[:dataLen]
 		col.nullBitmap = buf[dataLen:]
 	}

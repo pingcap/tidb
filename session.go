@@ -1130,10 +1130,12 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 16
+	currentBootstrapVersion = 17
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
@@ -1162,7 +1164,9 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 }
 
 func finishBootstrap(store kv.Storage) {
+	storeBootstrappedLock.Lock()
 	storeBootstrapped[store.UUID()] = true
+	storeBootstrappedLock.Unlock()
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
