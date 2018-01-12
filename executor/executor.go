@@ -173,7 +173,11 @@ func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ..
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if schema != nil {
-		e.retTypes = schema.GetTypes()
+		cols := schema.Columns
+		e.retFieldTypes = make([]*types.FieldType, len(cols))
+		for i := range cols {
+			e.retFieldTypes[i] = cols[i].RetType
+		}
 	}
 	return e
 }
