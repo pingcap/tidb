@@ -345,7 +345,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
-		err := pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
