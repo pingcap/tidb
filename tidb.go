@@ -92,7 +92,8 @@ var (
 	}
 	stores = make(map[string]kv.Driver)
 	// store.UUID()-> IfBootstrapped
-	storeBootstrapped = make(map[string]bool)
+	storeBootstrapped     = make(map[string]bool)
+	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is the time for re-updating remote schema.
 	// In online DDL, we must wait 2 * SchemaLease time to guarantee

@@ -52,7 +52,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			}
 		}
 	}
-	buffer.WriteString(fmt.Sprintf(", out of order:%v", p.OutOfOrder))
+	buffer.WriteString(fmt.Sprintf(", keep order:%v", p.KeepOrder))
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}

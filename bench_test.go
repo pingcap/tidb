@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/store/tikv"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
@@ -28,7 +29,11 @@ var smallCount = 100
 var bigCount = 10000
 
 func prepareBenchSession() Session {
-	store, err := NewStore("memory://bench")
+	store, err := tikv.NewMockTikvStore()
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = BootstrapSession(store)
 	if err != nil {
 		log.Fatal(err)
 	}

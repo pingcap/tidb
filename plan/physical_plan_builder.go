@@ -68,7 +68,7 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
-func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+func (p *LogicalTableDual) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 	if !prop.isEmpty() {
 		return invalidTask, nil
 	}
@@ -77,8 +77,8 @@ func (p *LogicalTableDual) convert2NewPhysicalPlan(prop *requiredProp) (task, er
 	return &rootTask{p: dual}, nil
 }
 
-// convert2NewPhysicalPlan implements LogicalPlan interface.
-func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
+// convert2PhysicalPlan implements LogicalPlan interface.
+func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProp) (t task, err error) {
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	t = p.getTask(prop)
@@ -102,9 +102,9 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, e
 }
 
 func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
-	tasks := make([]task, 0, len(p.basePlan.children))
-	for i, child := range p.basePlan.children {
-		childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(pp.getChildReqProps(i))
+	tasks := make([]task, 0, len(p.children))
+	for i, child := range p.children {
+		childTask, err := child.convert2PhysicalPlan(pp.getChildReqProps(i))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -170,9 +170,9 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 	return nil, nil
 }
 
-// convert2NewPhysicalPlan implements the PhysicalPlan interface.
+// convert2PhysicalPlan implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
 	// TODO: Add a special prop to handle IndexJoin's inner plan.
@@ -259,7 +259,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		Index:            idx,
 		dataSourceSchema: ds.schema,
 		Ranges:           ranger.FullNewRange(),
-		OutOfOrder:       true,
+		KeepOrder:        false,
 	}.init(ds.ctx)
 	is.filterCondition = remainedConds
 	is.stats = ds.stats
@@ -373,9 +373,9 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 		}
 		cop.keepOrder = true
+		is.KeepOrder = true
 		is.addPushedDownSelection(cop, ds, prop.expectedCnt)
 	} else {
-		is.OutOfOrder = true
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
 			expectedCnt = prop.expectedCnt
@@ -498,7 +498,7 @@ func (ds *DataSource) forceToTableScan() PhysicalPlan {
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
-		Ranges:      ranger.FullIntRange(),
+		Ranges:      ranger.FullIntNewRange(),
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = ds.stats
@@ -527,7 +527,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	ts.Ranges = ranger.FullIntRange()
+	ts.Ranges = ranger.FullIntNewRange()
 	var pkCol *expression.Column
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -542,7 +542,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	if len(ds.pushedDownConds) > 0 {
 		if pkCol != nil {
 			ts.AccessCondition, ts.filterCondition = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
