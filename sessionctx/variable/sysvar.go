@@ -620,6 +620,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBLogQuery, strconv.Itoa(DefLogQuery)},
 }
 
