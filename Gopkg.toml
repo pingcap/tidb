@@ -31,7 +31,12 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/golang/protobuf/ptyp
 
 [[constraint]]
   name = "github.com/coreos/etcd"
-  version = "3.2.6"
+  version = "=3.2.14"
+
+[[constraint]]
+  name = "google.golang.org/grpc"
+  source = "https://github.com/grpc/grpc-go.git"
+  version = "1.7.5"
 
 [[constraint]]
   branch = "master"

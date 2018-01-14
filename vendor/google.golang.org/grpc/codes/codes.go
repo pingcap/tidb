@@ -1,50 +1,36 @@
 /*
  *
- * Copyright 2014, Google Inc.
- * All rights reserved.
+ * Copyright 2014 gRPC authors.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  */
 
 // Package codes defines the canonical error codes used by gRPC. It is
 // consistent across various languages.
 package codes // import "google.golang.org/grpc/codes"
+import (
+	"fmt"
+)
 
 // A Code is an unsigned 32-bit error code as defined in the gRPC spec.
 type Code uint32
-
-//go:generate stringer -type=Code
 
 const (
 	// OK is returned on success.
 	OK Code = 0
 
-	// Canceled indicates the operation was cancelled (typically by the caller).
+	// Canceled indicates the operation was canceled (typically by the caller).
 	Canceled Code = 1
 
 	// Unknown error.  An example of where this error may be returned is
@@ -157,3 +143,41 @@ const (
 	// DataLoss indicates unrecoverable data loss or corruption.
 	DataLoss Code = 15
 )
+
+var strToCode = map[string]Code{
+	`"OK"`: OK,
+	`"CANCELLED"`:/* [sic] */ Canceled,
+	`"UNKNOWN"`:             Unknown,
+	`"INVALID_ARGUMENT"`:    InvalidArgument,
+	`"DEADLINE_EXCEEDED"`:   DeadlineExceeded,
+	`"NOT_FOUND"`:           NotFound,
+	`"ALREADY_EXISTS"`:      AlreadyExists,
+	`"PERMISSION_DENIED"`:   PermissionDenied,
+	`"RESOURCE_EXHAUSTED"`:  ResourceExhausted,
+	`"FAILED_PRECONDITION"`: FailedPrecondition,
+	`"ABORTED"`:             Aborted,
+	`"OUT_OF_RANGE"`:        OutOfRange,
+	`"UNIMPLEMENTED"`:       Unimplemented,
+	`"INTERNAL"`:            Internal,
+	`"UNAVAILABLE"`:         Unavailable,
+	`"DATA_LOSS"`:           DataLoss,
+	`"UNAUTHENTICATED"`:     Unauthenticated,
+}
+
+// UnmarshalJSON unmarshals b into the Code.
+func (c *Code) UnmarshalJSON(b []byte) error {
+	// From json.Unmarshaler: By convention, to approximate the behavior of
+	// Unmarshal itself, Unmarshalers implement UnmarshalJSON([]byte("null")) as
+	// a no-op.
+	if string(b) == "null" {
+		return nil
+	}
+	if c == nil {
+		return fmt.Errorf("nil receiver passed to UnmarshalJSON")
+	}
+	if jc, ok := strToCode[string(b)]; ok {
+		*c = jc
+		return nil
+	}
+	return fmt.Errorf("invalid code: %q", string(b))
+}
