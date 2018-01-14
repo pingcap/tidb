@@ -26,6 +26,7 @@ var (
 	TiDBBuildTS   = "None"
 	TiDBGitHash   = "None"
 	TiDBGitBranch = "None"
+	GoVersion     = "None"
 )
 
 // PrintTiDBInfo prints the TiDB version information.
@@ -35,6 +36,7 @@ func PrintTiDBInfo() {
 	log.Infof("Git Commit Hash: %s", TiDBGitHash)
 	log.Infof("Git Branch: %s", TiDBGitBranch)
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
+	log.Infof("GoVersion:  %s", GoVersion)
 }
 
 // PrintRawTiDBInfo prints the TiDB version information without log info.
@@ -43,6 +45,7 @@ func PrintRawTiDBInfo() {
 	fmt.Println("Git Commit Hash:", TiDBGitHash)
 	fmt.Println("Git Commit Branch:", TiDBGitBranch)
 	fmt.Println("UTC Build Time: ", TiDBBuildTS)
+	fmt.Println("GoVersion: ", GoVersion)
 }
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
