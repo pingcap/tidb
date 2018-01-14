@@ -624,7 +624,6 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{"select {ts '1989-09-10 11:11:11'}", true},
 		{"select {d '1989-09-10'}", true},
 		{"select {t '00:00:00.111'}", true},
-		{"select {ts '1989-09-10 11:11:11'}", true},
 		// If the identifier is not in (t, d, ts), we just ignore it and consider the following expression as a string literal.
 		// This is the same behavior with MySQL.
 		{"select {ts123 '1989-09-10 11:11:11'}", true},
