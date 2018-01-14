@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"math"
 	"strconv"
 	"time"
 
@@ -49,7 +48,7 @@ const (
 	maxRegionSampleSize  = 1000
 	maxSketchSize        = 10000
 	maxBucketSize        = 256
-	defaultCMSketchDepth = 8
+	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
 )
 
@@ -168,8 +167,8 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		Cms:     []*statistics.CMSketch{cms},
 		IsIndex: 1,
 	}
-	if len(hist.Buckets) > 0 {
-		result.Count = hist.Buckets[len(hist.Buckets)-1].Count
+	if hist.Len() > 0 {
+		result.Count = hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }
@@ -188,7 +187,7 @@ type AnalyzeIndexExec struct {
 func (e *AnalyzeIndexExec) open() error {
 	idxRange := &ranger.NewRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	var builder requestBuilder
-	kvReq, err := builder.SetIndexRanges(e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		SetPriority(e.priority).
@@ -257,8 +256,8 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
-	if len(hist.Buckets) > 0 {
-		result.Count += hist.Buckets[len(hist.Buckets)-1].Count
+	if hist.Len() > 0 {
+		result.Count += hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }
@@ -277,7 +276,7 @@ type AnalyzeColumnsExec struct {
 }
 
 func (e *AnalyzeColumnsExec) open() error {
-	ranges := []ranger.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+	ranges := ranger.FullIntNewRange()
 	var builder requestBuilder
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).
@@ -332,28 +331,23 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
 		}
 		for i, rc := range resp.Collectors {
-			collectors[i].MergeSampleCollector(statistics.SampleCollectorFromProto(rc))
+			collectors[i].MergeSampleCollector(sc, statistics.SampleCollectorFromProto(rc))
 		}
 	}
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
-		for i, bkt := range pkHist.Buckets {
-			pkHist.Buckets[i].LowerBound, err = tablecodec.DecodeColumnValue(bkt.LowerBound.GetBytes(), &e.pkInfo.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			pkHist.Buckets[i].UpperBound, err = tablecodec.DecodeColumnValue(bkt.UpperBound.GetBytes(), &e.pkInfo.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
+		err := pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 		hists = append(hists, pkHist)
 		cms = append(cms, nil)
@@ -365,7 +359,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i])
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

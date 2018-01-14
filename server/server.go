@@ -42,7 +42,7 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
-	proxyprotocol "github.com/blacktear23/go-proxyprotocol"
+	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"

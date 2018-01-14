@@ -199,7 +199,8 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 			se.Close()
 		}
 	}()
-
+	// disable stats update.
+	tidb.SetStatsLease(0)
 	store, dom, err = newMockTikvWithBootstrap()
 	if err != nil {
 		err = errors.Trace(err)
@@ -226,6 +227,7 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 
 	se.GetSessionVars().IDAllocator = idAlloc
 	se.GetSessionVars().ImportingData = true
+	se.GetSessionVars().SkipUTF8Check = true
 	e.se = se
 	e.store = store
 	e.dom = dom

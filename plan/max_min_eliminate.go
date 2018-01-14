@@ -53,7 +53,6 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 			// If it can be NULL, we need to filter NULL out first.
 			if !mysql.HasNotNullFlag(f.GetArgs()[0].GetType().Flag) {
 				sel := LogicalSelection{}.init(a.ctx)
-				sel.SetSchema(p.Children()[0].Schema().Clone())
 				isNullFunc := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.GetArgs()[0])
 				notNullFunc := expression.NewFunctionInternal(a.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 				sel.Conditions = []expression.Expression{notNullFunc}
@@ -67,14 +66,12 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 			// Compose Sort operator.
 			sort := LogicalSort{}.init(a.ctx)
 			sort.ByItems = append(sort.ByItems, &ByItems{f.GetArgs()[0], desc})
-			sort.SetSchema(child.Schema().Clone())
 			sort.SetChildren(child)
 			child = sort
 		}
 
 		// Compose Limit operator.
 		li := LogicalLimit{Count: 1}.init(a.ctx)
-		li.SetSchema(child.Schema().Clone())
 		li.SetChildren(child)
 
 		// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
@@ -84,6 +81,6 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 	}
 
 	for _, child := range p.Children() {
-		a.eliminateMaxMin(child.(LogicalPlan))
+		a.eliminateMaxMin(child)
 	}
 }

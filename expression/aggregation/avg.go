@@ -71,7 +71,7 @@ func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		return nil
 	}
 	if af.Distinct {
-		d, err1 := ctx.DistinctChecker.Check([]types.Datum{value})
+		d, err1 := ctx.DistinctChecker.Check(sc, []types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}

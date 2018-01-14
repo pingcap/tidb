@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -233,7 +234,6 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobStateDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -315,6 +315,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 // This part of the column data rows is defaultSmallBatchCnt.
 func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []int64, txn kv.Transaction) (int64, error) {
 	nextHandle := handles[0]
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	for _, handle := range handles {
 		log.Debug("[ddl] backfill column...", handle)
 		rowKey := t.RecordKey(handle)
@@ -344,7 +345,7 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 		}
 		newColumnIDs = append(newColumnIDs, colMeta.colID)
 		newRow = append(newRow, colMeta.defaultVal)
-		newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs, time.UTC)
+		newRowVal, err := tablecodec.EncodeRow(sc, newRow, newColumnIDs, nil, nil)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

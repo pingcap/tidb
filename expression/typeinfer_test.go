@@ -108,7 +108,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	)`
 	testKit.MustExec(sql)
 
-	tests := []typeInferTestCase{}
+	var tests []typeInferTestCase
 	tests = append(tests, s.createTestCase4Constants()...)
 	tests = append(tests, s.createTestCase4Cast()...)
 	tests = append(tests, s.createTestCase4Columns()...)
@@ -129,6 +129,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4Literals()...)
 	tests = append(tests, s.createTestCase4JSONFuncs()...)
 	tests = append(tests, s.createTestCase4MiscellaneousFunc()...)
+	tests = append(tests, s.createTestCase4AggregationFunc()...)
 
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -1948,5 +1949,11 @@ func (s *testInferTypeSuite) createTestCase4MiscellaneousFunc() []typeInferTestC
 		{"release_lock(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"release_lock(c_varchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"release_lock(c_text_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+	}
+}
+
+func (s *testInferTypeSuite) createTestCase4AggregationFunc() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"group_concat(c_int_d)", mysql.TypeVarString, charset.CharsetUTF8, 0, mysql.MaxBlobWidth, 0},
 	}
 }

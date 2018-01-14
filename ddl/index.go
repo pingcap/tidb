@@ -21,7 +21,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -93,8 +92,8 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 					sumLength += col.Flen
 				}
 			} else {
-				if len, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
-					sumLength += len
+				if length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
+					sumLength += length
 				} else {
 					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
 				}
@@ -102,8 +101,8 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 				// Special case for time fraction.
 				if types.IsTypeFractionable(col.FieldType.Tp) &&
 					col.FieldType.Decimal != types.UnspecifiedLength {
-					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
-						sumLength += len
+					if length, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
+						sumLength += length
 					} else {
 						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 					}
@@ -395,7 +394,6 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.State = model.JobStateRollbackDone
 		} else {
 			job.State = model.JobStateDone
-			d.asyncNotifyEvent(&ddlutil.Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		job.Args = append(job.Args, indexInfo.ID)

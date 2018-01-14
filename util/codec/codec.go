@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -43,18 +44,18 @@ const (
 
 // encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
-func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, error) {
+func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, error) {
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
 		case types.KindInt64:
 			b = encodeSignedInt(b, vals[i].GetInt64(), comparable)
 		case types.KindUint64:
 			if hash {
-				int := vals[i].GetInt64()
-				if int < 0 {
-					b = encodeUnsignedInt(b, uint64(int), comparable)
+				integer := vals[i].GetInt64()
+				if integer < 0 {
+					b = encodeUnsignedInt(b, uint64(integer), comparable)
 				} else {
-					b = encodeSignedInt(b, int, comparable)
+					b = encodeSignedInt(b, integer, comparable)
 				}
 			} else {
 				b = encodeUnsignedInt(b, vals[i].GetUint64(), comparable)
@@ -69,8 +70,8 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			t := vals[i].GetMysqlTime()
 			// Encoding timestamp need to consider timezone.
 			// If it's not in UTC, transform to UTC first.
-			if t.Type == mysql.TypeTimestamp && t.TimeZone != time.UTC {
-				err := t.ConvertTimeZone(t.TimeZone, time.UTC)
+			if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+				err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -96,7 +97,7 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 				}
 				b = append(b, bin...)
 			} else {
-				b = EncodeDecimal(b, vals[i])
+				b = EncodeDecimal(b, vals[i].GetMysqlDecimal(), vals[i].Length(), vals[i].Frac())
 			}
 		case types.KindMysqlEnum:
 			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlEnum().ToNumber()), comparable)
@@ -162,20 +163,112 @@ func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
 // EncodeKey appends the encoded values to byte slice b, returns the appended
 // slice. It guarantees the encoded value is in ascending order for comparison.
 // For Decimal type, datum must set datum's length and frac.
-func EncodeKey(b []byte, v ...types.Datum) ([]byte, error) {
-	return encode(b, v, true, false)
+func EncodeKey(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
+	return encode(sc, b, v, true, false)
 }
 
 // EncodeValue appends the encoded values to byte slice b, returning the appended
 // slice. It does not guarantee the order for comparison.
-func EncodeValue(b []byte, v ...types.Datum) ([]byte, error) {
-	return encode(b, v, false, false)
+func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
+	return encode(sc, b, v, false, false)
+}
+
+func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int, comparable, hash bool) ([]byte, error) {
+	for _, i := range colIdx {
+		if row.IsNull(i) {
+			b = append(b, NilFlag)
+			continue
+		}
+		switch allTypes[i].Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			if !mysql.HasUnsignedFlag(allTypes[i].Flag) {
+				b = encodeSignedInt(b, row.GetInt64(i), comparable)
+				break
+			}
+			// encode unsigned integers.
+			if hash {
+				integer := row.GetInt64(i)
+				if integer < 0 {
+					b = encodeUnsignedInt(b, uint64(integer), comparable)
+				} else {
+					b = encodeSignedInt(b, integer, comparable)
+				}
+			} else {
+				b = encodeUnsignedInt(b, row.GetUint64(i), comparable)
+			}
+		case mysql.TypeFloat:
+			b = append(b, floatFlag)
+			b = EncodeFloat(b, float64(row.GetFloat32(i)))
+		case mysql.TypeDouble:
+			b = append(b, floatFlag)
+			b = EncodeFloat(b, row.GetFloat64(i))
+		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			b = encodeBytes(b, row.GetBytes(i), comparable)
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			b = append(b, uintFlag)
+			t := row.GetTime(i)
+			// Encoding timestamp need to consider timezone.
+			// If it's not in UTC, transform to UTC first.
+			if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+				err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			v, err := t.ToPackedUint()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			b = EncodeUint(b, v)
+		case mysql.TypeDuration:
+			// duration may have negative value, so we cannot use String to encode directly.
+			b = append(b, durationFlag)
+			b = EncodeInt(b, int64(row.GetDuration(i).Duration))
+		case mysql.TypeNewDecimal:
+			b = append(b, decimalFlag)
+			if hash {
+				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
+				dec := row.GetMyDecimal(i)
+				precision, frac := dec.PrecisionAndFrac()
+				bin, err := dec.ToBin(precision, frac)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				b = append(b, bin...)
+			} else {
+				b = EncodeDecimal(b, row.GetMyDecimal(i), allTypes[i].Flen, allTypes[i].Decimal)
+			}
+		case mysql.TypeEnum:
+			b = encodeUnsignedInt(b, uint64(row.GetEnum(i).ToNumber()), comparable)
+		case mysql.TypeSet:
+			b = encodeUnsignedInt(b, uint64(row.GetSet(i).ToNumber()), comparable)
+		case mysql.TypeBit:
+			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+			val, err := types.BinaryLiteral(row.GetBytes(i)).ToInt()
+			terror.Log(errors.Trace(err))
+			b = encodeUnsignedInt(b, val, comparable)
+		case mysql.TypeJSON:
+			b = append(b, jsonFlag)
+			j := row.GetJSON(i)
+			b = append(b, j.TypeCode)
+			b = append(b, j.Value...)
+		default:
+			return nil, errors.Errorf("unsupport column type for encode %d", allTypes[i].Tp)
+		}
+	}
+	return b, nil
 }
 
 // HashValues appends the encoded values to byte slice b, returning the appended
 // slice. If two datums are equal, they will generate the same bytes.
-func HashValues(b []byte, v ...types.Datum) ([]byte, error) {
-	return encode(b, v, false, true)
+func HashValues(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
+	return encode(sc, b, v, false, true)
+}
+
+// HashChunkRow appends the encoded values to byte slice "b", returning the appended slice.
+// If two rows are equal, it will generate the same bytes.
+func HashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int) ([]byte, error) {
+	return encodeChunkRow(sc, b, row, allTypes, colIdx, false, true)
 }
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue

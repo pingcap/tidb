@@ -236,11 +236,11 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 // See https://godoc.org/github.com/go-sql-driver/mysql#RegisterTLSConfig for details.
 func registerTLSConfig(configName string, caCertPath string, clientCertPath string, clientKeyPath string, serverName string, verifyServer bool) error {
 	rootCertPool := x509.NewCertPool()
-	pem, err := ioutil.ReadFile(caCertPath)
+	data, err := ioutil.ReadFile(caCertPath)
 	if err != nil {
 		return err
 	}
-	if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+	if ok := rootCertPool.AppendCertsFromPEM(data); !ok {
 		return errors.New("Failed to append PEM")
 	}
 	clientCert := make([]tls.Certificate, 0, 1)

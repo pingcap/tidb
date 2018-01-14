@@ -16,8 +16,10 @@ package statistics
 import (
 	"encoding/binary"
 	"math"
+	"time"
 
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -40,35 +42,14 @@ func calcFraction(lower, upper, value float64) float64 {
 	return frac
 }
 
-// preCalculateDatumScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also
-// calculate their common prefix length, because when a value falls between lower and upper, the common prefix
-// of lower and upper equals to the common prefix of the lower, upper and the value.
-func preCalculateDatumScalar(lower, upper *types.Datum) (float64, float64, int) {
-	common := 0
-	if lower.Kind() == types.KindString || lower.Kind() == types.KindBytes {
-		common = commonPrefixLength(lower.GetBytes(), upper.GetBytes())
-	}
-	return convertDatumToScalar(lower, common), convertDatumToScalar(upper, common), common
-}
-
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
-	case types.KindFloat32:
-		return float64(value.GetFloat32())
-	case types.KindFloat64:
-		return value.GetFloat64()
-	case types.KindInt64:
-		return float64(value.GetInt64())
-	case types.KindUint64:
-		return float64(value.GetUint64())
 	case types.KindMysqlDecimal:
 		scalar, err := value.GetMysqlDecimal().ToFloat64()
 		if err != nil {
 			return 0
 		}
 		return scalar
-	case types.KindMysqlDuration:
-		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlTime:
 		valueTime := value.GetMysqlTime()
 		var minTime types.Time
@@ -92,7 +73,8 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 				Fsp:  types.DefaultFsp,
 			}
 		}
-		return float64(valueTime.Sub(&minTime).Duration)
+		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		return float64(valueTime.Sub(sc, &minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
@@ -103,6 +85,59 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		// do not know how to convert
 		return 0
 	}
+}
+
+// PreCalculateScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also
+// calculate their common prefix length, because when a value falls between lower and upper, the common prefix
+// of lower and upper equals to the common prefix of the lower, upper and the value. For some simple types like `Int64`,
+// we do not convert it because we can directly infer the scalar value.
+func (hg *Histogram) PreCalculateScalar() {
+	len := hg.Len()
+	if len == 0 {
+		return
+	}
+	switch hg.GetLower(0).Kind() {
+	case types.KindMysqlDecimal, types.KindMysqlTime:
+		hg.scalars = make([]scalar, len)
+		for i := 0; i < len; i++ {
+			hg.scalars[i] = scalar{
+				lower: convertDatumToScalar(hg.GetLower(i), 0),
+				upper: convertDatumToScalar(hg.GetUpper(i), 0),
+			}
+		}
+	case types.KindBytes, types.KindString:
+		hg.scalars = make([]scalar, len)
+		for i := 0; i < len; i++ {
+			lower, upper := hg.GetLower(i), hg.GetUpper(i)
+			common := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
+			hg.scalars[i] = scalar{
+				commonPfxLen: common,
+				lower:        convertDatumToScalar(lower, common),
+				upper:        convertDatumToScalar(upper, common),
+			}
+		}
+	}
+}
+
+func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
+	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
+	switch value.Kind() {
+	case types.KindFloat32:
+		return calcFraction(float64(lower.GetFloat32(0)), float64(upper.GetFloat32(0)), float64(value.GetFloat32()))
+	case types.KindFloat64:
+		return calcFraction(lower.GetFloat64(0), upper.GetFloat64(0), value.GetFloat64())
+	case types.KindInt64:
+		return calcFraction(float64(lower.GetInt64(0)), float64(upper.GetInt64(0)), float64(value.GetInt64()))
+	case types.KindUint64:
+		return calcFraction(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)), float64(value.GetUint64()))
+	case types.KindMysqlDuration:
+		return calcFraction(float64(lower.GetDuration(0).Duration), float64(upper.GetDuration(0).Duration), float64(value.GetMysqlDuration().Duration))
+	case types.KindMysqlDecimal, types.KindMysqlTime:
+		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, 0))
+	case types.KindBytes, types.KindString:
+		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, hg.scalars[index].commonPfxLen))
+	}
+	return 0.5
 }
 
 func commonPrefixLength(lower, upper []byte) int {

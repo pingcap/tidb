@@ -173,14 +173,14 @@ func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 		rowPtr := e.rowPtrs[e.Idx]
-		chk.AppendRow(0, e.rowChunks.GetRow(rowPtr))
+		chk.AppendRow(e.rowChunks.GetRow(rowPtr))
 		e.Idx++
 	}
 	return nil
 }
 
 func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
-	fields := e.schema.GetTypes()
+	fields := e.retTypes()
 	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
 	for {
 		chk := chunk.NewChunk(fields)
@@ -481,7 +481,7 @@ func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		chk.AppendRow(0, row)
+		chk.AppendRow(row)
 		e.Idx++
 	}
 	return nil
@@ -489,7 +489,7 @@ func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(e.schema.GetTypes(), e.maxChunkSize)
+	e.rowChunks = chunk.NewList(e.retTypes(), e.maxChunkSize)
 	for e.rowChunks.Len() < e.totalLimit {
 		srcChk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, srcChk)
@@ -589,7 +589,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(e.schema.GetTypes(), e.maxChunkSize)
+	newRowChunks := chunk.NewList(e.retTypes(), e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))

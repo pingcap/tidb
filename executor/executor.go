@@ -102,6 +102,7 @@ type baseExecutor struct {
 	maxChunkSize    int
 	children        []Executor
 	childrenResults []*chunk.Chunk
+	retFieldTypes   []*types.FieldType
 }
 
 // Open implements the Executor Open interface.
@@ -140,7 +141,12 @@ func (e *baseExecutor) Schema() *expression.Schema {
 }
 
 func (e *baseExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunk(e.Schema().GetTypes())
+	return chunk.NewChunk(e.retTypes())
+}
+
+// retTypes implements the Executor retTypes interface.
+func (e *baseExecutor) retTypes() []*types.FieldType {
+	return e.retFieldTypes
 }
 
 func (e *baseExecutor) supportChunk() bool {
@@ -160,12 +166,20 @@ func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
-	return baseExecutor{
+	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
 		schema:       schema,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
+	if schema != nil {
+		cols := schema.Columns
+		e.retFieldTypes = make([]*types.FieldType, len(cols))
+		for i := range cols {
+			e.retFieldTypes[i] = cols[i].RetType
+		}
+	}
+	return e
 }
 
 // Executor executes a query.
@@ -174,6 +188,7 @@ type Executor interface {
 	Close() error
 	Open(goctx.Context) error
 	Schema() *expression.Schema
+	retTypes() []*types.FieldType
 	supportChunk() bool
 	newChunk() *chunk.Chunk
 	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
@@ -377,7 +392,7 @@ func (e *CheckTableExec) run(goCtx goctx.Context) error {
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
-			err = admin.CompareIndexData(txn, tb, idx)
+			err = admin.CompareIndexData(e.ctx.GetSessionVars().StmtCtx, txn, tb, idx)
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
 			}
@@ -598,8 +613,8 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	exprs            []expression.Expression
-	vectorizable     bool
+	exprs            []expression.Expression // Only used in Next().
+	evaluatorSuit    *expression.EvaluatorSuit
 	calculateNoDelay bool
 }
 
@@ -608,7 +623,6 @@ func (e *ProjectionExec) Open(goCtx goctx.Context) error {
 	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
-	e.vectorizable = expression.Vectorizable(e.exprs)
 	return nil
 }
 
@@ -638,10 +652,7 @@ func (e *ProjectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 	if err := e.children[0].NextChunk(goCtx, e.childrenResults[0]); err != nil {
 		return errors.Trace(err)
 	}
-	if e.vectorizable {
-		return errors.Trace(expression.VectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
-	}
-	return errors.Trace(expression.UnVectorizedExecute(e.ctx, e.exprs, e.childrenResults[0], chk))
+	return errors.Trace(e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk))
 }
 
 // TableDualExec represents a dual table executor.
@@ -753,7 +764,7 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 			if chk.NumRows() == e.maxChunkSize {
 				return nil
 			}
-			chk.AppendRow(0, e.inputRow)
+			chk.AppendRow(e.inputRow)
 		}
 		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
@@ -782,7 +793,7 @@ func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk
 				return errors.Trace(err)
 			}
 			if selected {
-				chk.AppendRow(0, e.inputRow)
+				chk.AppendRow(e.inputRow)
 				e.inputRow = e.inputRow.Next()
 				return nil
 			}
@@ -867,7 +878,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
+	mutableRow := chunk.MutRowFromTypes(e.retTypes())
 	for chk.NumRows() < e.maxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
@@ -875,7 +886,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		}
 		e.seekHandle = handle + 1
 		mutableRow.SetDatums(row...)
-		chk.AppendRow(0, mutableRow.ToRow())
+		chk.AppendRow(mutableRow.ToRow())
 	}
 	return nil
 }
@@ -883,12 +894,12 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(e.Schema().GetTypes(), e.maxChunkSize)
+		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
 		}
-		mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
+		mutableRow := chunk.MutRowFromTypes(e.retTypes())
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
@@ -1142,7 +1153,7 @@ type execResult struct {
 
 // unionWorkerResult stores the result for a union worker.
 // A "resultPuller" is started for every child to pull result from that child, unionWorkerResult is used to store that pulled result.
-// "src" is used for Chunk resuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
+// "src" is used for Chunk reuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
 // enable the corresponding "resultPuller" continue to work.
 type unionWorkerResult struct {
 	chk *chunk.Chunk

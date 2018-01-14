@@ -51,7 +51,7 @@ var (
 
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
@@ -60,7 +60,7 @@ type PhysicalTableReader struct {
 
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []PhysicalPlan
@@ -72,7 +72,7 @@ type PhysicalIndexReader struct {
 
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []PhysicalPlan
@@ -84,19 +84,19 @@ type PhysicalIndexLookUpReader struct {
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
 
-	Table      *model.TableInfo
-	Index      *model.IndexInfo
-	Ranges     []*ranger.NewRange
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
-	Desc       bool
-	OutOfOrder bool
+	Table     *model.TableInfo
+	Index     *model.IndexInfo
+	Ranges    []*ranger.NewRange
+	Columns   []*model.ColumnInfo
+	DBName    model.CIStr
+	Desc      bool
+	KeepOrder bool
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -119,7 +119,7 @@ type PhysicalIndexScan struct {
 
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	DBName      model.CIStr
 	Table       *model.TableInfo
@@ -140,7 +140,7 @@ func needValue(af aggregation.Aggregation) bool {
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
@@ -150,7 +150,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []ranger.IntColumnRange
+	Ranges  []*ranger.NewRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
@@ -165,7 +165,7 @@ type PhysicalTableScan struct {
 
 // PhysicalProjection is the physical operator of projection.
 type PhysicalProjection struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	Exprs            []expression.Expression
 	CalculateNoDelay bool
@@ -185,9 +185,9 @@ type PhysicalTopN struct {
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
-	PhysicalJoin PhysicalPlan
+	PhysicalJoin *PhysicalHashJoin
 	OuterSchema  []*expression.CorrelatedColumn
 
 	rightChOffset int
@@ -195,7 +195,7 @@ type PhysicalApply struct {
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
 type PhysicalHashJoin struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	JoinType JoinType
 
@@ -211,7 +211,7 @@ type PhysicalHashJoin struct {
 
 // PhysicalIndexJoin represents the plan of index look up join.
 type PhysicalIndexJoin struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	JoinType        JoinType
 	OuterJoinKeys   []*expression.Column
@@ -234,7 +234,7 @@ type PhysicalIndexJoin struct {
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
 type PhysicalMergeJoin struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	JoinType JoinType
 
@@ -298,7 +298,7 @@ func (at AggregationType) String() string {
 }
 
 type basePhysicalAgg struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
@@ -351,7 +351,7 @@ type PhysicalSelection struct {
 
 // PhysicalExists is the physical operator of Exists.
 type PhysicalExists struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
@@ -361,59 +361,7 @@ type PhysicalMaxOneRow struct {
 
 // PhysicalTableDual is the physical operator of dual.
 type PhysicalTableDual struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	RowCount int
-}
-
-func buildJoinSchema(joinType JoinType, join Plan) *expression.Schema {
-	switch joinType {
-	case SemiJoin, AntiSemiJoin:
-		return join.Children()[0].Schema().Clone()
-	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := join.Children()[0].Schema().Clone()
-		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
-		return newSchema
-	}
-	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
-}
-
-func buildSchema(p PhysicalPlan) {
-	switch x := p.(type) {
-	case *PhysicalLimit, *PhysicalTopN, *PhysicalSort, *PhysicalSelection, *PhysicalMaxOneRow, *PhysicalLock:
-		p.SetSchema(p.Children()[0].Schema())
-	case *PhysicalIndexJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p))
-	case *PhysicalHashJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p))
-	case *PhysicalMergeJoin:
-		p.SetSchema(buildJoinSchema(x.JoinType, p))
-	case *PhysicalApply:
-		buildSchema(x.PhysicalJoin)
-		x.schema = x.PhysicalJoin.Schema()
-	case *PhysicalUnionAll:
-		panic("UnionAll shouldn't rebuild schema")
-	}
-}
-
-// rebuildSchema rebuilds the schema for physical plans, because join reorder will change join's schema.
-// And PhysicalIndexLookUpReader may add a handle column which make the schema changed.
-// In this two case, we need to rebuild the schema of its father.
-func rebuildSchema(p PhysicalPlan) bool {
-	needRebuild := false
-	for _, ch := range p.Children() {
-		childRebuilt := rebuildSchema(ch.(PhysicalPlan))
-		needRebuild = needRebuild || childRebuilt
-	}
-	switch p.(type) {
-	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexLookUpReader:
-		needRebuild = true
-		// If there is projection or aggregation, the index of column will be resolved so no need to rebuild the schema.
-	case *PhysicalProjection, *PhysicalHashAgg, *PhysicalStreamAgg:
-		needRebuild = false
-	}
-	if needRebuild {
-		buildSchema(p)
-	}
-	return needRebuild
 }
