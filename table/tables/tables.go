@@ -327,11 +327,10 @@ func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
 }
 
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
-// Just add the kv to transaction's membuf directly. the returned *kv.BufferStore avoids
-// type assert in bs.SaveTo(txn).
-func (t *Table) getRollbackableMemStore(ctx context.Context) (kv.RetrieverMutator, *kv.BufferStore) {
+// Just add the kv to transaction's membuf directly.
+func (t *Table) getRollbackableMemStore(ctx context.Context) kv.RetrieverMutator {
 	if ctx.GetSessionVars().ImportingData {
-		return ctx.Txn(), nil
+		return ctx.Txn()
 	}
 
 	bs := ctx.GetSessionVars().BufStore
@@ -340,7 +339,7 @@ func (t *Table) getRollbackableMemStore(ctx context.Context) (kv.RetrieverMutato
 	} else {
 		bs.Reset()
 	}
-	return bs, bs
+	return bs
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -368,7 +367,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
 
-	rm, bs := t.getRollbackableMemStore(ctx)
+	rm := t.getRollbackableMemStore(ctx)
 	// Insert new entries into indices.
 	h, err := t.addIndices(ctx, recordID, r, rm, skipHandleCheck)
 	if err != nil {
@@ -408,7 +407,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 		return 0, errors.Trace(err)
 	}
 	if !sessVars.ImportingData {
-		if err = bs.SaveTo(txn); err != nil {
+		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
