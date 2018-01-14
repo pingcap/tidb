@@ -62,17 +62,30 @@ func (res *Result) Rows() [][]interface{} {
 
 // Sort sorts and return the result.
 func (res *Result) Sort() *Result {
-	sort.Slice(res.rows, func(i, j int) bool {
-		a := res.rows[i]
-		b := res.rows[j]
-		for i := range a {
-			if a[i] < b[i] {
-				return true
-			}
-		}
-		return false
-	})
+	sort.Sort(res)
 	return res
+}
+
+// Len implements the sort.Interface interface.
+func (res *Result) Len() int {
+	return len(res.rows)
+}
+
+// Less implements the sort.Interface interface.
+func (res *Result) Less(i, j int) bool {
+	a := res.rows[i]
+	b := res.rows[j]
+	for i := range a {
+		if a[i] < b[i] {
+			return true
+		}
+	}
+	return false
+}
+
+// Swap implements the sort.Interface interface.
+func (res *Result) Swap(i, j int) {
+	res.rows[i], res.rows[j] = res.rows[j], res.rows[i]
 }
 
 // NewTestKit returns a new *TestKit.
