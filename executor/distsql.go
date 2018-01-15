@@ -414,23 +414,27 @@ func (e *TableReaderExecutor) splitRanges() ([]*ranger.NewRange, []*ranger.NewRa
 	if idx == len(e.ranges) {
 		return e.ranges, nil
 	}
+	if e.ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
+		signedRanges := e.ranges[0:idx]
+		unsignedRanges := e.ranges[idx:]
+		if !e.keepOrder {
+			return append(unsignedRanges, signedRanges...), nil
+		}
+		return signedRanges, unsignedRanges
+	}
 	signedRanges := make([]*ranger.NewRange, 0, idx+1)
 	unsignedRanges := make([]*ranger.NewRange, 0, len(e.ranges)-idx)
 	signedRanges = append(signedRanges, e.ranges[0:idx]...)
-	if e.ranges[idx].LowVal[0].GetUint64() <= math.MaxInt64 {
-		signedRanges = append(signedRanges, &ranger.NewRange{
-			LowVal:     e.ranges[idx].LowVal,
-			LowExclude: e.ranges[idx].LowExclude,
-			HighVal:    []types.Datum{types.NewIntDatum(math.MaxInt64)},
-		})
-		unsignedRanges = append(unsignedRanges, &ranger.NewRange{
-			LowVal:      []types.Datum{types.NewIntDatum(math.MinInt64)},
-			HighVal:     e.ranges[idx].HighVal,
-			HighExclude: e.ranges[idx].HighExclude,
-		})
-	} else {
-		unsignedRanges = append(unsignedRanges, e.ranges[idx])
-	}
+	signedRanges = append(signedRanges, &ranger.NewRange{
+		LowVal:     e.ranges[idx].LowVal,
+		LowExclude: e.ranges[idx].LowExclude,
+		HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
+	})
+	unsignedRanges = append(unsignedRanges, &ranger.NewRange{
+		LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
+		HighVal:     e.ranges[idx].HighVal,
+		HighExclude: e.ranges[idx].HighExclude,
+	})
 	if idx < len(e.ranges) {
 		unsignedRanges = append(unsignedRanges, e.ranges[idx+1:]...)
 	}
@@ -997,9 +1001,11 @@ func (builder *requestBuilder) SetPriority(priority int) *requestBuilder {
 }
 
 type tableResultHandler struct {
-	// firstResult handles the request whose range is exceed signed int range.
-	firstResult distsql.SelectResult
-	// secondResult handles the request whose range is in signed int range.
+	// If the pk is unsigned and we have KeepOrder=true.
+	// firstResult handles the request whose range is in signed int range.
+	// secondResult handles the request whose range is exceed signed int range.
+	// Otherwise, we just set firstIsEnded true and the secondResult handles the whole ranges.
+	firstResult  distsql.SelectResult
 	secondResult distsql.SelectResult
 
 	firstIsEnded bool

@@ -492,13 +492,13 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func (ds *DataSource) forceToTableScan() PhysicalPlan {
+func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 	ts := PhysicalTableScan{
 		Table:       ds.tableInfo,
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
-		Ranges:      ranger.FullIntNewRange(nil),
+		Ranges:      ranger.FullIntNewRange(pk),
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = ds.stats
