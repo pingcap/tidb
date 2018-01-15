@@ -18,6 +18,7 @@ import (
 	"math"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -392,6 +393,61 @@ func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
 	decFromChk := chk.GetRow(0).GetDatum(0, decType)
 	c.Assert(decDatum.Length(), check.Equals, decFromChk.Length())
 	c.Assert(decDatum.Frac(), check.Equals, decFromChk.Frac())
+}
+
+func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+
+	initCap := 10
+	chk := NewChunkWithCapacity(fieldTypes, initCap)
+
+	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
+	colUsage := make([]int, len(fieldTypes))
+	colUsage[0] = initCap>>3 + 0 + initCap*4 + 4
+	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	colUsage[3] = initCap>>3 + 0 + initCap*16 + 16
+	colUsage[4] = initCap>>3 + 0 + initCap*16 + 16
+
+	expectedUsage := 0
+	for i := range colUsage {
+		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
+	}
+	memUsage := chk.MemoryUsage()
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+
+	jsonObj, err := json.ParseBinaryFromString("1")
+	c.Assert(err, check.IsNil)
+	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+
+	chk.AppendFloat32(0, 12.4)
+	chk.AppendString(1, "123")
+	chk.AppendJSON(2, jsonObj)
+	chk.AppendTime(3, timeObj)
+	chk.AppendDuration(4, durationObj)
+
+	memUsage = chk.MemoryUsage()
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+
+	chk.AppendFloat32(0, 12.4)
+	chk.AppendString(1, "123111111111111111111111111111111111111111111111")
+	chk.AppendJSON(2, jsonObj)
+	chk.AppendTime(3, timeObj)
+	chk.AppendDuration(4, durationObj)
+
+	memUsage = chk.MemoryUsage()
+	colUsage[1] = initCap>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	expectedUsage = 0
+	for i := range colUsage {
+		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
+	}
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
 }
 
 func BenchmarkAppendInt(b *testing.B) {
