@@ -126,7 +126,7 @@ func (a *AggFuncDesc) CalculateDefaultValue(ctx context.Context, schema *express
 	}
 }
 
-// GetEvaluator gets an evaluator according to the aggregation function signature.
+// GetAggFunc gets an evaluator according to the aggregation function signature.
 func (a *AggFuncDesc) GetAggFunc() Aggregation {
 	aggFunc := aggFunction{AggFuncDesc: a}
 	switch a.Name {
