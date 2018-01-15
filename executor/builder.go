@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -670,10 +671,13 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	e := &HashAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     v.AggFuncs,
+		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
 	e.supportChk = true
+	for _, aggDesc := range v.AggFuncs {
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+	}
 	return e
 }
 
@@ -686,10 +690,13 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     v.AggFuncs,
+		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
 	e.supportChk = true
+	for _, aggDesc := range v.AggFuncs {
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+	}
 	return e
 }
 
