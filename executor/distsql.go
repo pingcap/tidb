@@ -294,7 +294,7 @@ type TableReaderExecutor struct {
 
 	// partialResult store the result from one region.
 	partialResult distsql.PartialResult
-	//resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
+	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
 	priority      int
@@ -407,7 +407,7 @@ func (e *TableReaderExecutor) buildResp(goCtx goctx.Context, ranges []*ranger.Ne
 }
 
 func (e *TableReaderExecutor) splitRanges() ([]*ranger.NewRange, []*ranger.NewRange) {
-	if !e.keepOrder || len(e.ranges) == 0 || e.ranges[0].LowVal[0].Kind() == types.KindInt64 {
+	if len(e.ranges) == 0 || e.ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return e.ranges, nil
 	}
 	idx := sort.Search(len(e.ranges), func(i int) bool { return e.ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
@@ -434,7 +434,11 @@ func (e *TableReaderExecutor) splitRanges() ([]*ranger.NewRange, []*ranger.NewRa
 	if idx < len(e.ranges) {
 		unsignedRanges = append(unsignedRanges, e.ranges[idx+1:]...)
 	}
-	return signedRanges, unsignedRanges
+	if e.keepOrder {
+		return signedRanges, unsignedRanges
+	} else {
+		return append(unsignedRanges, signedRanges...), nil
+	}
 }
 
 // startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.

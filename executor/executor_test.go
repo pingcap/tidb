@@ -2306,3 +2306,13 @@ func (s *testSuite) TestTableScanWithPointRanges(c *C) {
 	tk.MustExec("insert into t values(1), (5), (10)")
 	tk.MustQuery("select * from t where id in(1, 2, 10)").Check(testkit.Rows("1", "10"))
 }
+
+func (s *testSuite) TestUnsignedPk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id bigint unsigned primary key)")
+	tk.MustExec("insert into t values(9223372036854775810), (9223372036854775812), (1), (2)")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1", "2", "9223372036854775810", "9223372036854775812"))
+	tk.MustQuery("select * from t where id not in (2)").Check(testkit.Rows("9223372036854775810", "9223372036854775812", "1"))
+}
