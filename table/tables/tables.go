@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -286,7 +287,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 			if !touched[ic.Offset] {
 				continue
 			}
-			oldVs, err := idx.FetchValues(oldData)
+			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -301,7 +302,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 			if !touched[ic.Offset] {
 				continue
 			}
-			newVs, err := idx.FetchValues(newData)
+			newVs, err := idx.FetchValues(newData, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -314,32 +315,31 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 	return nil
 }
 
-// adjustRowValuesBuf adjust sessVars.AddRowValues length, sessVars.AddRowValues stores the inserting values that is used
+// adjustRowValuesBuf adjust insertVals.AddRowValues length, AddRowValues stores the inserting values that is used
 // by tablecodec.EncodeRow, the encoded row format is `id1, colval, id2, colval`, so the correct length is rowLen * 2. If
 // the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
-func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
+func adjustRowValuesBuf(insertVals *variable.InsertValuesBufs, rowLen int) {
 	adjustLen := rowLen * 2
-	if sessVars.AddRowValues == nil || cap(sessVars.AddRowValues) < adjustLen {
-		sessVars.AddRowValues = make([]types.Datum, adjustLen)
+	if insertVals.AddRowValues == nil || cap(insertVals.AddRowValues) < adjustLen {
+		insertVals.AddRowValues = make([]types.Datum, adjustLen)
 	}
-	sessVars.AddRowValues = sessVars.AddRowValues[:adjustLen]
+	insertVals.AddRowValues = insertVals.AddRowValues[:adjustLen]
 }
 
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
-// Just add the kv to transaction's membuf directly. the returned *kv.BufferStore avoids
-// type assert in bs.SaveTo(txn).
-func (t *Table) getRollbackableMemStore(ctx context.Context) (kv.RetrieverMutator, *kv.BufferStore) {
+// Just add the kv to transaction's membuf directly.
+func (t *Table) getRollbackableMemStore(ctx context.Context) kv.RetrieverMutator {
 	if ctx.GetSessionVars().ImportingData {
-		return ctx.Txn(), nil
+		return ctx.Txn()
 	}
 
-	bs := ctx.GetSessionVars().BufStore
+	bs := ctx.GetSessionVars().GetInsertBufs().BufStore
 	if bs == nil {
 		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
 	} else {
 		bs.Reset()
 	}
-	return bs, bs
+	return bs
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -361,7 +361,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 
 	txn := ctx.Txn()
 	sessVars := ctx.GetSessionVars()
-
 	// when ImportingData or BatchCheck is true,
 	// no needs to check the key constrains, so we names the variable skipCheck.
 	skipCheck := sessVars.ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
@@ -369,7 +368,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
 
-	rm, bs := t.getRollbackableMemStore(ctx)
+	rm := t.getRollbackableMemStore(ctx)
 	// Insert new entries into indices.
 	h, err := t.addIndices(ctx, recordID, r, rm, skipHandleCheck)
 	if err != nil {
@@ -397,19 +396,19 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 			row = append(row, value)
 		}
 	}
-	adjustRowValuesBuf(sessVars, len(row))
-
+	insertBufs := sessVars.GetInsertBufs()
+	adjustRowValuesBuf(insertBufs, len(row))
 	key := t.RecordKey(recordID)
-	sessVars.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, sessVars.RowValBuf, sessVars.AddRowValues)
+	insertBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, insertBufs.RowValBuf, insertBufs.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	value := sessVars.RowValBuf
+	value := insertBufs.RowValBuf
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
 	if !sessVars.ImportingData {
-		if err = bs.SaveTo(txn); err != nil {
+		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
@@ -457,21 +456,23 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 		}
 	}
 
+	insertBufs := ctx.GetSessionVars().GetInsertBufs()
+	indexVals := insertBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
-		colVals, err2 := v.FetchValues(r)
+		indexVals, err2 := v.FetchValues(r, indexVals)
 		if err2 != nil {
 			return 0, errors.Trace(err2)
 		}
 		var dupKeyErr error
 		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
-			entryKey, err1 := t.genIndexKeyStr(colVals)
+			entryKey, err1 := t.genIndexKeyStr(indexVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, colVals, recordID); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, errors.Trace(dupKeyErr)
 			}
@@ -479,6 +480,8 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 		}
 		txn.DelOption(kv.PresumeKeyNotExistsError)
 	}
+	// save the buffer, multi rows insert can use it.
+	insertBufs.IndexValsBuf = indexVals
 	return 0, nil
 }
 
@@ -616,7 +619,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 // removeRowIndices removes all the indices of a row.
 func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.DeletableIndices() {
-		vals, err := v.FetchValues(rec)
+		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
 			return errors.Trace(err)
