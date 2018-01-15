@@ -16,7 +16,9 @@ package executor_test
 import (
 	"flag"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -2312,7 +2314,10 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id bigint unsigned primary key)")
-	tk.MustExec("insert into t values(9223372036854775810), (9223372036854775812), (1), (2)")
-	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1", "2", "9223372036854775810", "9223372036854775812"))
-	tk.MustQuery("select * from t where id not in (2)").Check(testkit.Rows("9223372036854775810", "9223372036854775812", "1"))
+	var num1, num2 uint64 = math.MaxInt64 + 1, math.MaxInt64 + 2
+	tk.MustExec(fmt.Sprintf("insert into t values(%v), (%v), (1), (2)", num1, num2))
+	num1Str := strconv.FormatUint(num1, 10)
+	num2Str := strconv.FormatUint(num2, 10)
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1", "2", num1Str, num2Str))
+	tk.MustQuery("select * from t where id not in (2)").Check(testkit.Rows(num1Str, num2Str, "1"))
 }
