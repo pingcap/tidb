@@ -231,7 +231,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, true)
 	job = testTruncateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
-	testCheckJobDone(c, d, job, false)
+	testCheckJobDone(c, d, job, true)
 
 	// for rename table
 	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")

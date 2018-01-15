@@ -119,7 +119,7 @@ func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return chunk.NewChunk(a.executor.Schema().GetTypes())
+	return chunk.NewChunk(a.executor.retTypes())
 }
 
 func (a *recordSet) SupportChunk() bool {
@@ -349,10 +349,10 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.Text = executorExec.Stmt.Text()
+		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true
-		a.Plan = executorExec.Plan
-		e = executorExec.StmtExec
+		a.Plan = executorExec.plan
+		e = executorExec.stmtExec
 	}
 	return e, nil
 }

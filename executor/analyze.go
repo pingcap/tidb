@@ -48,7 +48,7 @@ const (
 	maxRegionSampleSize  = 1000
 	maxSketchSize        = 10000
 	maxBucketSize        = 256
-	defaultCMSketchDepth = 8
+	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
 )
 

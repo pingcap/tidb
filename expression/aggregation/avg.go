@@ -14,7 +14,6 @@
 package aggregation
 
 import (
-	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -26,41 +25,6 @@ type avgFunction struct {
 	aggFunction
 }
 
-// Clone implements Aggregation interface.
-func (af *avgFunction) Clone() Aggregation {
-	nf := *af
-	for i, arg := range af.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// GetType implements Aggregation interface.
-func (af *avgFunction) GetType() *types.FieldType {
-	var ft *types.FieldType
-	switch af.Args[0].GetType().Tp {
-	// For child returns integer or decimal type, "avg" should returns a "decimal",
-	// otherwise it returns a "double".
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
-		ft = types.NewFieldType(mysql.TypeNewDecimal)
-		if af.GetMode() == FinalMode {
-			ft.Flen, ft.Decimal = af.Args[1].GetType().Flen, af.Args[1].GetType().Decimal
-		} else {
-			if af.Args[0].GetType().Decimal < 0 {
-				ft.Decimal = mysql.MaxDecimalScale
-			} else {
-				ft.Decimal = mathutil.Min(af.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
-			}
-			ft.Flen = mysql.MaxDecimalWidth
-		}
-	default:
-		ft = types.NewFieldType(mysql.TypeDouble)
-		ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
-	}
-	types.SetBinChsClnFlag(ft)
-	return ft
-}
-
 func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := af.Args[1]
 	value, err := a.Eval(row)
@@ -70,7 +34,7 @@ func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 	if value.IsNull() {
 		return nil
 	}
-	if af.Distinct {
+	if af.HasDistinct {
 		d, err1 := ctx.DistinctChecker.Check(sc, []types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
@@ -93,7 +57,7 @@ func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 
 // Update implements Aggregation interface.
 func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if af.mode == FinalMode {
+	if af.Mode == FinalMode {
 		return af.updateAvg(ctx, sc, row)
 	}
 	return af.updateSum(ctx, sc, row)
@@ -116,7 +80,7 @@ func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	to := new(types.MyDecimal)
 	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 	terror.Log(errors.Trace(err))
-	frac := af.GetType().Decimal
+	frac := af.RetTp.Decimal
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
