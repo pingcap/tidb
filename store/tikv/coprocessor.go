@@ -393,6 +393,15 @@ func (it *copIterator) run(ctx goctx.Context) {
 	})
 }
 
+func recvFromRespCh(respCh <-chan copResponse, finished <-chan struct{}) (resp copResponse, ok bool, exit bool) {
+	select {
+	case resp, ok = <-respCh:
+	case <-finished:
+		exit = true
+	}
+	return
+}
+
 func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask, taskCh chan<- *copTask) (finished bool, canceled bool) {
 	select {
 	case taskCh <- t:
@@ -421,13 +430,18 @@ func (it *copIterator) Next() ([]byte, error) {
 			return nil, nil
 		}
 	} else {
+		var closed bool
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finished.
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
-			resp, ok = <-task.respChan
+			resp, ok, closed = recvFromRespCh(task.respChan, it.finished)
+			if closed {
+				// Close() is already called, so Next() is invalid.
+				return nil, nil
+			}
 			if ok {
 				break
 			}
