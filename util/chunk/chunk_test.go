@@ -394,6 +394,43 @@ func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
 	c.Assert(decDatum.Frac(), check.Equals, decFromChk.Frac())
 }
 
+func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+
+	initCap := 10
+	chk := NewChunkWithCapacity(fieldTypes, initCap)
+
+	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
+	col0Usage := initCap>>3 + 0 + initCap*4 + 4
+	col1Usage := initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	col2Usage := initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	expectedUsage := float64(col0Usage+col1Usage+col2Usage) / (1024 * 1024)
+	memUsage := chk.MemoryUsage()
+	c.Assert(memUsage, check.Equals, expectedUsage)
+
+	jsonObj, err := json.ParseBinaryFromString("1")
+	c.Assert(err, check.IsNil)
+
+	chk.AppendFloat32(0, 12.4)
+	chk.AppendString(1, "123")
+	chk.AppendJSON(2, jsonObj)
+
+	memUsage = chk.MemoryUsage()
+	c.Assert(memUsage, check.Equals, expectedUsage)
+
+	chk.AppendFloat32(0, 12.4)
+	chk.AppendString(1, "123111111111111111111111111111111111111111111111")
+	chk.AppendJSON(2, jsonObj)
+
+	memUsage = chk.MemoryUsage()
+	col1Usage = initCap>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	expectedUsage = float64(col0Usage+col1Usage+col2Usage) / (1024 * 1024)
+	c.Assert(memUsage, check.Equals, expectedUsage)
+}
+
 func BenchmarkAppendInt(b *testing.B) {
 	b.ReportAllocs()
 	chk := newChunk(8)

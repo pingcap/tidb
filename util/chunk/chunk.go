@@ -57,6 +57,18 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 	return chk
 }
 
+// MemoryUsage returns the total memory usage of a Chunk in MB.
+// We ignore the size of column.length, column.nullCount and column.elemBuf
+// since they have little effect of the total memory usage.
+func (c *Chunk) MemoryUsage() float64 {
+	sum := int64(0)
+	for _, c := range c.columns {
+		curColMemUsage := int64(cap(c.nullBitmap)) + int64(cap(c.offsets)*4) + int64(cap(c.data)) + int64(cap(c.elemBuf))
+		sum += curColMemUsage
+	}
+	return float64(sum) / (1024 * 1024)
+}
+
 // addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
 func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
 	c.columns = append(c.columns, &column{
