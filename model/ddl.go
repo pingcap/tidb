@@ -144,6 +144,22 @@ type Job struct {
 	Version int64 `json:"version"`
 }
 
+// FinishTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfo to the binlog.
+func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfo *TableInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+}
+
+// FinishDBJob is called when a job is finished.
+// It updates the job's state information and adds dbInfo the binlog.
+func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddDBInfo(ver, dbInfo)
+}
+
 // tsConvert2Time converts timestamp to time.
 func tsConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
