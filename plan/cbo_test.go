@@ -377,6 +377,7 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.DumpStatsDeltaToKV()
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
