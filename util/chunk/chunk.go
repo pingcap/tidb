@@ -61,8 +61,8 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 // We ignore the size of column.length and column.nullCount
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
-	for _, c := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*c)) + int64(cap(c.nullBitmap)) + int64(cap(c.offsets)*4) + int64(cap(c.data)) + int64(cap(c.elemBuf))
+	for _, col := range c.columns {
+		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*4) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
 	}
 	return
