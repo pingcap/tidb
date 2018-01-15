@@ -223,10 +223,10 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 	var allTypes []*types.FieldType
 	if isOuterKey {
 		keyColIdx = e.outerKeyColIdx
-		allTypes = e.outerExec.Schema().GetTypes()
+		allTypes = e.outerExec.retTypes()
 	} else {
 		keyColIdx = e.innerKeyColIdx
-		allTypes = e.innerExec.Schema().GetTypes()
+		allTypes = e.innerExec.retTypes()
 	}
 
 	for _, i := range keyColIdx {
@@ -331,7 +331,7 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 	innerExecChk := e.childrenResults[e.innerIdx]
 	selected := make([]bool, 0, chunk.InitialCapacity)
-	innerResult := chunk.NewList(e.innerExec.Schema().GetTypes(), e.maxChunkSize)
+	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
 	for {
 		innerExecChk.Reset()
 		err = e.innerExec.NextChunk(goCtx, innerExecChk)

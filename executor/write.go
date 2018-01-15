@@ -331,7 +331,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
-	fields := e.children[0].Schema().GetTypes()
+	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, chk)
@@ -409,7 +409,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 	e.initialMultiTableTblMap()
 	colPosInfos := e.getColPosInfos(e.children[0].Schema())
 	tblRowMap := make(tableRowMapType)
-	fields := e.children[0].Schema().GetTypes()
+	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, chk)
@@ -858,8 +858,9 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 
 	txn := e.ctx.Txn()
 	rowCount := 0
-
-	sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	if !sessVars.ImportingData {
+		sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	}
 	defer sessVars.CleanBuffers()
 
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
@@ -886,7 +887,9 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			if !sessVars.ImportingData {
+				sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			}
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -1334,7 +1337,7 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
 	var rows [][]types.Datum
-	fields := selectExec.Schema().GetTypes()
+	fields := selectExec.retTypes()
 	for {
 		chk := selectExec.newChunk()
 		err := selectExec.NextChunk(goCtx, chk)
@@ -1815,7 +1818,7 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 }
 
 func (e *UpdateExec) fetchChunkRows(goCtx goctx.Context) error {
-	fields := e.children[0].Schema().GetTypes()
+	fields := e.children[0].retTypes()
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(goCtx, chk)

@@ -120,11 +120,11 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
 	for _, funcName := range funcNames {
-		aggFunc := NewAggFunction(
-			funcName,
-			[]expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			true,
-		)
+		aggFunc := &AggFuncDesc{
+			Name:        funcName,
+			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
+			HasDistinct: true,
+		}
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
@@ -141,11 +141,11 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		"{\"tp\":3006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0}],\"sig\":0}",
 	}
 	for i, funcName := range funcNames {
-		aggFunc := NewAggFunction(
-			funcName,
-			[]expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			false,
-		)
+		aggFunc := &AggFuncDesc{
+			Name:        funcName,
+			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
+			HasDistinct: false,
+		}
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)

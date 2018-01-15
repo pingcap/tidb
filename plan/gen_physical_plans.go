@@ -244,7 +244,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) []PhysicalPlan {
-	innerChild := p.children[1-outerIdx].(LogicalPlan)
+	innerChild := p.children[1-outerIdx]
 	var (
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
@@ -533,7 +533,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 		return nil
 	}
 	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.GetMode() == aggregation.FinalMode {
+		if aggFunc.Mode == aggregation.FinalMode {
 			return nil
 		}
 	}

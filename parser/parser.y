@@ -3219,6 +3219,22 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr(ast.PasswordFunc), Args: $3.([]ast.ExprNode)}
 	}
+|	'{' Identifier stringLit '}'
+	{
+		// This is ODBC syntax.
+		// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
+		expr := ast.NewValueExpr($3)
+		tp := $2
+		if tp == "ts" {
+			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimestampLiteral), Args: []ast.ExprNode{expr}}
+		} else if tp == "t" {
+			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimeLiteral), Args: []ast.ExprNode{expr}}
+		} else if tp == "d" {
+			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{expr}}
+		} else {
+			$$ = expr
+		}
+	}
 
 FunctionCallNonKeyword:
 	builtinCurTime '(' FuncDatetimePrecListOpt ')'

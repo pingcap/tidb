@@ -15,8 +15,6 @@ package aggregation
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -24,30 +22,6 @@ import (
 type maxMinFunction struct {
 	aggFunction
 	isMax bool
-}
-
-// Clone implements Aggregation interface.
-func (mmf *maxMinFunction) Clone() Aggregation {
-	nf := *mmf
-	for i, arg := range mmf.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// CalculateDefaultValue implements Aggregation interface.
-func (mmf *maxMinFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
-	arg := mmf.Args[0]
-	result := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if con, ok := result.(*expression.Constant); ok {
-		return con.Value, true
-	}
-	return d, false
-}
-
-// GetType implements Aggregation interface.
-func (mmf *maxMinFunction) GetType() *types.FieldType {
-	return mmf.Args[0].GetType()
 }
 
 // GetResult implements Aggregation interface.
