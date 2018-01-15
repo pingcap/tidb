@@ -90,7 +90,10 @@
   packages = [
     "proto",
     "protoc-gen-go/descriptor",
-    "ptypes/any"
+    "ptypes",
+    "ptypes/any",
+    "ptypes/duration",
+    "ptypes/timestamp"
   ]
   revision = "8ee79997227bf9b34611aee7946ae64735e6fd93"
 
@@ -388,6 +391,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "a5008280441995ef8284f6f17972e8c6aaaa8070a758ca1c2f003a560ad8ac05"
+  inputs-digest = "92c7c81ac2ac3df66a63416a81e48b40ad4812849569a9dcefb4a9aa2a6f4cbd"
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -19,7 +19,7 @@
 #  name = "github.com/x/y"
 #  version = "2.4.0"
 
-ignored = ["github.com/coreos/etcd/etcdserver", "github.com/golang/protobuf/ptypes", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth"]
+ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth"]
 
 [[constraint]]
   branch = "master"
