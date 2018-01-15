@@ -634,7 +634,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		}
 		rows = append(rows, e.colsToRow(cols))
 		e.insertVal.rowCount++
-		if e.insertVal.maxRowsInBatch != 0 && e.insertVal.rowCount >= e.insertVal.maxRowsInBatch {
+		if e.insertVal.maxRowsInBatch != 0 && e.insertVal.rowCount%e.insertVal.maxRowsInBatch == 0 {
 			reachLimit = true
 			log.Infof("This insert rows has reached the batch %d, current total rows %d",
 				e.insertVal.maxRowsInBatch, e.insertVal.rowCount)
