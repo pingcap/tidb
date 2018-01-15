@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2301,4 +2302,36 @@ func (s *testSuite) TestMaxInt64Handle(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("delete from t where id = 9223372036854775807")
 	tk.MustQuery("select * from t").Check(nil)
+}
+
+func (s *testSuite) TestEarlyClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table earlyclose (id int primary key)")
+
+	// Insert 1000 rows.
+	var values []string
+	for i := 0; i < 1000; i++ {
+		values = append(values, fmt.Sprintf("(%d)", i))
+	}
+	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
+
+	// Get table ID for split.
+	dom := sessionctx.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, 500)
+
+	for i := 0; i < 500; i++ {
+		rss, err := tk.Se.Execute("select * from earlyclose order by id")
+		c.Assert(err, IsNil)
+		rs := rss[0]
+		_, err = rs.Next()
+		c.Assert(err, IsNil)
+		rs.Close()
+	}
 }
