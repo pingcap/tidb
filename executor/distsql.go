@@ -434,11 +434,10 @@ func (e *TableReaderExecutor) splitRanges() ([]*ranger.NewRange, []*ranger.NewRa
 	if idx < len(e.ranges) {
 		unsignedRanges = append(unsignedRanges, e.ranges[idx+1:]...)
 	}
-	if e.keepOrder {
-		return signedRanges, unsignedRanges
-	} else {
+	if !e.keepOrder {
 		return append(unsignedRanges, signedRanges...), nil
 	}
+	return signedRanges, unsignedRanges
 }
 
 // startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.
