@@ -676,7 +676,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	}
 	e.supportChk = true
 	for _, aggDesc := range v.AggFuncs {
-		e.AggFuncs = append(e.AggFuncs, aggDesc.GetEvaluator())
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 	}
 	return e
 }
@@ -695,7 +695,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	}
 	e.supportChk = true
 	for _, aggDesc := range v.AggFuncs {
-		e.AggFuncs = append(e.AggFuncs, aggDesc.GetEvaluator())
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 	}
 	return e
 }

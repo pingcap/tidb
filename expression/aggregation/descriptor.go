@@ -112,22 +112,22 @@ func (a *AggFuncDesc) TypeInfer(ctx context.Context) {
 func (a *AggFuncDesc) CalculateDefaultValue(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
 	switch a.Name {
 	case ast.AggFuncCount:
-		return a.calculateDefaultVale4Count(ctx, schema)
+		return a.calculateDefaultValue4Count(ctx, schema)
 	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
-		return a.calculateDefaultVale4Sum(ctx, schema)
+		return a.calculateDefaultValue4Sum(ctx, schema)
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		return types.Datum{}, false
 	case ast.AggFuncBitAnd:
-		return a.calculateDefaultVale4BitAnd(ctx, schema)
+		return a.calculateDefaultValue4BitAnd(ctx, schema)
 	case ast.AggFuncBitOr, ast.AggFuncBitXor:
-		return a.calculateDefaultVale4BitOr(ctx, schema)
+		return a.calculateDefaultValue4BitOr(ctx, schema)
 	default:
 		panic("unsupported agg function")
 	}
 }
 
 // GetEvaluator gets an evaluator according to the aggregation function signature.
-func (a *AggFuncDesc) GetEvaluator() Aggregation {
+func (a *AggFuncDesc) GetAggFunc() Aggregation {
 	aggFunc := aggFunction{AggFuncDesc: a}
 	switch a.Name {
 	case ast.AggFuncSum:
@@ -219,7 +219,7 @@ func (a *AggFuncDesc) typeInfer4BitFuncs(ctx context.Context) {
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
-func (a *AggFuncDesc) calculateDefaultVale4Count(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) calculateDefaultValue4Count(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
 	for _, arg := range a.Args {
 		result := expression.EvaluateExprWithNull(ctx, schema, arg)
 		con, ok := result.(*expression.Constant)
@@ -230,7 +230,7 @@ func (a *AggFuncDesc) calculateDefaultVale4Count(ctx context.Context, schema *ex
 	return types.NewDatum(1), true
 }
 
-func (a *AggFuncDesc) calculateDefaultVale4Sum(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) calculateDefaultValue4Sum(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
@@ -239,7 +239,7 @@ func (a *AggFuncDesc) calculateDefaultVale4Sum(ctx context.Context, schema *expr
 	return con.Value, true
 }
 
-func (a *AggFuncDesc) calculateDefaultVale4BitAnd(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) calculateDefaultValue4BitAnd(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
@@ -248,7 +248,7 @@ func (a *AggFuncDesc) calculateDefaultVale4BitAnd(ctx context.Context, schema *e
 	return con.Value, true
 }
 
-func (a *AggFuncDesc) calculateDefaultVale4BitOr(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) calculateDefaultValue4BitOr(ctx context.Context, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
