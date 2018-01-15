@@ -50,6 +50,7 @@ type MergeJoinExec struct {
 	resultCursor    int
 
 	// for chunk execution.
+	compareFuncs   []chunk.CompareFunc
 	outerIdx       int
 	resultChunk    *chunk.Chunk
 	outerChunkRows []chunk.Row
@@ -70,6 +71,8 @@ type readerIterator struct {
 	goCtx     goctx.Context
 
 	// for chunk executions
+	sameKeyRows    []chunk.Row
+	compareFuncs   []chunk.CompareFunc
 	firstRow4Key   chunk.Row
 	curRow         chunk.Row
 	curResult      *chunk.Chunk
@@ -160,10 +163,14 @@ func (ri *readerIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
 	ri.curResultInUse = false
 	ri.resultQueue = append(ri.resultQueue, chk4Reader)
 	ri.firstRow4Key, err = ri.nextSelectedRow()
+	ri.compareFuncs = make([]chunk.CompareFunc, 0, len(ri.joinKeys))
+	for i := range ri.joinKeys {
+		ri.compareFuncs = append(ri.compareFuncs, chunk.GetCompareFunc(ri.joinKeys[i].RetType))
+	}
 	return errors.Trace(err)
 }
 
-func (ri *readerIterator) rowsWithSameKey() (rows []chunk.Row, err error) {
+func (ri *readerIterator) rowsWithSameKey() ([]chunk.Row, error) {
 	lastResultIdx := len(ri.resultQueue) - 1
 	ri.resourceQueue = append(ri.resourceQueue, ri.resultQueue[0:lastResultIdx]...)
 	ri.resultQueue = ri.resultQueue[lastResultIdx:]
@@ -171,23 +178,21 @@ func (ri *readerIterator) rowsWithSameKey() (rows []chunk.Row, err error) {
 	if ri.firstRow4Key == ri.curResult.End() {
 		return nil, nil
 	}
-	rows = append(rows, ri.firstRow4Key)
+	ri.sameKeyRows = ri.sameKeyRows[:0]
+	ri.sameKeyRows = append(ri.sameKeyRows, ri.firstRow4Key)
 	for {
 		selectedRow, err := ri.nextSelectedRow()
 		// error happens or no more data.
 		if err != nil || selectedRow == ri.curResult.End() {
 			ri.firstRow4Key = ri.curResult.End()
-			return rows, errors.Trace(err)
+			return ri.sameKeyRows, errors.Trace(err)
 		}
-		compareResult, err := compareKeys(ri.stmtCtx, selectedRow, ri.joinKeys, ri.firstRow4Key, ri.joinKeys)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		compareResult := compareChunkRow(ri.compareFuncs, selectedRow, ri.firstRow4Key, ri.joinKeys, ri.joinKeys)
 		if compareResult == 0 {
-			rows = append(rows, selectedRow)
+			ri.sameKeyRows = append(ri.sameKeyRows, selectedRow)
 		} else {
 			ri.firstRow4Key = selectedRow
-			return rows, nil
+			return ri.sameKeyRows, nil
 		}
 	}
 }
@@ -263,6 +268,16 @@ func (e *MergeJoinExec) Open(goCtx goctx.Context) error {
 	e.resultCursor = 0
 	e.resultBuffer = make([]Row, 0, rowBufferSize)
 	return nil
+}
+
+func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhsKey, rhsKey []*expression.Column) int {
+	for i := range lhsKey {
+		cmp := cmpFuncs[i](lhsRow, lhsKey[i].Index, rhsRow, rhsKey[i].Index)
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
 }
 
 func compareKeys(stmtCtx *stmtctx.StatementContext,
@@ -395,6 +410,7 @@ func (e *MergeJoinExec) prepare(goCtx goctx.Context, forChunk bool) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		e.compareFuncs = e.outerIter.compareFuncs
 		e.prepared = true
 		return nil
 	}
@@ -487,10 +503,7 @@ func (e *MergeJoinExec) joinToResultChunk() (bool, error) {
 			// here we set cmpResult to -1 to emit unmatched outer rows.
 			cmpResult = -1
 		} else {
-			cmpResult, err = compareKeys(e.stmtCtx, e.outerChunkRows[0], e.outerKeys, e.innerChunkRows[0], e.innerKeys)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
+			cmpResult = compareChunkRow(e.compareFuncs, e.outerChunkRows[0], e.innerChunkRows[0], e.outerKeys, e.innerKeys)
 			if cmpResult > 0 {
 				e.innerChunkRows, err = e.innerIter.rowsWithSameKey()
 				if err != nil {
