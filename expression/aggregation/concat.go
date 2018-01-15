@@ -18,34 +18,14 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 )
 
 type concatFunction struct {
 	aggFunction
 	separator string
 	sepInited bool
-}
-
-// Clone implements Aggregation interface.
-func (cf *concatFunction) Clone() Aggregation {
-	nf := *cf
-	for i, arg := range cf.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// GetType implements Aggregation interface.
-func (cf *concatFunction) GetType() *types.FieldType {
-	retType := types.NewFieldType(mysql.TypeVarString)
-	retType.Charset = charset.CharsetUTF8
-	retType.Collate = charset.CollationUTF8
-	retType.Flen, retType.Decimal = mysql.MaxBlobWidth, 0
-	return retType
 }
 
 func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
@@ -90,7 +70,7 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		}
 		datumBuf = append(datumBuf, value)
 	}
-	if cf.Distinct {
+	if cf.HasDistinct {
 		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
 		if err != nil {
 			return errors.Trace(err)

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -265,15 +266,17 @@ func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
 }
 
 func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
-	return &ExecuteExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
-		IS:           b.is,
-		Name:         v.Name,
-		UsingVars:    v.UsingVars,
-		ID:           v.ExecID,
-		Stmt:         v.Stmt,
-		Plan:         v.Plan,
+	e := &ExecuteExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		is:           b.is,
+		name:         v.Name,
+		usingVars:    v.UsingVars,
+		id:           v.ExecID,
+		stmt:         v.Stmt,
+		plan:         v.Plan,
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildShow(v *plan.Show) Executor {
@@ -572,13 +575,17 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
-		defaultValues = make([]types.Datum, rightExec.Schema().Len())
+		if v.JoinType == plan.RightOuterJoin {
+			defaultValues = make([]types.Datum, leftExec.Schema().Len())
+		} else {
+			defaultValues = make([]types.Datum, rightExec.Schema().Len())
+		}
 	}
-	lhsColTypes := leftExec.Schema().GetTypes()
-	rhsColTypes := rightExec.Schema().GetTypes()
+	lhsColTypes := leftExec.retTypes()
+	rhsColTypes := rightExec.retTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, false, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
 		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
 		// left is the outer side by default.
 		outerIdx:  0,
@@ -598,7 +605,6 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		e.outerFilter = e.outerIter.filter
 		e.outerIter.filter = nil
 	}
-
 	e.supportChk = true
 	return e
 }
@@ -621,9 +627,11 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
+		innerIdx:     v.SmallChildIdx,
 	}
 
 	defaultValues := v.DefaultValues
+	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
 	if v.SmallChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
@@ -634,8 +642,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
-		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
-			v.OtherConditions, nil, nil)
 	} else {
 		e.innerExec = rightExec
 		e.outerExec = leftExec
@@ -646,10 +652,13 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
-		e.resultGenerator = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-			defaultValues, v.OtherConditions, nil, nil)
 	}
-
+	e.resultGenerators = make([]joinResultGenerator, e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		e.resultGenerators[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
+			v.OtherConditions, lhsTypes, rhsTypes)
+	}
+	e.supportChk = true
 	return e
 }
 
@@ -662,10 +671,13 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	e := &HashAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     v.AggFuncs,
+		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
 	e.supportChk = true
+	for _, aggDesc := range v.AggFuncs {
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+	}
 	return e
 }
 
@@ -678,10 +690,13 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     v.AggFuncs,
+		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
 	e.supportChk = true
+	for _, aggDesc := range v.AggFuncs {
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+	}
 	return e
 }
 
@@ -814,7 +829,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
 	}
 	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-		defaultValues, otherConditions, leftChild.Schema().GetTypes(), rightChild.Schema().GetTypes())
+		defaultValues, otherConditions, leftChild.retTypes(), rightChild.retTypes())
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.SmallChildIdx == 0 {
@@ -832,9 +847,9 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerSchema:     apply.OuterSchema,
 		outerChunk:      outerExec.newChunk(),
 		innerChunk:      innerExec.newChunk(),
-		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
-	e.innerList = chunk.NewList(innerExec.Schema().GetTypes(), e.maxChunkSize)
+	e.resultChunk = e.newChunk()
+	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	e.supportChk = true
 	return e
 }
@@ -987,7 +1002,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		tasks:        make([]*analyzeTask, 0, len(v.Children())),
+		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
@@ -1036,7 +1051,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		return nil
 	}
 	if outerExec.supportChunk() {
-		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReadfer),
+		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReader),
 		// we only need to check outer.
 		return b.buildNewIndexLookUpJoin(v, outerExec)
 	}
@@ -1073,18 +1088,23 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 }
 
 func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, outerExec Executor) Executor {
+	outerTypes := outerExec.retTypes()
+	innerPlan := v.Children()[1-v.OuterIndex]
+	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
+	for i, col := range innerPlan.Schema().Columns {
+		innerTypes[i] = col.RetType
+	}
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
-	leftTypes, rightTypes := v.Children()[0].Schema().GetTypes(), v.Children()[1].Schema().GetTypes()
-	outerTypes, innerTypes := leftTypes, rightTypes
+	leftTypes, rightTypes := outerTypes, innerTypes
+
 	if v.OuterIndex == 1 {
-		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
-		outerTypes, innerTypes = rightTypes, leftTypes
+		leftTypes, rightTypes = innerTypes, outerTypes
+		outerFilter, innerFilter = innerFilter, outerFilter
 	}
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
-	innerPlan := v.Children()[1-v.OuterIndex]
 	e := &NewIndexLookUpJoin{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerCtx: outerCtx{
@@ -1189,7 +1209,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		tableID:      is.Table.ID,
 		table:        table,
 		index:        is.Index,
-		keepOrder:    !is.OutOfOrder,
+		keepOrder:    is.KeepOrder,
 		desc:         is.Desc,
 		columns:      is.Columns,
 		priority:     b.priority,
@@ -1243,7 +1263,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		tableID:           is.Table.ID,
 		table:             table,
 		index:             is.Index,
-		keepOrder:         !is.OutOfOrder,
+		keepOrder:         is.KeepOrder,
 		desc:              is.Desc,
 		tableRequest:      tableReq,
 		columns:           is.Columns,
@@ -1322,7 +1342,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
+	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.retTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
