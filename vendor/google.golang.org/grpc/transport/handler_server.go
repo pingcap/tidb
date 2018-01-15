@@ -284,12 +284,12 @@ func (ht *serverHandlerTransport) WriteHeader(s *Stream, md metadata.MD) error {
 func (ht *serverHandlerTransport) HandleStreams(startStream func(*Stream), traceCtx func(context.Context, string) context.Context) {
 	// With this transport type there will be exactly 1 stream: this HTTP request.
 
-	ctx := contextFromRequest(ht.req)
+	var ctx context.Context
 	var cancel context.CancelFunc
 	if ht.timeoutSet {
-		ctx, cancel = context.WithTimeout(ctx, ht.timeout)
+		ctx, cancel = context.WithTimeout(context.Background(), ht.timeout)
 	} else {
-		ctx, cancel = context.WithCancel(ctx)
+		ctx, cancel = context.WithCancel(context.Background())
 	}
 
 	// requestOver is closed when either the request's context is done

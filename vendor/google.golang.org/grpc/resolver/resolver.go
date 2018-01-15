@@ -24,7 +24,7 @@ var (
 	// m is a map from scheme to resolver builder.
 	m = make(map[string]Builder)
 	// defaultScheme is the default scheme to use.
-	defaultScheme = "passthrough"
+	defaultScheme string
 )
 
 // TODO(bar) install dns resolver in init(){}.
@@ -38,7 +38,7 @@ func Register(b Builder) {
 // Get returns the resolver builder registered with the given scheme.
 // If no builder is register with the scheme, the default scheme will
 // be used.
-// If the default scheme is not modified, "passthrough" will be the default
+// If the default scheme is not modified, "dns" will be the default
 // scheme, and the preinstalled dns resolver will be used.
 // If the default scheme is modified, and a resolver is registered with
 // the scheme, that resolver will be returned.
@@ -55,7 +55,7 @@ func Get(scheme string) Builder {
 }
 
 // SetDefaultScheme sets the default scheme that will be used.
-// The default default scheme is "passthrough".
+// The default default scheme is "dns".
 func SetDefaultScheme(scheme string) {
 	defaultScheme = scheme
 }
@@ -78,9 +78,7 @@ type Address struct {
 	// Type is the type of this address.
 	Type AddressType
 	// ServerName is the name of this address.
-	//
-	// e.g. if Type is GRPCLB, ServerName should be the name of the remote load
-	// balancer, not the name of the backend.
+	// It's the name of the grpc load balancer, which will be used for authentication.
 	ServerName string
 	// Metadata is the information associated with Addr, which may be used
 	// to make load balancing decision.
@@ -90,18 +88,10 @@ type Address struct {
 // BuildOption includes additional information for the builder to create
 // the resolver.
 type BuildOption struct {
-	// UserOptions can be used to pass configuration between DialOptions and the
-	// resolver.
-	UserOptions interface{}
 }
 
 // ClientConn contains the callbacks for resolver to notify any updates
 // to the gRPC ClientConn.
-//
-// This interface is to be implemented by gRPC. Users should not need a
-// brand new implementation of this interface. For the situations like
-// testing, the new implementation should embed this interface. This allows
-// gRPC to add new methods to this interface.
 type ClientConn interface {
 	// NewAddress is called by resolver to notify ClientConn a new list
 	// of resolved addresses.
@@ -138,10 +128,8 @@ type ResolveNowOption struct{}
 // Resolver watches for the updates on the specified target.
 // Updates include address updates and service config updates.
 type Resolver interface {
-	// ResolveNow will be called by gRPC to try to resolve the target name
-	// again. It's just a hint, resolver can ignore this if it's not necessary.
-	//
-	// It could be called multiple times concurrently.
+	// ResolveNow will be called by gRPC to try to resolve the target name again.
+	// It's just a hint, resolver can ignore this if it's not necessary.
 	ResolveNow(ResolveNowOption)
 	// Close closes the resolver.
 	Close()

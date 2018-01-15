@@ -358,12 +358,9 @@
   packages = [
     ".",
     "balancer",
-    "balancer/base",
-    "balancer/roundrobin",
     "codes",
     "connectivity",
     "credentials",
-    "encoding",
     "grpclb/grpc_lb_v1/messages",
     "grpclog",
     "health/grpc_health_v1",
@@ -373,16 +370,14 @@
     "naming",
     "peer",
     "resolver",
-    "resolver/dns",
-    "resolver/passthrough",
     "stats",
     "status",
     "tap",
     "transport"
   ]
-  revision = "7cea4cc846bcf00cbb27595b07da5de875ef7de9"
+  revision = "5b3c4e850e90a4cf6a20ebd46c8b32a0a3afcb9e"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "v1.9.1"
+  version = "v1.7.5"
 
 [[projects]]
   name = "gopkg.in/natefinch/lumberjack.v2"
@@ -393,6 +388,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "387a0d1c1fdcf68d15c40fd635f9a72ce904c24f37922349e29149559f535b39"
+  inputs-digest = "a5008280441995ef8284f6f17972e8c6aaaa8070a758ca1c2f003a560ad8ac05"
   solver-name = "gps-cdcl"
   solver-version = 1
