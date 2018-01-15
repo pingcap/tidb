@@ -861,7 +861,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	rowCount := 0
 	insertBufs := sessVars.GetInsertBufs()
 	if !sessVars.ImportingData {
-		sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+		insertBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	}
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -888,7 +888,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			txn = e.ctx.Txn()
 			rowCount = 0
 			if !sessVars.ImportingData {
-				sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+				insertBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 			}
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
