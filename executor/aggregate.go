@@ -65,7 +65,7 @@ func (e *HashAggExec) Open(goCtx goctx.Context) error {
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
 	e.aggCtxsMap = make(aggCtxsMapper, 0)
-	e.mutableRow = chunk.MutRowFromTypes(e.Schema().GetTypes())
+	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 	return nil
 }
@@ -261,7 +261,7 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 	e.executed = false
 	e.hasData = false
 	e.inputRow = e.childrenResults[0].End()
-	e.mutableRow = chunk.MutRowFromTypes(e.Schema().GetTypes())
+	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
@@ -427,6 +427,9 @@ func (e *StreamAggExec) meetNewGroup(row types.Row) (bool, error) {
 	if matched {
 		return false, nil
 	}
-	e.curGroupKey = e.tmpGroupKey
+	e.curGroupKey = e.curGroupKey[:0]
+	for _, v := range e.tmpGroupKey {
+		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
+	}
 	return !firstGroup, nil
 }

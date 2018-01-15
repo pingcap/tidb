@@ -70,10 +70,6 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/golang/protobuf/ptyp
   version = "0.8.0"
 
 [[constraint]]
-  name = "github.com/sirupsen/logrus"
-  version = "0.11.5"
-
-[[constraint]]
   name = "github.com/spaolacci/murmur3"
   version = "1.0.0"
 

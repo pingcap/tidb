@@ -41,15 +41,13 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ err
 	case model.StateNone:
 		// We just support record the foreign key, so we just make it public.
 		// none -> public
-		job.SchemaState = model.StatePublic
 		fkInfo.State = model.StatePublic
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != fkInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.State = model.JobStateDone
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		return ver, nil
 	default:
 		return ver, ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
@@ -99,15 +97,13 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error
 	case model.StatePublic:
 		// We just support record the foreign key, so we just make it none.
 		// public -> none
-		job.SchemaState = model.StateNone
 		fkInfo.State = model.StateNone
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != fkInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.State = model.JobStateDone
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		return ver, nil
 	default:
 		return ver, ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)

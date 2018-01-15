@@ -32,8 +32,8 @@ func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
 	if j.reordered || !j.cartesianJoin || bits.OnesCount(j.preferJoinType) > 0 {
 		return nil, false
 	}
-	lChild := j.children[0].(LogicalPlan)
-	rChild := j.children[1].(LogicalPlan)
+	lChild := j.children[0]
+	rChild := j.children[1]
 	if nj, ok := lChild.(*LogicalJoin); ok {
 		plans, valid := tryToGetJoinGroup(nj)
 		return append(plans, rChild), valid
