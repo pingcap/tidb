@@ -131,7 +131,7 @@ func (p *PhysicalSelection) ResolveIndices() {
 func (p *basePhysicalAgg) ResolveIndices() {
 	p.physicalSchemaProducer.ResolveIndices()
 	for _, aggFun := range p.AggFuncs {
-		for _, arg := range aggFun.GetArgs() {
+		for _, arg := range aggFun.Args {
 			arg.ResolveIndices(p.children[0].Schema())
 		}
 	}
