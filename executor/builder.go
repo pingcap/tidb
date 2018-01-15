@@ -580,8 +580,8 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 			defaultValues = make([]types.Datum, rightExec.Schema().Len())
 		}
 	}
-	lhsColTypes := leftExec.Schema().GetTypes()
-	rhsColTypes := rightExec.Schema().GetTypes()
+	lhsColTypes := leftExec.retTypes()
+	rhsColTypes := rightExec.retTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
@@ -630,7 +630,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 
 	defaultValues := v.DefaultValues
-	lhsTypes, rhsTypes := leftExec.Schema().GetTypes(), rightExec.Schema().GetTypes()
+	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
 	if v.SmallChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
@@ -822,7 +822,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
 	}
 	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-		defaultValues, otherConditions, leftChild.Schema().GetTypes(), rightChild.Schema().GetTypes())
+		defaultValues, otherConditions, leftChild.retTypes(), rightChild.retTypes())
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.SmallChildIdx == 0 {
@@ -840,9 +840,9 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerSchema:     apply.OuterSchema,
 		outerChunk:      outerExec.newChunk(),
 		innerChunk:      innerExec.newChunk(),
-		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
-	e.innerList = chunk.NewList(innerExec.Schema().GetTypes(), e.maxChunkSize)
+	e.resultChunk = e.newChunk()
+	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	e.supportChk = true
 	return e
 }
@@ -995,7 +995,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		tasks:        make([]*analyzeTask, 0, len(v.Children())),
+		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
@@ -1081,18 +1081,23 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 }
 
 func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, outerExec Executor) Executor {
+	outerTypes := outerExec.retTypes()
+	innerPlan := v.Children()[1-v.OuterIndex]
+	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
+	for i, col := range innerPlan.Schema().Columns {
+		innerTypes[i] = col.RetType
+	}
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
-	leftTypes, rightTypes := v.Children()[0].Schema().GetTypes(), v.Children()[1].Schema().GetTypes()
-	outerTypes, innerTypes := leftTypes, rightTypes
+	leftTypes, rightTypes := outerTypes, innerTypes
+
 	if v.OuterIndex == 1 {
-		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
-		outerTypes, innerTypes = rightTypes, leftTypes
+		leftTypes, rightTypes = innerTypes, outerTypes
+		outerFilter, innerFilter = innerFilter, outerFilter
 	}
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
-	innerPlan := v.Children()[1-v.OuterIndex]
 	e := &NewIndexLookUpJoin{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerCtx: outerCtx{
@@ -1331,7 +1336,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 		return nil, errors.Trace(err)
 	}
 	e.resultHandler = &tableResultHandler{}
-	result, err := distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
+	result, err := distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.retTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

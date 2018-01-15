@@ -398,7 +398,7 @@ func (e *TableReaderExecutor) buildResp(goCtx goctx.Context, ranges []*ranger.Ne
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
+	result, err := distsql.SelectDAG(goCtx, e.ctx, kvReq, e.retTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -552,7 +552,7 @@ func (e *IndexReaderExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.schema.GetTypes())
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.retTypes())
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
