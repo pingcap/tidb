@@ -17,7 +17,6 @@ import (
 	"encoding/binary"
 	"unsafe"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -65,7 +64,6 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	for _, c := range c.columns {
 		curColMemUsage := int64(unsafe.Sizeof(*c)) + int64(cap(c.nullBitmap)) + int64(cap(c.offsets)*4) + int64(cap(c.data)) + int64(cap(c.elemBuf))
 		sum += curColMemUsage
-		log.Warning(curColMemUsage)
 	}
 	return
 }

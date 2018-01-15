@@ -18,6 +18,7 @@ import (
 	"math"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	"unsafe"
 )
 
 func TestT(t *testing.T) {
