@@ -42,12 +42,14 @@ type AggFuncDesc struct {
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
-func NewAggFuncDesc(name string, args []expression.Expression, hasDistinct bool) *AggFuncDesc {
-	return &AggFuncDesc{
+func NewAggFuncDesc(ctx context.Context, name string, args []expression.Expression, hasDistinct bool) *AggFuncDesc {
+	a := &AggFuncDesc{
 		Name:        strings.ToLower(name),
 		Args:        args,
 		HasDistinct: hasDistinct,
 	}
+	a.typeInfer(ctx)
+	return a
 }
 
 // Equal checks whether two aggregation function signatures are equal.
@@ -86,8 +88,8 @@ func (a *AggFuncDesc) String() string {
 	return buffer.String()
 }
 
-// TypeInfer infers the arguments and return types of an aggregation function.
-func (a *AggFuncDesc) TypeInfer(ctx context.Context) {
+// typeInfer infers the arguments and return types of an aggregation function.
+func (a *AggFuncDesc) typeInfer(ctx context.Context) {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)

@@ -138,8 +138,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
 				for _, col := range outerPlan.Schema().Columns {
-					first := aggregation.NewAggFuncDesc(ast.AggFuncFirstRow, []expression.Expression{col}, false)
-					first.TypeInfer(agg.ctx)
+					first := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 					newAggFuncs = append(newAggFuncs, first)
 				}
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)

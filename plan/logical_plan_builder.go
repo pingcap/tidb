@@ -89,8 +89,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			p = np
 			newArgList = append(newArgList, newArg)
 		}
-		newFunc := aggregation.NewAggFuncDesc(aggFunc.F, newArgList, aggFunc.Distinct)
-		newFunc.TypeInfer(b.ctx)
+		newFunc := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
 		combined := false
 		for j, oldFunc := range plan4Agg.AggFuncs {
 			if oldFunc.Equal(b.ctx, newFunc) {
@@ -112,8 +111,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 	}
 	for _, col := range p.Schema().Columns {
-		newFunc := aggregation.NewAggFuncDesc(ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
-		newFunc.TypeInfer(b.ctx)
+		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 		schema4Agg.Append(col.Clone().(*expression.Column))
 	}
@@ -578,8 +576,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	}.init(b.ctx)
 	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
-		aggDesc := aggregation.NewAggFuncDesc(ast.AggFuncFirstRow, []expression.Expression{col}, false)
-		aggDesc.TypeInfer(b.ctx)
+		aggDesc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggDesc)
 	}
 	plan4Agg.SetChildren(child)

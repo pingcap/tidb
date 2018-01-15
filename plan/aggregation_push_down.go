@@ -266,8 +266,7 @@ func (a *aggregationOptimizer) makeNewAgg(aggFuncs []*aggregation.AggFuncDesc, g
 		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {
-		firstRow := aggregation.NewAggFuncDesc(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
-		firstRow.TypeInfer(agg.ctx)
+		firstRow := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
 		newAggFuncDescs = append(newAggFuncDescs, firstRow)
 		schema.Append(gbyCol.Clone().(*expression.Column))
 	}

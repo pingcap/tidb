@@ -376,8 +376,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	funcMaxOrMin := aggregation.NewAggFuncDesc(funcName, []expression.Expression{rexpr}, false)
-	funcMaxOrMin.TypeInfer(er.ctx)
+	funcMaxOrMin := aggregation.NewAggFuncDesc(er.ctx, funcName, []expression.Expression{rexpr}, false)
 
 	// Create a column and append it to the schema of that aggregation.
 	colMaxOrMin := &expression.Column{
@@ -399,8 +398,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, cond, rexpr expression.Expression, all bool) {
 	funcIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
 
-	funcSum := aggregation.NewAggFuncDesc(ast.AggFuncSum, []expression.Expression{funcIsNull}, false)
-	funcSum.TypeInfer(er.ctx)
+	funcSum := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{funcIsNull}, false)
 	colSum := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_sum"),
 		FromID:   plan4Agg.id,
@@ -411,8 +409,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	plan4Agg.schema.Append(colSum)
 
 	if all {
-		funcCount := aggregation.NewAggFuncDesc(ast.AggFuncCount, []expression.Expression{funcIsNull.Clone()}, false)
-		funcCount.TypeInfer(er.ctx)
+		funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{funcIsNull.Clone()}, false)
 		colCount := &expression.Column{
 			ColName:  model.NewCIStr("agg_col_cnt"),
 			FromID:   plan4Agg.id,
@@ -467,10 +464,8 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := aggregation.NewAggFuncDesc(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := aggregation.NewAggFuncDesc(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
-	firstRowFunc.TypeInfer(er.ctx)
-	countFunc.TypeInfer(er.ctx)
+	firstRowFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.init(er.ctx)
@@ -497,10 +492,8 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := aggregation.NewAggFuncDesc(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := aggregation.NewAggFuncDesc(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
-	firstRowFunc.TypeInfer(er.ctx)
-	countFunc.TypeInfer(er.ctx)
+	firstRowFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.init(er.ctx)
