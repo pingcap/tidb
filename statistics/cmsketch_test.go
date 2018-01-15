@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"math"
 	"math/rand"
 	"time"
 
@@ -85,7 +86,7 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 			avgError:   63,
 		},
 	}
-	d, w := int32(8), int32(2048)
+	d, w := int32(5), int32(2048)
 	total, imax := uint64(1000000), uint64(10000000)
 	for _, t := range tests {
 		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, t.zipfFactor)
@@ -112,10 +113,16 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 }
 
 func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
-	lSketch, _, err := buildCMSketchAndMap(8, 2048, 0, 1000, 1000, 1.1)
-	c.Assert(err, IsNil)
+	lSketch := NewCMSketch(5, 2048)
+	lSketch.count = 2048 * math.MaxUint32
+	for i := range lSketch.table {
+		for j := range lSketch.table[i] {
+			lSketch.table[i][j] = math.MaxUint32
+		}
+	}
 	bytes, err := encodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
+	c.Assert(len(bytes), Equals, 61455)
 	rSketch, err := decodeCMSketch(bytes)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)

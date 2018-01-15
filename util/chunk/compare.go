@@ -14,6 +14,8 @@
 package chunk
 
 import (
+	"sort"
+
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -162,4 +164,64 @@ func cmpJSON(l Row, lCol int, r Row, rCol int) int {
 	}
 	lJ, rJ := l.GetJSON(lCol), r.GetJSON(rCol)
 	return json.CompareBinary(lJ, rJ)
+}
+
+func compare(row Row, colIdx int, ad *types.Datum) int {
+	switch ad.Kind() {
+	case types.KindNull:
+		if row.IsNull(colIdx) {
+			return 0
+		}
+		return 1
+	case types.KindMinNotNull:
+		if row.IsNull(colIdx) {
+			return -1
+		}
+		return 1
+	case types.KindMaxValue:
+		return -1
+	case types.KindInt64:
+		return types.CompareInt64(row.GetInt64(colIdx), ad.GetInt64())
+	case types.KindUint64:
+		return types.CompareUint64(row.GetUint64(colIdx), ad.GetUint64())
+	case types.KindFloat32:
+		return types.CompareFloat64(float64(row.GetFloat32(colIdx)), float64(ad.GetFloat32()))
+	case types.KindFloat64:
+		return types.CompareFloat64(row.GetFloat64(colIdx), ad.GetFloat64())
+	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
+		return types.CompareString(row.GetString(colIdx), ad.GetString())
+	case types.KindMysqlDecimal:
+		l, r := row.GetMyDecimal(colIdx), ad.GetMysqlDecimal()
+		return l.Compare(r)
+	case types.KindMysqlDuration:
+		l, r := row.GetDuration(colIdx), ad.GetMysqlDuration()
+		return types.CompareInt64(int64(l.Duration), int64(r.Duration))
+	case types.KindMysqlEnum:
+		l, r := row.GetEnum(colIdx).Value, ad.GetMysqlEnum().Value
+		return types.CompareUint64(l, r)
+	case types.KindMysqlSet:
+		l, r := row.GetSet(colIdx).Value, ad.GetMysqlSet().Value
+		return types.CompareUint64(l, r)
+	case types.KindMysqlJSON:
+		l, r := row.GetJSON(colIdx), ad.GetMysqlJSON()
+		return json.CompareBinary(l, r)
+	case types.KindMysqlTime:
+		l, r := row.GetTime(colIdx), ad.GetMysqlTime()
+		return l.Compare(r)
+	default:
+		return 0
+	}
+}
+
+// LowerBound searches on the non-decreasing column colIdx,
+// returns the smallest index i such that the value at row i is not less than `ad`.
+func (c *Chunk) LowerBound(colIdx int, ad *types.Datum) (index int, match bool) {
+	index = sort.Search(c.NumRows(), func(i int) bool {
+		cmp := compare(c.GetRow(i), colIdx, ad)
+		if cmp == 0 {
+			match = true
+		}
+		return cmp >= 0
+	})
+	return
 }

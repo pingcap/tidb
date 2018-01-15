@@ -387,7 +387,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 	return nil
 }
 
-func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
+func (b *planBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
@@ -642,6 +642,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 			}
 			p.Conditions = append(p.Conditions, expr)
 		}
+		p.ResolveIndices()
 	}
 	return p
 }
@@ -945,6 +946,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
+	insertPlan.ResolveIndices()
 	return insertPlan
 }
 

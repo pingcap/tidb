@@ -78,7 +78,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 		c.Assert(col2, check.DeepEquals, col1)
 	}
 
-	chk = newChunk(4, 8, -1, 16, 0, 0)
+	chk = newChunk(4, 8, 16, 16, 0, 0)
 	f32Val := float32(1.2)
 	chk.AppendFloat32(0, f32Val)
 	f64Val := 1.3
@@ -159,7 +159,6 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(len(dst.columns[0].offsets), check.Equals, 0)
 	c.Assert(len(dst.columns[0].data), check.Equals, 4*12)
 	c.Assert(len(dst.columns[0].elemBuf), check.Equals, 4)
-	c.Assert(len(dst.columns[0].ifaces), check.Equals, 0)
 
 	c.Assert(dst.columns[1].length, check.Equals, 12)
 	c.Assert(dst.columns[1].nullCount, check.Equals, 6)
@@ -167,7 +166,6 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(string(dst.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
 	c.Assert(string(dst.columns[1].data), check.Equals, "abcabcabcabcabcabc")
 	c.Assert(len(dst.columns[1].elemBuf), check.Equals, 0)
-	c.Assert(len(dst.columns[1].ifaces), check.Equals, 0)
 
 	c.Assert(dst.columns[2].length, check.Equals, 12)
 	c.Assert(dst.columns[2].nullCount, check.Equals, 6)
@@ -175,7 +173,6 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(len(dst.columns[2].offsets), check.Equals, 13)
 	c.Assert(len(dst.columns[2].data), check.Equals, 150)
 	c.Assert(len(dst.columns[2].elemBuf), check.Equals, 0)
-	c.Assert(len(dst.columns[2].ifaces), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
 		jsonElem := dst.GetRow(i).GetJSON(2)
 		cmpRes := json.CompareBinary(jsonElem, jsonObj)
@@ -215,7 +212,6 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(len(src.columns[0].offsets), check.Equals, 0)
 	c.Assert(len(src.columns[0].data), check.Equals, 4*12)
 	c.Assert(len(src.columns[0].elemBuf), check.Equals, 4)
-	c.Assert(len(src.columns[0].ifaces), check.Equals, 0)
 
 	c.Assert(src.columns[1].length, check.Equals, 12)
 	c.Assert(src.columns[1].nullCount, check.Equals, 6)
@@ -223,7 +219,6 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(string(src.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
 	c.Assert(string(src.columns[1].data), check.Equals, "abcabcabcabcabcabc")
 	c.Assert(len(src.columns[1].elemBuf), check.Equals, 0)
-	c.Assert(len(src.columns[1].ifaces), check.Equals, 0)
 
 	c.Assert(src.columns[2].length, check.Equals, 12)
 	c.Assert(src.columns[2].nullCount, check.Equals, 6)
@@ -231,7 +226,6 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(len(src.columns[2].offsets), check.Equals, 13)
 	c.Assert(len(src.columns[2].data), check.Equals, 150)
 	c.Assert(len(src.columns[2].elemBuf), check.Equals, 0)
-	c.Assert(len(src.columns[2].ifaces), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
 		row := src.GetRow(i)
 		jsonElem := row.GetJSON(2)
@@ -247,10 +241,8 @@ func newChunk(elemLen ...int) *Chunk {
 	for _, l := range elemLen {
 		if l > 0 {
 			chk.addFixedLenColumn(l, 0)
-		} else if l == 0 {
-			chk.addVarLenColumn(0)
 		} else {
-			chk.addInterfaceColumn(0)
+			chk.addVarLenColumn(0)
 		}
 	}
 	return chk

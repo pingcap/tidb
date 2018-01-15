@@ -102,6 +102,8 @@ func init() {
 	initTokenByte('\\', int('\\'))
 	initTokenByte('?', paramMarker)
 	initTokenByte('=', eq)
+	initTokenByte('{', int('{'))
+	initTokenByte('}', int('}'))
 
 	initTokenString("||", pipes)
 	initTokenString("&&", andand)
