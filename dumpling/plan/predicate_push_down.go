@@ -324,7 +324,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	var condsToPush []expression.Expression
 	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
 	for _, fun := range la.AggFuncs {
-		exprsOriginal = append(exprsOriginal, fun.GetArgs()[0])
+		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	for _, cond := range predicates {
 		switch cond.(type) {
