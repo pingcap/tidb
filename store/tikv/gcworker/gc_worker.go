@@ -477,6 +477,10 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 			if len(key) == 0 {
 				break
 			}
+			req.ScanLock.StartKey = []byte("")
+		} else {
+			// if len(locks) is '0', we should get into the branch above, not here.
+			req.ScanLock.StartKey = locks[len(locks)-1].Key
 		}
 	}
 	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s", identifier, safePoint, regions, totalResolvedLocks, time.Since(startTime))

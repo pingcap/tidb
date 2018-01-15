@@ -206,7 +206,7 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "3f5da532feb24e35fc0f24d790eeb1661a7f560f"
+  revision = "8502ad43609e06e8fb21674653595ceba52cc2dc"
 
 [[projects]]
   name = "github.com/pingcap/pd"
