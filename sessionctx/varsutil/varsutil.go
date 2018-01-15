@@ -54,8 +54,8 @@ func GetSessionOnlySysVars(s *variable.SessionVars, key string) (string, bool, e
 	switch sysVar.Name {
 	case variable.TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
-	case variable.TiDBLogQuery:
-		return fmt.Sprintf("%d", atomic.LoadUint32(&variable.ProcessLogQuery)), true, nil
+	case variable.TiDBGeneralLog:
+		return fmt.Sprintf("%d", atomic.LoadUint32(&variable.ProcessGeneralLog)), true, nil
 	}
 	sVal, ok := s.Systems[key]
 	if ok {
@@ -171,8 +171,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		return variable.ErrReadOnly
 	case variable.TiDBMaxChunkSize:
 		vars.MaxChunkSize = tidbOptPositiveInt(sVal, variable.DefMaxChunkSize)
-	case variable.TiDBLogQuery:
-		atomic.StoreUint32(&variable.ProcessLogQuery, uint32(tidbOptPositiveInt(sVal, variable.DefLogQuery)))
+	case variable.TiDBGeneralLog:
+		atomic.StoreUint32(&variable.ProcessGeneralLog, uint32(tidbOptPositiveInt(sVal, variable.DefTiDBGeneralLog)))
 	}
 	vars.Systems[name] = sVal
 	return nil

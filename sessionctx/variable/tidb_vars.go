@@ -105,8 +105,8 @@ const (
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
-	// tidb_log_query is used to log every query in info level.
-	TiDBLogQuery = "tidb_log_query"
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBGeneralLog = "tidb_general_log"
 )
 
 // Default TiDB system variable values.
@@ -125,10 +125,10 @@ const (
 	DefCurretTS                   = 0
 	DefMaxChunkSize               = 1024
 	DefDMLBatchSize               = 20000
-	DefLogQuery                   = 0
+	DefTiDBGeneralLog             = 0
 )
 
 // Process global variables.
 var (
-	ProcessLogQuery uint32
+	ProcessGeneralLog uint32
 )

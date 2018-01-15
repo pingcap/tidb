@@ -1342,7 +1342,7 @@ func (s *session) ShowProcess() util.ProcessInfo {
 }
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL
-// if variable.ProcessLogQuery is set.
+// if variable.ProcessGeneralLog is set.
 func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 	switch stmt := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
@@ -1360,7 +1360,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 }
 
 func logQuery(query string, vars *variable.SessionVars) {
-	if atomic.LoadUint32(&variable.ProcessLogQuery) != 0 && !vars.InRestrictedSQL {
+	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		log.Infof("[%d] %s", vars.ConnectionID, query)
 	}
 }

@@ -621,7 +621,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
 	/* The following variable is defined as session scope but is actually server scope. */
-	{ScopeSession, TiDBLogQuery, strconv.Itoa(DefLogQuery)},
+	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
