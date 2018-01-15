@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"unsafe"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -57,16 +58,16 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 	return chk
 }
 
-// MemoryUsage returns the total memory usage of a Chunk in MB.
-// We ignore the size of column.length, column.nullCount and column.elemBuf
+// MemoryUsage returns the total memory usage of a Chunk in B.
+// We ignore the size of column.length and column.nullCount
 // since they have little effect of the total memory usage.
-func (c *Chunk) MemoryUsage() float64 {
-	sum := int64(0)
+func (c *Chunk) MemoryUsage() (sum int64) {
 	for _, c := range c.columns {
-		curColMemUsage := int64(cap(c.nullBitmap)) + int64(cap(c.offsets)*4) + int64(cap(c.data)) + int64(cap(c.elemBuf))
+		curColMemUsage := int64(unsafe.Sizeof(*c)) + int64(cap(c.nullBitmap)) + int64(cap(c.offsets)*4) + int64(cap(c.data)) + int64(cap(c.elemBuf))
 		sum += curColMemUsage
+		log.Warning(curColMemUsage)
 	}
-	return float64(sum) / (1024 * 1024)
+	return
 }
 
 // addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
