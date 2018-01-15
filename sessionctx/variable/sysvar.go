@@ -615,6 +615,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBMaxRowCountForINLJ, strconv.Itoa(DefMaxRowCountForINLJ)},
+	{ScopeGlobal | ScopeSession, TiDBInitialIndexJoinBatchSize, strconv.Itoa(DefInitialIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
 	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},

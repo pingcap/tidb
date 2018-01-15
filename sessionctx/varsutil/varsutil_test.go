@@ -161,6 +161,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.MaxRowCountForINLJ, Equals, 128)
 	SetSessionSystemVar(v, variable.TiDBMaxRowCountForINLJ, types.NewStringDatum("127"))
 	c.Assert(v.MaxRowCountForINLJ, Equals, 127)
+
+	// Test case for tidb_initial_index_join_batch_size
+	c.Assert(v.InitialIndexJoinBatchSize, Equals, 2048)
+	SetSessionSystemVar(v, variable.TiDBInitialIndexJoinBatchSize, types.NewStringDatum("10000"))
+	c.Assert(v.InitialIndexJoinBatchSize, Equals, 10000)
 }
 
 type mockGlobalAccessor struct {

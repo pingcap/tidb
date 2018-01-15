@@ -167,6 +167,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
 	case variable.TiDBCurrentTS:
 		return variable.ErrReadOnly
+	case variable.TiDBInitialIndexJoinBatchSize:
+		vars.InitialIndexJoinBatchSize = tidbOptPositiveInt(sVal, variable.DefInitialIndexJoinBatchSize)
 	}
 	vars.Systems[name] = sVal
 	return nil
