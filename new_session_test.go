@@ -357,6 +357,14 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	tk.MustQuery("select * from history")
 	history := tidb.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
+
+	tk.MustExec("insert history values (4)")
+	tk.MustExec("insert history values (5)")
+	c.Assert(history.Count(), Equals, 2)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from history")
+	history = tidb.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
 }
 
 // TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
