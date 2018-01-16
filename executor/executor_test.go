@@ -19,6 +19,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2320,4 +2321,37 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 	num2Str := strconv.FormatUint(num2, 10)
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1", "2", num1Str, num2Str))
 	tk.MustQuery("select * from t where id not in (2)").Check(testkit.Rows(num1Str, num2Str, "1"))
+}
+
+func (s *testSuite) TestEarlyClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table earlyclose (id int primary key)")
+
+	// Insert 1000 rows.
+	var values []string
+	for i := 0; i < 1000; i++ {
+		values = append(values, fmt.Sprintf("(%d)", i))
+	}
+	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, 500)
+
+	goCtx := goctx.Background()
+	for i := 0; i < 500; i++ {
+		rss, err := tk.Se.Execute(goCtx, "select * from earlyclose order by id")
+		c.Assert(err, IsNil)
+		rs := rss[0]
+		_, err = rs.Next(goCtx)
+		c.Assert(err, IsNil)
+		rs.Close()
+	}
 }
