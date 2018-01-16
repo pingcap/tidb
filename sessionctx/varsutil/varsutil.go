@@ -168,6 +168,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		return variable.ErrReadOnly
 	case variable.TiDBMaxChunkSize:
 		vars.MaxChunkSize = tidbOptPositiveInt(sVal, variable.DefMaxChunkSize)
+	case variable.TiDBExecMemThres:
+		vars.ExecMemThreshold = int64(tidbOptPositiveInt(sVal, variable.DefExecMemThres))
 	}
 	vars.Systems[name] = sVal
 	return nil

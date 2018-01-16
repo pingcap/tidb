@@ -125,3 +125,13 @@ func (l *List) Walk(walkFunc ListWalkFunc) error {
 	}
 	return nil
 }
+
+func (l *List) MemoryUsage() (sum int64) {
+	for _, c := range l.chunks {
+		sum += c.MemoryUsage()
+	}
+	for _, f := range l.freelist {
+		sum += f.MemoryUsage()
+	}
+	return sum
+}

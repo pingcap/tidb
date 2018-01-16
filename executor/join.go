@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -75,6 +77,7 @@ type HashJoinExec struct {
 	outerResultChs     []chan *chunk.Chunk
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
+	memoryUsage        []int64
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -160,9 +163,27 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.workerWaitGroup = sync.WaitGroup{}
-
+	e.memoryUsage = make([]int64, e.concurrency+1)
 	e.resultCursor = 0
 	return nil
+}
+
+func (e *HashJoinExec) updateMemoryUsage(idx int, memUsage int64) {
+	if e.memoryUsage[idx] >= memUsage {
+		return
+	}
+	e.memoryUsage[idx] = memUsage
+	var sum int64 = 0
+	for _, usage := range e.memoryUsage {
+		sum += usage
+	}
+	if sum >= e.ctx.GetSessionVars().ExecMemThreshold {
+		warnMsg := fmt.Sprintf("HashJoinExec holds memory %dB\n\t[inner buffer: %dB]", sum, e.memoryUsage[0])
+		for i := 1; i < len(e.memoryUsage); i++ {
+			warnMsg += fmt.Sprintf("\n\t[join worker %d: %dB]", i-1, e.memoryUsage[i])
+		}
+		log.Warnf(warnMsg)
+	}
 }
 
 // makeJoinRow simply creates a new row that appends row b to row a.
@@ -352,6 +373,7 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 		}
 	}
 	e.innerResult = innerResult
+	e.updateMemoryUsage(0, e.innerResult.MemoryUsage())
 	return nil
 }
 
@@ -725,6 +747,7 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 			joinResult.err = errors.Trace(err)
 			return false, joinResult
 		}
+		e.updateMemoryUsage(workerID+1, joinResultChkBuffer.MemoryUsage())
 		// Splitting the joinResultChkBuffer into chunks that reach e.maxChunkSize.
 		numAppended := 0
 		for numAppended < joinResultChkBuffer.NumRows() {
