@@ -233,9 +233,6 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		Ranges:          ranges,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
-	if !prop.isEmpty() {
-		join.KeepOrder = true
-	}
 	return []PhysicalPlan{join}
 }
 
