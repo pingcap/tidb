@@ -32,9 +32,9 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-var _ Executor = &NewIndexLookUpJoin{}
+var _ Executor = &IndexLookUpJoin{}
 
-// NewIndexLookUpJoin employs one outer worker and N innerWorkers to execute concurrently.
+// IndexLookUpJoin employs one outer worker and N innerWorkers to execute concurrently.
 // It preserves the order of the outer table and support batch lookup.
 //
 // The execution flow is very similar to IndexLookUpReader:
@@ -42,7 +42,7 @@ var _ Executor = &NewIndexLookUpJoin{}
 // 2. The innerWorker receives the task, builds key ranges from outer rows and fetch inner rows, builds inner row hash map.
 // 3. main thread receives the task, waits for inner worker finish handling the task.
 // 4. main thread join each outer row by look up the inner rows hash map in the task.
-type NewIndexLookUpJoin struct {
+type IndexLookUpJoin struct {
 	baseExecutor
 
 	resultCh   <-chan *lookUpJoinTask
@@ -116,7 +116,7 @@ type innerWorker struct {
 }
 
 // Open implements the Executor interface.
-func (e *NewIndexLookUpJoin) Open(goCtx goctx.Context) error {
+func (e *IndexLookUpJoin) Open(goCtx goctx.Context) error {
 	err := e.children[0].Open(goCtx)
 	if err != nil {
 		return errors.Trace(err)
@@ -125,7 +125,7 @@ func (e *NewIndexLookUpJoin) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-func (e *NewIndexLookUpJoin) startWorkers(goCtx goctx.Context) {
+func (e *IndexLookUpJoin) startWorkers(goCtx goctx.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupConcurrency
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
@@ -140,7 +140,7 @@ func (e *NewIndexLookUpJoin) startWorkers(goCtx goctx.Context) {
 	}
 }
 
-func (e *NewIndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask) *outerWorker {
+func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask) *outerWorker {
 	ow := &outerWorker{
 		outerCtx:     e.outerCtx,
 		ctx:          e.ctx,
@@ -154,7 +154,7 @@ func (e *NewIndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTa
 	return ow
 }
 
-func (e *NewIndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
+func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
 	copiedRanges := make([]*ranger.NewRange, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
@@ -173,7 +173,7 @@ func (e *NewIndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerW
 }
 
 // NextChunk implements the Executor interface.
-func (e *NewIndexLookUpJoin) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *IndexLookUpJoin) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
 		err := e.prepareJoinResult(goCtx)
@@ -196,7 +196,7 @@ func (e *NewIndexLookUpJoin) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) er
 // Next implements the Executor interface.
 // Even though we only support read children in chunk mode, but we are not sure if our parents
 // support chunk, so we have to implement Next.
-func (e *NewIndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
+func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		err := e.prepareJoinResult(goCtx)
 		if err != nil {
@@ -218,7 +218,7 @@ func (e *NewIndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 	}
 }
 
-func (e *NewIndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
+func (e *IndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
 	if e.joinResultCursor < e.joinResult.NumRows() {
 		return nil
 	}
@@ -247,7 +247,7 @@ func (e *NewIndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
 	}
 }
 
-func (e *NewIndexLookUpJoin) getFinishedTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
+func (e *IndexLookUpJoin) getFinishedTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
 	task := e.task
 	if task != nil && task.cursor < task.outerResult.NumRows() {
 		return task, nil
@@ -273,7 +273,7 @@ func (e *NewIndexLookUpJoin) getFinishedTask(goCtx goctx.Context) (*lookUpJoinTa
 	return task, nil
 }
 
-func (e *NewIndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) {
+func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) {
 	outerKey := task.encodedLookUpKeys.GetRow(rowIdx).GetBytes(0)
 	innerPtrBytes := task.lookupMap.Get(outerKey)
 	task.matchedInners = task.matchedInners[:0]
@@ -538,7 +538,7 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 }
 
 // Close implements the Executor interface.
-func (e *NewIndexLookUpJoin) Close() error {
+func (e *IndexLookUpJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
