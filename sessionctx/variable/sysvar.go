@@ -620,6 +620,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
+	/* The following variable is defined as session scope but is actually server scope. */
+	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 }
 
 // SetNamesVariables is the system variable names related to set names statements.

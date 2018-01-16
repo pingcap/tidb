@@ -106,6 +106,9 @@ const (
 	// It controls the max row count of outer table when do index nested loop join without hint.
 	// After the row count of the inner table is accurate, this variable will be removed.
 	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
+
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBGeneralLog = "tidb_general_log"
 )
 
 // Default TiDB system variable values.
@@ -124,4 +127,10 @@ const (
 	DefBatchDelete                = false
 	DefCurretTS                   = 0
 	DefDMLBatchSize               = 20000
+	DefTiDBGeneralLog             = 0
+)
+
+// Process global variables.
+var (
+	ProcessGeneralLog uint32
 )
