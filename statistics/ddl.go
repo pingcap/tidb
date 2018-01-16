@@ -91,10 +91,12 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs []ast.RecordSet
 		rs, err = exec.Execute(goCtx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		if len(rs) > 0 {
+			defer terror.Call(rs[0].Close)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer terror.Call(rs[0].Close)
 		var row types.Row
 		row, err = rs[0].Next(goCtx)
 		if err != nil {
