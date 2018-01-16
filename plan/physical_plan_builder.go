@@ -492,13 +492,19 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func (ds *DataSource) forceToTableScan() PhysicalPlan {
+func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
+	var ranges []*ranger.NewRange
+	if pk != nil {
+		ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	} else {
+		ranges = ranger.FullIntNewRange(false)
+	}
 	ts := PhysicalTableScan{
 		Table:       ds.tableInfo,
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
-		Ranges:      ranger.FullIntNewRange(),
+		Ranges:      ranges,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = ds.stats
@@ -527,7 +533,6 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	ts.Ranges = ranger.FullIntNewRange()
 	var pkCol *expression.Column
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -536,6 +541,11 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 				ts.HistVersion = ds.statisticTable.Columns[pkColInfo.ID].LastUpdateVersion
 			}
 		}
+	}
+	if pkCol != nil {
+		ts.Ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+	} else {
+		ts.Ranges = ranger.FullIntNewRange(false)
 	}
 	statsTbl := ds.statisticTable
 	rowCount := float64(statsTbl.Count)
