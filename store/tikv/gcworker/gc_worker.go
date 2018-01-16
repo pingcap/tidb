@@ -427,6 +427,9 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		default:
 		}
 
+		// we'd better keep 'req.ScanLock.StartKey' the same as 'key' to avoid
+		// the error 'key is not in region' when the region split for several pieces, or
+		// merge into one piece.
 		req.ScanLock.StartKey = key
 		loc, err := store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
@@ -472,9 +475,6 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		}
 
 		totalResolvedLocks += len(locks)
-		// we'd better keep 'req.ScanLock.StartKey' the same as 'key' to avoid
-		// the error 'key is not in region' when the region split for several pieces, or
-		// merge into one piece.
 		if len(locks) < gcScanLockLimit {
 			regions++
 			key = loc.EndKey
