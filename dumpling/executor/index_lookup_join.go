@@ -60,6 +60,7 @@ type IndexLookUpJoin struct {
 
 	indexRanges   []*ranger.NewRange
 	keyOff2IdxOff []int
+	innerPtrBytes [][]byte
 }
 
 type outerCtx struct {
@@ -121,6 +122,7 @@ func (e *IndexLookUpJoin) Open(goCtx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.innerPtrBytes = make([][]byte, 0, 8)
 	e.startWorkers(goCtx)
 	return nil
 }
@@ -275,9 +277,9 @@ func (e *IndexLookUpJoin) getFinishedTask(goCtx goctx.Context) (*lookUpJoinTask,
 
 func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) {
 	outerKey := task.encodedLookUpKeys.GetRow(rowIdx).GetBytes(0)
-	innerPtrBytes := task.lookupMap.Get(outerKey)
+	e.innerPtrBytes = task.lookupMap.Get(outerKey, e.innerPtrBytes[:0])
 	task.matchedInners = task.matchedInners[:0]
-	for _, b := range innerPtrBytes {
+	for _, b := range e.innerPtrBytes {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
 		matchedInner := task.innerResult.GetRow(ptr)
 		task.matchedInners = append(task.matchedInners, matchedInner)
