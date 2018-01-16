@@ -14,11 +14,11 @@
 package executor
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"unsafe"
 
+	"fmt"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
@@ -179,12 +179,13 @@ func (e *HashJoinExec) updateMemoryUsage(idx int, memUsage int64) {
 	for _, usage := range e.memoryUsage {
 		sum += usage
 	}
-	if sum >= e.ctx.GetSessionVars().ExecMemThreshold {
-		warnMsg := fmt.Sprintf("HashJoinExec holds memory %dB\n\t[inner buffer: %dB]", sum, e.memoryUsage[0])
+	memThreshold := e.ctx.GetSessionVars().ExecMemThreshold
+	if sum >= memThreshold {
+		detailedMsg := fmt.Sprintf("\n\t[inner buffer: %dB]", e.memoryUsage[0])
 		for i := 1; i < len(e.memoryUsage); i++ {
-			warnMsg += fmt.Sprintf("\n\t[join worker %d: %dB]", i-1, e.memoryUsage[i])
+			detailedMsg += fmt.Sprintf("\n\t[join worker %d: %dB]", i-1, e.memoryUsage[i])
 		}
-		log.Warnf(warnMsg)
+		log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoinExec", sum, memThreshold, detailedMsg).Error())
 	}
 }
 
