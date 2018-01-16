@@ -69,14 +69,13 @@ type HashJoinExec struct {
 
 	// for chunk execution
 	outerKeyColIdx     []int
-	outerKeyColTypes   []*types.FieldType
 	innerKeyColIdx     []int
-	innerKeyColTypes   []*types.FieldType
 	innerResult        *chunk.List
 	outerChkResourceCh chan *outerChkResource
 	outerResultChs     []chan *chunk.Chunk
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
+	hashTableValBufs   [][][]byte
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -150,6 +149,7 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 
 	e.prepared = false
 
+	e.hashTableValBufs = make([][][]byte, e.concurrency)
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		buffer := &hashJoinBuffer{
@@ -222,27 +222,27 @@ func getJoinKey(sc *stmtctx.StatementContext, cols []*expression.Column, row Row
 
 func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyBuf []byte) (hasNull bool, _ []byte, err error) {
 	var keyColIdx []int
-	var keyColTypes []*types.FieldType
+	var allTypes []*types.FieldType
 	if isOuterKey {
 		keyColIdx = e.outerKeyColIdx
-		keyColTypes = e.outerKeyColTypes
+		allTypes = e.outerExec.retTypes()
 	} else {
 		keyColIdx = e.innerKeyColIdx
-		keyColTypes = e.innerKeyColTypes
+		allTypes = e.innerExec.retTypes()
+	}
+
+	for _, i := range keyColIdx {
+		if row.IsNull(i) {
+			return true, keyBuf, nil
+		}
 	}
 
 	keyBuf = keyBuf[:0]
-	for i, colIdx := range keyColIdx {
-		d := row.GetDatum(colIdx, keyColTypes[i])
-		if d.IsNull() {
-			return true, nil, nil
-		}
-		keyBuf, err = codec.HashValues(e.ctx.GetSessionVars().StmtCtx, keyBuf, d)
-		if err != nil {
-			return false, nil, errors.Trace(err)
-		}
+	keyBuf, err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, keyBuf, row, allTypes, keyColIdx)
+	if err != nil {
+		err = errors.Trace(err)
 	}
-	return false, keyBuf, nil
+	return false, keyBuf, err
 }
 
 // fetchOuterRows fetches rows from the big table in a background goroutine
@@ -333,7 +333,7 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 	innerExecChk := e.childrenResults[e.innerIdx]
 	selected := make([]bool, 0, chunk.InitialCapacity)
-	innerResult := chunk.NewList(e.innerExec.Schema().GetTypes(), e.maxChunkSize)
+	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
 	for {
 		innerExecChk.Reset()
 		err = e.innerExec.NextChunk(goCtx, innerExecChk)
@@ -386,10 +386,8 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
 
 	e.outerKeyColIdx = make([]int, len(e.outerKeys))
-	e.outerKeyColTypes = make([]*types.FieldType, len(e.outerKeys))
 	for i := range e.outerKeys {
 		e.outerKeyColIdx[i] = e.outerKeys[i].Index
-		e.outerKeyColTypes[i] = e.outerKeys[i].RetType
 	}
 }
 
@@ -637,7 +635,8 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 		return true
 	}
 
-	values := e.hashTable.Get(joinKey)
+	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
+	values := e.hashTableValBufs[workerID]
 	if len(values) == 0 {
 		resultBuffer.rows, resultBuffer.err = e.resultGenerators[0].emit(outerRow, nil, resultBuffer.rows)
 		resultBuffer.err = errors.Trace(resultBuffer.err)
@@ -676,7 +675,8 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 		}
 		return nil
 	}
-	innerPtrs := e.hashTable.Get(joinKey)
+	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
+	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
 		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, chk)
 		if err != nil {
@@ -1009,10 +1009,8 @@ func (e *NestedLoopApplyExec) Next(goCtx goctx.Context) (Row, error) {
 func (e *HashJoinExec) buildHashTableForList() error {
 	e.hashTable = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
-	e.innerKeyColTypes = make([]*types.FieldType, len(e.innerKeys))
 	for i := range e.innerKeys {
 		e.innerKeyColIdx[i] = e.innerKeys[i].Index
-		e.innerKeyColTypes[i] = e.innerKeys[i].RetType
 	}
 	var (
 		hasNull bool

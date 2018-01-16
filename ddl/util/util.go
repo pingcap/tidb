@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
@@ -45,6 +46,9 @@ func (t DelRangeTask) Range() ([]byte, []byte) {
 func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	sql := fmt.Sprintf(loadDeleteRangeSQL, safePoint)
 	rss, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if len(rss) > 0 {
+		defer terror.Call(rss[0].Close)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -165,15 +165,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 				pkCol = expression.ColInfo2Col(cols, pkColInfo)
 			}
 		}
-		newRanges := ranger.FullIntNewRange()
 		if pkCol != nil {
-			ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
+			var err error
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newRanges = ranges
+		} else {
+			ts.Ranges = ranger.FullIntNewRange(false)
 		}
-		ts.Ranges = newRanges
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
@@ -188,7 +188,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-	default:
+	case PhysicalPlan:
 		var err error
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
@@ -422,10 +422,10 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 		return
 	}
 
-	var copTasks []Plan
+	var copTasks []PhysicalPlan
 	var pipelines []string
 
-	for planQueue := []Plan{p}; len(planQueue) > 0; planQueue = planQueue[1:] {
+	for planQueue := []PhysicalPlan{p}; len(planQueue) > 0; planQueue = planQueue[1:] {
 		curPlan := planQueue[0]
 		switch copPlan := curPlan.(type) {
 		case *PhysicalTableReader:

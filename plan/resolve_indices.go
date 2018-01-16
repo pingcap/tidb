@@ -88,7 +88,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalUnionScan) ResolveIndices() {
-	p.basePlan.ResolveIndices()
+	p.basePhysicalPlan.ResolveIndices()
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.children[0].Schema())
 	}
@@ -121,7 +121,7 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalSelection) ResolveIndices() {
-	p.basePlan.ResolveIndices()
+	p.basePhysicalPlan.ResolveIndices()
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.children[0].Schema())
 	}
@@ -131,7 +131,7 @@ func (p *PhysicalSelection) ResolveIndices() {
 func (p *basePhysicalAgg) ResolveIndices() {
 	p.physicalSchemaProducer.ResolveIndices()
 	for _, aggFun := range p.AggFuncs {
-		for _, arg := range aggFun.GetArgs() {
+		for _, arg := range aggFun.Args {
 			arg.ResolveIndices(p.children[0].Schema())
 		}
 	}
@@ -142,7 +142,7 @@ func (p *basePhysicalAgg) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalSort) ResolveIndices() {
-	p.basePlan.ResolveIndices()
+	p.basePhysicalPlan.ResolveIndices()
 	for _, item := range p.ByItems {
 		item.Expr.ResolveIndices(p.children[0].Schema())
 	}
@@ -150,7 +150,7 @@ func (p *PhysicalSort) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTopN) ResolveIndices() {
-	p.basePlan.ResolveIndices()
+	p.basePhysicalPlan.ResolveIndices()
 	for _, item := range p.ByItems {
 		item.Expr.ResolveIndices(p.children[0].Schema())
 	}
@@ -166,7 +166,6 @@ func (p *PhysicalApply) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *Update) ResolveIndices() {
-	p.basePlan.ResolveIndices()
 	schema := p.SelectPlan.Schema()
 	for _, assign := range p.OrderedList {
 		assign.Col.ResolveIndices(schema)
@@ -176,7 +175,6 @@ func (p *Update) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *Insert) ResolveIndices() {
-	p.basePlan.ResolveIndices()
 	for _, asgn := range p.OnDuplicate {
 		asgn.Col.ResolveIndices(p.tableSchema)
 		asgn.Expr.ResolveIndices(p.tableSchema)
@@ -196,15 +194,13 @@ func (p *Insert) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *Show) ResolveIndices() {
-	p.basePlan.ResolveIndices()
-
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.schema)
 	}
 }
 
 func (p *physicalSchemaProducer) ResolveIndices() {
-	p.basePlan.ResolveIndices()
+	p.basePhysicalPlan.ResolveIndices()
 	if p.schema != nil {
 		for _, cols := range p.schema.TblID2Handle {
 			for _, col := range cols {
@@ -215,8 +211,8 @@ func (p *physicalSchemaProducer) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *basePlan) ResolveIndices() {
+func (p *basePhysicalPlan) ResolveIndices() {
 	for _, child := range p.children {
-		child.(PhysicalPlan).ResolveIndices()
+		child.ResolveIndices()
 	}
 }

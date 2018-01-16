@@ -331,7 +331,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
-	fields := e.children[0].Schema().GetTypes()
+	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, chk)
@@ -409,7 +409,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 	e.initialMultiTableTblMap()
 	colPosInfos := e.getColPosInfos(e.children[0].Schema())
 	tblRowMap := make(tableRowMapType)
-	fields := e.children[0].Schema().GetTypes()
+	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, chk)
@@ -858,9 +858,28 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 
 	txn := e.ctx.Txn()
 	rowCount := 0
-	sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	if !sessVars.ImportingData {
+		sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	}
 	defer sessVars.CleanBuffers()
+
+	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
+	if e.IgnoreErr {
+		var err error
+		rows, err = e.batchMarkDupRows(rows)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	for _, row := range rows {
+		// duplicate row will be marked as nil in batchMarkDupRows if
+		// IgnoreErr is true. For IgnoreErr is false, it is a protection.
+		if row == nil {
+			continue
+		}
 		if batchInsert && rowCount >= batchSize {
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
@@ -868,7 +887,9 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			if !sessVars.ImportingData {
+				sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			}
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -884,13 +905,6 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		}
 
 		if kv.ErrKeyExists.Equal(err) {
-			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
-			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
-			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-			if e.IgnoreErr {
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				continue
-			}
 			if len(e.OnDuplicate) > 0 {
 				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
@@ -907,6 +921,135 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	}
 	e.finished = true
 	return nil, nil
+}
+
+type keyWithDupError struct {
+	key    kv.Key
+	dupErr error
+}
+
+func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
+	recordIDs := make([]int64, 0, len(rows))
+	if e.Table.Meta().PKIsHandle {
+		var handleCol *table.Column
+		for _, col := range e.Table.Cols() {
+			if col.IsPKHandleColumn(e.Table.Meta()) {
+				handleCol = col
+				break
+			}
+		}
+		for _, row := range rows {
+			recordIDs = append(recordIDs, row[handleCol.Offset].GetInt64())
+		}
+	} else {
+		for range rows {
+			recordID, err := e.Table.AllocAutoID(e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			recordIDs = append(recordIDs, recordID)
+		}
+	}
+	return recordIDs, nil
+}
+
+// getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
+// which need to be checked whether they are duplicate keys.
+func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError, error) {
+	nUnique := 0
+	for _, v := range e.Table.WritableIndices() {
+		if v.Meta().Unique {
+			nUnique++
+		}
+	}
+	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
+
+	// get recordIDs
+	recordIDs, err := e.getRecordIDs(rows)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for i, row := range rows {
+		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
+		// append record keys and errors
+		if e.Table.Meta().PKIsHandle {
+			keysWithErr = append(keysWithErr, keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i])})
+		}
+
+		// append unique keys and errors
+		for _, v := range e.Table.WritableIndices() {
+			if !v.Meta().Unique {
+				continue
+			}
+			var colVals []types.Datum
+			colVals, err = v.FetchValues(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			var key []byte
+			var distinct bool
+			key, distinct, err = v.GenIndexKey(e.ctx.GetSessionVars().StmtCtx,
+				colVals, recordIDs[i])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !distinct {
+				continue
+			}
+			keysWithErr = append(keysWithErr, keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name)})
+		}
+		rowWithKeys = append(rowWithKeys, keysWithErr)
+	}
+	return rowWithKeys, nil
+}
+
+// batchMarkDupRows marks rows with duplicate errors as nil.
+// All duplicate rows were marked and appended as duplicate warnings
+// to the statement context in batch.
+func (e *InsertExec) batchMarkDupRows(rows [][]types.Datum) ([][]types.Datum, error) {
+	// get keys need to be checked
+	rowWithKeys, err := e.getKeysNeedCheck(rows)
+
+	// batch get values
+	nKeys := 0
+	for _, v := range rowWithKeys {
+		nKeys += len(v)
+	}
+	batchKeys := make([]kv.Key, 0, nKeys)
+	for _, v := range rowWithKeys {
+		for _, k := range v {
+			batchKeys = append(batchKeys, k.key)
+		}
+	}
+	values, err := e.ctx.Txn().GetSnapshot().BatchGet(batchKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// append warnings and get no duplicated error rows
+	for i, v := range rowWithKeys {
+		for _, k := range v {
+			if _, found := values[string(k.key)]; found {
+				// If duplicate keys were found in BatchGet, mark row = nil.
+				rows[i] = nil
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
+				break
+			}
+		}
+		// If row was checked with no duplicate keys,
+		// it should be add to values map for the further row check.
+		// There may be duplicate keys inside the insert statement.
+		if rows[i] != nil {
+			for _, k := range v {
+				values[string(k.key)] = []byte{}
+			}
+		}
+	}
+
+	// this statement was already been checked
+	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
+	return rows, nil
 }
 
 // Next implements the Executor Next interface.
@@ -1149,7 +1292,7 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ign
 		} else if mysql.HasAutoIncrementFlag(c.Flag) {
 			row[i] = table.GetZeroValue(c.ToInfo())
 		} else {
-			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			row[i], err = e.getColDefaultValue(i, c)
 			hasValue[c.Offset] = true
 			if table.ErrNoDefaultValue.Equal(err) {
 				row[i] = table.GetZeroValue(c.ToInfo())
@@ -1194,7 +1337,7 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
 	var rows [][]types.Datum
-	fields := selectExec.Schema().GetTypes()
+	fields := selectExec.retTypes()
 	for {
 		chk := selectExec.newChunk()
 		err := selectExec.NextChunk(goCtx, chk)
@@ -1675,7 +1818,7 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 }
 
 func (e *UpdateExec) fetchChunkRows(goCtx goctx.Context) error {
-	fields := e.children[0].Schema().GetTypes()
+	fields := e.children[0].retTypes()
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(goCtx, chk)

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -580,8 +581,8 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 			defaultValues = make([]types.Datum, rightExec.Schema().Len())
 		}
 	}
-	lhsColTypes := leftExec.Schema().GetTypes()
-	rhsColTypes := rightExec.Schema().GetTypes()
+	lhsColTypes := leftExec.retTypes()
+	rhsColTypes := rightExec.retTypes()
 	e := &MergeJoinExec{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
@@ -630,7 +631,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 
 	defaultValues := v.DefaultValues
-	lhsTypes, rhsTypes := leftExec.Schema().GetTypes(), rightExec.Schema().GetTypes()
+	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
 	if v.SmallChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
@@ -670,10 +671,13 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	e := &HashAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     v.AggFuncs,
+		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
 	e.supportChk = true
+	for _, aggDesc := range v.AggFuncs {
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+	}
 	return e
 }
 
@@ -686,10 +690,13 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     v.AggFuncs,
+		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
 	e.supportChk = true
+	for _, aggDesc := range v.AggFuncs {
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+	}
 	return e
 }
 
@@ -822,7 +829,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
 	}
 	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
-		defaultValues, otherConditions, leftChild.Schema().GetTypes(), rightChild.Schema().GetTypes())
+		defaultValues, otherConditions, leftChild.retTypes(), rightChild.retTypes())
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.SmallChildIdx == 0 {
@@ -840,9 +847,9 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerSchema:     apply.OuterSchema,
 		outerChunk:      outerExec.newChunk(),
 		innerChunk:      innerExec.newChunk(),
-		resultChunk:     chunk.NewChunk(v.Schema().GetTypes()),
 	}
-	e.innerList = chunk.NewList(innerExec.Schema().GetTypes(), e.maxChunkSize)
+	e.resultChunk = e.newChunk()
+	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	e.supportChk = true
 	return e
 }
@@ -995,7 +1002,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		tasks:        make([]*analyzeTask, 0, len(v.Children())),
+		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
@@ -1043,57 +1050,24 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	if outerExec.supportChunk() {
-		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReader),
-		// we only need to check outer.
-		return b.buildNewIndexLookUpJoin(v, outerExec)
+	outerTypes := outerExec.retTypes()
+	innerPlan := v.Children()[1-v.OuterIndex]
+	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
+	for i, col := range innerPlan.Schema().Columns {
+		innerTypes[i] = col.RetType
 	}
-	batchSize := 1
-	if !v.KeepOrder {
-		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
-	}
-	innerExecBuilder := &dataReaderBuilder{v.Children()[1-v.OuterIndex], b}
-	defaultValues := v.DefaultValues
-	if defaultValues == nil {
-		defaultValues = make([]types.Datum, innerExecBuilder.Schema().Len())
-	}
-	var outerConditions, innerConditions []expression.Expression
-	if v.OuterIndex == 0 {
-		outerConditions = v.LeftConditions
-		innerConditions = v.RightConditions
-	} else {
-		outerConditions = v.RightConditions
-		innerConditions = v.LeftConditions
-	}
-	return &IndexLookUpJoin{
-		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
-		outerExec:        outerExec,
-		innerExecBuilder: innerExecBuilder,
-		outerKeys:        v.OuterJoinKeys,
-		innerKeys:        v.InnerJoinKeys,
-		outerFilter:      outerConditions,
-		innerFilter:      innerConditions,
-		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, nil, nil),
-		maxBatchSize:     batchSize,
-		indexRanges:      v.Ranges,
-		keyOff2IdxOff:    v.KeyOff2IdxOff,
-	}
-}
-
-func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, outerExec Executor) Executor {
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
-	leftTypes, rightTypes := v.Children()[0].Schema().GetTypes(), v.Children()[1].Schema().GetTypes()
-	outerTypes, innerTypes := leftTypes, rightTypes
+	leftTypes, rightTypes := outerTypes, innerTypes
+
 	if v.OuterIndex == 1 {
-		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
-		outerTypes, innerTypes = rightTypes, leftTypes
+		leftTypes, rightTypes = innerTypes, outerTypes
+		outerFilter, innerFilter = innerFilter, outerFilter
 	}
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
-	innerPlan := v.Children()[1-v.OuterIndex]
-	e := &NewIndexLookUpJoin{
+	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerCtx: outerCtx{
 			rowTypes: outerTypes,
@@ -1330,11 +1304,13 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.schema.GetTypes())
+	e.resultHandler = &tableResultHandler{}
+	result, err := distsql.SelectDAG(goCtx, builder.ctx, kvReq, e.retTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.result.Fetch(goCtx)
+	result.Fetch(goCtx)
+	e.resultHandler.open(nil, result)
 	return e, nil
 }
 

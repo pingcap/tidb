@@ -358,12 +358,9 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 func (do *Domain) mustRestartSyncer() error {
 	ctx := goctx.Background()
 	syncer := do.ddl.SchemaSyncer()
-	timeout := 5 * time.Second
 
 	for {
-		childCtx, cancel := goctx.WithTimeout(ctx, timeout)
-		err := syncer.Restart(childCtx)
-		cancel()
+		err := syncer.Restart(ctx)
 		if err == nil {
 			return nil
 		}
