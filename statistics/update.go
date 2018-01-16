@@ -102,7 +102,7 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map. Then we dumps every table that held in map to KV.
-func (h *Handle) DumpStatsDeltaToKV() {
+func (h *Handle) DumpStatsDeltaToKV() error {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
@@ -110,35 +110,39 @@ func (h *Handle) DumpStatsDeltaToKV() {
 	}
 	h.listHead.Unlock()
 	for id, item := range h.globalMap {
-		err := h.dumpTableStatDeltaToKV(id, item)
-		if err == nil {
+		updated, err := h.dumpTableStatDeltaToKV(id, item)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if updated {
 			delete(h.globalMap, id)
-		} else {
-			log.Warnf("Error happens when updating stats table, the error message is %s.", err.Error())
 		}
 	}
+	return nil
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
+func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bool, error) {
 	if delta.Count == 0 {
-		return nil
+		return true, nil
 	}
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	op := "+"
+	var sql string
 	if delta.Delta < 0 {
-		op = "-"
-		delta.Delta = -delta.Delta
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.ctx.Txn().StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
+	} else {
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), delta.Delta, delta.Count, id)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count %s %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), op, delta.Delta, delta.Count, id))
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(sql)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
+	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
-	return errors.Trace(err)
+	return updated, errors.Trace(err)
 }
 
 const (
