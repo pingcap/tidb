@@ -30,7 +30,7 @@ func (d *distinctChecker) Check(sc *stmtctx.StatementContext, values []types.Dat
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	d.vals = d.existingKeys.Get(d.key, d.vals)
+	d.vals = d.existingKeys.Get(d.key, d.vals[:0])
 	if len(d.vals) > 0 {
 		return false, nil
 	}
