@@ -305,11 +305,7 @@ type TableReaderExecutor struct {
 func (e *TableReaderExecutor) Close() error {
 	e.feedback.SetIntRanges(e.ranges).SetActual(e.resultHandler.totalCount())
 	e.ctx.StoreQueryFeedback(e.feedback)
-	err := e.resultHandler.close()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = closeAll(e.partialResult)
+	err := closeAll(e.resultHandler, e.partialResult)
 	e.partialResult = nil
 	return errors.Trace(err)
 }
@@ -380,6 +376,7 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 	var secondResult distsql.SelectResult
 	secondResult, err = e.buildResp(goCtx, secondPartRanges)
 	if err != nil {
+		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
 	e.resultHandler.open(firstResult, secondResult)
@@ -1002,24 +999,24 @@ func (builder *requestBuilder) SetPriority(priority int) *requestBuilder {
 
 type tableResultHandler struct {
 	// If the pk is unsigned and we have KeepOrder=true.
-	// firstResult handles the request whose range is in signed int range.
-	// secondResult handles the request whose range is exceed signed int range.
-	// Otherwise, we just set firstIsEnded true and the secondResult handles the whole ranges.
-	firstResult  distsql.SelectResult
-	secondResult distsql.SelectResult
+	// optionalResult handles the request whose range is in signed int range.
+	// result handles the request whose range is exceed signed int range.
+	// Otherwise, we just set optionalFinished true and the result handles the whole ranges.
+	optionalResult distsql.SelectResult
+	result         distsql.SelectResult
 
-	firstIsEnded bool
+	optionalFinished bool
 }
 
 func (tr *tableResultHandler) open(result1, result2 distsql.SelectResult) {
 	if result1 == nil {
-		tr.firstIsEnded = true
-		tr.secondResult = result2
+		tr.optionalFinished = true
+		tr.result = result2
 		return
 	}
-	tr.firstResult = result1
-	tr.secondResult = result2
-	tr.firstIsEnded = false
+	tr.optionalResult = result1
+	tr.result = result2
+	tr.optionalFinished = false
 }
 
 func (tr *tableResultHandler) next(goCtx goctx.Context) (distsql.PartialResult, error) {
@@ -1027,17 +1024,17 @@ func (tr *tableResultHandler) next(goCtx goctx.Context) (distsql.PartialResult, 
 		partialResult distsql.PartialResult
 		err           error
 	)
-	if !tr.firstIsEnded {
-		partialResult, err = tr.firstResult.Next(goCtx)
+	if !tr.optionalFinished {
+		partialResult, err = tr.optionalResult.Next(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if partialResult != nil {
 			return partialResult, nil
 		}
-		tr.firstIsEnded = true
+		tr.optionalFinished = true
 	}
-	partialResult, err = tr.secondResult.Next(goCtx)
+	partialResult, err = tr.result.Next(goCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1045,29 +1042,29 @@ func (tr *tableResultHandler) next(goCtx goctx.Context) (distsql.PartialResult, 
 }
 
 func (tr *tableResultHandler) nextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	if !tr.firstIsEnded {
-		err := tr.firstResult.NextChunk(goCtx, chk)
+	if !tr.optionalFinished {
+		err := tr.optionalResult.NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if chk.NumRows() > 0 {
 			return nil
 		}
-		tr.firstIsEnded = true
+		tr.optionalFinished = true
 	}
-	return tr.secondResult.NextChunk(goCtx, chk)
+	return tr.result.NextChunk(goCtx, chk)
 }
 
-func (tr *tableResultHandler) close() error {
-	err := closeAll(tr.firstResult, tr.secondResult)
-	tr.firstResult, tr.secondResult = nil, nil
+func (tr *tableResultHandler) Close() error {
+	err := closeAll(tr.optionalResult, tr.result)
+	tr.optionalResult, tr.result = nil, nil
 	return errors.Trace(err)
 }
 
 func (tr *tableResultHandler) totalCount() (count int64) {
-	if tr.firstResult != nil {
-		count += tr.firstResult.ScanCount()
+	if tr.optionalResult != nil {
+		count += tr.optionalResult.ScanCount()
 	}
-	count += tr.secondResult.ScanCount()
+	count += tr.result.ScanCount()
 	return count
 }
