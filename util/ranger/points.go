@@ -130,7 +130,10 @@ func FullIntRange() []IntColumnRange {
 
 // FullIntNewRange is used for table range. Since table range cannot accept MaxValueDatum as the max value.
 // So we need to set it to MaxInt64.
-func FullIntNewRange() []*NewRange {
+func FullIntNewRange(isUnsigned bool) []*NewRange {
+	if isUnsigned {
+		return []*NewRange{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}}}
+	}
 	return []*NewRange{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 }
 

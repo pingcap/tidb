@@ -16,7 +16,9 @@ package executor_test
 import (
 	"flag"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -2306,6 +2308,19 @@ func (s *testSuite) TestTableScanWithPointRanges(c *C) {
 	tk.MustExec("create table t(id int, PRIMARY KEY (id))")
 	tk.MustExec("insert into t values(1), (5), (10)")
 	tk.MustQuery("select * from t where id in(1, 2, 10)").Check(testkit.Rows("1", "10"))
+}
+
+func (s *testSuite) TestUnsignedPk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id bigint unsigned primary key)")
+	var num1, num2 uint64 = math.MaxInt64 + 1, math.MaxInt64 + 2
+	tk.MustExec(fmt.Sprintf("insert into t values(%v), (%v), (1), (2)", num1, num2))
+	num1Str := strconv.FormatUint(num1, 10)
+	num2Str := strconv.FormatUint(num2, 10)
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1", "2", num1Str, num2Str))
+	tk.MustQuery("select * from t where id not in (2)").Check(testkit.Rows(num1Str, num2Str, "1"))
 }
 
 func (s *testSuite) TestEarlyClose(c *C) {
