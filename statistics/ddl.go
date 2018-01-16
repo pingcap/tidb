@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
@@ -93,6 +94,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		if err != nil {
 			return errors.Trace(err)
 		}
+		defer terror.Call(rs[0].Close)
 		var row types.Row
 		row, err = rs[0].Next(goCtx)
 		if err != nil {
