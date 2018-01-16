@@ -2321,7 +2321,7 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
 
 	// Get table ID for split.
-	dom := sessionctx.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
 	c.Assert(err, IsNil)
@@ -2330,11 +2330,12 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 500)
 
+	goCtx := goctx.Background()
 	for i := 0; i < 500; i++ {
-		rss, err := tk.Se.Execute("select * from earlyclose order by id")
+		rss, err := tk.Se.Execute(goCtx, "select * from earlyclose order by id")
 		c.Assert(err, IsNil)
 		rs := rss[0]
-		_, err = rs.Next()
+		_, err = rs.Next(goCtx)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
