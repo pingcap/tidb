@@ -493,12 +493,18 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 }
 
 func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
+	var ranges []*ranger.NewRange
+	if pk != nil {
+		ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	} else {
+		ranges = ranger.FullIntNewRange(false)
+	}
 	ts := PhysicalTableScan{
 		Table:       ds.tableInfo,
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
-		Ranges:      ranger.FullIntNewRange(pk),
+		Ranges:      ranges,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = ds.stats
@@ -536,7 +542,11 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 			}
 		}
 	}
-	ts.Ranges = ranger.FullIntNewRange(pkCol)
+	if pkCol != nil {
+		ts.Ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+	} else {
+		ts.Ranges = ranger.FullIntNewRange(false)
+	}
 	statsTbl := ds.statisticTable
 	rowCount := float64(statsTbl.Count)
 	if len(ds.pushedDownConds) > 0 {

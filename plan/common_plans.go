@@ -165,15 +165,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 				pkCol = expression.ColInfo2Col(cols, pkColInfo)
 			}
 		}
-		newRanges := ranger.FullIntNewRange(pkCol)
 		if pkCol != nil {
-			ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
+			var err error
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newRanges = ranges
+		} else {
+			ts.Ranges = ranger.FullIntNewRange(false)
 		}
-		ts.Ranges = newRanges
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error

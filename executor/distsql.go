@@ -363,7 +363,7 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 	defer span.Finish()
 
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := e.splitRanges()
+	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
 	firstResult, err := e.buildResp(goCtx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -403,39 +403,39 @@ func (e *TableReaderExecutor) buildResp(goCtx goctx.Context, ranges []*ranger.Ne
 	return result, nil
 }
 
-func (e *TableReaderExecutor) splitRanges() ([]*ranger.NewRange, []*ranger.NewRange) {
-	if len(e.ranges) == 0 || e.ranges[0].LowVal[0].Kind() == types.KindInt64 {
-		return e.ranges, nil
+func splitRanges(ranges []*ranger.NewRange, keepOrder bool) ([]*ranger.NewRange, []*ranger.NewRange) {
+	if len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
+		return ranges, nil
 	}
-	idx := sort.Search(len(e.ranges), func(i int) bool { return e.ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
-	if idx == len(e.ranges) {
-		return e.ranges, nil
+	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
+	if idx == len(ranges) {
+		return ranges, nil
 	}
-	if e.ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
-		signedRanges := e.ranges[0:idx]
-		unsignedRanges := e.ranges[idx:]
-		if !e.keepOrder {
+	if ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
+		signedRanges := ranges[0:idx]
+		unsignedRanges := ranges[idx:]
+		if !keepOrder {
 			return append(unsignedRanges, signedRanges...), nil
 		}
 		return signedRanges, unsignedRanges
 	}
 	signedRanges := make([]*ranger.NewRange, 0, idx+1)
-	unsignedRanges := make([]*ranger.NewRange, 0, len(e.ranges)-idx)
-	signedRanges = append(signedRanges, e.ranges[0:idx]...)
+	unsignedRanges := make([]*ranger.NewRange, 0, len(ranges)-idx)
+	signedRanges = append(signedRanges, ranges[0:idx]...)
 	signedRanges = append(signedRanges, &ranger.NewRange{
-		LowVal:     e.ranges[idx].LowVal,
-		LowExclude: e.ranges[idx].LowExclude,
+		LowVal:     ranges[idx].LowVal,
+		LowExclude: ranges[idx].LowExclude,
 		HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
 	})
 	unsignedRanges = append(unsignedRanges, &ranger.NewRange{
 		LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
-		HighVal:     e.ranges[idx].HighVal,
-		HighExclude: e.ranges[idx].HighExclude,
+		HighVal:     ranges[idx].HighVal,
+		HighExclude: ranges[idx].HighExclude,
 	})
-	if idx < len(e.ranges) {
-		unsignedRanges = append(unsignedRanges, e.ranges[idx+1:]...)
+	if idx < len(ranges) {
+		unsignedRanges = append(unsignedRanges, ranges[idx+1:]...)
 	}
-	if !e.keepOrder {
+	if !keepOrder {
 		return append(unsignedRanges, signedRanges...), nil
 	}
 	return signedRanges, unsignedRanges
@@ -1019,11 +1019,7 @@ func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) 
 	tr.optionalFinished = false
 }
 
-func (tr *tableResultHandler) next(goCtx goctx.Context) (distsql.PartialResult, error) {
-	var (
-		partialResult distsql.PartialResult
-		err           error
-	)
+func (tr *tableResultHandler) next(goCtx goctx.Context) (partialResult distsql.PartialResult, err error) {
 	if !tr.optionalFinished {
 		partialResult, err = tr.optionalResult.Next(goCtx)
 		if err != nil {
@@ -1053,6 +1049,24 @@ func (tr *tableResultHandler) nextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 		tr.optionalFinished = true
 	}
 	return tr.result.NextChunk(goCtx, chk)
+}
+
+func (tr *tableResultHandler) nextRaw() (data []byte, err error) {
+	if !tr.optionalFinished {
+		data, err = tr.optionalResult.NextRaw()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if data != nil {
+			return data, nil
+		}
+		tr.optionalFinished = true
+	}
+	data, err = tr.result.NextRaw()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return data, nil
 }
 
 func (tr *tableResultHandler) Close() error {

@@ -21,7 +21,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -131,8 +130,8 @@ func FullIntRange() []IntColumnRange {
 
 // FullIntNewRange is used for table range. Since table range cannot accept MaxValueDatum as the max value.
 // So we need to set it to MaxInt64.
-func FullIntNewRange(col *expression.Column) []*NewRange {
-	if col != nil && mysql.HasUnsignedFlag(col.RetType.Flag) {
+func FullIntNewRange(isUnsigned bool) []*NewRange {
+	if isUnsigned {
 		return []*NewRange{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}}}
 	}
 	return []*NewRange{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
