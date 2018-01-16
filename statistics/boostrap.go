@@ -18,6 +18,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -25,6 +26,9 @@ import (
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
 	rs, err := h.ctx.(sqlexec.SQLExecutor).Execute(sql)
+	if len(rs) > 0 {
+		defer terror.Call(rs[0].Close)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -60,6 +64,9 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
 	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms"
 	rs, err := h.ctx.(sqlexec.SQLExecutor).Execute(sql)
+	if len(rs) > 0 {
+		defer terror.Call(rs[0].Close)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -114,6 +121,9 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 func (h *Handle) initStatsBuckets(tables statsCache) error {
 	sql := "select table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets"
 	rs, err := h.ctx.(sqlexec.SQLExecutor).Execute(sql)
+	if len(rs) > 0 {
+		defer terror.Call(rs[0].Close)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
