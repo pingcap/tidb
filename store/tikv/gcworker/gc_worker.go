@@ -689,11 +689,7 @@ func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, er
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
 	rs, err := s.Execute(goCtx, stmt)
 	if len(rs) > 0 {
-		defer func() {
-			if e := rs[0].Close(); e != nil {
-				log.Errorf("close recordSet error: %v", e)
-			}
-		}()
+		defer terror.Call(rs[0].Close)
 	}
 	if err != nil {
 		return "", errors.Trace(err)
