@@ -175,7 +175,7 @@ func (e *HashJoinExec) updateMemoryUsage(idx int, memUsage int64) {
 		return
 	}
 	e.memoryUsage[idx] = memUsage
-	var sum int64 = 0
+	var sum int64
 	for _, usage := range e.memoryUsage {
 		sum += usage
 	}
