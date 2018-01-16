@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -54,6 +55,13 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	go func() {
 		defer wg.Done()
 		rs, err := session.Execute(goctx.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		if len(rs) > 0 {
+			defer func() {
+				if e := rs[0].Close(); e != nil {
+					log.Errorf("close recordSet error: %v", e)
+				}
+			}()
+		}
 		c.Assert(err, IsNil)
 		row, err := rs[0].Next(goctx.Background())
 		c.Assert(err, IsNil)
