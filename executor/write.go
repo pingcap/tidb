@@ -858,8 +858,9 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 
 	txn := e.ctx.Txn()
 	rowCount := 0
-
-	sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	if !sessVars.ImportingData {
+		sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	}
 	defer sessVars.CleanBuffers()
 
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
@@ -886,7 +887,9 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			if !sessVars.ImportingData {
+				sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			}
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -1289,7 +1292,7 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ign
 		} else if mysql.HasAutoIncrementFlag(c.Flag) {
 			row[i] = table.GetZeroValue(c.ToInfo())
 		} else {
-			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			row[i], err = e.getColDefaultValue(i, c)
 			hasValue[c.Offset] = true
 			if table.ErrNoDefaultValue.Equal(err) {
 				row[i] = table.GetZeroValue(c.ToInfo())

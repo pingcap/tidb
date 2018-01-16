@@ -533,7 +533,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 		return nil
 	}
 	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.GetMode() == aggregation.FinalMode {
+		if aggFunc.Mode == aggregation.FinalMode {
 			return nil
 		}
 	}
