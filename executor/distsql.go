@@ -1008,14 +1008,14 @@ type tableResultHandler struct {
 	optionalFinished bool
 }
 
-func (tr *tableResultHandler) open(result1, result2 distsql.SelectResult) {
-	if result1 == nil {
+func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) {
+	if optionalResult == nil {
 		tr.optionalFinished = true
-		tr.result = result2
+		tr.result = result
 		return
 	}
-	tr.optionalResult = result1
-	tr.result = result2
+	tr.optionalResult = optionalResult
+	tr.result = result
 	tr.optionalFinished = false
 }
 
