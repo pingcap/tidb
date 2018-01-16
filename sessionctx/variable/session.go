@@ -229,6 +229,9 @@ type SessionVars struct {
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
+
+	// InitialIndexJoinBatchSize defines the initial index join batch size.
+	InitialIndexJoinBatchSize int
 }
 
 // NewSessionVars creates a session vars object.
@@ -252,6 +255,7 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 		DMLBatchSize:               DefDMLBatchSize,
+		InitialIndexJoinBatchSize:  DefInitialIndexJoinBatchSize,
 	}
 }
 

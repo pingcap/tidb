@@ -106,6 +106,8 @@ const (
 	// It controls the max row count of outer table when do index nested loop join without hint.
 	// After the row count of the inner table is accurate, this variable will be removed.
 	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
+
+	TiDBInitialIndexJoinBatchSize = "tidb_initial_index_join_batch_size"
 )
 
 // Default TiDB system variable values.
@@ -124,4 +126,5 @@ const (
 	DefBatchDelete                = false
 	DefCurretTS                   = 0
 	DefDMLBatchSize               = 20000
+	DefInitialIndexJoinBatchSize  = 2048
 )

@@ -73,7 +73,7 @@ type IndexLookUpJoin struct {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpJoin) Open() error {
-	e.curBatchSize = 32
+	e.curBatchSize = e.ctx.GetSessionVars().InitialIndexJoinBatchSize
 	e.cursor = 0
 	e.exhausted = false
 	return errors.Trace(e.children[0].Open())
