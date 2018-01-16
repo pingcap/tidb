@@ -1050,44 +1050,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	if outerExec.supportChunk() {
-		// All inner data reader supports chunk(TableReader, IndexReader, IndexLookUpReader),
-		// we only need to check outer.
-		return b.buildNewIndexLookUpJoin(v, outerExec)
-	}
-	batchSize := 1
-	if !v.KeepOrder {
-		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
-	}
-	innerExecBuilder := &dataReaderBuilder{v.Children()[1-v.OuterIndex], b}
-	defaultValues := v.DefaultValues
-	if defaultValues == nil {
-		defaultValues = make([]types.Datum, innerExecBuilder.Schema().Len())
-	}
-	var outerConditions, innerConditions []expression.Expression
-	if v.OuterIndex == 0 {
-		outerConditions = v.LeftConditions
-		innerConditions = v.RightConditions
-	} else {
-		outerConditions = v.RightConditions
-		innerConditions = v.LeftConditions
-	}
-	return &IndexLookUpJoin{
-		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, outerExec),
-		outerExec:        outerExec,
-		innerExecBuilder: innerExecBuilder,
-		outerKeys:        v.OuterJoinKeys,
-		innerKeys:        v.InnerJoinKeys,
-		outerFilter:      outerConditions,
-		innerFilter:      innerConditions,
-		resultGenerator:  newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, nil, nil),
-		maxBatchSize:     batchSize,
-		indexRanges:      v.Ranges,
-		keyOff2IdxOff:    v.KeyOff2IdxOff,
-	}
-}
-
-func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, outerExec Executor) Executor {
 	outerTypes := outerExec.retTypes()
 	innerPlan := v.Children()[1-v.OuterIndex]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
@@ -1105,7 +1067,7 @@ func (b *executorBuilder) buildNewIndexLookUpJoin(v *plan.PhysicalIndexJoin, out
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
-	e := &NewIndexLookUpJoin{
+	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, outerExec),
 		outerCtx: outerCtx{
 			rowTypes: outerTypes,
