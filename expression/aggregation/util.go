@@ -11,7 +11,8 @@ import (
 // distinctChecker stores existing keys and checks if given data is distinct.
 type distinctChecker struct {
 	existingKeys *mvmap.MVMap
-	buf          []byte
+	key          []byte
+	vals         [][]byte
 }
 
 // createDistinctChecker creates a new distinct checker.
@@ -23,17 +24,17 @@ func createDistinctChecker() *distinctChecker {
 
 // Check checks if values is distinct.
 func (d *distinctChecker) Check(sc *stmtctx.StatementContext, values []types.Datum) (bool, error) {
-	d.buf = d.buf[:0]
+	d.key = d.key[:0]
 	var err error
-	d.buf, err = codec.EncodeValue(sc, d.buf, values...)
+	d.key, err = codec.EncodeValue(sc, d.key, values...)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	v := d.existingKeys.Get(d.buf)
-	if v != nil {
+	d.vals = d.existingKeys.Get(d.key, d.vals[:0])
+	if len(d.vals) > 0 {
 		return false, nil
 	}
-	d.existingKeys.Put(d.buf, []byte{})
+	d.existingKeys.Put(d.key, []byte{})
 	return true, nil
 }
 
