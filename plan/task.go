@@ -159,14 +159,8 @@ func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 	}
 	cst := lCnt * netWorkFactor
 	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
-	if p.KeepOrder {
-		batchSize = 1
-	}
 	cst += lCnt * math.Log2(math.Min(float64(batchSize), lCnt)) * 2
 	cst += lCnt / float64(batchSize) * netWorkStartFactor
-	if p.KeepOrder {
-		return cst * 2
-	}
 	return cst
 }
 
