@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -53,6 +54,8 @@ func GetSessionOnlySysVars(s *variable.SessionVars, key string) (string, bool, e
 	switch sysVar.Name {
 	case variable.TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
+	case variable.TiDBGeneralLog:
+		return fmt.Sprintf("%d", atomic.LoadUint32(&variable.ProcessGeneralLog)), true, nil
 	}
 	sVal, ok := s.Systems[key]
 	if ok {
@@ -170,6 +173,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.MaxChunkSize = tidbOptPositiveInt(sVal, variable.DefMaxChunkSize)
 	case variable.TiDBExecMemThres:
 		vars.ExecMemThreshold = int64(tidbOptPositiveInt(sVal, variable.DefExecMemThres))
+	case variable.TiDBGeneralLog:
+		atomic.StoreUint32(&variable.ProcessGeneralLog, uint32(tidbOptPositiveInt(sVal, variable.DefTiDBGeneralLog)))
 	}
 	vars.Systems[name] = sVal
 	return nil
