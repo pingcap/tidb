@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -121,6 +122,9 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs []ast.RecordSet
 		rs, err = exec.Execute(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		if len(rs) > 0 {
+			defer terror.Call(rs[0].Close)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
