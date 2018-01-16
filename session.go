@@ -114,6 +114,11 @@ func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.Sta
 	h.history = append(h.history, s)
 }
 
+// Count returns the count of the history.
+func (h *StmtHistory) Count() int {
+	return len(h.history)
+}
+
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
