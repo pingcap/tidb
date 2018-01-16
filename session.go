@@ -657,7 +657,7 @@ func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt as
 	} else {
 		s.ClearValue(context.LastExecuteDDL)
 	}
-
+	logStmt(stmtNode, s.sessionVars)
 	startTS := time.Now()
 	recordSet, err := runStmt(s, stmt)
 	if err != nil {
@@ -671,7 +671,6 @@ func (s *session) executeStatement(connID uint64, stmtNode ast.StmtNode, stmt as
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
 	}
-	logCrucialStmt(stmtNode, s.sessionVars.User)
 	return recordSets, nil
 }
 
@@ -836,7 +835,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	}
 	s.PrepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
-
+	logQuery(st.OriginText(), s.sessionVars)
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
 }
@@ -1287,17 +1286,27 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	return pi
 }
 
-// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc.
-func logCrucialStmt(node ast.StmtNode, user *auth.UserIdentity) {
+// logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL
+// if variable.ProcessGeneralLog is set.
+func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 	switch stmt := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
+		user := vars.User
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
 			log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
 		} else {
 			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
 		}
+	default:
+		logQuery(node.Text(), vars)
+	}
+}
+
+func logQuery(query string, vars *variable.SessionVars) {
+	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
+		log.Infof("[%d] %s", vars.ConnectionID, query)
 	}
 }
 
