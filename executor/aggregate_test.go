@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -496,4 +497,17 @@ func (s *testSuite) TestAggEliminator(c *C) {
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestIssue5663(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	plan.PlanCacheEnabled = true
+	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (i int unsigned, primary key(i));")
+	tk.MustExec("insert into t1 values (1),(2),(3);")
+	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
+	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
 }
