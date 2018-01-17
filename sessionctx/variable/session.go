@@ -247,8 +247,8 @@ type SessionVars struct {
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
 
-	// ExecMemThreshold defines the memory usage warning threshold in Byte of a executor during query execution.
-	ExecMemThreshold int64
+	// MemThreshold defines the memory usage warning threshold in Byte of a executor during query execution.
+	MemThreshold int64
 
 	// EnableChunk indicates whether the chunk execution model is enabled.
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
@@ -285,7 +285,7 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
-		ExecMemThreshold:           DefExecMemThres,
+		MemThreshold:               DefMemThreshold,
 	}
 }
 

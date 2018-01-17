@@ -105,9 +105,9 @@ const (
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
-	// tidb_exec_mem_threshold is used to control the memory usage warning threshold in Byte of an executor during query execution.
+	// tidb_mem_threshold is used to control the memory usage warning threshold in Byte of an executor during query execution.
 	// When the memory usage hold by an executor exceeds the threshold, a warning log will be printed.
-	TiDBExecMemThres = "tidb_exec_mem_thres"
+	TiDBMemThreshold = "tidb_mem_threshold"
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -129,7 +129,7 @@ const (
 	DefCurretTS                   = 0
 	DefMaxChunkSize               = 1024
 	DefDMLBatchSize               = 20000
-	DefExecMemThres               = 32 * 1024 * 1024 * 1024 // 32 GiB
+	DefMemThreshold               = 32 * 1024 * 1024 * 1024 // 32 GiB
 	DefTiDBGeneralLog             = 0
 )
 
