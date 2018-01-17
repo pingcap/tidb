@@ -102,8 +102,8 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
-			grpc.MaxCallSendMsgSize(MaxCallMsgSize),
-			grpc.MaxSendMsgSize(MaxSendMsgSize),
+			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxCallMsgSize)),
+			grpc.WithDefaultCallOptions(grpc.MaxSendMsgSize(MaxSendMsgSize)),
 		)
 
 		if err != nil {
