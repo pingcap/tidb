@@ -168,18 +168,6 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-// We only consider the inner result memory usage now.
-func (e *HashJoinExec) updateMemoryUsage(memUsage int64) {
-	memThreshold := e.ctx.GetSessionVars().ExecMemThreshold
-	if e.totalMemoryUsage >= memThreshold {
-		return
-	}
-	e.totalMemoryUsage += memUsage
-	if e.totalMemoryUsage >= memThreshold {
-		log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoinExec", e.totalMemoryUsage, memThreshold).Error())
-	}
-}
-
 // makeJoinRow simply creates a new row that appends row b to row a.
 func makeJoinRow(a Row, b Row) Row {
 	ret := make([]types.Datum, 0, len(a)+len(b))
@@ -347,7 +335,7 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 	innerExecChk := e.childrenResults[e.innerIdx]
 	selected := make([]bool, 0, chunk.InitialCapacity)
 	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
-	curInnerResultMem := int64(0)
+	memExceedThreshold, execMemThreshold := false, e.ctx.GetSessionVars().ExecMemThreshold
 	for {
 		innerExecChk.Reset()
 		err = e.innerExec.NextChunk(goCtx, innerExecChk)
@@ -366,8 +354,11 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 				innerResult.AppendRow(innerExecChk.GetRow(idx))
 			}
 		}
-		e.updateMemoryUsage(innerResult.MemoryUsage() - curInnerResultMem)
-		curInnerResultMem = innerResult.MemoryUsage()
+		innerMemUsage := innerResult.MemoryUsage()
+		if !memExceedThreshold && innerMemUsage > execMemThreshold {
+			memExceedThreshold = true
+			log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoin", innerMemUsage, execMemThreshold).Error())
+		}
 	}
 	e.innerResult = innerResult
 	return nil
