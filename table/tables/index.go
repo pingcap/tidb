@@ -101,7 +101,7 @@ type index struct {
 	prefix  kv.Key
 
 	// buffer is used reduce the number of new slice when multiple index keys are created.
-	// It is not thread-safe, is only used in ddl index reorganation stage, please don't use it in other case.
+	// It is not thread-safe, is only used in ddl index reorganization stage, please don't use it in other case.
 	buffer []byte
 }
 
