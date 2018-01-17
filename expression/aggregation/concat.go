@@ -61,7 +61,7 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 	}
 
 	for i, length := 0, len(cg.Args)-1; i < length; i++ {
-		value, err := cf.Args[0].Eval(row)
+		value, err := cf.Args[i].Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
