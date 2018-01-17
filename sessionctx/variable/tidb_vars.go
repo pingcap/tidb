@@ -129,7 +129,7 @@ const (
 	DefCurretTS                   = 0
 	DefMaxChunkSize               = 1024
 	DefDMLBatchSize               = 20000
-	DefExecMemThres               = 4 * 1024 * 1024 * 1024 // 4 GiB
+	DefExecMemThres               = 32 * 1024 * 1024 * 1024 // 32 GiB
 	DefTiDBGeneralLog             = 0
 )
 
