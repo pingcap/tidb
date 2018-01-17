@@ -105,10 +105,6 @@ type hashJoinBuffer struct {
 func (e *HashJoinExec) Close() error {
 	close(e.closeCh)
 	e.finished.Store(true)
-	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
-	}
-
 	if e.prepared {
 		if e.resultBufferCh != nil {
 			for range e.resultBufferCh {
@@ -136,9 +132,10 @@ func (e *HashJoinExec) Close() error {
 			e.joinChkResourceCh = nil
 		}
 	}
-
 	e.resultBuffer = nil
-	return nil
+
+	err := e.baseExecutor.Close()
+	return errors.Trace(err)
 }
 
 // Open implements the Executor Open interface.

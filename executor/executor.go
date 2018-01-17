@@ -1315,6 +1315,10 @@ func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *UnionExec) Close() error {
 	e.rows = nil
 	close(e.finished)
+	if e.resultPool != nil {
+		for range e.resultPool {
+		}
+	}
 	e.resourcePools = nil
 	return errors.Trace(e.baseExecutor.Close())
 }
