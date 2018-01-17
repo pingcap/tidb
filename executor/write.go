@@ -859,7 +859,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 
 	txn := e.ctx.Txn()
 	rowCount := 0
-	insertBufs := sessVars.GetInsertBufs()
+	insertBufs := sessVars.GetWriteStmtBufs()
 	if !sessVars.ImportingData {
 		insertBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	}

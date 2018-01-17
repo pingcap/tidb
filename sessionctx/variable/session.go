@@ -109,9 +109,9 @@ func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
 }
 
-// InsertValuesBufs is buffers used by insert statement.
+// WriteStmtBufs is buffers used by insert statement.
 // TODO: use a common memory pool to replace this.
-type InsertValuesBufs struct {
+type WriteStmtBufs struct {
 	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
 	RowValBuf []byte
 	// BufStore stores temp KVs for a row when executing insert statement.
@@ -126,7 +126,7 @@ type InsertValuesBufs struct {
 	IndexKeyBuf []byte
 }
 
-func (ib *InsertValuesBufs) clean() {
+func (ib *WriteStmtBufs) clean() {
 	ib.BufStore = nil
 	ib.RowValBuf = nil
 	ib.AddRowValues = nil
@@ -276,7 +276,7 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
 
-	insertBufs InsertValuesBufs
+	insertBufs WriteStmtBufs
 }
 
 // NewSessionVars creates a session vars object.
@@ -304,15 +304,15 @@ func NewSessionVars() *SessionVars {
 	}
 }
 
-// GetInsertBufs get pointer of SessionVars.InsertBufs.
-func (s *SessionVars) GetInsertBufs() *InsertValuesBufs {
+// GetWriteStmtBufs get pointer of SessionVars.InsertBufs.
+func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 	return &s.insertBufs
 }
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
 	if !s.ImportingData {
-		s.GetInsertBufs().clean()
+		s.GetWriteStmtBufs().clean()
 	}
 }
 

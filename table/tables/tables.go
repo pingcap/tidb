@@ -318,7 +318,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 // adjustRowValuesBuf adjust insertVals.AddRowValues length, AddRowValues stores the inserting values that is used
 // by tablecodec.EncodeRow, the encoded row format is `id1, colval, id2, colval`, so the correct length is rowLen * 2. If
 // the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
-func adjustRowValuesBuf(insertVals *variable.InsertValuesBufs, rowLen int) {
+func adjustRowValuesBuf(insertVals *variable.WriteStmtBufs, rowLen int) {
 	adjustLen := rowLen * 2
 	if insertVals.AddRowValues == nil || cap(insertVals.AddRowValues) < adjustLen {
 		insertVals.AddRowValues = make([]types.Datum, adjustLen)
@@ -333,7 +333,7 @@ func (t *Table) getRollbackableMemStore(ctx context.Context) kv.RetrieverMutator
 		return ctx.Txn()
 	}
 
-	bs := ctx.GetSessionVars().GetInsertBufs().BufStore
+	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
 	if bs == nil {
 		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
 	} else {
@@ -396,7 +396,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 			row = append(row, value)
 		}
 	}
-	insertBufs := sessVars.GetInsertBufs()
+	insertBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(insertBufs, len(row))
 	key := t.RecordKey(recordID)
 	insertBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, insertBufs.RowValBuf, insertBufs.AddRowValues)
@@ -456,7 +456,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 		}
 	}
 
-	insertBufs := ctx.GetSessionVars().GetInsertBufs()
+	insertBufs := ctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := insertBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
 		var err2 error
