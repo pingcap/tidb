@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"fmt"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
@@ -78,7 +77,7 @@ type HashJoinExec struct {
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
-	memoryUsage        []int64
+	totalMemoryUsage   int64
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -165,27 +164,19 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.workerWaitGroup = sync.WaitGroup{}
-	e.memoryUsage = make([]int64, e.concurrency+1)
 	e.resultCursor = 0
 	return nil
 }
 
-func (e *HashJoinExec) updateMemoryUsage(idx int, memUsage int64) {
-	if e.memoryUsage[idx] >= memUsage {
+// We only consider the inner result memory usage now.
+func (e *HashJoinExec) updateMemoryUsage(memUsage int64) {
+	memThreshold := e.ctx.GetSessionVars().ExecMemThreshold
+	if e.totalMemoryUsage >= memThreshold {
 		return
 	}
-	e.memoryUsage[idx] = memUsage
-	var sum int64
-	for _, usage := range e.memoryUsage {
-		sum += usage
-	}
-	memThreshold := e.ctx.GetSessionVars().ExecMemThreshold
-	if sum >= memThreshold {
-		detailedMsg := fmt.Sprintf("\n\t[inner buffer: %dB]", e.memoryUsage[0])
-		for i := 1; i < len(e.memoryUsage); i++ {
-			detailedMsg += fmt.Sprintf("\n\t[join worker %d: %dB]", i-1, e.memoryUsage[i])
-		}
-		log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoinExec", sum, memThreshold, detailedMsg).Error())
+	e.totalMemoryUsage += memUsage
+	if e.totalMemoryUsage >= memThreshold {
+		log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoinExec", e.totalMemoryUsage, memThreshold).Error())
 	}
 }
 
@@ -356,6 +347,7 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 	innerExecChk := e.childrenResults[e.innerIdx]
 	selected := make([]bool, 0, chunk.InitialCapacity)
 	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	curInnerResultMem := int64(0)
 	for {
 		innerExecChk.Reset()
 		err = e.innerExec.NextChunk(goCtx, innerExecChk)
@@ -374,9 +366,10 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 				innerResult.AppendRow(innerExecChk.GetRow(idx))
 			}
 		}
+		e.updateMemoryUsage(innerResult.MemoryUsage() - curInnerResultMem)
+		curInnerResultMem = innerResult.MemoryUsage()
 	}
 	e.innerResult = innerResult
-	e.updateMemoryUsage(0, e.innerResult.MemoryUsage())
 	return nil
 }
 
@@ -752,7 +745,6 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 			joinResult.err = errors.Trace(err)
 			return false, joinResult
 		}
-		e.updateMemoryUsage(workerID+1, joinResultChkBuffer.MemoryUsage())
 		// Splitting the joinResultChkBuffer into chunks that reach e.maxChunkSize.
 		numAppended := 0
 		for numAppended < joinResultChkBuffer.NumRows() {
