@@ -276,7 +276,7 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
 
-	insertBufs WriteStmtBufs
+	writeStmtBufs WriteStmtBufs
 }
 
 // NewSessionVars creates a session vars object.
@@ -304,9 +304,9 @@ func NewSessionVars() *SessionVars {
 	}
 }
 
-// GetWriteStmtBufs get pointer of SessionVars.InsertBufs.
+// GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
 func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
-	return &s.insertBufs
+	return &s.writeStmtBufs
 }
 
 // CleanBuffers cleans the temporary bufs
