@@ -715,7 +715,7 @@ func (s *MvccStore) BatchResolveLock(startKey, endKey []byte, txninfos map[uint6
 
 	var ents []*mvccEntry
 	var err error
-	iterator := func(item llrb.Item) bool {
+	iterator := func(item btree.Item) bool {
 		ent := item.(*mvccEntry)
 		if !regionContains(startKey, endKey, ent.key) {
 			return false

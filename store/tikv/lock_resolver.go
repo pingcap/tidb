@@ -159,7 +159,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	var expiredLocks []*Lock
 	for _, l := range locks {
-		if lr.store.oracle.IsExpired(l.TxnID, l.TTL) {
+		if lr.store.GetOracle().IsExpired(l.TxnID, l.TTL) {
 			lockResolverCounter.WithLabelValues("expired").Inc()
 			expiredLocks = append(expiredLocks, l)
 		} else {
@@ -173,7 +173,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	lr.cntTxnStatus = 0
 	lr.costTxnStatus = 0
-	txninfos := make(map[uint64]uint64)
+	txnInfos := make(map[uint64]uint64)
 	count := 0
 	for _, l := range expiredLocks {
 		count = count + 1
@@ -181,12 +181,12 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		txninfos[l.TxnID] = uint64(status)
+		txnInfos[l.TxnID] = uint64(status)
 	}
 	log.Infof("BatchResolveLocks: it takes %v cost to lookup %v txn status from %v txn status", lr.costTxnStatus, lr.cntTxnStatus, count)
 
 	var listTxnInfos []*kvrpcpb.TxnInfo
-	for txnID, status := range txninfos {
+	for txnID, status := range txnInfos {
 		listTxnInfos = append(listTxnInfos, &kvrpcpb.TxnInfo{
 			Txn:    txnID,
 			Status: status,
@@ -212,7 +212,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	}
 
 	if regionErr != nil {
-		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return false, errors.Trace(err)
 		}

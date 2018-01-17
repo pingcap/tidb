@@ -212,9 +212,6 @@ func (s *mockTikvGrpcServer) RawScan(goctx.Context, *kvrpcpb.RawScanRequest) (*k
 func (s *mockTikvGrpcServer) Coprocessor(goctx.Context, *coprocessor.Request) (*coprocessor.Response, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
-	return errors.New("unreachable")
-}
 func (s *mockTikvGrpcServer) Raft(tikvpb.Tikv_RaftServer) error {
 	return errors.New("unreachable")
 }

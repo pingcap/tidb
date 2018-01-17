@@ -457,7 +457,7 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
 
-		ok, err1 := store.GetLockResolver().ResolveLocks(bo, locks)
+		ok, err1 := store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
