@@ -422,6 +422,41 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 	}
 }
 
+func (s *testKvEncoderSuite) TestAllocatorRebase(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	alloc := NewAllocator()
+	var tableID int64 = 1
+	encoder, err := New("test", alloc)
+	err = alloc.Rebase(tableID, 100, false)
+	c.Assert(err, IsNil)
+	c.Assert(alloc.Base(), Equals, int64(100))
+
+	schemaSQL := `create table t(
+		id int auto_increment,
+		a char(10),
+		primary key(id))`
+	tk.MustExec(schemaSQL)
+	c.Assert(encoder.ExecDDLSQL(schemaSQL), IsNil)
+
+	sql := "insert into t(id, a) values(1000, 'test')"
+	encoder.Encode(sql, tableID)
+	c.Assert(alloc.Base(), Equals, int64(1000))
+
+	sql = "insert into t(a) values('test')"
+	encoder.Encode(sql, tableID)
+	c.Assert(alloc.Base(), Equals, int64(1001))
+
+	sql = "insert into t(id, a) values(2000, 'test')"
+	encoder.Encode(sql, tableID)
+	c.Assert(alloc.Base(), Equals, int64(2000))
+}
+
 func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	encoder, err := New("test", nil)
 	c.Assert(err, IsNil)
