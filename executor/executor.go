@@ -68,7 +68,7 @@ var (
 	ErrBatchInsertFail      = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
 	ErrWrongValueCountOnRow = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
 	ErrPasswordFormat       = terror.ClassExecutor.New(codePasswordFormat, "The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.")
-	ErrMemExceedThreshold   = terror.ClassExecutor.New(codeMemExceedThreshold, "%s holds %dB memory, exceeds threshold %dB.%s")
+	ErrMemExceedThreshold   = terror.ClassExecutor.New(codeMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
 )
 
 // Error codes.
