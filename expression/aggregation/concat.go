@@ -46,7 +46,6 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.
 		return errors.Errorf("Invalid separator argument.")
 	}
 	cf.separator = sep
-	cf.Args = cf.Args[:len(cf.Args)-1]
 	return nil
 }
 
@@ -60,16 +59,16 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		}
 		cf.sepInited = true
 	}
-	for _, a := range cf.Args {
-		value, err := a.Eval(row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if value.GetValue() == nil {
-			return nil
-		}
-		datumBuf = append(datumBuf, value)
+
+	value, err := cf.Args[0].Eval(row)
+	if err != nil {
+		return errors.Trace(err)
 	}
+	if value.GetValue() == nil {
+		return nil
+	}
+
+	datumBuf = append(datumBuf, value)
 	if cf.HasDistinct {
 		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
 		if err != nil {
