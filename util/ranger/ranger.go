@@ -218,10 +218,6 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 
 // BuildTableRange will build range of pk for PhysicalTableScan
 func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*NewRange, error) {
-	if len(accessConditions) == 0 {
-		return FullIntNewRange(), nil
-	}
-
 	rb := builder{sc: sc}
 	rangePoints := fullRange
 	for _, cond := range accessConditions {
