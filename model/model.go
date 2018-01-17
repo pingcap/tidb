@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // SchemaState is the state for schema elements.
@@ -87,6 +87,9 @@ func (c *ColumnInfo) IsGenerated() bool {
 // for use of execution phase.
 const ExtraHandleID = -1
 
+// ExtraHandleName is the name of ExtraHandle Column.
+var ExtraHandleName = NewCIStr("_rowid")
+
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
 	ID      int64  `json:"id"`
@@ -107,7 +110,21 @@ type TableInfo struct {
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
+	// TODO: Remove it.
+	// Now it only uses for compatibility with the old version that already uses this field.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+
+	// ShardRowIDBits specify if the implicit row ID is sharded.
+	ShardRowIDBits uint64
+}
+
+// GetDBID returns the schema ID that is used to create an allocator.
+// TODO: Remove it after removing OldSchemaID.
+func (t *TableInfo) GetDBID(dbID int64) int64 {
+	if t.OldSchemaID != 0 {
+		return t.OldSchemaID
+	}
+	return dbID
 }
 
 // Clone clones TableInfo.
@@ -153,6 +170,16 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 		}
 	}
 	return nil
+}
+
+// NewExtraHandleColInfo mocks a column info for extra handle column.
+func NewExtraHandleColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraHandleID,
+		Name: ExtraHandleName,
+	}
+	colInfo.Flag = mysql.PriKeyFlag
+	return colInfo
 }
 
 // ColumnIsInIndex checks whether c is included in any indices of t.

@@ -24,21 +24,21 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/plan/cache"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
 
@@ -63,11 +64,16 @@ const (
 	nmRunDDL          = "run-ddl"
 	nmLogLevel        = "L"
 	nmLogFile         = "log-file"
+	nmLogSlowQuery    = "log-slow-query"
 	nmReportStatus    = "report-status"
 	nmStatusPort      = "status"
 	nmMetricsAddr     = "metrics-addr"
 	nmMetricsInterval = "metrics-interval"
 	nmDdlLease        = "lease"
+	nmTokenLimit      = "token-limit"
+
+	nmProxyProtocolNetworks      = "proxy-protocol-networks"
+	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 )
 
 var (
@@ -83,16 +89,22 @@ var (
 	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
+	tokenLimit   = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 
 	// Log
-	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
-	logFile  = flag.String(nmLogFile, "", "log file path")
+	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
+	logFile      = flag.String(nmLogFile, "", "log file path")
+	logSlowQuery = flag.String(nmLogSlowQuery, "", "slow query file path")
 
 	// Status
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+
+	// PROXY Protocol
+	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
+	proxyProtocolHeaderTimeout = flag.Int(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -104,11 +116,12 @@ var (
 )
 
 var (
-	cfg     *config.Config
-	storage kv.Storage
-	dom     *domain.Domain
-	svr     *server.Server
-	xsvr    *xserver.Server
+	cfg      *config.Config
+	storage  kv.Storage
+	dom      *domain.Domain
+	svr      *server.Server
+	xsvr     *xserver.Server
+	graceful bool
 )
 
 func main() {
@@ -118,14 +131,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	runtime.GOMAXPROCS(runtime.NumCPU())
-
 	registerStores()
 	loadConfig()
 	overrideConfig()
 	validateConfig()
 	setGlobalVars()
 	setupLog()
+	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
 	createStoreAndDomain()
@@ -138,10 +150,9 @@ func main() {
 }
 
 func registerStores() {
-	err := tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	err := tidb.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
-	err = tidb.RegisterStore("tikv", tikv.Driver{})
-	terror.MustNil(err)
+	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = tidb.RegisterStore("mocktikv", tikv.MockDriver{})
 	terror.MustNil(err)
 }
@@ -163,9 +174,9 @@ func setupBinlogClient() {
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientCon, err := grpc.Dial(cfg.BinlogSocket, dialerOpt, grpc.WithInsecure())
+	clientConn, err := tidb.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
-	binloginfo.SetPumpClient(binlog.NewPumpClient(clientCon))
+	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s", cfg.BinlogSocket)
 }
 
@@ -274,6 +285,9 @@ func overrideConfig() {
 	if actualFlags[nmDdlLease] {
 		cfg.Lease = *ddlLease
 	}
+	if actualFlags[nmTokenLimit] {
+		cfg.TokenLimit = *tokenLimit
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -281,6 +295,9 @@ func overrideConfig() {
 	}
 	if actualFlags[nmLogFile] {
 		cfg.Log.File.Filename = *logFile
+	}
+	if actualFlags[nmLogSlowQuery] {
+		cfg.Log.SlowQueryFile = *logSlowQuery
 	}
 
 	// Status
@@ -297,6 +314,14 @@ func overrideConfig() {
 	if actualFlags[nmMetricsInterval] {
 		cfg.Status.MetricsInterval = *metricsInterval
 	}
+
+	// PROXY Protocol
+	if actualFlags[nmProxyProtocolNetworks] {
+		cfg.ProxyProtocol.Networks = *proxyProtocolNetworks
+	}
+	if actualFlags[nmProxyProtocolHeaderTimeout] {
+		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
+	}
 }
 
 func validateConfig() {
@@ -309,6 +334,7 @@ func validateConfig() {
 func setGlobalVars() {
 	ddlLeaseDuration := parseLease(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
+	runtime.GOMAXPROCS(cfg.Performance.MaxProcs)
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
@@ -319,16 +345,20 @@ func setGlobalVars() {
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
-	cache.PlanCacheEnabled = cfg.PlanCache.Enabled
-	if cache.PlanCacheEnabled {
-		cache.PlanCacheCapacity = cfg.PlanCache.Capacity
-		cache.PlanCacheShards = cfg.PlanCache.Shards
-		cache.GlobalPlanCache = kvcache.NewShardedLRUCache(cache.PlanCacheCapacity, cache.PlanCacheShards)
+	plan.PlanCacheEnabled = cfg.PlanCache.Enabled
+	if plan.PlanCacheEnabled {
+		plan.PlanCacheCapacity = cfg.PlanCache.Capacity
+		plan.PlanCacheShards = cfg.PlanCache.Shards
+		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(plan.PlanCacheCapacity, plan.PlanCacheShards)
 	}
 
-	cache.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
-	if cache.PreparedPlanCacheEnabled {
-		cache.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
+	if plan.PreparedPlanCacheEnabled {
+		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+	}
+
+	if cfg.TiKVClient.GrpcConnectionCount > 0 {
+		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
 }
 
@@ -353,8 +383,9 @@ func createServer() {
 	terror.MustNil(err)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
-			Addr:   fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
-			Socket: cfg.XProtocol.XSocket,
+			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
+			Socket:     cfg.XProtocol.XSocket,
+			TokenLimit: cfg.TokenLimit,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
 		terror.MustNil(err)
@@ -371,7 +402,11 @@ func setupSignalHandler() {
 
 	go func() {
 		sig := <-sc
-		log.Infof("Got signal [%d] to exit.", sig)
+		log.Infof("Got signal [%s] to exit.", sig)
+		if sig == syscall.SIGTERM {
+			graceful = true
+		}
+
 		if xsvr != nil {
 			xsvr.Close() // Should close xserver before server.
 		}
@@ -388,6 +423,15 @@ func setupMetrics() {
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
 
+func setupTracing() {
+	tracingCfg := cfg.OpenTracing.ToTracingConfig()
+	tracer, _, err := tracingCfg.New("TiDB")
+	if err != nil {
+		log.Fatal("cannot initialize Jaeger Tracer", err)
+	}
+	opentracing.SetGlobalTracer(tracer)
+}
+
 func runServer() {
 	err := svr.Run()
 	terror.MustNil(err)
@@ -398,6 +442,9 @@ func runServer() {
 }
 
 func cleanup() {
+	if graceful {
+		svr.GracefulDown()
+	}
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))

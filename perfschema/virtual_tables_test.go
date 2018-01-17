@@ -11,17 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package perfschema
+package perfschema_test
 
 import (
 	"testing"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/perfschema"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -35,21 +35,21 @@ type testSuite struct {
 }
 
 func (*testSuite) TestSessionStatus(c *C) {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
 	ctx := mock.NewContext()
 	ctx.Store = store
-	ps := newPerfHandle()
+	ps := perfschema.NewPerfHandle()
 
-	testTableName := []string{TableSessionStatus, TableGlobalStatus}
+	testTableName := []string{perfschema.TableSessionStatus, perfschema.TableGlobalStatus}
 	for _, tableName := range testTableName {
 		tb, _ := ps.GetTable(tableName)
-		meta := ps.tables[tableName]
+		meta, ok := ps.GetTableMeta(tableName)
 		c.Assert(tb, NotNil)
+		c.Assert(ok, IsTrue)
 
-		sessionStatusHandle, _ := createVirtualDataSource(tableName, meta)
+		sessionStatusHandle, _ := perfschema.CreateVirtualDataSource(tableName, meta)
 		rows, err := sessionStatusHandle.GetRows(ctx)
 		c.Assert(err, IsNil)
 

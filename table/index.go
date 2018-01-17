@@ -14,9 +14,11 @@
 package table
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 )
 
 // IndexIterator is the interface for iterator of index data on KV store.
@@ -30,17 +32,17 @@ type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
 	// Create supports insert into statement.
-	Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error)
+	Create(ctx context.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error)
 	// Delete supports delete from statement.
-	Delete(m kv.Mutator, indexedValues []types.Datum, h int64) error
+	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error
 	// Drop supports drop table, drop index statements.
 	Drop(rm kv.RetrieverMutator) error
 	// Exist supports check index exists or not.
-	Exist(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (bool, int64, error)
+	Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (bool, int64, error)
 	// GenIndexKey generates an index key.
-	GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, distinct bool, err error)
+	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h int64) (key []byte, distinct bool, err error)
 	// Seek supports where clause.
-	Seek(r kv.Retriever, indexedValues []types.Datum) (iter IndexIterator, hit bool, err error)
+	Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter IndexIterator, hit bool, err error)
 	// SeekFirst supports aggregate min and ascend order by.
 	SeekFirst(r kv.Retriever) (iter IndexIterator, err error)
 	// FetchValues fetched index column values in a row.

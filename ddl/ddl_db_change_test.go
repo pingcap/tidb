@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -50,17 +51,17 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	tidb.SetSchemaLease(s.lease)
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.se, err = tidb.CreateSession(s.store)
+	s.se, err = tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute("create database test_db_state")
+	_, err = s.se.Execute(goctx.Background(), "create database test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute("use test_db_state")
+	_, err = s.se.Execute(goctx.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	s.p = parser.New()
 }
 
 func (s *testStateChangeSuite) TearDownSuite(c *C) {
-	s.se.Execute("drop database if exists test_db_state")
+	s.se.Execute(goctx.Background(), "drop database if exists test_db_state")
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
@@ -100,15 +101,15 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 
 func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testInfo *testExecInfo) {
 	defer testleak.AfterTest(c)()
-	_, err := s.se.Execute(`create table t (
+	_, err := s.se.Execute(goctx.Background(), `create table t (
 		c1 int,
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute("drop table t")
-	_, err = s.se.Execute("insert into t values(1, 'a', 'N', '2017-07-01')")
+	defer s.se.Execute(goctx.Background(), "drop table t")
+	_, err = s.se.Execute(goctx.Background(), "insert into t values(1, 'a', 'N', '2017-07-01')")
 	c.Assert(err, IsNil)
 
 	callback := &ddl.TestDDLCallback{}
@@ -167,7 +168,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	}
 	d := s.dom.DDL()
 	d.SetHook(callback)
-	_, err = s.se.Execute(alterTableSQL)
+	_, err = s.se.Execute(goctx.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
 	err = testInfo.compileSQL(4)
 	c.Assert(err, IsNil)
@@ -209,11 +210,11 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 	var err error
 	for i, info := range t.sqlInfos {
 		for j, c := range info.cases {
-			c.session, err = tidb.CreateSession(store)
+			c.session, err = tidb.CreateSession4Test(store)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			_, err = c.session.Execute("use " + useDB)
+			_, err = c.session.Execute(goctx.Background(), "use "+useDB)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -243,15 +244,16 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 }
 
 func (t *testExecInfo) compileSQL(idx int) (err error) {
-	compiler := executor.Compiler{}
 	for _, info := range t.sqlInfos {
 		c := info.cases[idx]
+		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
-		se.PrepareTxnCtx()
+		goCtx := goctx.TODO()
+		se.PrepareTxnCtx(goCtx)
 		ctx := se.(context.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
 
-		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
+		c.stmt, err = compiler.Compile(goCtx, c.rawStmt)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -262,8 +264,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
 		c := sqlInfo.cases[idx]
-		ctx := c.session.(context.Context)
-		_, err := c.stmt.Exec(ctx)
+		_, err := c.stmt.Exec(goctx.TODO())
 		if c.expectedErr != nil {
 			if err == nil {
 				err = errors.Errorf("expected error %s but got nil", c.expectedErr)
@@ -274,7 +275,7 @@ func (t *testExecInfo) execSQL(idx int) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = c.session.CommitTxn()
+		err = c.session.CommitTxn(goctx.TODO())
 		if err != nil {
 			return errors.Trace(err)
 		}

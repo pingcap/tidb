@@ -16,8 +16,9 @@ package tikv
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 type testSplitSuite struct {
@@ -66,7 +67,7 @@ func (s *testSplitSuite) TestSplitBatchGet(c *C) {
 	s.split(c, loc.Region.id, []byte("b"))
 	s.store.regionCache.DropRegion(loc.Region)
 
-	// mock-tikv will panic if it meets a not-in-region key.
+	// mocktikv will panic if it meets a not-in-region key.
 	err = snapshot.batchGetSingleRegion(s.bo, batch, func([]byte, []byte) {})
 	c.Assert(err, IsNil)
 }
@@ -83,7 +84,7 @@ func (s *testSplitSuite) TestStaleEpoch(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("c"), []byte("c"))
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	// Initiate a split and disable the PD client. If it still works, the

@@ -18,19 +18,21 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/types"
+	log "github.com/sirupsen/logrus"
+	goctx "golang.org/x/net/context"
 )
 
 // SetExecutor executes set statement.
@@ -42,7 +44,7 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next() (Row, error) {
+func (e *SetExecutor) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -52,6 +54,17 @@ func (e *SetExecutor) Next() (Row, error) {
 	}
 	e.done = true
 	return nil, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *SetExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.done {
+		e.done = true
+		err := e.executeSet()
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (e *SetExecutor) executeSet() error {
@@ -150,8 +163,14 @@ func (e *SetExecutor) executeSet() error {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return errors.Trace(err)
 			}
-			valStr, err := value.ToString()
-			terror.Log(errors.Trace(err))
+			var valStr string
+			if value.IsNull() {
+				valStr = "NULL"
+			} else {
+				var err error
+				valStr, err = value.ToString()
+				terror.Log(errors.Trace(err))
+			}
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 
@@ -174,7 +193,7 @@ func validateSnapshot(ctx context.Context, snapshotTS uint64) error {
 	if len(rows) != 1 {
 		return errors.New("can not get 'tikv_gc_safe_point'")
 	}
-	safePointString := rows[0].Data[0].GetString()
+	safePointString := rows[0].GetString(0)
 	const gcTimeFormat = "20060102-15:04:05 -0700 MST"
 	safePointTime, err := time.Parse(gcTimeFormat, safePointString)
 	if err != nil {
@@ -233,7 +252,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 		return nil
 	}
 	log.Infof("[%d] loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
-	dom := sessionctx.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {
 		return errors.Trace(err)

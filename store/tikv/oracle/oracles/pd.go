@@ -17,10 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -80,7 +80,9 @@ type tsFuture struct {
 
 // Wait implements the oracle.Future interface.
 func (f *tsFuture) Wait() (uint64, error) {
+	now := time.Now()
 	physical, logical, err := f.TSFuture.Wait()
+	tsFutureWaitDuration.Observe(time.Since(now).Seconds())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

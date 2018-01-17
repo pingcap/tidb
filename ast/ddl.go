@@ -15,7 +15,7 @@ package ast
 
 import (
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -23,6 +23,7 @@ var (
 	_ DDLNode = &CreateDatabaseStmt{}
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
+	_ DDLNode = &CreateViewStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
@@ -530,6 +531,23 @@ func (n *TableToTable) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// CreateViewStmt is a statement to create a View.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-view.html
+type CreateViewStmt struct {
+	ddlNode
+
+	OrReplace bool
+	ViewName  *TableName
+	Cols      []model.CIStr
+	Select    StmtNode
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
+	// TODO: implement the details.
+	return n, true
+}
+
 // CreateIndexStmt is a statement to create an index.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type CreateIndexStmt struct {
@@ -618,6 +636,8 @@ const (
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
 	TableOptionStatsPersistent
+	TableOptionShardRowID
+	TableOptionPackKeys
 )
 
 // RowFormat types
@@ -679,7 +699,7 @@ type AlterTableType int
 // AlterTable types.
 const (
 	AlterTableOption AlterTableType = iota + 1
-	AlterTableAddColumn
+	AlterTableAddColumns
 	AlterTableAddConstraint
 	AlterTableDropColumn
 	AlterTableDropPrimaryKey
@@ -715,7 +735,7 @@ type AlterTableSpec struct {
 	Constraint    *Constraint
 	Options       []*TableOption
 	NewTable      *TableName
-	NewColumn     *ColumnDef
+	NewColumns    []*ColumnDef
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
 	LockType      LockType
@@ -742,12 +762,12 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.NewTable = node.(*TableName)
 	}
-	if n.NewColumn != nil {
-		node, ok := n.NewColumn.Accept(v)
+	for _, col := range n.NewColumns {
+		node, ok := col.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.NewColumn = node.(*ColumnDef)
+		col = node.(*ColumnDef)
 	}
 	if n.OldColumnName != nil {
 		node, ok := n.OldColumnName.Accept(v)

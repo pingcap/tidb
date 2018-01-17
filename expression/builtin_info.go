@@ -21,8 +21,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -51,6 +51,7 @@ var (
 	_ builtinFunc = &builtinLastInsertIDWithIDSig{}
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinTiDBVersionSig{}
+	_ builtinFunc = &builtinRowCountSig{}
 )
 
 type databaseFunctionClass struct {
@@ -201,7 +202,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expr
 		return nil, errors.Trace(err)
 	}
 
-	argsTp := []types.EvalType{}
+	var argsTp []types.EvalType
 	if len(args) == 1 {
 		argsTp = append(argsTp, types.ETInt)
 	}
@@ -328,6 +329,22 @@ type rowCountFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowCountFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ROW_COUNT")
+func (c *rowCountFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
+	sig = &builtinRowCountSig{bf}
+	return sig, nil
+}
+
+type builtinRowCountSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals ROW_COUNT().
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
+func (b *builtinRowCountSig) evalInt(_ types.Row) (res int64, isNull bool, err error) {
+	res = int64(b.ctx.GetSessionVars().PrevAffectedRows)
+	return res, false, nil
 }

@@ -106,11 +106,12 @@ func (c *Context) NewTxn() error {
 		return errors.New("store is not set")
 	}
 	if c.txn != nil && c.txn.Valid() {
-		err := c.txn.Commit()
+		err := c.txn.Commit(c.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+
 	txn, err := c.Store.Begin()
 	if err != nil {
 		return errors.Trace(err)
@@ -120,7 +121,7 @@ func (c *Context) NewTxn() error {
 }
 
 // RefreshTxnCtx implements the context.Context interface.
-func (c *Context) RefreshTxnCtx() error {
+func (c *Context) RefreshTxnCtx(goCtx goctx.Context) error {
 	return errors.Trace(c.NewTxn())
 }
 
@@ -145,10 +146,15 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
+		membufCap := kv.DefaultTxnMembufCap
+		if c.sessionVars.ImportingData {
+			membufCap = kv.ImportingTxnMembufCap
+		}
 		txn, err := c.Store.BeginWithStartTS(startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		txn.SetCap(membufCap)
 		c.txn = txn
 	}
 	return nil
@@ -179,13 +185,18 @@ func (c *Context) GoCtx() goctx.Context {
 	return c.ctx
 }
 
+// StoreQueryFeedback stores the query feedback.
+func (c *Context) StoreQueryFeedback(_ interface{}) {}
+
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
-	ctx, cancel := goctx.WithCancel(goctx.Background())
-	return &Context{
+	goCtx, cancel := goctx.WithCancel(goctx.Background())
+	ctx := &Context{
 		values:      make(map[fmt.Stringer]interface{}),
 		sessionVars: variable.NewSessionVars(),
-		ctx:         ctx,
+		ctx:         goCtx,
 		cancel:      cancel,
 	}
+	ctx.sessionVars.MaxChunkSize = 2
+	return ctx
 }

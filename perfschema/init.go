@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type columnInfo struct {
@@ -197,7 +197,7 @@ var stagesCurrentCols = []columnInfo{
 	{mysql.TypeEnum, -1, 0, nil, []string{"TRANSACTION", "STATEMENT", "STAGE"}},
 }
 
-func (ps *perfSchema) buildTables() {
+func (ps *PerfSchema) buildTables() {
 	tbls := make([]*model.TableInfo, 0, len(ps.tables))
 	dbID := autoid.GenLocalSchemaID()
 
@@ -227,7 +227,7 @@ func (ps *perfSchema) buildTables() {
 	}
 }
 
-func (ps *perfSchema) buildModel(tbName string, colNames []string, cols []columnInfo) {
+func (ps *PerfSchema) buildModel(tbName string, colNames []string, cols []columnInfo) {
 	rcols := make([]*model.ColumnInfo, len(cols))
 	for i, col := range cols {
 		var ci *model.ColumnInfo
@@ -298,7 +298,7 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 	return colInfo
 }
 
-func (ps *perfSchema) initialize() {
+func (ps *PerfSchema) initialize() {
 	ps.tables = make(map[string]*model.TableInfo)
 	ps.mTables = make(map[string]table.Table, len(ps.tables))
 
@@ -349,11 +349,19 @@ func (ps *perfSchema) initialize() {
 	ps.buildTables()
 }
 
-func (ps *perfSchema) GetDBMeta() *model.DBInfo {
+// GetDBMeta returns the DB info.
+func (ps *PerfSchema) GetDBMeta() *model.DBInfo {
 	return ps.dbInfo
 }
 
-func (ps *perfSchema) GetTable(name string) (table.Table, bool) {
+// GetTable returns the table.
+func (ps *PerfSchema) GetTable(name string) (table.Table, bool) {
 	tbl, ok := ps.mTables[name]
+	return tbl, ok
+}
+
+// GetTableMeta returns the table info.
+func (ps *PerfSchema) GetTableMeta(name string) (*model.TableInfo, bool) {
+	tbl, ok := ps.tables[name]
 	return tbl, ok
 }

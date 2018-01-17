@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var _ = Suite(&testMemoryTableSuite{})
@@ -39,7 +39,7 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 	store, err := tikv.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
-	ts.se, err = tidb.CreateSession(ts.store)
+	ts.se, err = tidb.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
 	// create table
@@ -92,25 +92,25 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(key, IsNil)
 	err = tb.UpdateRecord(nil, 0, nil, nil, nil)
 	c.Assert(err, NotNil)
-	alc := tb.Allocator()
+	alc := tb.Allocator(nil)
 	c.Assert(alc, NotNil)
-	err = tb.RebaseAutoID(0, false)
+	err = tb.RebaseAutoID(nil, 0, false)
 	c.Assert(err, IsNil)
 
-	autoid, err := tb.AllocAutoID()
+	autoID, err := tb.AllocAutoID(nil)
 	c.Assert(err, IsNil)
-	c.Assert(autoid, Greater, int64(0))
+	c.Assert(autoID, Greater, int64(0))
 
-	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"), false)
 	c.Assert(err, NotNil)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"), false)
 	c.Assert(err, IsNil)
 
 	err = tb.UpdateRecord(ctx, 1, types.MakeDatums(1, "abc"), types.MakeDatums(3, "abe"), nil)
@@ -132,7 +132,7 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(vals[0].GetString(), Equals, "abe")
 
 	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	tb.(*tables.MemoryTable).Truncate()
 	_, err = tb.Row(ctx, rid)

@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -72,6 +72,8 @@ func (c *mockKvClient) supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge, tipb.ExprType_JsonSet,
 		tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove, tipb.ExprType_JsonContains:
 		return false
+	case tipb.ExprType_DateFormat:
+		return true
 	case kv.ReqSubTypeDesc:
 		return true
 	default:
@@ -93,7 +95,7 @@ func (dg *dataGen4Expr2PbTest) genColumn(tp byte, id int64) *Column {
 func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
 	c.Skip("constant pb has changed")
 	var constExprs []Expression
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 
 	// can be transformed
@@ -178,7 +180,7 @@ func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
 
 func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	var colExprs []Expression
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 
@@ -279,8 +281,8 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
-	var compareExprs []Expression
-	sc := new(variable.StatementContext)
+	var compareExprs = make([]Expression, 0)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 
@@ -320,7 +322,7 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 
 func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 	var likeFuncs []Expression
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 
 	retTp := types.NewFieldType(mysql.TypeString)
@@ -351,8 +353,8 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
-	var arithmeticalFuncs []Expression
-	sc := new(variable.StatementContext)
+	var arithmeticalFuncs = make([]Expression, 0)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 
@@ -386,9 +388,28 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestDateFunc2Pb(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mockKvClient)
+	dg := new(dataGen4Expr2PbTest)
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.DateFormat,
+		types.NewFieldType(mysql.TypeUnspecified),
+		dg.genColumn(mysql.TypeDatetime, 1),
+		dg.genColumn(mysql.TypeString, 2))
+	c.Assert(err, IsNil)
+	funcs := []Expression{fc}
+	pbExprs := ExpressionsToPBList(sc, funcs, client)
+	c.Assert(pbExprs[0], NotNil)
+	js, err := json.Marshal(pbExprs[0])
+	c.Assert(err, IsNil)
+	c.Assert(string(js), Equals, "{\"tp\":6001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}")
+}
+
 func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
-	var logicalFuncs []Expression
-	sc := new(variable.StatementContext)
+	var logicalFuncs = make([]Expression, 0)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 
@@ -423,8 +444,8 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
-	var bitwiseFuncs []Expression
-	sc := new(variable.StatementContext)
+	var bitwiseFuncs = make([]Expression, 0)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 
@@ -453,8 +474,8 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
-	var controlFuncs []Expression
-	sc := new(variable.StatementContext)
+	var controlFuncs = make([]Expression, 0)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 
@@ -494,8 +515,8 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
-	var otherFuncs []Expression
-	sc := new(variable.StatementContext)
+	var otherFuncs = make([]Expression, 0)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 
@@ -520,7 +541,7 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestGroupByItem2Pb(c *C) {
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 	item := dg.genColumn(mysql.TypeDouble, 0)
@@ -537,7 +558,7 @@ func (s *testEvaluatorSuite) TestGroupByItem2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSortByItem2Pb(c *C) {
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 	item := dg.genColumn(mysql.TypeDouble, 0)

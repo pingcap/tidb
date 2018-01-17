@@ -14,11 +14,11 @@
 package tikv
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -151,7 +151,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				NotFillCache:   s.snapshot.notFillCache,
 			},
 		}
-		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -161,7 +161,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		if regionErr != nil {
 			log.Debugf("scanner getData failed: %s", regionErr)
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -169,7 +169,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		cmdScanResp := resp.Scan
 		if cmdScanResp == nil {
-			return errors.Trace(errBodyMissing)
+			return errors.Trace(ErrBodyMissing)
 		}
 
 		err = s.snapshot.store.CheckVisibility(s.startTS())

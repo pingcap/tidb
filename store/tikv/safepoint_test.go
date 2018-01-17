@@ -19,29 +19,23 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
+	goctx "golang.org/x/net/context"
 )
 
 type testSafePointSuite struct {
-	store    *tikvStore
-	oracle   *mockOracle
-	gcWorker *GCWorker
-	prefix   string
+	store  *tikvStore
+	oracle *MockOracle
+	prefix string
 }
 
 var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.store = newTestStore(c)
-	s.oracle = &mockOracle{}
+	s.oracle = &MockOracle{}
 	s.store.oracle = s.oracle
-	_, err := tidb.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store, false)
-	c.Assert(err, IsNil)
-	s.gcWorker = gcWorker
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
 
@@ -67,9 +61,9 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 
 func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
 	for {
-		s.gcWorker.saveSafePoint(gcSavedSafePoint, t+10)
+		saveSafePoint(s.store.GetSafePointKV(), GcSavedSafePoint, t+10)
 		cachedTime := time.Now()
-		newSafePoint, err := s.gcWorker.loadSafePoint(gcSavedSafePoint)
+		newSafePoint, err := loadSafePoint(s.store.GetSafePointKV(), GcSavedSafePoint)
 		if err == nil {
 			s.store.UpdateSPCache(newSafePoint, cachedTime)
 			break
@@ -85,7 +79,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit()
+	err := txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	// for txn get

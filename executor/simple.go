@@ -17,19 +17,20 @@ import (
 	"fmt"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
+	goctx "golang.org/x/net/context"
 )
 
 // SimpleExec represents simple statement executor.
@@ -46,11 +47,19 @@ type SimpleExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *SimpleExec) Next() (Row, error) {
+func (e *SimpleExec) Next(goCtx goctx.Context) (Row, error) {
+	return nil, errors.Trace(e.run(goCtx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *SimpleExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *SimpleExec) run(goCtx goctx.Context) (err error) {
 	if e.done {
-		return nil, nil
+		return nil
 	}
-	var err error
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
@@ -74,15 +83,12 @@ func (e *SimpleExec) Next() (Row, error) {
 		err = e.executeKillStmt(x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
-		return nil, nil
+		return nil
 	case *ast.DropStatsStmt:
 		err = e.executeDropStats(x)
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	e.done = true
-	return nil, nil
+	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
@@ -127,6 +133,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	if e.ctx.Txn().Valid() {
+		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
 		return e.ctx.Txn().Rollback()
 	}
 	return nil
@@ -160,11 +167,11 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
 }
 
@@ -211,13 +218,14 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit()
+		err := e.ctx.Txn().Commit(goctx.Background())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		errMsg := "Operation ALTER USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
 }
 
@@ -242,13 +250,14 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit()
+		err := e.ctx.Txn().Commit(goctx.Background())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
 }
 
@@ -280,7 +289,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	// update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), s.User.Username, s.User.Hostname)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
 }
 
@@ -291,6 +300,9 @@ func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
 			return nil
 		}
 		sm.Kill(s.ConnectionID, s.Query)
+	} else {
+		err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 	return nil
 }
@@ -300,7 +312,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	case ast.FlushTables:
 		// TODO: A dummy implement
 	case ast.FlushPrivileges:
-		dom := sessionctx.GetDomain(e.ctx)
+		dom := domain.GetDomain(e.ctx)
 		sysSessionPool := dom.SysSessionPool()
 		ctx, err := sysSessionPool.Get()
 		if err != nil {
@@ -314,7 +326,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 }
 
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
-	h := sessionctx.GetDomain(e.ctx).StatsHandle()
+	h := domain.GetDomain(e.ctx).StatsHandle()
 	if h.Lease <= 0 {
 		err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
 		if err != nil {
@@ -322,6 +334,5 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 		}
 		return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
 	}
-	h.DDLEventCh() <- &ddl.Event{Tp: model.ActionDropTable, TableInfo: s.Table.TableInfo}
 	return nil
 }

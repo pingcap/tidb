@@ -21,13 +21,13 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
-	"golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -47,6 +47,9 @@ var (
 		"gc",
 		"select:0_10000:10",
 	}, "|"), "jobs to run")
+	sslCA   = flag.String("cacert", "", "path of file that contains list of trusted SSL CAs.")
+	sslCert = flag.String("cert", "", "path of file that contains X509 certificate in PEM format.")
+	sslKey  = flag.String("key", "", "path of file that contains X509 key in PEM format.")
 )
 
 func main() {
@@ -88,7 +91,7 @@ func main() {
 }
 
 type benchDB struct {
-	store   kv.Storage
+	store   tikv.Storage
 	session tidb.Session
 }
 
@@ -100,24 +103,25 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	session, err := tidb.CreateSession(store)
 	terror.MustNil(err)
-	_, err = session.Execute("use test")
+	_, err = session.Execute(goctx.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
-		store:   store,
+		store:   store.(tikv.Storage),
 		session: session,
 	}
 }
 
 func (ut *benchDB) mustExec(sql string) {
-	rss, err := ut.session.Execute(sql)
+	rss, err := ut.session.Execute(goctx.Background(), sql)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if len(rss) > 0 {
+		goCtx := goctx.Background()
 		rs := rss[0]
 		for {
-			row, err1 := rs.Next()
+			row, err1 := rs.Next(goCtx)
 			if err1 != nil {
 				log.Fatal(err1)
 			}
@@ -280,7 +284,7 @@ func (ut *benchDB) manualGC(done chan bool) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = tikv.RunGCJob(context.Background(), ut.store, ver.Ver, "benchDB")
+	err = gcworker.RunGCJob(goctx.Background(), ut.store, ver.Ver, "benchDB")
 	if err != nil {
 		log.Fatal(err)
 	}

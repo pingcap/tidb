@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	log "github.com/Sirupsen/logrus"
 	. "github.com/pingcap/check"
+	log "github.com/sirupsen/logrus"
 )
 
 const (

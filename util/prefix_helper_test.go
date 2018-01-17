@@ -19,10 +19,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -43,22 +43,17 @@ type testPrefixSuite struct {
 }
 
 func (s *testPrefixSuite) SetUpSuite(c *C) {
-	path := "memory:"
-	d := localstore.Driver{
-		Driver: goleveldb.MemoryDriver{},
-	}
-	store, err := d.Open(path)
+	testleak.BeforeTest()
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
 
-	// must in cache
-	cacheS, _ := d.Open(path)
-	c.Assert(cacheS, Equals, store)
 }
 
 func (s *testPrefixSuite) TearDownSuite(c *C) {
 	err := s.s.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func encodeInt(n int) []byte {
@@ -116,11 +111,10 @@ func (c *MockContext) CommitTxn() error {
 	if c.txn == nil {
 		return nil
 	}
-	return c.txn.Commit()
+	return c.txn.Commit(goctx.Background())
 }
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := &MockContext{10000000, make(map[fmt.Stringer]interface{}), s.s, nil}
 	ctx.fillTxn()
 	txn, err := ctx.GetTxn(false)
@@ -139,12 +133,11 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 		return true
 	})
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }
 
 func (s *testPrefixSuite) TestPrefixFilter(c *C) {
-	defer testleak.AfterTest(c)()
 	rowKey := []byte("test@#$%l(le[0]..prefix) 2uio")
 	rowKey[8] = 0x00
 	rowKey[9] = 0x00

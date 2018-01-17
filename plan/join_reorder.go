@@ -14,12 +14,13 @@
 package plan
 
 import (
+	"math/bits"
 	"sort"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	log "github.com/sirupsen/logrus"
 )
 
 // tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
@@ -27,13 +28,12 @@ func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
 	// Ignore reorder if:
 	// 1. already reordered
 	// 2. not inner join
-	// 3. forced merge join
-	// 4. forced index nested loop join
-	if j.reordered || !j.cartesianJoin || j.preferMergeJoin || j.preferINLJ > 0 {
+	// 3. forced to choose join type
+	if j.reordered || !j.cartesianJoin || bits.OnesCount(j.preferJoinType) > 0 {
 		return nil, false
 	}
-	lChild := j.children[0].(LogicalPlan)
-	rChild := j.children[1].(LogicalPlan)
+	lChild := j.children[0]
+	rChild := j.children[1]
 	if nj, ok := lChild.(*LogicalJoin); ok {
 		plans, valid := tryToGetJoinGroup(nj)
 		return append(plans, rChild), valid
@@ -57,7 +57,6 @@ type joinReOrderSolver struct {
 	visited    []bool
 	resultJoin LogicalPlan
 	groupRank  []*rankInfo
-	allocator  *idAllocator
 	ctx        context.Context
 }
 
@@ -189,9 +188,9 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.init(e.allocator, e.ctx)
+	}.init(e.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-	setParentAndChildren(join, lChild, rChild)
+	join.SetChildren(lChild, rChild)
 	return join
 }
 

@@ -41,7 +41,7 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -114,6 +115,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
+		status:       connStatusDispatching,
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
@@ -132,14 +134,12 @@ func (s *Server) skipAuth() bool {
 	return s.cfg.Socket != ""
 }
 
-const tokenLimit = 1000
-
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(tokenLimit),
+		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
@@ -162,6 +162,17 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 		}
 	}
+
+	if cfg.ProxyProtocol.Networks != "" {
+		pplistener, errProxy := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks, cfg.ProxyProtocol.HeaderTimeout)
+		if errProxy != nil {
+			log.Error("ProxyProtocol Networks parameter invalid")
+			return nil, errors.Trace(errProxy)
+		}
+		log.Infof("Server is running MySQL Protocol (through PROXY Protocol) at [%s]", s.cfg.Host)
+		s.listener = pplistener
+	}
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -233,6 +244,13 @@ func (s *Server) Run() error {
 					return nil
 				}
 			}
+
+			// If we got PROXY protocol error, we should continue accept.
+			if proxyprotocol.IsProxyProtocolError(err) {
+				log.Errorf("PROXY protocol error: %s", err.Error())
+				continue
+			}
+
 			log.Errorf("accept error %s", err.Error())
 			return errors.Trace(err)
 		}
@@ -303,7 +321,7 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
-		if client.killed {
+		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
 		rs = append(rs, client.ctx.ShowProcess())
@@ -322,9 +340,53 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	conn.ctx.Cancel()
+	conn.mu.RLock()
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
+
 	if !query {
-		conn.killed = true
+		// Mark the client connection status as WaitShutdown, when the goroutine detect
+		// this, it will end the dispatch loop and exit.
+		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+	}
+}
+
+// GracefulDown waits all clients to close.
+func (s *Server) GracefulDown() {
+	log.Info("graceful shutdown.")
+
+	count := s.ConnectionCount()
+	for i := 0; count > 0; i++ {
+		time.Sleep(time.Second)
+		s.kickIdleConnection()
+
+		count = s.ConnectionCount()
+		// Print information for every 30s.
+		if i%30 == 0 {
+			log.Infof("graceful shutdown...connection count %d\n", count)
+		}
+	}
+}
+
+func (s *Server) kickIdleConnection() {
+	var conns []*clientConn
+	s.rwlock.RLock()
+	for _, cc := range s.clients {
+		if cc.ShutdownOrNotify() {
+			// Shutdowned conn will be closed by us, and notified conn will exist themselves.
+			conns = append(conns, cc)
+		}
+	}
+	s.rwlock.RUnlock()
+
+	for _, cc := range conns {
+		err := cc.Close()
+		if err != nil {
+			log.Error("close connection error:", err)
+		}
 	}
 }
 

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	goctx "golang.org/x/net/context"
 )
 
@@ -57,14 +57,14 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(s.cache.mu.regions, HasLen, len)
 	c.Assert(s.cache.mu.sorted.Len(), Equals, len)
 	for _, r := range s.cache.mu.regions {
-		c.Assert(r.region, DeepEquals, s.cache.getRegionFromCache(r.region.StartKey()))
+		c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey()))
 	}
 }
 
 func (s *testRegionCacheSuite) getRegion(c *C, key []byte) *Region {
 	_, err := s.cache.LocateKey(s.bo, key)
 	c.Assert(err, IsNil)
-	return s.cache.getRegionFromCache(key)
+	return s.cache.searchCachedRegion(key)
 }
 
 func (s *testRegionCacheSuite) getAddr(c *C, key []byte) string {
@@ -85,7 +85,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
 	s.cache.mu.regions[r.VerID()].lastAccess = 0
-	r = s.cache.getRegionFromCache([]byte("a"))
+	r = s.cache.searchCachedRegion([]byte("a"))
 	c.Assert(r, IsNil)
 }
 
@@ -279,7 +279,7 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	s.cache.OnRequestFail(ctx, errors.New("test error"))
 	// Both region2 and store should be dropped from cache.
 	c.Assert(s.cache.storeMu.stores, HasLen, 0)
-	c.Assert(s.cache.getRegionFromCache([]byte("x")), IsNil)
+	c.Assert(s.cache.searchCachedRegion([]byte("x")), IsNil)
 	s.checkCache(c, 1)
 }
 

@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -66,9 +66,9 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	h, err := originTable.AddRecord(ctx, row)
+	h, err := originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	var mu sync.Mutex
@@ -120,7 +120,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			}
 			mu.Unlock()
 		}
-		err = hookCtx.Txn().Commit()
+		err = hookCtx.Txn().Commit(goctx.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -167,12 +167,12 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10))
+			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10), false)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
 		}
-		err = hookCtx.Txn().Commit()
+		err = hookCtx.Txn().Commit(goctx.TODO())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -218,7 +218,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3))
+	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -292,7 +292,7 @@ func (s *testColumnChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writ
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h, err := publicTable.AddRecord(ctx, types.MakeDatums(4, 4, 4))
+	h, err := publicTable.AddRecord(ctx, types.MakeDatums(4, 4, 4), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -362,7 +362,7 @@ func checkResult(ctx context.Context, t table.Table, cols []*table.Column, rows 
 }
 
 func datumsToInterfaces(datums []types.Datum) []interface{} {
-	var ifs []interface{}
+	ifs := make([]interface{}, 0, len(datums))
 	for _, d := range datums {
 		ifs = append(ifs, d.GetValue())
 	}

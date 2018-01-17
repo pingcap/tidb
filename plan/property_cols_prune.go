@@ -17,16 +17,17 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
-	indices, includeTS := availableIndices(p.indexHints, p.tableInfo)
+func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
+	indices := ds.availableIndices.indices
+	includeTS := ds.availableIndices.includeTableScan
 	if includeTS {
-		col := p.getPKIsHandleCol()
+		col := ds.getPKIsHandleCol()
 		if col != nil {
 			result = append(result, []*expression.Column{col})
 		}
 	}
 	for _, idx := range indices {
-		cols, _ := expression.IndexInfo2Cols(p.schema.Columns, idx)
+		cols, _ := expression.IndexInfo2Cols(ds.schema.Columns, idx)
 		if len(cols) > 0 {
 			result = append(result, cols)
 		}
@@ -34,30 +35,35 @@ func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column)
 	return
 }
 
-func (p *Selection) preparePossibleProperties() (result [][]*expression.Column) {
-	return p.children[0].(LogicalPlan).preparePossibleProperties()
+func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.Column) {
+	return p.children[0].preparePossibleProperties()
 }
 
 func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
-	if len(p.basePlan.children) > 0 {
-		p.basePlan.children[0].(LogicalPlan).preparePossibleProperties()
+	if len(p.children) > 0 {
+		p.children[0].preparePossibleProperties()
 	}
 	return nil
 }
 
 func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
-	leftProperties := p.children[0].(LogicalPlan).preparePossibleProperties()
-	rightProperties := p.children[1].(LogicalPlan).preparePossibleProperties()
+	leftProperties := p.children[0].preparePossibleProperties()
+	rightProperties := p.children[1].preparePossibleProperties()
 	// TODO: We should consider properties propagation.
 	p.leftProperties = leftProperties
 	p.rightProperties = rightProperties
+	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin {
+		rightProperties = nil
+	} else if p.JoinType == RightOuterJoin {
+		leftProperties = nil
+	}
 	resultProperties := make([][]*expression.Column, len(leftProperties), len(leftProperties)+len(rightProperties))
 	copy(resultProperties, leftProperties)
 	resultProperties = append(resultProperties, rightProperties...)
 	return resultProperties
 }
 
-func (p *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
-	p.possibleProperties = p.children[0].(LogicalPlan).preparePossibleProperties()
+func (la *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
+	la.possibleProperties = la.children[0].preparePossibleProperties()
 	return nil
 }

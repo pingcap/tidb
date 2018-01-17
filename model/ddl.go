@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
@@ -40,8 +41,10 @@ const (
 	ActionDropForeignKey
 	ActionTruncateTable
 	ActionModifyColumn
+	ActionRebaseAutoID
 	ActionRenameTable
 	ActionSetDefaultValue
+	ActionShardRowID
 )
 
 func (action ActionType) String() string {
@@ -70,10 +73,14 @@ func (action ActionType) String() string {
 		return "truncate table"
 	case ActionModifyColumn:
 		return "modify column"
+	case ActionRebaseAutoID:
+		return "rebase auto_increment ID"
 	case ActionRenameTable:
 		return "rename table"
 	case ActionSetDefaultValue:
 		return "set default value"
+	case ActionShardRowID:
+		return "shard row ID"
 	default:
 		return "none"
 	}
@@ -126,15 +133,37 @@ type Job struct {
 	SchemaState SchemaState     `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
-	// LastUpdateTS now uses unix nano seconds
-	// TODO: Use timestamp allocated by TSO.
-	LastUpdateTS int64 `json:"last_update_ts"`
+	// StartTS uses timestamp allocated by TSO.
+	// Now it's the TS when we put the job to TiKV queue.
+	StartTS uint64 `json:"start_ts"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
 
 	// Version indicates the DDL job version. For old jobs, it will be 0.
 	Version int64 `json:"version"`
+}
+
+// FinishTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfo to the binlog.
+func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfo *TableInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+}
+
+// FinishDBJob is called when a job is finished.
+// It updates the job's state information and adds dbInfo the binlog.
+func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddDBInfo(ver, dbInfo)
+}
+
+// startTime gets the job generation time.
+func (job *Job) startTime() time.Time {
+	t := int64(job.StartTS >> 18) // 18 is for the logical time.
+	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -189,8 +218,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args))
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), job.startTime())
 }
 
 // IsFinished returns whether job is finished or not.

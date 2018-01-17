@@ -16,7 +16,7 @@ package codec
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var valueCnt = 100
@@ -26,7 +26,7 @@ func composeEncodedData(size int) []byte {
 	for i := 0; i < size; i++ {
 		values = append(values, types.NewDatum(i))
 	}
-	bs, _ := EncodeValue(nil, values...)
+	bs, _ := EncodeValue(nil, nil, values...)
 	return bs
 }
 

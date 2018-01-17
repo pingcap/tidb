@@ -17,9 +17,11 @@ import (
 	"crypto/tls"
 	"fmt"
 
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/chunk"
+	goctx "golang.org/x/net/context"
 )
 
 // IDriver opens IContext.
@@ -46,7 +48,7 @@ type QueryCtx interface {
 	SetValue(key fmt.Stringer, value interface{})
 
 	// CommitTxn commits the transaction operations.
-	CommitTxn() error
+	CommitTxn(goCtx goctx.Context) error
 
 	// RollbackTxn undoes the transaction operations.
 	RollbackTxn() error
@@ -58,7 +60,7 @@ type QueryCtx interface {
 	CurrentDB() string
 
 	// Execute executes a SQL statement.
-	Execute(sql string) ([]ResultSet, error)
+	Execute(goCtx goctx.Context, sql string) ([]ResultSet, error)
 
 	// SetClientCapability sets client capability flags
 	SetClientCapability(uint32)
@@ -83,8 +85,9 @@ type QueryCtx interface {
 
 	SetSessionManager(util.SessionManager)
 
-	// Cancel the execution of current transaction.
-	Cancel()
+	// EnableChunk indicates whether the chunk execution model is enabled.
+	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
+	EnableChunk()
 }
 
 // PreparedStatement is the interface to use a prepared statement.
@@ -93,7 +96,7 @@ type PreparedStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(args ...interface{}) (ResultSet, error)
+	Execute(goctx.Context, ...interface{}) (ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -119,7 +122,10 @@ type PreparedStatement interface {
 
 // ResultSet is the result set of an query.
 type ResultSet interface {
-	Columns() ([]*ColumnInfo, error)
-	Next() ([]types.Datum, error)
+	Columns() []*ColumnInfo
+	Next(goctx.Context) (types.Row, error)
+	SupportChunk() bool
+	NewChunk() *chunk.Chunk
+	NextChunk(goctx.Context, *chunk.Chunk) error
 	Close() error
 }

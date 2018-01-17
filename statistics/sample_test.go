@@ -14,11 +14,18 @@
 package statistics_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testSampleSuite{})
@@ -32,18 +39,41 @@ type recordSet struct {
 	data   []types.Datum
 	count  int
 	cursor int
+	fields []*ast.ResultField
 }
 
-func (r *recordSet) Fields() ([]*ast.ResultField, error) {
-	return nil, nil
+func (r *recordSet) Fields() []*ast.ResultField {
+	return r.fields
 }
 
-func (r *recordSet) Next() (*ast.Row, error) {
+func (r *recordSet) setFields(tps ...uint8) {
+	r.fields = make([]*ast.ResultField, len(tps))
+	for i := 0; i < len(tps); i++ {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = *types.NewFieldType(tps[i])
+		r.fields[i] = rf
+	}
+}
+
+func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
 	r.cursor++
-	return &ast.Row{Data: []types.Datum{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}}, nil
+	return types.DatumRow{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}, nil
+}
+
+func (r *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	return nil
+}
+
+func (r *recordSet) NewChunk() *chunk.Chunk {
+	return nil
+}
+
+func (r *recordSet) SupportChunk() bool {
+	return false
 }
 
 func (r *recordSet) Close() error {
@@ -58,6 +88,7 @@ func (s *testSampleSuite) SetUpSuite(c *C) {
 		count:  s.count,
 		cursor: 0,
 	}
+	rs.setFields(mysql.TypeLonglong, mysql.TypeLonglong)
 	start := 1000 // 1000 values is null
 	for i := start; i < rs.count; i++ {
 		rs.data[i].SetInt64(int64(i))
@@ -71,60 +102,68 @@ func (s *testSampleSuite) SetUpSuite(c *C) {
 	s.rs = rs
 }
 
-func (s *testSampleSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
+func (s *testSampleSuite) TestCollectColumnStats(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
 	builder := statistics.SampleBuilder{
-		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
-		RecordSet:     s.rs,
-		ColLen:        1,
-		PkID:          1,
-		MaxSampleSize: 10000,
-		MaxBucketSize: 256,
-		MaxSketchSize: 1000,
+		Sc:              sc,
+		RecordSet:       s.rs,
+		ColLen:          1,
+		PkBuilder:       statistics.NewSortedBuilder(sc, 256, 1, types.NewFieldType(mysql.TypeLonglong)),
+		MaxSampleSize:   10000,
+		MaxBucketSize:   256,
+		MaxFMSketchSize: 1000,
+		CMSketchWidth:   2048,
+		CMSketchDepth:   8,
 	}
 	s.rs.Close()
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(s.count))
-	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(6232))
+	c.Assert(collectors[0].FMSketch.NDV(), Equals, int64(6232))
+	c.Assert(collectors[0].CMSketch.TotalCount(), Equals, uint64(collectors[0].Count))
 	c.Assert(int64(pkBuilder.Count), Equals, int64(s.count))
 	c.Assert(pkBuilder.Hist().NDV, Equals, int64(s.count))
 }
 
 func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 	builder := statistics.SampleBuilder{
-		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
-		RecordSet:     s.rs,
-		ColLen:        2,
-		PkID:          -1,
-		MaxSampleSize: 1000,
-		MaxBucketSize: 256,
-		MaxSketchSize: 1000,
+		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+		RecordSet:       s.rs,
+		ColLen:          2,
+		MaxSampleSize:   1000,
+		MaxBucketSize:   256,
+		MaxFMSketchSize: 1000,
+		CMSketchWidth:   2048,
+		CMSketchDepth:   8,
 	}
 	s.rs.Close()
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)
 	c.Assert(len(collectors), Equals, 2)
 	collectors[0].IsMerger = true
-	collectors[0].MergeSampleCollector(collectors[1])
-	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(9280))
+	collectors[0].MergeSampleCollector(sc, collectors[1])
+	c.Assert(collectors[0].FMSketch.NDV(), Equals, int64(9280))
 	c.Assert(len(collectors[0].Samples), Equals, 1000)
 	c.Assert(collectors[0].NullCount, Equals, int64(1000))
 	c.Assert(collectors[0].Count, Equals, int64(19000))
+	c.Assert(collectors[0].CMSketch.TotalCount(), Equals, uint64(collectors[0].Count))
 }
 
 func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 	builder := statistics.SampleBuilder{
-		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
-		RecordSet:     s.rs,
-		ColLen:        2,
-		PkID:          -1,
-		MaxSampleSize: 10000,
-		MaxBucketSize: 256,
-		MaxSketchSize: 1000,
+		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+		RecordSet:       s.rs,
+		ColLen:          2,
+		MaxSampleSize:   10000,
+		MaxBucketSize:   256,
+		MaxFMSketchSize: 1000,
+		CMSketchWidth:   2048,
+		CMSketchDepth:   8,
 	}
 	s.rs.Close()
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)
 	for _, collector := range collectors {
@@ -132,7 +171,8 @@ func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 		s := statistics.SampleCollectorFromProto(p)
 		c.Assert(collector.Count, Equals, s.Count)
 		c.Assert(collector.NullCount, Equals, s.NullCount)
-		c.Assert(collector.Sketch.NDV(), Equals, s.Sketch.NDV())
+		c.Assert(collector.CMSketch.TotalCount(), Equals, s.CMSketch.TotalCount())
+		c.Assert(collector.FMSketch.NDV(), Equals, s.FMSketch.NDV())
 		c.Assert(len(collector.Samples), Equals, len(s.Samples))
 	}
 }

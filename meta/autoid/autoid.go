@@ -18,16 +18,16 @@ import (
 	"sync"
 	"sync/atomic"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 )
 
 // Test needs to change it, so it's a variable.
-var step = int64(5000)
+var step = int64(30000)
 
 var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 
@@ -41,6 +41,12 @@ type Allocator interface {
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
 	Rebase(tableID, newBase int64, allocIDs bool) error
+	// Base return the current base of Allocator.
+	Base() int64
+	// End is only used for test.
+	End() int64
+	// NextGlobalAutoID returns the next global autoID.
+	NextGlobalAutoID(tableID int64) (int64, error)
 }
 
 type allocator struct {
@@ -48,12 +54,40 @@ type allocator struct {
 	base  int64
 	end   int64
 	store kv.Storage
-	dbID  int64
+	// dbID is current database's ID.
+	dbID int64
 }
 
 // GetStep is only used by tests
 func GetStep() int64 {
 	return step
+}
+
+// SetStep is only used by tests
+func SetStep(s int64) {
+	step = s
+}
+
+// Base implements autoid.Allocator Base interface.
+func (alloc *allocator) Base() int64 {
+	return alloc.base
+}
+
+// End implements autoid.Allocator End interface.
+func (alloc *allocator) End() int64 {
+	return alloc.end
+}
+
+// NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
+func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
+	var autoID int64
+	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		var err1 error
+		m := meta.NewMeta(txn)
+		autoID, err1 = m.GetAutoTableID(alloc.dbID, tableID)
+		return errors.Trace(err1)
+	})
+	return autoID + 1, errors.Trace(err)
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -152,6 +186,23 @@ type memoryAllocator struct {
 	base int64
 	end  int64
 	dbID int64
+}
+
+// Base implements autoid.Allocator Base interface.
+func (alloc *memoryAllocator) Base() int64 {
+	return alloc.base
+}
+
+// End implements autoid.Allocator End interface.
+func (alloc *memoryAllocator) End() int64 {
+	return alloc.end
+}
+
+// NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
+func (alloc *memoryAllocator) NextGlobalAutoID(tableID int64) (int64, error) {
+	memIDLock.Lock()
+	defer memIDLock.Unlock()
+	return memID + 1, nil
 }
 
 // Rebase implements autoid.Allocator Rebase interface.

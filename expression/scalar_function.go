@@ -22,11 +22,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -219,53 +218,38 @@ func (sf *ScalarFunction) Eval(row types.Row) (d types.Datum, err error) {
 }
 
 // EvalInt implements Expression interface.
-func (sf *ScalarFunction) EvalInt(row types.Row, sc *variable.StatementContext) (int64, bool, error) {
+func (sf *ScalarFunction) EvalInt(row types.Row, sc *stmtctx.StatementContext) (int64, bool, error) {
 	return sf.Function.evalInt(row)
 }
 
 // EvalReal implements Expression interface.
-func (sf *ScalarFunction) EvalReal(row types.Row, sc *variable.StatementContext) (float64, bool, error) {
+func (sf *ScalarFunction) EvalReal(row types.Row, sc *stmtctx.StatementContext) (float64, bool, error) {
 	return sf.Function.evalReal(row)
 }
 
 // EvalDecimal implements Expression interface.
-func (sf *ScalarFunction) EvalDecimal(row types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+func (sf *ScalarFunction) EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (*types.MyDecimal, bool, error) {
 	return sf.Function.evalDecimal(row)
 }
 
 // EvalString implements Expression interface.
-func (sf *ScalarFunction) EvalString(row types.Row, sc *variable.StatementContext) (string, bool, error) {
+func (sf *ScalarFunction) EvalString(row types.Row, sc *stmtctx.StatementContext) (string, bool, error) {
 	return sf.Function.evalString(row)
 }
 
 // EvalTime implements Expression interface.
-func (sf *ScalarFunction) EvalTime(row types.Row, sc *variable.StatementContext) (types.Time, bool, error) {
+func (sf *ScalarFunction) EvalTime(row types.Row, sc *stmtctx.StatementContext) (types.Time, bool, error) {
 	return sf.Function.evalTime(row)
 }
 
 // EvalDuration implements Expression interface.
-func (sf *ScalarFunction) EvalDuration(row types.Row, sc *variable.StatementContext) (types.Duration, bool, error) {
+func (sf *ScalarFunction) EvalDuration(row types.Row, sc *stmtctx.StatementContext) (types.Duration, bool, error) {
 	return sf.Function.evalDuration(row)
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(row types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
-}
-
-// HashCode implements Expression interface.
-func (sf *ScalarFunction) HashCode() []byte {
-	v := make([]types.Datum, 0, len(sf.GetArgs())+1)
-	bytes, err := codec.EncodeValue(nil, types.NewStringDatum(sf.FuncName.L))
-	terror.Log(errors.Trace(err))
-	v = append(v, types.NewBytesDatum(bytes))
-	for _, arg := range sf.GetArgs() {
-		v = append(v, types.NewBytesDatum(arg.HashCode()))
-	}
-	bytes = bytes[:0]
-	bytes, err = codec.EncodeValue(bytes, v...)
-	terror.Log(errors.Trace(err))
-	return bytes
 }
 
 // ResolveIndices implements Expression interface.

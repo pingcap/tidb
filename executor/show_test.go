@@ -14,16 +14,22 @@
 package executor_test
 
 import (
+	"strconv"
 	"strings"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestShow(c *C) {
@@ -32,12 +38,12 @@ func (s *testSuite) TestShow(c *C) {
 
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
-	testSQL = `create table SHOW_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
+	testSQL = `create table SHOW_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1, c4 text, key idx_wide_c4(c3, c4(10))) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
 	tk.MustExec(testSQL)
 
 	testSQL = "show columns from show_test;"
 	result := tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 4)
+	c.Check(result.Rows(), HasLen, 5)
 
 	testSQL = "show create table show_test;"
 	result = tk.MustQuery(testSQL)
@@ -45,7 +51,7 @@ func (s *testSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -137,6 +143,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows())
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
@@ -164,12 +171,42 @@ func (s *testSuite) TestShow(c *C) {
 	// Test show create table with AUTO_INCREMENT option
 	// for issue https://github.com/pingcap/tidb/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
-	tk.MustExec(`create table show_auto_increment (id int) auto_increment=4`)
+	tk.MustExec(`create table show_auto_increment (id int key auto_increment) auto_increment=4`)
 	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
-			"  `id` int(11) DEFAULT NULL\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
+	))
+	// for issue https://github.com/pingcap/tidb/issues/4678
+	autoIDStep := autoid.GetStep()
+	tk.MustExec("insert into show_auto_increment values(20)")
+	autoID := autoIDStep + 21
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
+	))
+	tk.MustExec(`drop table show_auto_increment`)
+	tk.MustExec(`create table show_auto_increment (id int primary key auto_increment)`)
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+	tk.MustExec("insert into show_auto_increment values(10)")
+	autoID = autoIDStep + 11
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 
 	// Test show table with column's comment contain escape character
@@ -234,6 +271,12 @@ func (s *testSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// for issue #4255
+	result = tk.MustQuery("show function status like '%'")
+	result.Check(result.Rows())
+	result = tk.MustQuery("show plugins like '%'")
+	result.Check(result.Rows())
+
 	// for issue #4740
 	testSQL = `drop table if exists t`
 	tk.MustExec(testSQL)
@@ -267,7 +310,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
@@ -298,6 +341,38 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
+}
+
+// mockSessionManager is a mocked session manager that wraps one session
+// it returns only this session's current proccess info as processlist for test.
+type mockSessionManager struct {
+	tidb.Session
+}
+
+// ShowProcessList implements the SessionManager.ShowProcessList interface.
+func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
+	return []util.ProcessInfo{msm.ShowProcess()}
+}
+
+// Kill implements the SessionManager.Kill interface.
+func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
+
+func (s *testSuite) TestShowFullProcessList(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("select 1") // for tk.Se init
+
+	se := tk.Se
+	se.SetSessionManager(&mockSessionManager{se})
+
+	fullSQL := "show                                                                                        full processlist"
+	simpSQL := "show                                                                                        processlist"
+
+	cols := []int{4, 5, 6, 7} // columns to check: Command, Time, State, Info
+	tk.MustQuery(fullSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+fullSQL))
+	tk.MustQuery(simpSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+simpSQL[:100]))
+
+	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }
 
 type stats struct {
@@ -433,11 +508,11 @@ func (s *testSuite) TestShow2(c *C) {
 
 	r, err := tk.Exec("show table status from test like 't'")
 	c.Assert(err, IsNil)
-	row, err := r.Next()
+	row, err := r.Next(goctx.Background())
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 18)
-	c.Assert(row.Data[0].GetString(), Equals, "t")
-	c.Assert(row.Data[17].GetString(), Equals, "注释")
+	c.Assert(row.Len(), Equals, 18)
+	c.Assert(row.GetString(0), Equals, "t")
+	c.Assert(row.GetString(17), Equals, "注释")
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -445,4 +520,45 @@ func (s *testSuite) TestShow2(c *C) {
 
 	tk.MustExec("grant all on *.* to 'root'@'%'")
 	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"))
+}
+
+func (s *testSuite) TestCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	rs, err := tk.Exec("show collation;")
+	c.Assert(err, IsNil)
+	fields := rs.Fields()
+	c.Assert(fields[0].Column.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fields[1].Column.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fields[2].Column.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(fields[3].Column.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fields[4].Column.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fields[5].Column.Tp, Equals, mysql.TypeLonglong)
+}
+
+func (s *testSuite) TestShowTableStatus(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint);`)
+
+	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
+	tk.MustExec("show table status;")
+	rs, err := tk.Exec("show table status;")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err := tidb.GetRows4Test(goctx.Background(), rs)
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	err = rs.Close()
+	c.Assert(errors.ErrorStack(err), Equals, "")
+
+	for i := range rows {
+		row := rows[i]
+		c.Assert(row.GetString(0), Equals, "t")
+		c.Assert(row.GetString(1), Equals, "InnoDB")
+		c.Assert(row.GetInt64(2), Equals, int64(10))
+		c.Assert(row.GetString(3), Equals, "Compact")
+	}
 }

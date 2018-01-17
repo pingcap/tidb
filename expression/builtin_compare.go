@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -99,7 +99,7 @@ var (
 	_ builtinFunc = &builtinNullEQDurationSig{}
 )
 
-// Coalesce returns the first non-NULL value in the list,
+// coalesceFunctionClass returns the first non-NULL value in the list,
 // or NULL if there are no non-NULL values.
 type coalesceFunctionClass struct {
 	baseFunctionClass
@@ -145,7 +145,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 			}
 			argIntLen := argTp.Flen
 			if argTp.Decimal > 0 {
-				argIntLen -= (argTp.Decimal + 1)
+				argIntLen -= argTp.Decimal + 1
 			}
 
 			// Reduce the sign bit if it is a signed integer/decimal
@@ -201,6 +201,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	return sig, nil
 }
 
+// builtinCoalesceIntSig is buitin function coalesce signature which return type int
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
 	baseBuiltinFunc
@@ -217,6 +218,7 @@ func (b *builtinCoalesceIntSig) evalInt(row types.Row) (res int64, isNull bool, 
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceRealSig is buitin function coalesce signature which return type real
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
 	baseBuiltinFunc
@@ -233,6 +235,7 @@ func (b *builtinCoalesceRealSig) evalReal(row types.Row) (res float64, isNull bo
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceDecimalSig is buitin function coalesce signature which return type Decimal
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseBuiltinFunc
@@ -249,6 +252,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row types.Row) (res *types.MyDec
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceStringSig is buitin function coalesce signature which return type string
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
 	baseBuiltinFunc
@@ -265,6 +269,7 @@ func (b *builtinCoalesceStringSig) evalString(row types.Row) (res string, isNull
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceTimeSig is buitin function coalesce signature which return type time
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
 	baseBuiltinFunc
@@ -281,6 +286,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row types.Row) (res types.Time, isNull
 	return res, isNull, errors.Trace(err)
 }
 
+// builtinCoalesceDurationSig is buitin function coalesce signature which return type duration
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
 	baseBuiltinFunc
@@ -312,7 +318,7 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
-// getCmp4MinMax gets compare type for GREATEST and LEAST.
+// getCmpTp4MinMax gets compare type for GREATEST and LEAST.
 func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
 	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
@@ -333,7 +339,7 @@ func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 		if !isStr {
 			isAllStr = false
 		}
-		cmpEvalType = getCmpType(cmpEvalType, tp, lft, rft)
+		cmpEvalType = getBaseCmpType(cmpEvalType, tp, lft, rft)
 		lft = rft
 	}
 	argTp = cmpEvalType
@@ -744,10 +750,11 @@ func (b *builtinIntervalIntSig) evalInt(row types.Row) (int64, bool, error) {
 	return int64(idx), err != nil, errors.Trace(err)
 }
 
+// binSearch is a binary search method.
 // All arguments are treated as integers.
 // It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
 // This is because a binary search is used (very fast).
-func (b *builtinIntervalIntSig) binSearch(sc *variable.StatementContext, target int64, isUint1 bool, args []Expression, row types.Row) (_ int, err error) {
+func (b *builtinIntervalIntSig) binSearch(sc *stmtctx.StatementContext, target int64, isUint1 bool, args []Expression, row types.Row) (_ int, err error) {
 	i, j, cmp := 0, len(args), false
 	for i < j {
 		mid := i + (j-i)/2
@@ -798,7 +805,7 @@ func (b *builtinIntervalRealSig) evalInt(row types.Row) (int64, bool, error) {
 	return int64(idx), err != nil, errors.Trace(err)
 }
 
-func (b *builtinIntervalRealSig) binSearch(sc *variable.StatementContext, target float64, args []Expression, row types.Row) (_ int, err error) {
+func (b *builtinIntervalRealSig) binSearch(sc *stmtctx.StatementContext, target float64, args []Expression, row types.Row) (_ int, err error) {
 	i, j := 0, len(args)
 	for i < j {
 		mid := i + (j-i)/2
@@ -824,8 +831,8 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
-// getCmpType gets the ClassType that the two args will be treated as when comparing.
-func getCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
+// getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
+func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
 	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
 		if lft.Tp == rft.Tp {
 			return types.ETString
@@ -838,13 +845,71 @@ func getCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalTy
 	}
 	if lhs.IsStringKind() && rhs.IsStringKind() {
 		return types.ETString
-	} else if lhs == types.ETInt && rhs == types.ETInt {
+	} else if (lhs == types.ETInt || lft.Hybrid()) && (rhs == types.ETInt || rft.Hybrid()) {
 		return types.ETInt
-	} else if (lhs == types.ETInt || lhs == types.ETDecimal) &&
-		(rhs == types.ETInt || rhs == types.ETDecimal) {
+	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
+		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
 		return types.ETDecimal
 	}
 	return types.ETReal
+}
+
+// GetAccurateCmpType uses a more complex logic to decide the EvalType of the two args when compare with each other than
+// getBaseCmpType does.
+func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
+	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
+	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
+	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
+	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
+		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
+		cmpType = types.ETJson
+	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
+		// date[time] <cmp> date[time]
+		// string <cmp> date[time]
+		// compare as time
+		if lhsFieldType.Tp == rhsFieldType.Tp {
+			cmpType = lhsFieldType.EvalType()
+		} else {
+			cmpType = types.ETDatetime
+		}
+	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
+		// duration <cmp> duration
+		// compare as duration
+		cmpType = types.ETDuration
+	} else if cmpType == types.ETReal || cmpType == types.ETString {
+		_, isLHSConst := lhs.(*Constant)
+		_, isRHSConst := rhs.(*Constant)
+		if (lhsEvalType == types.ETDecimal && !isLHSConst && rhsEvalType.IsStringKind() && isRHSConst) ||
+			(rhsEvalType == types.ETDecimal && !isRHSConst && lhsEvalType.IsStringKind() && isLHSConst) {
+			/*
+				<non-const decimal expression> <cmp> <const string expression>
+				or
+				<const string expression> <cmp> <non-const decimal expression>
+
+				Do comparison as decimal rather than float, in order not to lose precision.
+			)*/
+			cmpType = types.ETDecimal
+		} else if isTemporalColumn(lhs) && isRHSConst ||
+			isTemporalColumn(rhs) && isLHSConst {
+			/*
+				<temporal column> <cmp> <non-temporal constant>
+				or
+				<non-temporal constant> <cmp> <temporal column>
+
+				Convert the constant to temporal type.
+			*/
+			col, isLHSColumn := lhs.(*Column)
+			if !isLHSColumn {
+				col = rhs.(*Column)
+			}
+			if col.GetType().Tp == mysql.TypeDuration {
+				cmpType = types.ETDuration
+			} else {
+				cmpType = types.ETDatetime
+			}
+		}
+	}
+	return cmpType
 }
 
 // isTemporalColumn checks if a expression is a temporal column,
@@ -881,8 +946,8 @@ func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 	}
 }
 
-// refineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func refineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
+// RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
+func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
 	sc := ctx.GetSessionVars().StmtCtx
 	dt, err := con.Eval(nil)
 	if err != nil {
@@ -929,12 +994,12 @@ func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression
 	arg1, arg1IsCon := args[1].(*Constant)
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1 = refineConstantArg(ctx, arg1, c.op)
+		arg1 = RefineConstantArg(ctx, arg1, c.op)
 		return []Expression{args[0], arg1}
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0 = refineConstantArg(ctx, arg0, symmetricOp[c.op])
+		arg0 = RefineConstantArg(ctx, arg0, symmetricOp[c.op])
 		return []Expression{arg0, args[1]}
 	}
 	return args
@@ -946,82 +1011,20 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 		return nil, errors.Trace(err)
 	}
 	args := c.refineArgs(ctx, rawArgs)
-	lhsFieldType, rhsFieldType := args[0].GetType(), args[1].GetType()
-	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
-	cmpType := getCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
-	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
-		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
-		sig, err = c.generateCmpSigs(ctx, args, types.ETJson)
-	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
-		// date[time] <cmp> date[time]
-		// string <cmp> date[time]
-		// compare as time
-		if lhsFieldType.Tp == rhsFieldType.Tp {
-			sig, err = c.generateCmpSigs(ctx, args, lhsFieldType.EvalType())
-		} else {
-			sig, err = c.generateCmpSigs(ctx, args, types.ETDatetime)
-		}
-	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
-		// duration <cmp> duration
-		// compare as duration
-		sig, err = c.generateCmpSigs(ctx, args, types.ETDuration)
-	} else if cmpType == types.ETReal || cmpType == types.ETString {
-		_, isLHSConst := args[0].(*Constant)
-		_, isRHSConst := args[1].(*Constant)
-		if (lhsEvalType == types.ETDecimal && !isLHSConst && rhsEvalType.IsStringKind() && isRHSConst) ||
-			(rhsEvalType == types.ETDecimal && !isRHSConst && lhsEvalType.IsStringKind() && isLHSConst) {
-			/*
-				<non-const decimal expression> <cmp> <const string expression>
-				or
-				<const string expression> <cmp> <non-const decimal expression>
-
-				Do comparison as decimal rather than float, in order not to lose precision.
-			)*/
-			cmpType = types.ETDecimal
-		} else if isTemporalColumn(args[0]) && isRHSConst ||
-			isTemporalColumn(args[1]) && isLHSConst {
-			/*
-				<temporal column> <cmp> <non-temporal constant>
-				or
-				<non-temporal constant> <cmp> <temporal column>
-
-				Convert the constant to temporal type.
-			*/
-			col, isLHSColumn := args[0].(*Column)
-			if !isLHSColumn {
-				col = args[1].(*Column)
-			}
-			if col.GetType().Tp == mysql.TypeDuration {
-				sig, err = c.generateCmpSigs(ctx, args, types.ETDuration)
-			} else {
-				sig, err = c.generateCmpSigs(ctx, args, types.ETDatetime)
-			}
-		}
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if sig == nil {
-		switch cmpType {
-		case types.ETString:
-			sig, err = c.generateCmpSigs(ctx, args, types.ETString)
-		case types.ETInt:
-			sig, err = c.generateCmpSigs(ctx, args, types.ETInt)
-		case types.ETDecimal:
-			sig, err = c.generateCmpSigs(ctx, args, types.ETDecimal)
-		case types.ETReal:
-			sig, err = c.generateCmpSigs(ctx, args, types.ETReal)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return sig, nil
+	cmpType := GetAccurateCmpType(args[0], args[1])
+	sig, err = c.generateCmpSigs(ctx, args, cmpType)
+	return sig, errors.Trace(err)
 }
 
-// genCmpSigs generates compare function signatures.
+// generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
+	if tp == types.ETJson {
+		// In compare, if we cast string to JSON, we shouldn't parse it.
+		for i := range args {
+			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		}
+	}
 	bf.tp.Flen = 1
 	switch tp {
 	case types.ETInt:
@@ -1726,10 +1729,7 @@ func (s *builtinNullEQJSONSig) evalInt(row types.Row) (val int64, isNull bool, e
 	case isNull0 != isNull1:
 		break
 	default:
-		cmpRes, err := json.CompareJSON(arg0, arg1)
-		if err != nil {
-			return 0, true, errors.Trace(err)
-		}
+		cmpRes := json.CompareBinary(arg0, arg1)
 		if cmpRes == 0 {
 			res = 1
 		}
@@ -1920,6 +1920,5 @@ func compareJSON(args []Expression, row types.Row, ctx context.Context) (int64, 
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
 	}
-	res, err := json.CompareJSON(arg0, arg1)
-	return int64(res), err != nil, errors.Trace(err)
+	return int64(json.CompareBinary(arg0, arg1)), false, nil
 }

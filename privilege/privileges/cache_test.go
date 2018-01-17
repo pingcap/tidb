@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 var _ = Suite(&testCacheSuite{})
@@ -30,7 +31,9 @@ type testCacheSuite struct {
 
 func (s *testCacheSuite) SetUpSuite(c *C) {
 	privileges.Enable = true
-	store, err := tidb.NewStore("memory://mysql")
+	store, err := tikv.NewMockTikvStore()
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -42,7 +45,7 @@ func (s *testCacheSuite) TearDown(c *C) {
 }
 
 func (s *testCacheSuite) TestLoadUserTable(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "use mysql;")
@@ -71,7 +74,7 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 }
 
 func (s *testCacheSuite) TestLoadDBTable(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "use mysql;")
@@ -88,7 +91,7 @@ func (s *testCacheSuite) TestLoadDBTable(c *C) {
 }
 
 func (s *testCacheSuite) TestLoadTablesPrivTable(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "use mysql;")
@@ -108,7 +111,7 @@ func (s *testCacheSuite) TestLoadTablesPrivTable(c *C) {
 }
 
 func (s *testCacheSuite) TestLoadColumnsPrivTable(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "use mysql;")
@@ -130,7 +133,7 @@ func (s *testCacheSuite) TestLoadColumnsPrivTable(c *C) {
 }
 
 func (s *testCacheSuite) TestPatternMatch(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "USE MYSQL;")
@@ -144,6 +147,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(p.RequestVerification("root", "localhost", "test", "", "", mysql.SelectPriv), IsFalse)
 	c.Assert(p.RequestVerification("root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
 	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
 
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
 	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
@@ -163,7 +167,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 }
 
 func (s *testCacheSuite) TestCaseInsensitive(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	se, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "CREATE DATABASE TCTrain;")
@@ -181,13 +185,15 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	privileges.Enable = true
-	store, err := tidb.NewStore("memory://sync_mysql_user")
+	store, err := tikv.NewMockTikvStore()
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	domain, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer domain.Close()
 
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 

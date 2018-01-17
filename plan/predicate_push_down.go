@@ -13,84 +13,84 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 type ppdSolver struct{}
 
-func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
-	_, p, err := lp.PredicatePushDown(nil)
-	return p, errors.Trace(err)
+func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+	_, p := lp.PredicatePushDown(nil)
+	return p, nil
 }
 
-func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
+func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, chIdx int) {
+	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
 	conditions = expression.PropagateConstant(p.context(), conditions)
-	selection := Selection{Conditions: conditions}.init(allocator, p.context())
-	selection.SetSchema(child.Schema().Clone())
-	return InsertPlan(p, child, selection)
+	selection := LogicalSelection{Conditions: conditions}.init(p.context())
+	selection.SetChildren(child)
+	p.Children()[chIdx] = selection
+}
+
+// PredicatePushDown implements LogicalPlan interface.
+func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	if len(p.children) == 0 {
+		return predicates, p.self
+	}
+	child := p.children[0]
+	rest, newChild := child.PredicatePushDown(predicates)
+	addSelection(p.self, newChild, rest, 0)
+	return nil, p.self
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	retConditions, child, err := p.children[0].(LogicalPlan).PredicatePushDown(append(p.Conditions, predicates...))
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
+func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	retConditions, child := p.children[0].PredicatePushDown(append(p.Conditions, predicates...))
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
-		return nil, p, nil
+		return nil, p
 	}
-	err = RemovePlan(p)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	return nil, child, nil
+	return nil, child
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if UseDAGPlanBuilder(p.ctx) {
-		_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
-	}
-	return predicates, p, nil
+func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	p.children[0].PredicatePushDown(predicates)
+	p.conditions = predicates
+	return nil, p
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *TableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	return predicates, p, nil
+func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	_, ds.pushedDownConds, predicates = expression.ExpressionsToPB(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient())
+	return predicates, ds
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	err = outerJoinSimplify(p, predicates)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
+func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	return predicates, p
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+	outerJoinSimplify(p, predicates)
 	groups, valid := tryToGetJoinGroup(p)
 	if valid {
-		e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
+		e := joinReOrderSolver{ctx: p.ctx}
 		e.reorderJoin(groups, predicates)
 		newJoin := e.resultJoin
-		if len(p.parents) > 0 {
-			parent := p.parents[0]
-			newJoin.SetParents(parent)
-			err = parent.ReplaceChild(p, newJoin)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-		}
 		return newJoin.PredicatePushDown(predicates)
 	}
 	var leftCond, rightCond []expression.Expression
-	retPlan = p
-	leftPlan := p.children[0].(LogicalPlan)
-	rightPlan := p.children[1].(LogicalPlan)
+	leftPlan := p.children[0]
+	rightPlan := p.children[1]
 	var (
 		equalCond                              []*expression.ScalarFunction
 		leftPushCond, rightPushCond, otherCond []expression.Expression
@@ -107,7 +107,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan)
 	}
 	switch p.JoinType {
-	case LeftOuterJoin, LeftOuterSemiJoin:
+	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		rightCond = p.RightConditions
 		p.RightConditions = nil
 		leftCond = leftPushCond
@@ -119,7 +119,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		rightCond = rightPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
-	case SemiJoin:
+	case SemiJoin, AntiSemiJoin:
 		_, leftPushCond, rightPushCond, _ = extractOnCondition(predicates, leftPlan, rightPlan)
 		leftCond = append(p.LeftConditions, leftPushCond...)
 		rightCond = append(p.RightConditions, rightPushCond...)
@@ -133,26 +133,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
-	leftRet, _, err1 := leftPlan.PredicatePushDown(leftCond)
-	if err1 != nil {
-		return nil, nil, errors.Trace(err1)
-	}
-	rightRet, _, err2 := rightPlan.PredicatePushDown(rightCond)
-	if err2 != nil {
-		return nil, nil, errors.Trace(err2)
-	}
-	if len(leftRet) > 0 {
-		err2 = addSelection(p, leftPlan, leftRet, p.allocator)
-		if err2 != nil {
-			return nil, nil, errors.Trace(err2)
-		}
-	}
-	if len(rightRet) > 0 {
-		err2 = addSelection(p, rightPlan, rightRet, p.allocator)
-		if err2 != nil {
-			return nil, nil, errors.Trace(err2)
-		}
-	}
+	leftRet, lCh := leftPlan.PredicatePushDown(leftCond)
+	rightRet, rCh := rightPlan.PredicatePushDown(rightCond)
+	addSelection(p, lCh, leftRet, 0)
+	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
 	for _, eqCond := range p.EqualConditions {
 		p.LeftJoinKeys = append(p.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
@@ -160,7 +144,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	}
 	p.mergeSchema()
 	p.buildKeyInfo()
-	return
+	return ret, p.self
 }
 
 // updateEQCond will extract the arguments of a equal condition that connect two expressions.
@@ -197,7 +181,7 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *Projection) appendExpr(expr expression.Expression) *expression.Column {
+func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.Column {
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
@@ -213,28 +197,27 @@ func (p *Projection) appendExpr(expr expression.Expression) *expression.Column {
 	return col.Clone().(*expression.Column)
 }
 
-func (p *LogicalJoin) getProj(idx int) *Projection {
+func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	child := p.children[idx]
-	proj, ok := child.(*Projection)
+	proj, ok := child.(*LogicalProjection)
 	if ok {
 		return proj
 	}
-	proj = Projection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.allocator, p.ctx)
+	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.ctx)
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col.Clone())
 	}
 	proj.SetSchema(child.Schema().Clone())
-	setParentAndChildren(proj, child)
-	proj.SetParents(p)
+	proj.SetChildren(child)
 	p.children[idx] = proj
 	return proj
 }
 
 // outerJoinSimplify simplifies outer join.
-func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) error {
+func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) {
 	var innerTable, outerTable LogicalPlan
-	child1 := p.children[0].(LogicalPlan)
-	child2 := p.children[1].(LogicalPlan)
+	child1 := p.children[0]
+	child2 := p.children[1]
 	var fullConditions []expression.Expression
 	if p.JoinType == LeftOuterJoin {
 		innerTable = child2
@@ -243,37 +226,28 @@ func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) error
 		innerTable = child1
 		outerTable = child2
 	} else {
-		return nil
+		return
 	}
 	// first simplify embedded outer join.
 	// When trying to simplify an embedded outer join operation in a query,
 	// we must take into account the join condition for the embedding outer join together with the WHERE condition.
 	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
 		fullConditions = concatOnAndWhereConds(p, predicates)
-		err := outerJoinSimplify(innerPlan, fullConditions)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		outerJoinSimplify(innerPlan, fullConditions)
 	}
 	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
 		if fullConditions != nil {
 			fullConditions = concatOnAndWhereConds(p, predicates)
 		}
-		err := outerJoinSimplify(outerPlan, fullConditions)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		outerJoinSimplify(outerPlan, fullConditions)
 	}
 	if p.JoinType == InnerJoin {
-		return nil
+		return
 	}
 	// then simplify embedding outer join.
 	canBeSimplified := false
 	for _, expr := range predicates {
-		isOk, err := isNullRejected(p.ctx, innerTable.Schema(), expr)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isOk := isNullRejected(p.ctx, innerTable.Schema(), expr)
 		if isOk {
 			canBeSimplified = true
 			break
@@ -282,7 +256,6 @@ func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) error
 	if canBeSimplified {
 		p.JoinType = InnerJoin
 	}
-	return nil
 }
 
 // isNullRejected check whether a condition is null-rejected
@@ -290,22 +263,19 @@ func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) error
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
-func isNullRejected(ctx context.Context, schema *expression.Schema, expr expression.Expression) (bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, expr)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
+func isNullRejected(ctx context.Context, schema *expression.Schema, expr expression.Expression) bool {
+	result := expression.EvaluateExprWithNull(ctx, schema, expr)
 	x, ok := result.(*expression.Constant)
 	if !ok {
-		return false, nil
+		return false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	if x.Value.IsNull() {
-		return true, nil
+		return true
 	} else if isTrue, err := x.Value.ToBool(sc); err != nil || isTrue == 0 {
-		return true, errors.Trace(err)
+		return true
 	}
-	return false, nil
+	return false
 }
 
 // concatOnAndWhereConds concatenate ON conditions with WHERE conditions.
@@ -323,74 +293,38 @@ func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Projection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	retPlan = p
-	var push []expression.Expression
+func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+	var push = make([]expression.Expression, 0, p.Schema().Len())
 	for _, cond := range predicates {
-		canSubstitute := true
-		extractedCols := expression.ExtractColumns(cond)
-		for _, col := range extractedCols {
-			id := p.Schema().ColumnIndex(col)
-			if _, ok := p.Exprs[id].(*expression.ScalarFunction); ok {
-				canSubstitute = false
-				break
-			}
-		}
-		if canSubstitute {
-			push = append(push, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
-		} else {
-			ret = append(ret, cond)
-		}
+		push = append(push, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
 	}
-	child := p.children[0].(LogicalPlan)
-	restConds, _, err1 := child.PredicatePushDown(push)
-	if err1 != nil {
-		return nil, nil, errors.Trace(err1)
-	}
-	if len(restConds) > 0 {
-		err1 = addSelection(p, child, restConds, p.allocator)
-		if err1 != nil {
-			return nil, nil, errors.Trace(err1)
-		}
-	}
-	return
+	return p.baseLogicalPlan.PredicatePushDown(push)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	retPlan = p
-	for _, proj := range p.children {
+func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+	for i, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
-			newCond := expression.ColumnSubstitute(cond, p.Schema(), expression.Column2Exprs(proj.Schema().Columns))
-			newExprs = append(newExprs, newCond)
+			newExprs = append(newExprs, cond.Clone())
 		}
-		retCond, _, err := proj.(LogicalPlan).PredicatePushDown(newExprs)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if len(retCond) != 0 {
-			err = addSelection(p, proj.(LogicalPlan), retCond, p.allocator)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-		}
+		retCond, newChild := proj.PredicatePushDown(newExprs)
+		addSelection(p, newChild, retCond, i)
 	}
-	return
+	return nil, p
 }
 
 // getGbyColIndex gets the column's index in the group-by columns.
-func (p *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
-	return expression.NewSchema(p.groupByCols...).ColumnIndex(col)
+func (la *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
+	return expression.NewSchema(la.groupByCols...).ColumnIndex(col)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	retPlan = p
-	var exprsOriginal []expression.Expression
+func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	var condsToPush []expression.Expression
-	for _, fun := range p.AggFuncs {
-		exprsOriginal = append(exprsOriginal, fun.GetArgs()[0])
+	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
+	for _, fun := range la.AggFuncs {
+		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	for _, cond := range predicates {
 		switch cond.(type) {
@@ -404,13 +338,13 @@ func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expressio
 			extractedCols := expression.ExtractColumns(cond)
 			ok := true
 			for _, col := range extractedCols {
-				if p.getGbyColIndex(col) == -1 {
+				if la.getGbyColIndex(col) == -1 {
 					ok = false
 					break
 				}
 			}
 			if ok {
-				newFunc := expression.ColumnSubstitute(cond.Clone(), p.Schema(), exprsOriginal)
+				newFunc := expression.ColumnSubstitute(cond.Clone(), la.Schema(), exprsOriginal)
 				condsToPush = append(condsToPush, newFunc)
 			} else {
 				ret = append(ret, cond)
@@ -419,20 +353,20 @@ func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expressio
 			ret = append(ret, cond)
 		}
 	}
-	_, _, err = p.baseLogicalPlan.PredicatePushDown(condsToPush)
-	return ret, retPlan, errors.Trace(err)
+	la.baseLogicalPlan.PredicatePushDown(condsToPush)
+	return ret, la
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	// Limit forbids any condition to push down.
-	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
-	return predicates, p, errors.Trace(err)
+	p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *MaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	// MaxOneRow forbids any condition to push down.
-	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
-	return predicates, p, errors.Trace(err)
+	p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p
 }

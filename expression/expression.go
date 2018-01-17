@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 // EvalAstExpr evaluates ast expression directly.
@@ -40,34 +40,31 @@ type Expression interface {
 	Eval(row types.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(row types.Row, sc *variable.StatementContext) (val int64, isNull bool, err error)
+	EvalInt(row types.Row, sc *stmtctx.StatementContext) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(row types.Row, sc *variable.StatementContext) (val float64, isNull bool, err error)
+	EvalReal(row types.Row, sc *stmtctx.StatementContext) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(row types.Row, sc *variable.StatementContext) (val string, isNull bool, err error)
+	EvalString(row types.Row, sc *stmtctx.StatementContext) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(row types.Row, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(row types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
+	EvalTime(row types.Row, sc *stmtctx.StatementContext) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(row types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
+	EvalDuration(row types.Row, sc *stmtctx.StatementContext) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(row types.Row, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
+	EvalJSON(row types.Row, sc *stmtctx.StatementContext) (val json.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
 	// Clone copies an expression totally.
 	Clone() Expression
-
-	// HashCode create the hashcode for expression
-	HashCode() []byte
 
 	// Equal checks whether two expressions are equal.
 	Equal(e Expression, ctx context.Context) bool
@@ -145,6 +142,30 @@ func ComposeDNFCondition(ctx context.Context, conditions ...Expression) Expressi
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
 }
 
+func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Expression {
+	var ret []Expression
+	for _, arg := range conditions.GetArgs() {
+		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == funcName {
+			ret = append(ret, extractBinaryOpItems(sf, funcName)...)
+		} else {
+			ret = append(ret, arg)
+		}
+	}
+	return ret
+}
+
+// FlattenDNFConditions extracts DNF expression's leaf item.
+// e.g. or(or(a=1, a=2), or(a=3, a=4)), we'll get [a=1, a=2, a=3, a=4].
+func FlattenDNFConditions(DNFCondition *ScalarFunction) []Expression {
+	return extractBinaryOpItems(DNFCondition, ast.LogicOr)
+}
+
+// FlattenCNFConditions extracts CNF expression's leaf item.
+// e.g. and(and(a>1, a>2), and(a>3, a>4)), we'll get [a>1, a>2, a>3, a>4].
+func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
+	return extractBinaryOpItems(CNFCondition, ast.LogicAnd)
+}
+
 // Assignment represents a set assignment in Update, such as
 // Update t set c1 = hex(12), c2 = c3 where c2 = 1
 type Assignment struct {
@@ -191,35 +212,25 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) (Expression, error) {
+func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		var err error
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i], err = EvaluateExprWithNull(ctx, schema, arg)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		newFunc, err := NewFunction(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return newFunc, nil
+		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 	case *Column:
 		if !schema.Contains(x) {
-			return x, nil
+			return x
 		}
-		constant := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
-		return constant, nil
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:
 		if x.DeferredExpr != nil {
-			newConst := FoldConstant(x)
-			return newConst, nil
+			return FoldConstant(x)
 		}
 	}
-	return expr.Clone(), nil
+	return expr.Clone()
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.
@@ -271,11 +282,6 @@ func TableInfo2SchemaWithDBName(dbName model.CIStr, tbl *model.TableInfo) *Schem
 	return schema
 }
 
-// ColumnInfos2Columns converts a slice of ColumnInfo to a slice of Column with empty DBName.
-func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
-	return ColumnInfos2ColumnsWithDBName(model.CIStr{}, tblName, colInfos)
-}
-
 // ColumnInfos2ColumnsWithDBName converts a slice of ColumnInfo to a slice of Column.
 func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
 	columns := make([]*Column, 0, len(colInfos))
@@ -305,24 +311,8 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 	}
 }
 
-// IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.
-//
-// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
-// it will cause an error if we convert ENUM/SET to int as a string value.
-//
-// For BinaryLiteral/MysqlBit, we will get a wrong result if we convert it to int as a string value.
-// For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
-func IsHybridType(expr Expression) bool {
-	if expr.GetType().Hybrid() {
-		return true
-	}
-
-	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is BinaryLiteral
-	if con, ok := expr.(*Constant); ok {
-		switch con.Value.Kind() {
-		case types.KindBinaryLiteral:
-			return true
-		}
-	}
-	return false
+// IsBinaryLiteral checks whether an expression is a binary literal
+func IsBinaryLiteral(expr Expression) bool {
+	con, ok := expr.(*Constant)
+	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }

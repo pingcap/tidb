@@ -26,10 +26,10 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type comparableRow struct {
@@ -45,7 +45,7 @@ type item struct {
 
 // rowHeap maintains a min-heap property of comparableRows.
 type rowHeap struct {
-	sc     *variable.StatementContext
+	sc     *stmtctx.StatementContext
 	ims    []*item
 	byDesc []bool
 	err    error
@@ -53,7 +53,7 @@ type rowHeap struct {
 
 var headSize = 8
 
-func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, byDesc []bool) (bool, error) {
+func lessThan(sc *stmtctx.StatementContext, i []types.Datum, j []types.Datum, byDesc []bool) (bool, error) {
 	for k := range byDesc {
 		v1 := i[k]
 		v2 := j[k]
@@ -110,7 +110,7 @@ func (rh *rowHeap) Pop() interface{} {
 // FileSorter sorts the given rows according to the byDesc order.
 // FileSorter can sort rows that exceed predefined memory capacity.
 type FileSorter struct {
-	sc     *variable.StatementContext
+	sc     *stmtctx.StatementContext
 	byDesc []bool
 
 	workers  []*Worker
@@ -152,7 +152,7 @@ type Worker struct {
 
 // Builder builds a new FileSorter.
 type Builder struct {
-	sc       *variable.StatementContext
+	sc       *stmtctx.StatementContext
 	keySize  int
 	valSize  int
 	bufSize  int
@@ -162,7 +162,7 @@ type Builder struct {
 }
 
 // SetSC sets StatementContext instance which is required in row comparison.
-func (b *Builder) SetSC(sc *variable.StatementContext) *Builder {
+func (b *Builder) SetSC(sc *stmtctx.StatementContext) *Builder {
 	b.sc = sc
 	return b
 }
@@ -581,21 +581,21 @@ func (w *Worker) flushToFile() {
 		return
 	}
 	defer terror.Call(outputFile.Close)
-
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for _, row := range w.buf {
 		prevLen = len(outputByte)
 		outputByte = append(outputByte, w.head...)
-		outputByte, err = codec.EncodeKey(outputByte, row.key...)
+		outputByte, err = codec.EncodeKey(sc, outputByte, row.key...)
 		if err != nil {
 			w.err = errors.Trace(err)
 			return
 		}
-		outputByte, err = codec.EncodeKey(outputByte, row.val...)
+		outputByte, err = codec.EncodeKey(sc, outputByte, row.val...)
 		if err != nil {
 			w.err = errors.Trace(err)
 			return
 		}
-		outputByte, err = codec.EncodeKey(outputByte, types.NewIntDatum(row.handle))
+		outputByte, err = codec.EncodeKey(sc, outputByte, types.NewIntDatum(row.handle))
 		if err != nil {
 			w.err = errors.Trace(err)
 			return

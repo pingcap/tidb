@@ -16,17 +16,19 @@ package tables
 import (
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/google/btree"
 	"github.com/juju/errors"
-	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
+	log "github.com/sirupsen/logrus"
 )
+
+const btreeDegree = 32
 
 type itemKey int64
 
@@ -35,7 +37,7 @@ type itemPair struct {
 	data   []types.Datum
 }
 
-func (r *itemPair) Less(item llrb.Item) bool {
+func (r *itemPair) Less(item btree.Item) bool {
 	switch x := item.(type) {
 	case itemKey:
 		return r.handle < x
@@ -46,7 +48,7 @@ func (r *itemPair) Less(item llrb.Item) bool {
 	return true
 }
 
-func (k itemKey) Less(item llrb.Item) bool {
+func (k itemKey) Less(item btree.Item) bool {
 	switch x := item.(type) {
 	case itemKey:
 		return k < x
@@ -68,7 +70,7 @@ type MemoryTable struct {
 	alloc        autoid.Allocator
 	meta         *model.TableInfo
 
-	tree *llrb.LLRB
+	tree *btree.BTree
 	mu   sync.RWMutex
 }
 
@@ -98,7 +100,7 @@ func newMemoryTable(tableID int64, tableName string, cols []*table.Column, alloc
 		alloc:        alloc,
 		Columns:      cols,
 		recordPrefix: tablecodec.GenTableRecordPrefix(tableID),
-		tree:         llrb.New(),
+		tree:         btree.New(btreeDegree),
 	}
 	return t
 }
@@ -108,7 +110,7 @@ func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, erro
 	var found bool
 	var result int64
 	t.mu.RLock()
-	t.tree.AscendGreaterOrEqual(itemKey(handle), func(item llrb.Item) bool {
+	t.tree.AscendGreaterOrEqual(itemKey(handle), func(item btree.Item) bool {
 		found = true
 		result = int64(item.(*itemPair).handle)
 		return false
@@ -169,7 +171,7 @@ func (t *MemoryTable) FirstKey() kv.Key {
 
 // Truncate drops all data in Memory Table.
 func (t *MemoryTable) Truncate() {
-	t.tree = llrb.New()
+	t.tree = btree.New(btreeDegree)
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -186,7 +188,7 @@ func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData, newDat
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *MemoryTable) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
+func (t *MemoryTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	if t.pkHandleCol != nil {
 		recordID, err = r[t.pkHandleCol.Offset].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
@@ -248,17 +250,17 @@ func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.
-func (t *MemoryTable) AllocAutoID() (int64, error) {
+func (t *MemoryTable) AllocAutoID(ctx context.Context) (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
 // Allocator implements table.Table Allocator interface.
-func (t *MemoryTable) Allocator() autoid.Allocator {
+func (t *MemoryTable) Allocator(ctx context.Context) autoid.Allocator {
 	return t.alloc
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *MemoryTable) RebaseAutoID(newBase int64, isSetStep bool) error {
+func (t *MemoryTable) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
 	return t.alloc.Rebase(t.ID, newBase, isSetStep)
 }
 

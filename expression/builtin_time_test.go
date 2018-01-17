@@ -24,13 +24,13 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
@@ -911,7 +911,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
+func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
 	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
@@ -936,7 +936,7 @@ func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byt
 	return
 }
 
-func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
+func convertToTime(sc *stmtctx.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
 	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
 }
 
@@ -2206,5 +2206,46 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(d.IsNull(), IsTrue)
+	}
+}
+
+func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
+	sv := s.ctx.GetSessionVars()
+	originTZ := sv.GetTimeZone()
+	sv.TimeZone, _ = time.LoadLocation("Asia/Tokyo")
+	defer func() {
+		sv.TimeZone = originTZ
+	}()
+
+	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
+		result, _ := d.GetMysqlTime().Time.GoTime(loc)
+		return result
+	}
+	durationToGoTime := func(d types.Datum, loc *time.Location) time.Time {
+		t, _ := d.GetMysqlDuration().ConvertToTime(mysql.TypeDatetime)
+		result, _ := t.Time.GoTime(sv.TimeZone)
+		return result
+	}
+
+	tests := []struct {
+		method        string
+		Input         []types.Datum
+		convertToTime func(types.Datum, *time.Location) time.Time
+	}{
+		{ast.Sysdate, makeDatums(2), timeToGoTime},
+		{ast.Sysdate, nil, timeToGoTime},
+		{ast.Curdate, nil, timeToGoTime},
+		{ast.CurrentTime, makeDatums(2), durationToGoTime},
+		{ast.CurrentTime, nil, durationToGoTime},
+		{ast.Curtime, nil, durationToGoTime},
+	}
+
+	for _, t := range tests {
+		now := time.Now().In(sv.TimeZone)
+		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
+		d, err := evalBuiltinFunc(f, nil)
+		c.Assert(err, IsNil)
+		result := t.convertToTime(d, sv.TimeZone)
+		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
 	}
 }

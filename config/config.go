@@ -14,9 +14,15 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"io/ioutil"
+	"time"
+
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/logutil"
+	tracing "github.com/uber/jaeger-client-go/config"
 )
 
 // Config contains configuration options.
@@ -30,6 +36,8 @@ type Config struct {
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
+	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
+	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -38,6 +46,9 @@ type Config struct {
 	XProtocol         XProtocol         `toml:"xprotocol" json:"xprotocol"`
 	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 }
 
 // Log is the log section of config.
@@ -62,6 +73,44 @@ type Security struct {
 	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
 	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
 	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+}
+
+// ToTLSConfig generates tls's config based on security section of the config.
+func (s *Security) ToTLSConfig() (*tls.Config, error) {
+	var tlsConfig *tls.Config
+	if len(s.ClusterSSLCA) != 0 {
+		var certificates = make([]tls.Certificate, 0)
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
+			// Load the client certificates from disk
+			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
+			if err != nil {
+				return nil, errors.Errorf("could not load client key pair: %s", err)
+			}
+			certificates = append(certificates, certificate)
+		}
+
+		// Create a certificate pool from the certificate authority
+		certPool := x509.NewCertPool()
+		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
+		if err != nil {
+			return nil, errors.Errorf("could not read ca certificate: %s", err)
+		}
+
+		// Append the certificates from the CA
+		if !certPool.AppendCertsFromPEM(ca) {
+			return nil, errors.New("failed to append ca certs")
+		}
+
+		tlsConfig = &tls.Config{
+			Certificates: certificates,
+			RootCAs:      certPool,
+		}
+	}
+
+	return tlsConfig, nil
 }
 
 // Status is the status section of the config.
@@ -74,6 +123,7 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
+	MaxProcs        int    `toml:"max-procs" json:"max-procs"`
 	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	RetryLimit      int    `toml:"retry-limit" json:"retry-limit"`
 	JoinConcurrency int    `toml:"join-concurrency" json:"join-concurrency"`
@@ -92,24 +142,71 @@ type XProtocol struct {
 
 // PlanCache is the PlanCache section of the config.
 type PlanCache struct {
-	Enabled  bool  `toml:"plan-cache-enabled" json:"plan-cache-enabled"`
-	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`
-	Shards   int64 `toml:"plan-cache-shards" json:"plan-cache-shards"`
+	Enabled  bool  `toml:"enabled" json:"enabled"`
+	Capacity int64 `toml:"capacity" json:"capacity"`
+	Shards   int64 `toml:"shards" json:"shards"`
 }
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
-	Enabled  bool  `toml:"prepared-plan-cache-enabled" json:"prepared-plan-cache-enabled"`
-	Capacity int64 `toml:"prepared-plan-cache-capacity" json:"prepared-plan-cache-capacity"`
+	Enabled  bool  `toml:"enabled" json:"enabled"`
+	Capacity int64 `toml:"capacity" json:"capacity"`
+}
+
+// OpenTracing is the opentracing section of the config.
+type OpenTracing struct {
+	Enable     bool                `toml:"enable" json:"enbale"`
+	Sampler    OpenTracingSampler  `toml:"sampler" json:"sampler"`
+	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
+	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
+}
+
+// OpenTracingSampler is the config for opentracing sampler.
+// See https://godoc.org/github.com/uber/jaeger-client-go/config#SamplerConfig
+type OpenTracingSampler struct {
+	Type                    string        `toml:"type" json:"type"`
+	Param                   float64       `toml:"param" json:"param"`
+	SamplingServerURL       string        `toml:"sampling-server-url" json:"sampling-server-url"`
+	MaxOperations           int           `toml:"max-operations" json:"max-operations"`
+	SamplingRefreshInterval time.Duration `toml:"sampling-refresh-interval" json:"sampling-refresh-interval"`
+}
+
+// OpenTracingReporter is the config for opentracing reporter.
+// See https://godoc.org/github.com/uber/jaeger-client-go/config#ReporterConfig
+type OpenTracingReporter struct {
+	QueueSize           int           `toml:"queue-size" json:"queue-size"`
+	BufferFlushInterval time.Duration `toml:"buffer-flush-interval" json:"buffer-flush-interval"`
+	LogSpans            bool          `toml:"log-spans" json:"log-spans"`
+	LocalAgentHostPort  string        `toml:"local-agent-host-port" json:"local-agent-host-port"`
+}
+
+// ProxyProtocol is the PROXY protocol section of the config.
+type ProxyProtocol struct {
+	// PROXY protocol acceptable client networks.
+	// Empty string means disable PROXY protocol,
+	// * means all networks.
+	Networks string `toml:"networks" json:"networks"`
+	// PROXY protocol header read timeout, Unit is second.
+	HeaderTimeout int `toml:"header-timeout" json:"header-timeout"`
+}
+
+// TiKVClient is the config for tikv client.
+type TiKVClient struct {
+	// GrpcConnectionCount is the max gRPC connections that will be established
+	// with each tikv-server.
+	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
 }
 
 var defaultConf = Config{
-	Host:   "0.0.0.0",
-	Port:   4000,
-	Store:  "mocktikv",
-	Path:   "/tmp/tidb",
-	RunDDL: true,
-	Lease:  "10s",
+	Host:        "0.0.0.0",
+	Port:        4000,
+	Store:       "mocktikv",
+	Path:        "/tmp/tidb",
+	RunDDL:      true,
+	SplitTable:  true,
+	Lease:       "10s",
+	TokenLimit:  1000,
+	EnableChunk: true,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
@@ -136,6 +233,10 @@ var defaultConf = Config{
 		XHost: "0.0.0.0",
 		XPort: 14000,
 	},
+	ProxyProtocol: ProxyProtocol{
+		Networks:      "",
+		HeaderTimeout: 5,
+	},
 	PlanCache: PlanCache{
 		Enabled:  false,
 		Capacity: 2560,
@@ -144,6 +245,17 @@ var defaultConf = Config{
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:  false,
 		Capacity: 100,
+	},
+	OpenTracing: OpenTracing{
+		Enable: false,
+		Sampler: OpenTracingSampler{
+			Type:  "const",
+			Param: 1.0,
+		},
+		Reporter: OpenTracingReporter{},
+	},
+	TiKVClient: TiKVClient{
+		GrpcConnectionCount: 16,
 	},
 }
 
@@ -165,6 +277,9 @@ func GetGlobalConfig() *Config {
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	_, err := toml.DecodeFile(confFile, c)
+	if c.TokenLimit <= 0 {
+		c.TokenLimit = 1000
+	}
 	return errors.Trace(err)
 }
 
@@ -177,4 +292,25 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 		File:             l.File,
 		SlowQueryFile:    l.SlowQueryFile,
 	}
+}
+
+// ToTracingConfig converts *OpenTracing to *tracing.Configuration.
+func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
+	ret := &tracing.Configuration{
+		Disabled:   !t.Enable,
+		RPCMetrics: t.RPCMetrics,
+		Reporter:   &tracing.ReporterConfig{},
+		Sampler:    &tracing.SamplerConfig{},
+	}
+	ret.Reporter.QueueSize = t.Reporter.QueueSize
+	ret.Reporter.BufferFlushInterval = t.Reporter.BufferFlushInterval
+	ret.Reporter.LogSpans = t.Reporter.LogSpans
+	ret.Reporter.LocalAgentHostPort = t.Reporter.LocalAgentHostPort
+
+	ret.Sampler.Type = t.Sampler.Type
+	ret.Sampler.Param = t.Sampler.Param
+	ret.Sampler.SamplingServerURL = t.Sampler.SamplingServerURL
+	ret.Sampler.MaxOperations = t.Sampler.MaxOperations
+	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
+	return ret
 }

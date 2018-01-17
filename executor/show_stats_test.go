@@ -58,7 +58,7 @@ func (s *testSuite) TestShowStatsBuckets(c *C) {
 	tk.MustExec("insert into t values (1,1)")
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_buckets").Sort()
-	result.Check(testkit.Rows("test t idx 1 0 1 1 (1, 1) (1, 1)", "test t a 0 0 1 1 1 1", "test t b 0 0 1 1 1 1"))
+	result.Sort().Check(testkit.Rows("test t a 0 0 1 1 1 1", "test t b 0 0 1 1 1 1", "test t idx 1 0 1 1 (1, 1) (1, 1)"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
 	result.Check(testkit.Rows("test t idx 1 0 1 1 (1, 1) (1, 1)"))
 }

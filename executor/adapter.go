@@ -18,11 +18,11 @@ import (
 	"math"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -30,7 +30,11 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	log "github.com/sirupsen/logrus"
+	goctx "golang.org/x/net/context"
 )
 
 type processinfoSetter interface {
@@ -43,53 +47,88 @@ type recordSet struct {
 	executor    Executor
 	stmt        *ExecStmt
 	processinfo processinfoSetter
-	err         error
+	lastErr     error
+	txnStartTS  uint64
 }
 
-func (a *recordSet) Fields() ([]*ast.ResultField, error) {
+func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		for _, col := range a.executor.Schema().Columns {
-			dbName := col.DBName.O
-			if dbName == "" && col.TblName.L != "" {
-				dbName = a.stmt.ctx.GetSessionVars().CurrentDB
-			}
-			rf := &ast.ResultField{
-				ColumnAsName: col.ColName,
-				TableAsName:  col.TblName,
-				DBName:       model.NewCIStr(dbName),
-				Table:        &model.TableInfo{Name: col.OrigTblName},
-				Column: &model.ColumnInfo{
-					FieldType: *col.RetType,
-					Name:      col.ColName,
-				},
-			}
-			a.fields = append(a.fields, rf)
-		}
+		a.fields = schema2ResultFields(a.executor.Schema(), a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
-	return a.fields, nil
+	return a.fields
 }
 
-func (a *recordSet) Next() (*ast.Row, error) {
-	row, err := a.executor.Next()
+func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*ast.ResultField) {
+	rfs = make([]*ast.ResultField, 0, schema.Len())
+	for _, col := range schema.Columns {
+		dbName := col.DBName.O
+		if dbName == "" && col.TblName.L != "" {
+			dbName = defaultDB
+		}
+		rf := &ast.ResultField{
+			ColumnAsName: col.ColName,
+			TableAsName:  col.TblName,
+			DBName:       model.NewCIStr(dbName),
+			Table:        &model.TableInfo{Name: col.OrigTblName},
+			Column: &model.ColumnInfo{
+				FieldType: *col.RetType,
+				Name:      col.ColName,
+			},
+		}
+		rfs = append(rfs, rf)
+	}
+	return rfs
+}
+
+func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
+	row, err := a.executor.Next(goCtx)
 	if err != nil {
+		a.lastErr = err
 		return nil, errors.Trace(err)
 	}
 	if row == nil {
 		if a.stmt != nil {
-			a.stmt.ctx.GetSessionVars().LastFoundRows = a.stmt.ctx.GetSessionVars().StmtCtx.FoundRows()
+			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
 		}
 		return nil, nil
 	}
 
 	if a.stmt != nil {
-		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
+		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
-	return &ast.Row{Data: row}, nil
+	return row, nil
+}
+
+func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	err := a.executor.NextChunk(goCtx, chk)
+	if err != nil {
+		a.lastErr = err
+		return errors.Trace(err)
+	}
+	numRows := chk.NumRows()
+	if numRows == 0 {
+		if a.stmt != nil {
+			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
+		}
+		return nil
+	}
+	if a.stmt != nil {
+		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
+	}
+	return nil
+}
+
+func (a *recordSet) NewChunk() *chunk.Chunk {
+	return chunk.NewChunk(a.executor.retTypes())
+}
+
+func (a *recordSet) SupportChunk() bool {
+	return a.executor.supportChunk()
 }
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.logSlowQuery()
+	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
 	if a.processinfo != nil {
 		a.processinfo.SetProcessInfo("")
 	}
@@ -109,7 +148,9 @@ type ExecStmt struct {
 	// Text represents the origin query text.
 	Text string
 
-	ctx            context.Context
+	StmtNode ast.StmtNode
+
+	Ctx            context.Context
 	startTime      time.Time
 	isPreparedStmt bool
 }
@@ -124,14 +165,37 @@ func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
 
+// IsReadOnly implements ast.Statement interface.
+func (a *ExecStmt) IsReadOnly() bool {
+	readOnlyCheckStmt := a.StmtNode
+	if checkPlan, ok := a.Plan.(*plan.Execute); ok {
+		readOnlyCheckStmt = checkPlan.Stmt
+	}
+	return ast.IsReadOnly(readOnlyCheckStmt)
+}
+
+// RebuildPlan implements ast.Statement interface.
+func (a *ExecStmt) RebuildPlan() error {
+	is := GetInfoSchema(a.Ctx)
+	a.InfoSchema = is
+	if err := plan.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
+		return errors.Trace(err)
+	}
+	p, err := plan.Optimize(a.Ctx, a.StmtNode, is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	a.Plan = p
+	return nil
+}
+
 // Exec implements the ast.Statement Exec interface.
 // This function builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
-func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
+func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
-	a.ctx = ctx
-
+	ctx := a.Ctx
 	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
 		oriStats := ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency]
 		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
@@ -154,7 +218,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if err := e.Open(); err != nil {
+	if err := e.Open(goCtx); err != nil {
+		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
 
@@ -171,19 +236,25 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql)
 	}
-	// Fields or Schema are only used for statements that return result set.
+	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(e, ctx, pi)
+		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
+	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
+		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+		// the Projection has two expressions and two columns in the schema, but we should
+		// not return the result of the two expressions.
+		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
 	}
 
 	return &recordSet{
 		executor:    e,
 		stmt:        a,
 		processinfo: pi,
+		txnStartTS:  ctx.Txn().StartTS(),
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -194,26 +265,42 @@ func (a *ExecStmt) handleNoDelayExecutor(e Executor, ctx context.Context, pi pro
 		}
 	}
 
+	var err error
 	defer func() {
 		if pi != nil {
 			pi.SetProcessInfo("")
 		}
 		terror.Log(errors.Trace(e.Close()))
-		a.logSlowQuery()
+		txnTS := uint64(0)
+		if ctx.Txn() != nil {
+			txnTS = ctx.Txn().StartTS()
+		}
+		a.logSlowQuery(txnTS, err == nil)
 	}()
-	for {
-		row, err := e.Next()
+
+	if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
+		err = e.NextChunk(goCtx, e.newChunk())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Even though there isn't any result set, the row is still used to indicate if there is
-		// more work to do.
-		// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
-		// There is no more rows to update.
-		if row == nil {
-			return nil, nil
+	} else {
+		for {
+			var row Row
+			row, err = e.Next(goCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// Even though there isn't any result set, the row is still used to indicate if there is
+			// more work to do.
+			// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
+			// There is no more rows to update.
+			if row == nil {
+				return nil, nil
+			}
 		}
 	}
+
+	return nil, nil
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
@@ -262,32 +349,35 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.Text = executorExec.Stmt.Text()
+		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true
-		a.Plan = executorExec.Plan
-		e = executorExec.StmtExec
+		a.Plan = executorExec.plan
+		e = executorExec.stmtExec
 	}
 	return e, nil
 }
 
-func (a *ExecStmt) logSlowQuery() {
+func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
-	connID := a.ctx.GetSessionVars().ConnectionID
+	connID := a.Ctx.GetSessionVars().ConnectionID
+	currentDB := a.Ctx.GetSessionVars().CurrentDB
 	logEntry := log.NewEntry(logutil.SlowQueryLogger)
 	logEntry.Data = log.Fields{
 		"connectionId": connID,
 		"costTime":     costTime,
+		"database":     currentDB,
 		"sql":          sql,
+		"txnStartTS":   txnTS,
 	}
 	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
-		logEntry.WithField("type", "query").Debugf("query")
+		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
 	} else {
-		logEntry.WithField("type", "slow-query").Warnf("slow-query")
+		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")
 	}
 }
 
@@ -307,7 +397,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 	}
 
 	// check plan
-	if proj, ok := p.(*plan.Projection); ok {
+	if proj, ok := p.(*plan.PhysicalProjection); ok {
 		if len(proj.Children()) != 1 {
 			return false
 		}
@@ -315,19 +405,15 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 	}
 
 	switch v := p.(type) {
-	case *plan.PhysicalIndexScan:
-		return v.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	case *plan.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	case *plan.PhysicalIndexLookUpReader:
 		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
-	case *plan.PhysicalTableScan:
-		return len(v.Ranges) == 1 && v.Ranges[0].IsPoint()
 	case *plan.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
 	default:
 		return false
 	}

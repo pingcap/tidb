@@ -17,15 +17,13 @@ import (
 	"bytes"
 	"fmt"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -112,7 +110,7 @@ func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of Constant.
-func (c *Constant) EvalInt(_ types.Row, sc *variable.StatementContext) (int64, bool, error) {
+func (c *Constant) EvalInt(_ types.Row, sc *stmtctx.StatementContext) (int64, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -139,7 +137,7 @@ func (c *Constant) EvalInt(_ types.Row, sc *variable.StatementContext) (int64, b
 }
 
 // EvalReal returns real representation of Constant.
-func (c *Constant) EvalReal(_ types.Row, sc *variable.StatementContext) (float64, bool, error) {
+func (c *Constant) EvalReal(_ types.Row, sc *stmtctx.StatementContext) (float64, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -166,7 +164,7 @@ func (c *Constant) EvalReal(_ types.Row, sc *variable.StatementContext) (float64
 }
 
 // EvalString returns string representation of Constant.
-func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (string, bool, error) {
+func (c *Constant) EvalString(_ types.Row, sc *stmtctx.StatementContext) (string, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -190,7 +188,7 @@ func (c *Constant) EvalString(_ types.Row, sc *variable.StatementContext) (strin
 }
 
 // EvalDecimal returns decimal representation of Constant.
-func (c *Constant) EvalDecimal(_ types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+func (c *Constant) EvalDecimal(_ types.Row, sc *stmtctx.StatementContext) (*types.MyDecimal, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -210,7 +208,7 @@ func (c *Constant) EvalDecimal(_ types.Row, sc *variable.StatementContext) (*typ
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
+func (c *Constant) EvalTime(_ types.Row, sc *stmtctx.StatementContext) (val types.Time, isNull bool, err error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -237,7 +235,7 @@ func (c *Constant) EvalTime(_ types.Row, sc *variable.StatementContext) (val typ
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(_ types.Row, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
+func (c *Constant) EvalDuration(_ types.Row, sc *stmtctx.StatementContext) (val types.Duration, isNull bool, err error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -264,24 +262,25 @@ func (c *Constant) EvalDuration(_ types.Row, sc *variable.StatementContext) (val
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(_ types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
+func (c *Constant) EvalJSON(_ types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return json.JSON{}, true, errors.Trace(err)
+			return json.BinaryJSON{}, true, errors.Trace(err)
 		}
 		if dt.IsNull() {
-			return json.JSON{}, true, nil
+			return json.BinaryJSON{}, true, nil
 		}
 		val, err := dt.ConvertTo(sc, types.NewFieldType(mysql.TypeJSON))
 		if err != nil {
-			return json.JSON{}, true, errors.Trace(err)
+			return json.BinaryJSON{}, true, errors.Trace(err)
 		}
+		fmt.Println("const eval json", val.GetMysqlJSON().String())
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
 		c.GetType().Tp = mysql.TypeJSON
 	} else {
 		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return json.JSON{}, true, nil
+			return json.BinaryJSON{}, true, nil
 		}
 	}
 	return c.Value.GetMysqlJSON(), false, nil
@@ -313,17 +312,6 @@ func (c *Constant) IsCorrelated() bool {
 // Decorrelate implements Expression interface.
 func (c *Constant) Decorrelate(_ *Schema) Expression {
 	return c
-}
-
-// HashCode implements Expression interface.
-func (c *Constant) HashCode() []byte {
-	_, err := c.Eval(nil)
-	if err != nil {
-		terror.Log(errors.Trace(err))
-	}
-	bytes, err := codec.EncodeValue(nil, c.Value)
-	terror.Log(errors.Trace(err))
-	return bytes
 }
 
 // ResolveIndices implements Expression interface.

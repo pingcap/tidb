@@ -14,13 +14,13 @@
 package expression
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
+	log "github.com/sirupsen/logrus"
 )
 
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
@@ -173,7 +173,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		}
 		col, con := s.validPropagateCond(cond, eqFuncNameMap)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
-		ok := false
+		var ok bool
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
 				value, err := EvalBool([]Expression{con}, nil, s.ctx)
@@ -214,7 +214,7 @@ func (s *propagateConstantSolver) tryToUpdateEQList(col *Column, con *Constant) 
 }
 
 func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
-	var cols []*Column
+	cols := make([]*Column, 0, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
 		cols = append(cols, ExtractColumns(cond)...)

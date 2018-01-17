@@ -20,9 +20,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -37,8 +37,7 @@ type testSuite struct {
 
 func (s *testSuite) TestMeta(c *C) {
 	defer testleak.AfterTest(c)()
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -144,7 +143,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.DropTable(1, 2, true)
+	err = t.DropTable(1, tbInfo2.ID, true)
 	c.Assert(err, IsNil)
 	// Make sure auto id key-value entry is gone.
 	n, err = t.GetAutoTableID(1, 2)
@@ -164,22 +163,25 @@ func (s *testSuite) TestMeta(c *C) {
 	// Create table.
 	err = t.CreateTable(1, tbInfo100)
 	c.Assert(err, IsNil)
-	// Update auto id.
-	n, err = t.GenAutoTableID(1, tid, 10)
+	// Update auto ID.
+	currentDBID := int64(1)
+	n, err = t.GenAutoTableID(currentDBID, tid, 10)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
-	n, err = t.GetAutoTableID(1, tid)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
-	// Drop table without touch auto id key-value entry.
-	err = t.DropTable(1, 100, false)
-	c.Assert(err, IsNil)
-	// Make sure that auto id key-value entry is still there.
-	n, err = t.GetAutoTableID(1, tid)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
+	// Fail to update auto ID.
+	// The table ID doesn't exist.
+	nonExistentID := int64(1234)
+	_, err = t.GenAutoTableID(currentDBID, nonExistentID, 10)
+	c.Assert(err, NotNil)
+	// Fail to update auto ID.
+	// The current database ID doesn't exist.
+	currentDBID = nonExistentID
+	_, err = t.GenAutoTableID(currentDBID, tid, 10)
+	c.Assert(err, NotNil)
 
 	err = t.DropDatabase(1)
+	c.Assert(err, IsNil)
+	err = t.DropDatabase(currentDBID)
 	c.Assert(err, IsNil)
 
 	dbs, err = t.ListDatabases()
@@ -217,14 +219,13 @@ func (s *testSuite) TestMeta(c *C) {
 	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
 	c.Assert(readDiff, DeepEquals, schemaDiff)
 
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestSnapshot(c *C) {
 	defer testleak.AfterTest(c)()
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -233,7 +234,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	m.GenGlobalID()
 	n, _ := m.GetGlobalID()
 	c.Assert(n, Equals, int64(1))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	ver1, _ := store.CurrentVersion()
 	time.Sleep(time.Millisecond)
@@ -242,7 +243,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	m.GenGlobalID()
 	n, _ = m.GetGlobalID()
 	c.Assert(n, Equals, int64(2))
-	txn.Commit()
+	txn.Commit(goctx.Background())
 
 	snapshot, _ := store.GetSnapshot(ver1)
 	snapMeta := meta.NewSnapshotMeta(snapshot)
@@ -254,8 +255,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 
 func (s *testSuite) TestDDL(c *C) {
 	defer testleak.AfterTest(c)()
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -280,7 +280,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 	job.ID = 2
-	err = t.UpdateDDLJob(0, job)
+	err = t.UpdateDDLJob(0, job, true)
 	c.Assert(err, IsNil)
 
 	err = t.UpdateDDLReorgHandle(job, 1)
@@ -311,6 +311,6 @@ func (s *testSuite) TestDDL(c *C) {
 		lastID = job.ID
 	}
 
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }

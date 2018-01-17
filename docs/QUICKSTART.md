@@ -27,7 +27,7 @@ Read the documents for [binary deployment](https://github.com/pingcap/docs/blob/
 
 #### __Pre-requirement__
 
-Go environment. Currently a 64-bit version of go >= 1.8 is required.
+Go environment. Currently a 64-bit version of go >= 1.9 is required.
 ```
 git clone https://github.com/pingcap/tidb.git $GOPATH/src/github.com/pingcap/tidb
 cd $GOPATH/src/github.com/pingcap/tidb

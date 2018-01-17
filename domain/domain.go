@@ -14,12 +14,12 @@
 package domain
 
 import (
+	"crypto/tls"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -317,9 +318,9 @@ func (do *Domain) Reload() error {
 }
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
+	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
-	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 	syncer := do.ddl.SchemaSyncer()
@@ -340,7 +341,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
 			do.SchemaValidator.Stop()
-			err := syncer.Restart(goctx.Background())
+			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
@@ -352,9 +353,33 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	}
 }
 
+// mustRestartSyncer tries to restart the SchemaSyncer.
+// It returns until it's successful or the domain is stoped.
+func (do *Domain) mustRestartSyncer() error {
+	ctx := goctx.Background()
+	syncer := do.ddl.SchemaSyncer()
+
+	for {
+		err := syncer.Restart(ctx)
+		if err == nil {
+			return nil
+		}
+		// If the domain has stopped, we return an error immediately.
+		select {
+		case <-do.exit:
+			return errors.Trace(err)
+		default:
+		}
+		time.Sleep(time.Second)
+		log.Infof("[ddl] restart the schema syncer failed %v", err)
+	}
+}
+
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
-	terror.Log(errors.Trace(do.ddl.Stop()))
+	if do.ddl != nil {
+		terror.Log(errors.Trace(do.ddl.Stop()))
+	}
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -405,70 +430,77 @@ func (m *MockFailure) getValue() bool {
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
 	EtcdAddrs() []string
+	TLSConfig() *tls.Config
 	StartGCWorker() error
 }
 
+const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
+
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory, sysFactory func(*Domain) (pools.Resource, error)) (d *Domain, err error) {
-	capacity := 200                // capacity of the sysSessionPool size
-	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
-	d = &Domain{
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) *Domain {
+	capacity := 200 // capacity of the sysSessionPool size
+	return &Domain{
 		store:           store,
 		SchemaValidator: NewSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, idleTimeout),
+		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
 		statsLease:      statsLease,
+		infoHandle:      infoschema.NewHandle(store),
 	}
+}
 
-	if ebd, ok := store.(EtcdBackend); ok {
+// Init initializes a domain.
+func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
+	if ebd, ok := do.store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
-			var cli *clientv3.Client
-			cli, err = clientv3.New(clientv3.Config{
+			cli, err := clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
 				},
+				TLS: ebd.TLSConfig(),
 			})
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
-			d.etcdClient = cli
+			do.etcdClient = cli
 		}
 	}
 
-	d.infoHandle = infoschema.NewHandle(d.store)
-	ctx := goctx.Background()
-	callback := &ddlCallback{do: d}
-
 	// TODO: Here we create new sessions with sysFac in DDL,
-	// which will use `d` as Domain instead of call `domap.Get`.
+	// which will use `do` as Domain instead of call `domap.Get`.
 	// That's because `domap.Get` requires a lock, but before
 	// we initialize Domain finish, we can't require that again.
 	// After we remove the lazy logic of creating Domain, we
 	// can simplify code here.
 	sysFac := func() (pools.Resource, error) {
-		return sysFactory(d)
+		return sysFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, idleTimeout)
-	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease, sysCtxPool)
+	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
+	ctx := goctx.Background()
+	callback := &ddlCallback{do: do}
+	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
 
-	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
-		return nil, errors.Trace(err)
+	err := do.ddl.SchemaSyncer().Init(ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	if err = d.Reload(); err != nil {
-		return nil, errors.Trace(err)
+	err = do.Reload()
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
+		do.wg.Add(1)
 		// Local store needs to get the change information for every DDL state in each session.
-		go d.loadSchemaInLoop(ddlLease)
+		go do.loadSchemaInLoop(ddlLease)
 	}
 
-	return d, nil
+	return nil
 }
 
 // SysSessionPool returns the system session pool.
@@ -551,30 +583,55 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
-	err := statsHandle.Update(do.InfoSchema())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	lease := do.statsLease
-	if lease <= 0 {
+	if do.statsLease <= 0 {
 		return nil
 	}
+	owner := do.newStatsOwner()
 	do.wg.Add(1)
-	go do.updateStatsWorker(ctx, lease)
+	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
 		do.wg.Add(1)
-		go do.autoAnalyzeWorker(lease)
+		go do.autoAnalyzeWorker(owner)
 	}
 	return nil
 }
 
-func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
+func (do *Domain) newStatsOwner() owner.Manager {
+	id := do.ddl.OwnerManager().ID()
+	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+	var statsOwner owner.Manager
+	if do.etcdClient == nil {
+		statsOwner = owner.NewMockManager(id, cancelFunc)
+	} else {
+		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
+	}
+	// TODO: Need to do something when err is not nil.
+	err := statsOwner.CampaignOwner(cancelCtx)
+	if err != nil {
+		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+	}
+	return statsOwner
+}
+
+func (do *Domain) updateStatsWorker(ctx context.Context, owner owner.Manager) {
+	lease := do.statsLease
 	deltaUpdateDuration := lease * 5
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
 	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
 	defer deltaUpdateTicker.Stop()
+	loadHistogramTicker := time.NewTicker(lease)
+	defer loadHistogramTicker.Stop()
+	gcStatsTicker := time.NewTicker(100 * lease)
+	defer gcStatsTicker.Stop()
 	statsHandle := do.StatsHandle()
+	t := time.Now()
+	err := statsHandle.InitStats(do.InfoSchema())
+	if err != nil {
+		log.Error("[stats] init stats info failed: ", errors.ErrorStack(err))
+	} else {
+		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
+	}
 	for {
 		select {
 		case <-loadTicker.C:
@@ -592,39 +649,42 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 				log.Error("[stats] handle ddl event fail: ", errors.ErrorStack(err))
 			}
 		case t := <-statsHandle.AnalyzeResultCh():
-			for _, hg := range t.Hist {
-				err := hg.SaveToStorage(ctx, t.TableID, t.Count, t.IsIndex)
+			for i, hg := range t.Hist {
+				err := statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
 				if err != nil {
 					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
 			}
 		case <-deltaUpdateTicker.C:
-			statsHandle.DumpStatsDeltaToKV()
+			err := statsHandle.DumpStatsDeltaToKV()
+			if err != nil {
+				log.Error("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+			}
+		case <-loadHistogramTicker.C:
+			err := statsHandle.LoadNeededHistograms()
+			if err != nil {
+				log.Error("[stats] load histograms fail: ", errors.ErrorStack(err))
+			}
+		case <-gcStatsTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			if err != nil {
+				log.Error("[stats] gc stats fail: ", errors.ErrorStack(err))
+			}
 		}
 	}
 }
 
-func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
-	id := do.ddl.OwnerManager().ID()
-	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
-	var statsOwner owner.Manager
-	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(id, cancelFunc)
-	} else {
-		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
-	}
-	// TODO: Need to do something when err is not nil.
-	err := statsOwner.CampaignOwner(cancelCtx)
-	if err != nil {
-		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
-	}
+func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	statsHandle := do.StatsHandle()
-	analyzeTicker := time.NewTicker(lease)
+	analyzeTicker := time.NewTicker(do.statsLease)
 	defer analyzeTicker.Stop()
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if statsOwner.IsOwner() {
+			if owner.IsOwner() {
 				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
 				if err != nil {
 					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
@@ -643,8 +703,8 @@ const privilegeKey = "/tidb/privilege"
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
 	if do.etcdClient != nil {
-		kv := do.etcdClient.KV
-		_, err := kv.Put(goctx.Background(), privilegeKey, "")
+		row := do.etcdClient.KV
+		_, err := row.Put(goctx.Background(), privilegeKey, "")
 		if err != nil {
 			log.Warn("notify update privilege failed:", err)
 		}

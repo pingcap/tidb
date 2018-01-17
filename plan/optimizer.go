@@ -31,6 +31,7 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagMaxMinEliminate
 	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
@@ -41,6 +42,7 @@ const (
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&maxMinEliminator{},
 	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
@@ -51,18 +53,17 @@ var optRuleList = []logicalOptRule{
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(LogicalPlan, context.Context, *idAllocator) (LogicalPlan, error)
+	optimize(LogicalPlan, context.Context) (LogicalPlan, error)
 }
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
-	allocator := new(idAllocator)
+	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: allocator,
 	}
 	p := builder.build(node)
 	if builder.err != nil {
@@ -78,18 +79,22 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic, ctx, allocator)
+		return doOptimize(builder.optFlag, logic, ctx)
+	}
+	if execPlan, ok := p.(*Execute); ok {
+		err := execPlan.optimizePreparedPlan(ctx, is)
+		return p, errors.Trace(err)
 	}
 	return p, nil
 }
 
-// BuildLogicalPlan is exported and only used for test.
+// BuildLogicalPlan used to build logical plan from ast.Node.
 func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: new(idAllocator),
 	}
 	p := builder.build(node)
 	if builder.err != nil {
@@ -107,20 +112,15 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
-func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
-	logic, err := logicalOptimize(flag, logic, ctx, allocator)
+func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (PhysicalPlan, error) {
+	logic, err := logicalOptimize(flag, logic, ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	var physical PhysicalPlan
-	if UseDAGPlanBuilder(ctx) {
-		physical, err = dagPhysicalOptimize(logic)
-	} else {
-		physical, err = physicalOptimize(flag, logic, allocator)
-	}
+	physical, err := dagPhysicalOptimize(logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -128,7 +128,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	return finalPlan, nil
 }
 
-func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
+func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (LogicalPlan, error) {
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -137,7 +137,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 		if flag&(1<<uint(i)) == 0 {
 			continue
 		}
-		logic, err = rule.optimize(logic, ctx, alloc)
+		logic, err = rule.optimize(logic, ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -147,27 +147,13 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 
 func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
-	logic.prepareStatsProfile()
-	t, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+	logic.deriveStats()
+	t, err := logic.convert2PhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	p := t.plan()
-	rebuildSchema(p)
 	p.ResolveIndices()
-	return p, nil
-}
-
-func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
-	logic.ResolveIndices()
-	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	p := info.p
-	if flag&(flagDecorrelate) > 0 {
-		addCachePlan(p, allocator)
-	}
 	return p, nil
 }
 
@@ -183,30 +169,23 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
-// PrepareStmt prepares a raw statement parsed from parser.
-// The statement must be prepared before it can be passed to optimize function.
-// We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
-func PrepareStmt(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	if err := Preprocess(node, is, ctx); err != nil {
-		return errors.Trace(err)
-	}
-	if err := Validate(node, true); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 // Optimizer error codes.
 const (
 	CodeOperandColumns      terror.ErrCode = 1
-	CodeInvalidWildCard     terror.ErrCode = 3
-	CodeUnsupported         terror.ErrCode = 4
-	CodeInvalidGroupFuncUse terror.ErrCode = 5
-	CodeIllegalReference    terror.ErrCode = 6
+	CodeInvalidWildCard                    = 3
+	CodeUnsupported                        = 4
+	CodeInvalidGroupFuncUse                = 5
+	CodeStmtNotFound                       = 7
+	CodeWrongParamCount                    = 8
+	CodeSchemaChanged                      = 9
 
 	// MySQL error code.
-	CodeNoDB                 terror.ErrCode = mysql.ErrNoDB
-	CodeUnknownExplainFormat terror.ErrCode = mysql.ErrUnknownExplainFormat
+	CodeIllegalReference     = mysql.ErrIllegalReference
+	CodeNoDB                 = mysql.ErrNoDB
+	CodeUnknownExplainFormat = mysql.ErrUnknownExplainFormat
+	CodeWrongGroupField      = mysql.ErrWrongGroupField
+	CodeDupFieldName         = mysql.ErrDupFieldName
+	CodeNonUpdatableTable    = mysql.ErrNonUpdatableTable
 )
 
 // Optimizer base errors.
@@ -215,9 +194,15 @@ var (
 	ErrInvalidWildCard             = terror.ClassOptimizer.New(CodeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
-	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
+	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, mysql.MySQLErrName[mysql.ErrIllegalReference])
 	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
 	ErrUnknownExplainFormat        = terror.ClassOptimizer.New(CodeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
+	ErrStmtNotFound                = terror.ClassOptimizer.New(CodeStmtNotFound, "Prepared statement not found")
+	ErrWrongParamCount             = terror.ClassOptimizer.New(CodeWrongParamCount, "Wrong parameter count")
+	ErrSchemaChanged               = terror.ClassOptimizer.New(CodeSchemaChanged, "Schema has changed")
+	ErrWrongGroupField             = terror.ClassOptimizer.New(CodeWrongGroupField, mysql.MySQLErrName[mysql.ErrWrongGroupField])
+	ErrDupFieldName                = terror.ClassOptimizer.New(CodeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
+	ErrNonUpdatableTable           = terror.ClassOptimizer.New(CodeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 )
 
 func init() {
@@ -228,6 +213,9 @@ func init() {
 		CodeIllegalReference:     mysql.ErrIllegalReference,
 		CodeNoDB:                 mysql.ErrNoDB,
 		CodeUnknownExplainFormat: mysql.ErrUnknownExplainFormat,
+		CodeWrongGroupField:      mysql.ErrWrongGroupField,
+		CodeDupFieldName:         mysql.ErrDupFieldName,
+		CodeNonUpdatableTable:    mysql.ErrUnknownTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 	expression.EvalAstExpr = evalAstExpr

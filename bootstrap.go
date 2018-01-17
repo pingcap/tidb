@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -33,14 +32,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/types"
+	log "github.com/sirupsen/logrus"
+	goctx "golang.org/x/net/context"
 )
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	CreateUserTable = `CREATE TABLE if not exists mysql.user (
 		Host				CHAR(64),
-		User				CHAR(16),
+		User				CHAR(32),
 		Password			CHAR(41),
 		Select_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -159,6 +159,7 @@ const (
 		null_count bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
+		cm_sketch blob,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
 
@@ -226,26 +227,28 @@ const (
 	version13 = 13
 	version14 = 14
 	version15 = 15
+	version16 = 16
+	version17 = 17
 )
 
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
-	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
+	_, err := s.Execute(goctx.Background(), fmt.Sprintf("USE %s;", mysql.SystemDB))
 	if err != nil && infoschema.ErrDatabaseNotExists.NotEqual(err) {
 		log.Fatal(err)
 	}
 	// Check bootstrapped variable value in TiDB table.
-	d, err := getTiDBVar(s, bootstrappedVar)
+	sVal, _, err := getTiDBVar(s, bootstrappedVar)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return false, nil
 		}
 		return false, errors.Trace(err)
 	}
-	isBootstrapped := d.GetString() == bootstrappedVarTrue
+	isBootstrapped := sVal == bootstrappedVarTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
-		if err = s.CommitTxn(); err != nil {
+		if err = s.CommitTxn(goctx.Background()); err != nil {
 			return false, errors.Trace(err)
 		}
 	}
@@ -254,23 +257,27 @@ func checkBootstrapped(s Session) (bool, error) {
 
 // getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
-func getTiDBVar(s Session, name string) (types.Datum, error) {
+func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, name)
-	rs, err := s.Execute(sql)
+	goCtx := goctx.Background()
+	rs, err := s.Execute(goCtx, sql)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return "", true, errors.Trace(err)
 	}
 	if len(rs) != 1 {
-		return types.Datum{}, errors.New("Wrong number of Recordset")
+		return "", true, errors.New("Wrong number of Recordset")
 	}
 	r := rs[0]
 	defer terror.Call(r.Close)
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	if err != nil || row == nil {
-		return types.Datum{}, errors.Trace(err)
+		return "", true, errors.Trace(err)
 	}
-	return row.Data[0], nil
+	if row.IsNull(0) {
+		return "", true, nil
+	}
+	return row.GetString(0), false, nil
 }
 
 // upgrade function  will do some upgrade works, when the system is boostrapped by low version TiDB server
@@ -338,8 +345,16 @@ func upgrade(s Session) {
 		upgradeToVer15(s)
 	}
 
+	if ver < version16 {
+		upgradeToVer16(s)
+	}
+
+	if ver < version17 {
+		upgradeToVer17(s)
+	}
+
 	updateBootstrapVer(s)
-	_, err = s.Execute("COMMIT")
+	_, err = s.Execute(goctx.Background(), "COMMIT")
 
 	if err != nil {
 		time.Sleep(1 * time.Second)
@@ -355,7 +370,6 @@ func upgrade(s Session) {
 		log.Errorf("[Upgrade] upgrade from %d to %d error", ver, currentBootstrapVersion)
 		log.Fatal(err)
 	}
-	return
 }
 
 // upgradeToVer2 updates to version 2.
@@ -406,7 +420,7 @@ func upgradeToVer7(s Session) {
 
 func upgradeToVer8(s Session) {
 	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
-	if _, err := s.Execute("SELECT `Process_priv` from mysql.user limit 0"); err == nil {
+	if _, err := s.Execute(goctx.Background(), "SELECT `Process_priv` from mysql.user limit 0"); err == nil {
 		return
 	}
 	upgradeToVer7(s)
@@ -419,7 +433,7 @@ func upgradeToVer9(s Session) {
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	_, err := s.Execute(sql)
+	_, err := s.Execute(goctx.Background(), sql)
 	for _, ignorableErr := range ignorableErrs {
 		if terror.ErrorEqual(err, ignorableErr) {
 			return
@@ -439,7 +453,7 @@ func upgradeToVer10(s Session) {
 }
 
 func upgradeToVer11(s Session) {
-	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
+	_, err := s.Execute(goctx.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
 	if err != nil {
 		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 			return
@@ -450,25 +464,26 @@ func upgradeToVer11(s Session) {
 }
 
 func upgradeToVer12(s Session) {
-	_, err := s.Execute("BEGIN")
+	goCtx := goctx.Background()
+	_, err := s.Execute(goCtx, "BEGIN")
 	terror.MustNil(err)
 	sql := "SELECT user, host, password FROM mysql.user WHERE password != ''"
-	rs, err := s.Execute(sql)
+	rs, err := s.Execute(goCtx, sql)
 	terror.MustNil(err)
 	r := rs[0]
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
-	row, err := r.Next()
+	row, err := r.Next(goCtx)
 	for err == nil && row != nil {
-		user := row.Data[0].GetString()
-		host := row.Data[1].GetString()
-		pass := row.Data[2].GetString()
+		user := row.GetString(0)
+		host := row.GetString(1)
+		pass := row.GetString(2)
 		var newPass string
 		newPass, err = oldPasswordUpgrade(pass)
 		terror.MustNil(err)
 		updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 		sqls = append(sqls, updateSQL)
-		row, err = r.Next()
+		row, err = r.Next(goCtx)
 	}
 	terror.MustNil(err)
 
@@ -493,8 +508,9 @@ func upgradeToVer13(s Session) {
 		"ALTER TABLE mysql.user ADD COLUMN `Alter_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
 		"ALTER TABLE mysql.user ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`",
 	}
+	goCtx := goctx.Background()
 	for _, sql := range sqls {
-		_, err := s.Execute(sql)
+		_, err := s.Execute(goCtx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -517,8 +533,9 @@ func upgradeToVer14(s Session) {
 		"ALTER TABLE mysql.db ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
 		"ALTER TABLE mysql.db ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Event_priv`",
 	}
+	goCtx := goctx.Background()
 	for _, sql := range sqls {
-		_, err := s.Execute(sql)
+		_, err := s.Execute(goCtx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -530,10 +547,18 @@ func upgradeToVer14(s Session) {
 
 func upgradeToVer15(s Session) {
 	var err error
-	_, err = s.Execute(CreateGCDeleteRangeTable)
+	_, err = s.Execute(goctx.Background(), CreateGCDeleteRangeTable)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func upgradeToVer16(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `cm_sketch` blob", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer17(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY User CHAR(32)")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -546,14 +571,14 @@ func updateBootstrapVer(s Session) {
 
 // getBootstrapVersion gets bootstrap version from mysql.tidb table;
 func getBootstrapVersion(s Session) (int64, error) {
-	d, err := getTiDBVar(s, tidbServerVersionVar)
+	sVal, isNull, err := getTiDBVar(s, tidbServerVersionVar)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if d.IsNull() {
+	if isNull {
 		return 0, nil
 	}
-	return strconv.ParseInt(d.GetString(), 10, 64)
+	return strconv.ParseInt(sVal, 10, 64)
 }
 
 // doDDLWorks executes DDL statements in bootstrap stage.
@@ -615,7 +640,7 @@ func doDMLWorks(s Session) {
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion)
 	mustExecute(s, sql)
 
-	_, err := s.Execute("COMMIT")
+	_, err := s.Execute(goctx.Background(), "COMMIT")
 	if err != nil {
 		time.Sleep(1 * time.Second)
 		// Check if TiDB is already bootstrapped.
@@ -631,7 +656,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(sql)
+	_, err := s.Execute(goctx.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		log.Fatal(err)

@@ -2,16 +2,17 @@ package aggregation
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // distinctChecker stores existing keys and checks if given data is distinct.
 type distinctChecker struct {
 	existingKeys *mvmap.MVMap
-	buf          []byte
+	key          []byte
+	vals         [][]byte
 }
 
 // createDistinctChecker creates a new distinct checker.
@@ -22,23 +23,23 @@ func createDistinctChecker() *distinctChecker {
 }
 
 // Check checks if values is distinct.
-func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
-	d.buf = d.buf[:0]
+func (d *distinctChecker) Check(sc *stmtctx.StatementContext, values []types.Datum) (bool, error) {
+	d.key = d.key[:0]
 	var err error
-	d.buf, err = codec.EncodeValue(d.buf, values...)
+	d.key, err = codec.EncodeValue(sc, d.key, values...)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	v := d.existingKeys.Get(d.buf)
-	if v != nil {
+	d.vals = d.existingKeys.Get(d.key, d.vals[:0])
+	if len(d.vals) > 0 {
 		return false, nil
 	}
-	d.existingKeys.Put(d.buf, []byte{})
+	d.existingKeys.Put(d.key, []byte{})
 	return true, nil
 }
 
 // calculateSum adds v to sum.
-func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
+func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
 	// for avg and sum calculation
 	// avg and sum use decimal for integer and decimal type, use float for others
 	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
@@ -52,7 +53,7 @@ func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types
 			data = types.NewDecimalDatum(d)
 		}
 	case types.KindMysqlDecimal:
-		data = v
+		data = types.CopyDatum(v)
 	default:
 		var f float64
 		f, err = v.ToFloat64(sc)

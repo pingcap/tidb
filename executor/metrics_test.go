@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
@@ -60,7 +61,8 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
 		is := executor.GetInfoSchema(tk.Se)
-		c.Assert(plan.Preprocess(stmtNode, is, tk.Se), IsNil)
+		err = plan.Preprocess(tk.Se.(context.Context), stmtNode, is, false)
+		c.Assert(err, IsNil)
 		p, err := plan.Optimize(tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
 		c.Assert(executor.StatementLabel(stmtNode, p, &ignore), Equals, tt.label)

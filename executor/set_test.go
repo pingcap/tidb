@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/testkit"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestSetVar(c *C) {
@@ -104,7 +105,7 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	// Test session variable states.
 	vars := tk.Se.(context.Context).GetSessionVars()
-	tk.Se.CommitTxn()
+	tk.Se.CommitTxn(goctx.TODO())
 	tk.MustExec("set @@autocommit = 1")
 	c.Assert(vars.InTxn(), IsFalse)
 	c.Assert(vars.IsAutocommit(), IsTrue)
@@ -123,11 +124,11 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	tk.MustExec("set @@character_set_results = NULL")
 
-	c.Assert(vars.SkipConstraintCheck, IsFalse)
-	tk.MustExec("set @@tidb_skip_constraint_check = '1'")
-	c.Assert(vars.SkipConstraintCheck, IsTrue)
-	tk.MustExec("set @@tidb_skip_constraint_check = '0'")
-	c.Assert(vars.SkipConstraintCheck, IsFalse)
+	c.Assert(vars.ImportingData, IsFalse)
+	tk.MustExec("set @@tidb_import_data = '1'")
+	c.Assert(vars.ImportingData, IsTrue)
+	tk.MustExec("set @@tidb_import_data = '0'")
+	c.Assert(vars.ImportingData, IsFalse)
 
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
@@ -140,7 +141,7 @@ func (s *testSuite) TestSetVar(c *C) {
 	// Even the transaction fail, set session variable would success.
 	tk.MustExec("BEGIN")
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-	_, err = tk.Se.Execute(`INSERT INTO t VALUES ("sdfsdf")`)
+	_, err = tk.Exec(`INSERT INTO t VALUES ("sdfsdf")`)
 	c.Assert(err, NotNil)
 	tk.MustExec("COMMIT")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))

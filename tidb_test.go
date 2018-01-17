@@ -14,7 +14,6 @@
 package tidb
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -28,13 +27,15 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
-
-var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
 
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
@@ -122,6 +123,21 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
 
+func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
+	retryDialPumpClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
+		return util.RunWithRetry(maxRetries, 10, func() (bool, error) {
+			// Assume that it'll always return an error.
+			return true, errors.New("must fail")
+		})
+	}
+	begin := time.Now()
+	err := retryDialPumpClientMustFail("", nil, 3, nil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "must fail")
+	elapse := time.Since(begin)
+	c.Assert(uint64(elapse), GreaterEqual, uint64(6*10*time.Millisecond))
+}
+
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	c.Skip("make leak should check it")
 	// TODO: testleak package should be able to find this leak.
@@ -161,13 +177,14 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := NewStore(*store + "://" + dbPath)
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	return store
 }
 
 func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
-	store := newStore(c, dbPath)
+	store, err := tikv.NewMockTikvStore()
+	c.Assert(err, IsNil)
 	dom, err := BootstrapSession(store)
 	c.Assert(err, IsNil)
 	return store, dom
@@ -176,7 +193,7 @@ func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
 var testConnID uint64
 
 func newSession(c *C, store kv.Storage, dbName string) Session {
-	se, err := CreateSession(store)
+	se, err := CreateSession4Test(store)
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
@@ -191,8 +208,9 @@ func removeStore(c *C, dbPath string) {
 }
 
 func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
+	goCtx := goctx.Background()
 	if len(args) == 0 {
-		rs, err := se.Execute(sql)
+		rs, err := se.Execute(goCtx, sql)
 		if err == nil && len(rs) > 0 {
 			return rs[0], nil
 		}
@@ -202,7 +220,7 @@ func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	rs, err := se.ExecutePreparedStmt(stmtID, args...)
+	rs, err := se.ExecutePreparedStmt(goCtx, stmtID, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -224,25 +242,11 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 	}
 }
 
-func matches(c *C, rows [][]types.Datum, expected [][]interface{}) {
-	c.Assert(len(rows), Equals, len(expected))
-	for i := 0; i < len(rows); i++ {
-		match(c, rows[i], expected[i]...)
-	}
-}
-
-func mustExecMatch(c *C, se Session, sql string, expected [][]interface{}) {
-	r := mustExecSQL(c, se, sql)
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	matches(c, rows, expected)
-}
-
 func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
 	r, err := exec(se, sql, args...)
 	if err == nil && r != nil {
 		// sometimes we may meet error after executing first row.
-		_, err = r.Next()
+		_, err = r.Next(goctx.Background())
 	}
 	c.Assert(err, NotNil)
 }

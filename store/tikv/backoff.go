@@ -19,10 +19,10 @@ import (
 	"math/rand"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -40,10 +40,10 @@ const (
 // NewBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
-func NewBackoffFn(base, cap, jitter int) func() int {
+func NewBackoffFn(base, cap, jitter int) func(goCtx goctx.Context) int {
 	attempts := 0
 	lastSleep := base
-	return func() int {
+	return func(goCtx goctx.Context) int {
 		var sleep int
 		switch jitter {
 		case NoJitter:
@@ -57,7 +57,11 @@ func NewBackoffFn(base, cap, jitter int) func() int {
 		case DecorrJitter:
 			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
-		time.Sleep(time.Duration(sleep) * time.Millisecond)
+
+		select {
+		case <-time.After(time.Duration(sleep) * time.Millisecond):
+		case <-goCtx.Done():
+		}
 
 		attempts++
 		lastSleep = sleep
@@ -71,26 +75,27 @@ func expo(base, cap, n int) int {
 
 type backoffType int
 
+// Back off types.
 const (
 	boTiKVRPC backoffType = iota
-	boTxnLock
+	BoTxnLock
 	boTxnLockFast
 	boPDRPC
-	boRegionMiss
+	BoRegionMiss
 	boServerBusy
 )
 
-func (t backoffType) createFn() func() int {
+func (t backoffType) createFn() func(goctx.Context) int {
 	switch t {
 	case boTiKVRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
-	case boTxnLock:
+	case BoTxnLock:
 		return NewBackoffFn(200, 3000, EqualJitter)
 	case boTxnLockFast:
 		return NewBackoffFn(100, 3000, EqualJitter)
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
-	case boRegionMiss:
+	case BoRegionMiss:
 		return NewBackoffFn(100, 500, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
@@ -102,13 +107,13 @@ func (t backoffType) String() string {
 	switch t {
 	case boTiKVRPC:
 		return "tikvRPC"
-	case boTxnLock:
+	case BoTxnLock:
 		return "txnLock"
 	case boTxnLockFast:
 		return "txnLockFast"
 	case boPDRPC:
 		return "pdRPC"
-	case boRegionMiss:
+	case BoRegionMiss:
 		return "regionMiss"
 	case boServerBusy:
 		return "serverBusy"
@@ -120,12 +125,12 @@ func (t backoffType) TError() *terror.Error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout
-	case boTxnLock, boTxnLockFast:
+	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case boPDRPC:
 		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
-	case boRegionMiss:
-		return ErrRegionUnavaiable
+	case BoRegionMiss:
+		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
 	}
@@ -142,9 +147,9 @@ const (
 	getMaxBackoff           = 20000
 	prewriteMaxBackoff      = 20000
 	cleanupMaxBackoff       = 20000
-	gcMaxBackoff            = 100000
-	gcResolveLockMaxBackoff = 100000
-	gcDeleteRangeMaxBackoff = 100000
+	GcMaxBackoff            = 100000
+	GcResolveLockMaxBackoff = 100000
+	GcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
 	splitRegionBackoff      = 20000
 )
@@ -153,19 +158,20 @@ var commitMaxBackoff = 20000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
-	fn         map[backoffType]func() int
+	goctx.Context
+
+	fn         map[backoffType]func(goctx.Context) int
 	maxSleep   int
 	totalSleep int
 	errors     []error
-	ctx        goctx.Context
 	types      []backoffType
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 	return &Backoffer{
+		Context:  ctx,
 		maxSleep: maxSleep,
-		ctx:      ctx,
 	}
 }
 
@@ -173,7 +179,7 @@ func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	select {
-	case <-b.ctx.Done():
+	case <-b.Context.Done():
 		return errors.Trace(err)
 	default:
 	}
@@ -181,7 +187,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	backoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
-		b.fn = make(map[backoffType]func() int)
+		b.fn = make(map[backoffType]func(goctx.Context) int)
 	}
 	f, ok := b.fn[typ]
 	if !ok {
@@ -189,7 +195,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		b.fn[typ] = f
 	}
 
-	b.totalSleep += f()
+	b.totalSleep += f(b)
 	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
@@ -220,21 +226,21 @@ func (b *Backoffer) String() string {
 // current Backoffer's context.
 func (b *Backoffer) Clone() *Backoffer {
 	return &Backoffer{
+		Context:    b.Context,
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
-		ctx:        b.ctx,
 	}
 }
 
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
 // a child context of current Backoffer's context.
 func (b *Backoffer) Fork() (*Backoffer, goctx.CancelFunc) {
-	ctx, cancel := goctx.WithCancel(b.ctx)
+	ctx, cancel := goctx.WithCancel(b.Context)
 	return &Backoffer{
+		Context:    ctx,
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
-		ctx:        ctx,
 	}, cancel
 }

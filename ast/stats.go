@@ -26,6 +26,9 @@ type AnalyzeTableStmt struct {
 
 	TableNames []*TableName
 	IndexNames []model.CIStr
+
+	// IndexFlag is true when we only analyze indices for a table.
+	IndexFlag bool
 }
 
 // Accept implements Node Accept interface.

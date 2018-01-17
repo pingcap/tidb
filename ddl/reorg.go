@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -25,34 +24,59 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
+	log "github.com/sirupsen/logrus"
 )
+
+// reorgCtx is for reorganization.
+type reorgCtx struct {
+	// doneCh is used to notify.
+	// If the reorganization job is done, we will use this channel to notify outer.
+	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
+	// use a persistent job list.
+	doneCh chan error
+	// rowCount is used to simulate a job's row count.
+	rowCount int64
+	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
+	notifyCancelReorgJob chan struct{}
+	// doneHandle is used to simulate the handle that has been processed.
+	doneHandle int64
+}
 
 // newContext gets a context. It is only used for adding column in reorganization state.
 func (d *ddl) newContext() context.Context {
 	c := mock.NewContext()
 	c.Store = d.store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	c.GetSessionVars().StmtCtx.TimeZone = time.UTC
 	return c
 }
 
 const waitReorgTimeout = 10 * time.Second
 
-func (d *ddl) setReorgRowCount(count int64) {
-	atomic.StoreInt64(&d.reorgRowCount, count)
+func (rc *reorgCtx) setRowCountAndHandle(count, doneHandle int64) {
+	atomic.StoreInt64(&rc.rowCount, count)
+	atomic.StoreInt64(&rc.doneHandle, doneHandle)
 }
 
-func (d *ddl) getReorgRowCount() int64 {
-	return atomic.LoadInt64(&d.reorgRowCount)
+func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
+	row := atomic.LoadInt64(&rc.rowCount)
+	handle := atomic.LoadInt64(&rc.doneHandle)
+	return row, handle
 }
 
-func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
-	if d.reorgDoneCh == nil {
+func (rc *reorgCtx) clean() {
+	rc.setRowCountAndHandle(0, 0)
+	rc.doneCh = nil
+}
+
+func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
+	if d.reorgCtx.doneCh == nil {
 		// start a reorganization job
 		d.wait.Add(1)
-		d.reorgDoneCh = make(chan error, 1)
+		d.reorgCtx.doneCh = make(chan error, 1)
 		go func() {
 			defer d.wait.Done()
-			d.reorgDoneCh <- f()
+			d.reorgCtx.doneCh <- f()
 		}()
 	}
 
@@ -68,22 +92,25 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 
 	// wait reorganization job done or timeout
 	select {
-	case err := <-d.reorgDoneCh:
-		log.Info("[ddl] run reorg job done")
-		d.reorgDoneCh = nil
+	case err := <-d.reorgCtx.doneCh:
+		rowCount, _ := d.reorgCtx.getRowCountAndHandle()
+		log.Infof("[ddl] run reorg job done, handled %d rows", rowCount)
 		// Update a job's RowCount.
-		job.SetRowCount(d.getReorgRowCount())
-		d.setReorgRowCount(0)
+		job.SetRowCount(rowCount)
+		d.reorgCtx.clean()
 		return errors.Trace(err)
 	case <-d.quitCh:
 		log.Info("[ddl] run reorg job ddl quit")
-		d.setReorgRowCount(0)
+		d.reorgCtx.setRowCountAndHandle(0, 0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		log.Infof("[ddl] run reorg job wait timeout %v", waitTimeout)
+		rowCount, doneHandle := d.reorgCtx.getRowCountAndHandle()
 		// Update a job's RowCount.
-		job.SetRowCount(d.getReorgRowCount())
+		job.SetRowCount(rowCount)
+		// Update a reorgInfo's handle.
+		err := t.UpdateDDLReorgHandle(job, doneHandle)
+		log.Infof("[ddl] run reorg job wait timeout %v, handled %d rows, current done handle %d, err %v", waitTimeout, rowCount, doneHandle, err)
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
@@ -96,7 +123,7 @@ func (d *ddl) isReorgRunnable() error {
 	}
 
 	select {
-	case <-d.notifyCancelReorgJob:
+	case <-d.reorgCtx.notifyCancelReorgJob:
 		// Job is cancelled. So it can't be done.
 		return errCancelledDDLJob
 	default:

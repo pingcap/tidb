@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -114,7 +114,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i))
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i), false)
 		c.Assert(err, IsNil)
 	}
 
@@ -154,7 +154,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(num))
 
-	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
+	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14), false)
 	c.Assert(err, IsNil)
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -261,7 +261,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer ctx.Txn().Commit()
+	defer ctx.Txn().Commit(goctx.Background())
 	key := t.RecordKey(handle)
 	data, err := ctx.Txn().Get(key)
 	if !isExist {
@@ -341,7 +341,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tbl
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow)
+	newHandle, err := t.AddRecord(ctx, newRow, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -445,7 +445,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblI
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow)
+	newHandle, err := t.AddRecord(ctx, newRow, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -545,7 +545,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl,
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow)
+	newHandle, err := t.AddRecord(ctx, newRow, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -642,7 +642,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx context.Context, d *ddl, tblInfo
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -748,10 +748,10 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
-	handle, err := t.AddRecord(ctx, oldRow)
+	handle, err := t.AddRecord(ctx, oldRow, false)
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	newColName := "c4"
@@ -814,7 +814,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
@@ -836,10 +836,10 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
+	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)), false)
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -888,7 +888,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
@@ -928,7 +928,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
-	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumn
+	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
 	col, _, err := buildColumnAndConstraint(nil, 0, colDef)
 	c.Assert(err, IsNil)
 	return &col.FieldType

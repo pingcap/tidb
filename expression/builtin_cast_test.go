@@ -22,10 +22,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -215,13 +215,13 @@ var (
 		Fsp:  types.DefaultFsp}
 
 	// jsonInt indicates json(3)
-	jsonInt = types.NewDatum(json.CreateJSON(int64(3)))
+	jsonInt = types.NewDatum(json.CreateBinary(int64(3)))
 
 	// jsonTime indicates "CURRENT_DAY 12:59:59"
-	jsonTime = types.NewDatum(json.CreateJSON(tm.String()))
+	jsonTime = types.NewDatum(json.CreateBinary(tm.String()))
 
 	// jsonDuration indicates
-	jsonDuration = types.NewDatum(json.CreateJSON(duration.String()))
+	jsonDuration = types.NewDatum(json.CreateBinary(duration.String()))
 )
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
@@ -740,7 +740,6 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
-		c.Assert(res.TimeZone, Equals, sc.TimeZone)
 		c.Assert(res.String(), Equals, t.after.String())
 	}
 
@@ -823,7 +822,6 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
-		c.Assert(res.TimeZone, Equals, sc.TimeZone)
 		resAfter := t.after.String()
 		if t.fsp > 0 {
 			resAfter += "."
@@ -1086,12 +1084,12 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			97, 97, types.NewDecFromInt(0x61), "a",
 		},
 	}
-	for _, t := range cases {
+	for i, t := range cases {
 		// Test wrapping with CastAsInt.
 		intExpr := WrapWithCastAsInt(ctx, t.expr)
 		c.Assert(intExpr.GetType().EvalType(), Equals, types.ETInt)
 		intRes, isNull, err := intExpr.EvalInt(t.row, sc)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("cast[%v]: %#v", i, t))
 		c.Assert(isNull, Equals, false)
 		c.Assert(intRes, Equals, t.intRes)
 
@@ -1101,15 +1099,15 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		realRes, isNull, err := realExpr.EvalReal(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
-		c.Assert(realRes, Equals, t.realRes)
+		c.Assert(realRes, Equals, t.realRes, Commentf("cast[%v]: %#v", i, t))
 
 		// Test wrapping with CastAsDecimal.
 		decExpr := WrapWithCastAsDecimal(ctx, t.expr)
 		c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
 		decRes, isNull, err := decExpr.EvalDecimal(t.row, sc)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("case[%v]: %#v\n", i, t))
 		c.Assert(isNull, Equals, false)
-		c.Assert(decRes.Compare(t.decRes), Equals, 0)
+		c.Assert(decRes.Compare(t.decRes), Equals, 0, Commentf("case[%v]: %#v\n", i, t))
 
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(ctx, t.expr)

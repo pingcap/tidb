@@ -16,10 +16,13 @@ package util
 import (
 	"encoding/hex"
 	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -42,31 +45,34 @@ func (t DelRangeTask) Range() ([]byte, []byte) {
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
 func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	sql := fmt.Sprintf(loadDeleteRangeSQL, safePoint)
-	rss, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	rss, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if len(rss) > 0 {
+		defer terror.Call(rss[0].Close)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	rs := rss[0]
 	for {
-		row, err := rs.Next()
+		row, err := rs.Next(goctx.TODO())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
 			break
 		}
-		startKey, err := hex.DecodeString(row.Data[2].GetString())
+		startKey, err := hex.DecodeString(row.GetString(2))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		endKey, err := hex.DecodeString(row.Data[3].GetString())
+		endKey, err := hex.DecodeString(row.GetString(3))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ranges = append(ranges, DelRangeTask{
-			JobID:     row.Data[0].GetInt64(),
-			ElementID: row.Data[1].GetInt64(),
+			JobID:     row.GetInt64(0),
+			ElementID: row.GetInt64(1),
 			StartKey:  startKey,
 			EndKey:    endKey,
 		})
@@ -78,7 +84,7 @@ func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeT
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx context.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 	return errors.Trace(err)
 }
 
@@ -87,6 +93,6 @@ func UpdateDeleteRange(ctx context.Context, dr DelRangeTask, newStartKey, oldSta
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 	return errors.Trace(err)
 }

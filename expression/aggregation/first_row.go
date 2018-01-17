@@ -14,34 +14,17 @@
 package aggregation
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 )
 
 type firstRowFunction struct {
 	aggFunction
 }
 
-// Clone implements Aggregation interface.
-func (ff *firstRowFunction) Clone() Aggregation {
-	nf := *ff
-	for i, arg := range ff.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// GetType implements Aggregation interface.
-func (ff *firstRowFunction) GetType() *types.FieldType {
-	return ff.Args[0].GetType()
-}
-
 // Update implements Aggregation interface.
-func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	if ctx.GotFirstRow {
 		return nil
 	}
@@ -52,7 +35,7 @@ func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *variable.Stateme
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.Value = value
+	ctx.Value = types.CopyDatum(value)
 	ctx.GotFirstRow = true
 	return nil
 }
@@ -65,18 +48,4 @@ func (ff *firstRowFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
 // GetPartialResult implements Aggregation interface.
 func (ff *firstRowFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{ff.GetResult(ctx)}
-}
-
-// CalculateDefaultValue implements Aggregation interface.
-func (ff *firstRowFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
-	arg := ff.Args[0]
-	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if err != nil {
-		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
-		return d, false
-	}
-	if con, ok := result.(*expression.Constant); ok {
-		return con.Value, true
-	}
-	return d, false
 }

@@ -19,11 +19,13 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	goctx "golang.org/x/net/context"
 )
 
 /***
@@ -49,30 +51,42 @@ type RevokeExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *RevokeExec) Next() (Row, error) {
+func (e *RevokeExec) Next(goCtx goctx.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
+	e.done = true
+	return nil, errors.Trace(e.run(goCtx))
+}
 
+// NextChunk implements the Executor NextChunk interface.
+func (e *RevokeExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+	return errors.Trace(e.run(goCtx))
+}
+
+func (e *RevokeExec) run(goCtx goctx.Context) error {
 	// Revoke for each user
 	for _, user := range e.Users {
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if !exists {
-			return nil, errors.Errorf("Unknown user: %s", user.User)
+			return errors.Errorf("Unknown user: %s", user.User)
 		}
 
 		err = e.revokeOneUser(user.User.Username, user.User.Hostname)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	e.done = true
-	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil, nil
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	return nil
 }
 
 func (e *RevokeExec) revokeOneUser(user, host string) error {

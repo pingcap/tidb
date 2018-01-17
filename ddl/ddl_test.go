@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -27,11 +26,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -46,8 +44,7 @@ func TestT(t *testing.T) {
 }
 
 func testCreateStore(c *C, name string) kv.Storage {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open(fmt.Sprintf("memory://%s", name))
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	return store
 }

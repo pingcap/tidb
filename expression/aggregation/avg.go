@@ -16,33 +16,16 @@ package aggregation
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 type avgFunction struct {
 	aggFunction
 }
 
-// Clone implements Aggregation interface.
-func (af *avgFunction) Clone() Aggregation {
-	nf := *af
-	for i, arg := range af.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// GetType implements Aggregation interface.
-func (af *avgFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeNewDecimal)
-	types.SetBinChsClnFlag(ft)
-	ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
-	return ft
-}
-
-func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := af.Args[1]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -51,8 +34,8 @@ func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.Statement
 	if value.IsNull() {
 		return nil
 	}
-	if af.Distinct {
-		d, err1 := ctx.DistinctChecker.Check([]types.Datum{value})
+	if af.HasDistinct {
+		d, err1 := ctx.DistinctChecker.Check(sc, []types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -73,8 +56,8 @@ func (af *avgFunction) updateAvg(ctx *AggEvaluateContext, sc *variable.Statement
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
-	if af.mode == FinalMode {
+func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+	if af.Mode == FinalMode {
 		return af.updateAvg(ctx, sc, row)
 	}
 	return af.updateSum(ctx, sc, row)
@@ -82,20 +65,34 @@ func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementCon
 
 // GetResult implements Aggregation interface.
 func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
+	var x *types.MyDecimal
 	switch ctx.Value.Kind() {
 	case types.KindFloat64:
-		t := ctx.Value.GetFloat64() / float64(ctx.Count)
-		d.SetValue(t)
+		x = new(types.MyDecimal)
+		err := x.FromFloat64(ctx.Value.GetFloat64())
+		terror.Log(errors.Trace(err))
 	case types.KindMysqlDecimal:
-		x := ctx.Value.GetMysqlDecimal()
-		y := types.NewDecFromInt(ctx.Count)
-		to := new(types.MyDecimal)
-		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
-		terror.Log(errors.Trace(err))
-		err = to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
-		terror.Log(errors.Trace(err))
-		d.SetMysqlDecimal(to)
+		x = ctx.Value.GetMysqlDecimal()
+	default:
+		return
 	}
+	y := types.NewDecFromInt(ctx.Count)
+	to := new(types.MyDecimal)
+	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
+	terror.Log(errors.Trace(err))
+	frac := af.RetTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = to.Round(to, frac, types.ModeHalfEven)
+	terror.Log(errors.Trace(err))
+	if ctx.Value.Kind() == types.KindFloat64 {
+		f, err := to.ToFloat64()
+		terror.Log(errors.Trace(err))
+		d.SetFloat64(f)
+		return
+	}
+	d.SetMysqlDecimal(to)
 	return
 }
 

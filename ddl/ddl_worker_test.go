@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
 )
 
@@ -50,6 +50,54 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	d1.SetLease(goctx.Background(), 1*time.Second)
 	d1.SetLease(goctx.Background(), 2*time.Second)
 	c.Assert(d1.GetLease(), Equals, 2*time.Second)
+}
+
+// TestRunWorker tests no job is handled when the value of RunWorker is false.
+func (s *testDDLSuite) TestRunWorker(c *C) {
+	defer testleak.AfterTest(c)()
+	store := testCreateStore(c, "test_run_worker")
+	defer store.Close()
+
+	RunWorker = false
+	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	testCheckOwner(c, d, false)
+	defer d.Stop()
+	ctx := testNewContext(d)
+
+	dbInfo := testSchemaInfo(c, d, "test")
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
+	}
+
+	exitCh := make(chan struct{})
+	go func(ch chan struct{}) {
+		err := d.doDDLJob(ctx, job)
+		c.Assert(err, IsNil)
+		close(ch)
+	}(exitCh)
+	// Make sure the DDL job is in the DDL job queue.
+	// The reason for doing it twice is to eliminate the operation in the start function.
+	<-d.ddlJobCh
+	<-d.ddlJobCh
+	// Make sure the DDL job doesn't be handled.
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		job, err := d.getFirstDDLJob(t)
+		c.Assert(err, IsNil)
+		c.Assert(job, NotNil)
+		c.Assert(job.SchemaID, Equals, dbInfo.ID, Commentf("job %s", job))
+		return nil
+	})
+	// Make sure the DDL job can be done and exit that goroutine.
+	RunWorker = true
+	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	testCheckOwner(c, d1, true)
+	defer d1.Stop()
+	asyncNotify(d1.ddlJobCh)
+	<-exitCh
 }
 
 func (s *testDDLSuite) TestSchemaError(c *C) {
@@ -322,9 +370,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	_, err = originTable.AddRecord(ctx, row)
+	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit()
+	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
@@ -346,7 +394,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			return
 		}
 		checkCancelState(hookCtx.Txn(), job, test)
-		err = hookCtx.Txn().Commit()
+		err = hookCtx.Txn().Commit(goctx.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -374,7 +422,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	test = &tests[3]
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	c.Assert(ctx.Txn().Commit(), IsNil)
+	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
 
 	// for dropping index
 	idxName := []interface{}{model.NewCIStr("idx")}

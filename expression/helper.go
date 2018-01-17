@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 func boolToInt64(v bool) int64 {
@@ -114,9 +114,6 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 		}
 	default:
 		return d, nil
-	}
-	if tp == mysql.TypeTimestamp {
-		value.TimeZone = ctx.GetSessionVars().GetTimeZone()
 	}
 	d.SetMysqlTime(value)
 	return d, nil

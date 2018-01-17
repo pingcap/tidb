@@ -21,13 +21,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testSuite) TestInsert(c *C) {
@@ -346,7 +346,7 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
-    create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int);`
+    create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int unique key);`
 	tk.MustExec(testSQL)
 	testSQL = `insert into t values (1, 2);`
 	tk.MustExec(testSQL)
@@ -356,11 +356,21 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	r.Check(testkit.Rows(rowStr))
 
 	tk.MustExec("insert ignore into t values (1, 3), (2, 3)")
-
 	r = tk.MustQuery("select * from t;")
-	rowStr = fmt.Sprintf("%v %v", "1", "2")
 	rowStr1 := fmt.Sprintf("%v %v", "2", "3")
 	r.Check(testkit.Rows(rowStr, rowStr1))
+
+	tk.MustExec("insert ignore into t values (3, 4), (3, 4)")
+	r = tk.MustQuery("select * from t;")
+	rowStr2 := fmt.Sprintf("%v %v", "3", "4")
+	r.Check(testkit.Rows(rowStr, rowStr1, rowStr2))
+
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into t values (4, 4), (4, 5), (4, 6)")
+	r = tk.MustQuery("select * from t;")
+	rowStr3 := fmt.Sprintf("%v %v", "4", "5")
+	r.Check(testkit.Rows(rowStr, rowStr1, rowStr2, rowStr3))
+	tk.MustExec("commit")
 
 	cfg.SetGetError(errors.New("foo"))
 	_, err := tk.Exec("insert ignore into t values (1, 3)")
@@ -610,9 +620,37 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2000-10-01 01:01:01 2017-01-01 10:10:10"))
 	tk.MustExec("update t set t1 = '2017-10-01 10:10:11', t2 = date_add(t1, INTERVAL 10 MINUTE) where id = 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2017-10-01 10:20:11"))
+
+	// for issue #5132
+	tk.MustExec("CREATE TABLE `tt1` (" +
+		"`a` int(11) NOT NULL," +
+		"`b` varchar(32) DEFAULT NULL," +
+		"`c` varchar(32) DEFAULT NULL," +
+		"PRIMARY KEY (`a`)," +
+		"UNIQUE KEY `b_idx` (`b`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("insert into tt1 values(1, 'a', 'a');")
+	tk.MustExec("insert into tt1 values(2, 'd', 'b');")
+	r = tk.MustQuery("select * from tt1;")
+	r.Check(testkit.Rows("1 a a", "2 d b"))
+	tk.MustExec("update tt1 set a=5 where c='b';")
+	r = tk.MustQuery("select * from tt1;")
+	r.Check(testkit.Rows("1 a a", "5 d b"))
+
+	// Automatic Updating for TIMESTAMP
+	tk.MustExec("CREATE TABLE `tsup` (" +
+		"`a` int," +
+		"`ts` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
+		"KEY `idx` (`ts`)" +
+		");")
+	tk.MustExec("insert into tsup values(1, '0000-00-00 00:00:00');")
+	tk.MustExec("update tsup set a=5;")
+	r1 := tk.MustQuery("select ts from tsup use index (idx);")
+	r2 := tk.MustQuery("select ts from tsup;")
+	r1.Check(r2.Rows())
 }
 
-// For issue #4514.
+// TestUpdateCastOnlyModifiedValues for issue #4514.
 func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -632,6 +670,16 @@ func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	tk.MustExec("update update_modified set col_1 = 3, col_2 = 'a'")
 	r = tk.MustQuery("SELECT * FROM update_modified")
 	r.Check(testkit.Rows("3 a"))
+
+	// Test update a field with different column type.
+	tk.MustExec(`CREATE TABLE update_with_diff_type (a int, b JSON)`)
+	tk.MustExec(`INSERT INTO update_with_diff_type VALUES(3, '{"a": "测试"}')`)
+	tk.MustExec(`UPDATE update_with_diff_type SET a = '300'`)
+	r = tk.MustQuery("SELECT a FROM update_with_diff_type")
+	r.Check(testkit.Rows("300"))
+	tk.MustExec(`UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}'`)
+	r = tk.MustQuery("SELECT b FROM update_with_diff_type")
+	r.Check(testkit.Rows(`{"a":"测试"}`))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -987,7 +1035,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-// reuse TestLoadDataEscape's test case :-)
+// TestLoadDataSpecifiedCoumns reuse TestLoadDataEscape's test case :-)
 func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -1011,8 +1059,8 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 }
 
 func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
-	domain := sessionctx.GetDomain(ctx)
-	is := domain.InfoSchema()
+	dom := domain.GetDomain(ctx)
+	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
 	c.Assert(err, IsNil)
@@ -1033,17 +1081,11 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context
 
 func (s *testSuite) TestBatchInsertDelete(c *C) {
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
-	originBatch := executor.BatchInsertSize
-	originDeleteBatch := executor.BatchDeleteSize
 	defer func() {
 		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
-		executor.BatchInsertSize = originBatch
-		executor.BatchDeleteSize = originDeleteBatch
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
 	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
-	executor.BatchInsertSize = 50
-	executor.BatchDeleteSize = 50
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1084,6 +1126,7 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
+
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
@@ -1092,11 +1135,24 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
 
-	// Change to batch inset mode.
+	// Change to batch inset mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
+	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+
+	// Enlarge the batch size to 150 which is larger than the txn limitation (100).
+	// So the insert will meet error.
+	tk.MustExec("set @@session.tidb_dml_batch_size=150;")
+	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("320"))
+	// Set it back to 50.
+	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
+
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
@@ -1120,8 +1176,9 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
-	// Enable batch delete.
+	// Enable batch delete and set batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_delete=on;")
+	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 	tk.MustExec("delete from batch_insert;")
 	// Make sure that all rows are gone.
 	r = tk.MustQuery("select count(*) from batch_insert;")
@@ -1189,7 +1246,7 @@ func assertEqualStrings(c *C, got []string, expect []string) {
 	}
 }
 
-// Test issue https://github.com/pingcap/tidb/issues/4067
+// TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
 func (s *testSuite) TestIssue4067(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

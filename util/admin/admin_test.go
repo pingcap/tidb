@@ -24,15 +24,16 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -50,9 +51,8 @@ type testSuite struct {
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	var err error
-	s.store, err = driver.Open("memory:test_inspect")
+	s.store, err = tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
 	s.ctx = mock.NewContext()
@@ -115,7 +115,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	err = t.CreateTable(s.dbInfo.ID, s.tbInfo)
 	c.Assert(err, IsNil)
 
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -128,7 +128,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	err = t.DropDatabase(s.dbInfo.ID)
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	err = s.store.Close()
@@ -280,9 +280,9 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
 	c.Assert(s.ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11))
+	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(), IsNil)
+	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
@@ -293,9 +293,9 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
 	c.Assert(s.ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(s.ctx, record2.Values)
+	_, err = tb.AddRecord(s.ctx, record2.Values, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(), IsNil)
+	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
@@ -314,16 +314,17 @@ func (s *testSuite) TestScan(c *C) {
 	idxRow1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10))}
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
 	kvIndex := tables.NewIndex(tb.Meta(), indices[0].Meta())
-	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, idxRow1.Values, 2)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
-	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, idxRow1.Values, 1)
+	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 1)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1})
-	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
+	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, nextVals, 1)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow2})
-	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
+	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, nextVals, 1)
 	c.Assert(idxRows, IsNil)
 	c.Assert(nextVals, DeepEquals, types.MakeDatums(nil))
 	c.Assert(err, IsNil)
@@ -337,7 +338,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(), IsNil)
+	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {
@@ -397,27 +398,28 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-
-	err = CompareIndexData(txn, tb, idx)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	err = CompareIndexData(sc, txn, tb, idx)
 	c.Assert(err, IsNil)
 
-	cnt, err := GetIndexRecordsCount(txn, idx, nil)
+	cnt, err := GetIndexRecordsCount(sc, txn, idx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(cnt, Equals, int64(2))
 
+	mockCtx := mock.NewContext()
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	_, err = idx.Create(txn, types.MakeDatums(int64(30)), 3)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(txn, tb, idx)
+	err = CompareIndexData(sc, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
 	diffMsg := newDiffRetError("index", record1, nil)
@@ -426,16 +428,16 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	_, err = idx.Create(txn, types.MakeDatums(int64(40)), 4)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(txn, tb, idx)
+	err = CompareIndexData(sc, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(31))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -448,12 +450,12 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	txn.Delete(key)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 5))
 	setColValue(c, txn, key, types.NewDatum(int64(30)))
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = checkRecordAndIndex(txn, tb, idx)
+	err = checkRecordAndIndex(sc, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 = &RecordData{Handle: int64(5), Values: types.MakeDatums(int64(30))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -466,12 +468,12 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	txn.Delete(key)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(30)))
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(txn, tb, idx)
+	err = CompareIndexData(sc, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
 	diffMsg = newDiffRetError("index", record1, nil)
@@ -480,16 +482,16 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	err = idx.Delete(txn, types.MakeDatums(int64(40)), 4)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
-	err = txn.Commit()
+	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(txn, tb, idx)
+	err = CompareIndexData(sc, txn, tb, idx)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
@@ -498,7 +500,8 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	row := []types.Datum{v, {}}
 	colIDs := []int64{2, 3}
-	value, err := tablecodec.EncodeRow(row, colIDs, time.UTC)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)

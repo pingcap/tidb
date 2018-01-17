@@ -14,59 +14,19 @@
 package aggregation
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 )
 
 type countFunction struct {
 	aggFunction
 }
 
-// Clone implements Aggregation interface.
-func (cf *countFunction) Clone() Aggregation {
-	nf := *cf
-	for i, arg := range cf.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// CalculateDefaultValue implements Aggregation interface.
-func (cf *countFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
-	for _, arg := range cf.Args {
-		result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
-		if err != nil {
-			log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", cf, err.Error())
-			return d, false
-		}
-		if con, ok := result.(*expression.Constant); ok {
-			if con.Value.IsNull() {
-				return types.NewDatum(0), true
-			}
-		} else {
-			return d, false
-		}
-	}
-	return types.NewDatum(1), true
-}
-
-// GetType implements Aggregation interface.
-func (cf *countFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	ft.Flen = 21
-	types.SetBinChsClnFlag(ft)
-	return ft
-}
-
 // Update implements Aggregation interface.
-func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row types.Row) error {
+func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	var datumBuf []types.Datum
-	if cf.Distinct {
+	if cf.HasDistinct {
 		datumBuf = make([]types.Datum, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
@@ -77,15 +37,15 @@ func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementC
 		if value.GetValue() == nil {
 			return nil
 		}
-		if cf.mode == FinalMode {
+		if cf.Mode == FinalMode {
 			ctx.Count += value.GetInt64()
 		}
-		if cf.Distinct {
+		if cf.HasDistinct {
 			datumBuf = append(datumBuf, value)
 		}
 	}
-	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(datumBuf)
+	if cf.HasDistinct {
+		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -93,7 +53,7 @@ func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementC
 			return nil
 		}
 	}
-	if cf.mode == CompleteMode {
+	if cf.Mode == CompleteMode {
 		ctx.Count++
 	}
 	return nil

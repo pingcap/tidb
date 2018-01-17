@@ -16,15 +16,17 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
+	log "github.com/sirupsen/logrus"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -45,7 +47,7 @@ func (col *CorrelatedColumn) Eval(row types.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalInt(row types.Row, sc *variable.StatementContext) (int64, bool, error) {
+func (col *CorrelatedColumn) EvalInt(row types.Row, sc *stmtctx.StatementContext) (int64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
@@ -57,40 +59,36 @@ func (col *CorrelatedColumn) EvalInt(row types.Row, sc *variable.StatementContex
 }
 
 // EvalReal returns real representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalReal(row types.Row, sc *variable.StatementContext) (float64, bool, error) {
+func (col *CorrelatedColumn) EvalReal(row types.Row, sc *stmtctx.StatementContext) (float64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
-	}
-	if col.GetType().Hybrid() {
-		res, err := col.Data.ToFloat64(sc)
-		return res, err != nil, errors.Trace(err)
 	}
 	return col.Data.GetFloat64(), false, nil
 }
 
 // EvalString returns string representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalString(row types.Row, sc *variable.StatementContext) (string, bool, error) {
+func (col *CorrelatedColumn) EvalString(row types.Row, sc *stmtctx.StatementContext) (string, bool, error) {
 	if col.Data.IsNull() {
 		return "", true, nil
 	}
 	res, err := col.Data.ToString()
+	resLen := len([]rune(res))
+	if resLen < col.RetType.Flen && sc.PadCharToFullLength {
+		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+	}
 	return res, err != nil, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDecimal(row types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+func (col *CorrelatedColumn) EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (*types.MyDecimal, bool, error) {
 	if col.Data.IsNull() {
 		return nil, true, nil
-	}
-	if col.GetType().Hybrid() {
-		res, err := col.Data.ToDecimal(sc)
-		return res, err != nil, errors.Trace(err)
 	}
 	return col.Data.GetMysqlDecimal(), false, nil
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalTime(row types.Row, sc *variable.StatementContext) (types.Time, bool, error) {
+func (col *CorrelatedColumn) EvalTime(row types.Row, sc *stmtctx.StatementContext) (types.Time, bool, error) {
 	if col.Data.IsNull() {
 		return types.Time{}, true, nil
 	}
@@ -98,7 +96,7 @@ func (col *CorrelatedColumn) EvalTime(row types.Row, sc *variable.StatementConte
 }
 
 // EvalDuration returns Duration representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDuration(row types.Row, sc *variable.StatementContext) (types.Duration, bool, error) {
+func (col *CorrelatedColumn) EvalDuration(row types.Row, sc *stmtctx.StatementContext) (types.Duration, bool, error) {
 	if col.Data.IsNull() {
 		return types.Duration{}, true, nil
 	}
@@ -106,9 +104,9 @@ func (col *CorrelatedColumn) EvalDuration(row types.Row, sc *variable.StatementC
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJSON(row types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
+func (col *CorrelatedColumn) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
 	if col.Data.IsNull() {
-		return json.JSON{}, true, nil
+		return json.BinaryJSON{}, true, nil
 	}
 	return col.Data.GetMysqlJSON(), false, nil
 }
@@ -194,79 +192,93 @@ func (col *Column) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (col *Column) Eval(row types.Row) (types.Datum, error) {
-	return row.(types.DatumRow)[col.Index], nil
+	return row.GetDatum(col.Index, col.RetType), nil
 }
 
 // EvalInt returns int representation of Column.
-func (col *Column) EvalInt(row types.Row, sc *variable.StatementContext) (int64, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
-		return 0, true, nil
-	}
+func (col *Column) EvalInt(row types.Row, sc *stmtctx.StatementContext) (int64, bool, error) {
 	if col.GetType().Hybrid() {
+		val := row.GetDatum(col.Index, col.RetType)
+		if val.IsNull() {
+			return 0, true, nil
+		}
 		res, err := val.ToInt64(sc)
 		return res, err != nil, errors.Trace(err)
 	}
-	return val.GetInt64(), false, nil
+	if row.IsNull(col.Index) {
+		return 0, true, nil
+	}
+	return row.GetInt64(col.Index), false, nil
 }
 
 // EvalReal returns real representation of Column.
-func (col *Column) EvalReal(row types.Row, sc *variable.StatementContext) (float64, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
+func (col *Column) EvalReal(row types.Row, sc *stmtctx.StatementContext) (float64, bool, error) {
+	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
-	if col.GetType().Hybrid() {
-		res, err := val.ToFloat64(sc)
-		return res, err != nil, errors.Trace(err)
+	if col.GetType().Tp == mysql.TypeFloat {
+		return float64(row.GetFloat32(col.Index)), false, nil
 	}
-	return val.GetFloat64(), false, nil
+	return row.GetFloat64(col.Index), false, nil
 }
 
 // EvalString returns string representation of Column.
-func (col *Column) EvalString(row types.Row, sc *variable.StatementContext) (string, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
+func (col *Column) EvalString(row types.Row, sc *stmtctx.StatementContext) (string, bool, error) {
+	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
-	res, err := val.ToString()
-	return res, err != nil, errors.Trace(err)
+	if col.GetType().Hybrid() {
+		val := row.GetDatum(col.Index, col.RetType)
+		if val.IsNull() {
+			return "", true, nil
+		}
+		res, err := val.ToString()
+		resLen := len([]rune(res))
+		if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
+			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+		}
+		return res, err != nil, errors.Trace(err)
+	}
+	val := row.GetString(col.Index)
+	if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
+		valLen := len([]rune(val))
+		if valLen < col.RetType.Flen {
+			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
+		}
+	}
+	return val, false, nil
 }
 
 // EvalDecimal returns decimal representation of Column.
-func (col *Column) EvalDecimal(row types.Row, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	val := &row.(types.DatumRow)[col.Index]
-	if val.IsNull() {
+func (col *Column) EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (*types.MyDecimal, bool, error) {
+	if row.IsNull(col.Index) {
 		return nil, true, nil
 	}
-	if col.GetType().Hybrid() {
-		res, err := val.ToDecimal(sc)
-		return res, err != nil, errors.Trace(err)
-	}
-	// We can not use val.GetMyDecimal() here directly,
-	// for sql like: `select sum(1.2e2) * 0.1` may cause an panic here,
-	// since we infer the result type of `SUM` as `mysql.TypeNewDecimal`,
-	// but what we actually get is store as float64 in Datum.
-	res, err := val.ToDecimal(sc)
-	return res, false, errors.Trace(err)
+	return row.GetMyDecimal(col.Index), false, nil
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
-func (col *Column) EvalTime(row types.Row, sc *variable.StatementContext) (types.Time, bool, error) {
-	t, isNull := row.GetTime(col.Index)
-	return t, isNull, nil
+func (col *Column) EvalTime(row types.Row, sc *stmtctx.StatementContext) (types.Time, bool, error) {
+	if row.IsNull(col.Index) {
+		return types.Time{}, true, nil
+	}
+	return row.GetTime(col.Index), false, nil
 }
 
 // EvalDuration returns Duration representation of Column.
-func (col *Column) EvalDuration(row types.Row, sc *variable.StatementContext) (types.Duration, bool, error) {
-	dur, isNull := row.GetDuration(col.Index)
-	return dur, isNull, nil
+func (col *Column) EvalDuration(row types.Row, sc *stmtctx.StatementContext) (types.Duration, bool, error) {
+	if row.IsNull(col.Index) {
+		return types.Duration{}, true, nil
+	}
+	return row.GetDuration(col.Index), false, nil
 }
 
 // EvalJSON returns JSON representation of Column.
-func (col *Column) EvalJSON(row types.Row, sc *variable.StatementContext) (json.JSON, bool, error) {
-	j, isNull := row.GetJSON(col.Index)
-	return j, isNull, nil
+func (col *Column) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
+	if row.IsNull(col.Index) {
+		return json.BinaryJSON{}, true, nil
+	}
+	return row.GetJSON(col.Index), false, nil
 }
 
 // Clone implements Expression interface.
@@ -347,7 +359,11 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 			return retCols, lengths
 		}
 		retCols = append(retCols, col)
-		lengths = append(lengths, c.Length)
+		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.Flen {
+			lengths = append(lengths, types.UnspecifiedLength)
+		} else {
+			lengths = append(lengths, c.Length)
+		}
 	}
 	return retCols, lengths
 }

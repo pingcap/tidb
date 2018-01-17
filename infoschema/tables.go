@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -615,7 +615,7 @@ var filesCols = []columnInfo{
 }
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		record := types.MakeDatums(
 			catalogVal,                 // CATALOG_NAME
@@ -630,7 +630,7 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			record := types.MakeDatums(
@@ -663,7 +663,7 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForColumnsInTable(schema, table)
@@ -674,7 +674,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for i, col := range tbl.Columns {
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
@@ -718,7 +718,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 }
 
 func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForStatisticsInTable(schema, table)
@@ -729,7 +729,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
@@ -802,7 +802,7 @@ const (
 
 // dataForTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
 func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.PKIsHandle {
@@ -856,7 +856,7 @@ func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
@@ -939,7 +939,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-var tableNameToColumns = map[string]([]columnInfo){
+var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
@@ -1136,7 +1136,7 @@ func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
-func (it *infoschemaTable) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
+func (it *infoschemaTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
@@ -1148,15 +1148,15 @@ func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData, n
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) AllocAutoID() (int64, error) {
+func (it *infoschemaTable) AllocAutoID(ctx context.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) Allocator() autoid.Allocator {
+func (it *infoschemaTable) Allocator(ctx context.Context) autoid.Allocator {
 	return nil
 }
 
-func (it *infoschemaTable) RebaseAutoID(newBase int64, isSetStep bool) error {
+func (it *infoschemaTable) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 

@@ -15,7 +15,8 @@ package xserver
 
 // Config contains configuration options.
 type Config struct {
-	Addr     string `json:"addr" toml:"addr"`
-	Socket   string `json:"socket" toml:"socket"`
-	SkipAuth bool   `json:"skip_auth" toml:"skip_auth"`
+	Addr       string `json:"addr" toml:"addr"`
+	Socket     string `json:"socket" toml:"socket"`
+	SkipAuth   bool   `json:"skip-auth" toml:"skip-auth"`
+	TokenLimit int    `json:"token-limit" toml:"token-limit"`
 }

@@ -14,84 +14,25 @@
 package executor_test
 
 import (
-	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
-
-func (s *testSuite) TestNestedLoopJoin(c *C) {
-	bigExec := &MockExec{Rows: []executor.Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	smallExec := &MockExec{Rows: []executor.Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
-	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
-	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
-	bigFilter := expression.NewFunctionInternal(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
-	smallFilter := bigFilter.Clone()
-	otherFilter := expression.NewFunctionInternal(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	join := &executor.NestedLoopJoinExec{
-		BigExec:     bigExec,
-		SmallExec:   smallExec,
-		Ctx:         mock.NewContext(),
-		BigFilter:   []expression.Expression{bigFilter},
-		SmallFilter: []expression.Expression{smallFilter},
-		OtherFilter: []expression.Expression{otherFilter},
-	}
-	row, err := join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
-	row, err = join.Next()
-	c.Check(err, IsNil)
-	c.Check(row, IsNil)
-}
 
 func (s *testSuite) TestJoinPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
 	tk.MustExec("drop table if exists events")
 	tk.MustExec("create table events (clock int, source int)")
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+	_, err := tk.Exec("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+	c.Check(err, NotNil)
 }
 
 func (s *testSuite) TestJoin(c *C) {
@@ -207,6 +148,10 @@ func (s *testSuite) TestJoin(c *C) {
 	// Test that two conflict hints will return error.
 	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
+	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("select /*+ TIDB_SMJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
+	c.Assert(err, NotNil)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -237,6 +182,52 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1,2), (5,3), (6,4)")
 	tk.MustExec("insert into t1 values(1), (2), (3)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t1.a from t1, t where t.a = 5 and t.b = t1.a").Check(testkit.Rows("3"))
+
+	// test issue#4997
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`
+	CREATE TABLE t1 (
+  		pk int(11) NOT NULL AUTO_INCREMENT primary key,
+  		a int(11) DEFAULT NULL,
+  		b date DEFAULT NULL,
+  		c varchar(1) DEFAULT NULL,
+  		KEY a (a),
+  		KEY b (b),
+  		KEY c (c,a)
+	)`)
+	tk.MustExec(`
+	CREATE TABLE t2 (
+  		pk int(11) NOT NULL AUTO_INCREMENT primary key,
+  		a int(11) DEFAULT NULL,
+  		b date DEFAULT NULL,
+  		c varchar(1) DEFAULT NULL,
+  		KEY a (a),
+  		KEY b (b),
+  		KEY c (c,a)
+	)`)
+	tk.MustExec(`insert into t1 value(1,1,"2000-11-11", null);`)
+	result = tk.MustQuery(`
+	SELECT table2.b AS field2 FROM
+	(
+	  t1 AS table1  LEFT OUTER JOIN
+		(SELECT tmp_t2.* FROM ( t2 AS tmp_t1 RIGHT JOIN t1 AS tmp_t2 ON (tmp_t2.a = tmp_t1.a))) AS table2
+	  ON (table2.c = table1.c)
+	) `)
+	result.Check(testkit.Rows("<nil>"))
+
+	// This case is for testing:
+	// when the main thread calls Executor.Close() while the out data fetch worker and join workers are still working,
+	// we need to stop the goroutines as soon as possible to avoid unexpected error.
+	savedConcurrency := plan.JoinConcurrency
+	plan.JoinConcurrency = 5
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t value(1)")
+	}
+	result = tk.MustQuery("select /*+ TIDB_HJ(s, r) */ * from t as s join t as r on s.a = r.a limit 1;")
+	result.Check(testkit.Rows("1 1"))
+	plan.JoinConcurrency = savedConcurrency
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
@@ -299,6 +290,14 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("insert into t2 values('abc')")
 	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
 	result.Sort().Check(testkit.Rows("abc abc"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10), index idx(a))")
+	tk.MustExec("insert into t values('1'), ('2'), ('3')")
+	tk.MustExec("set @@tidb_max_chunk_size=1")
+	result = tk.MustQuery("select a from (select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
+	result.Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("set @@tidb_max_chunk_size=1024")
 }
 
 func (s *testSuite) TestUsing(c *C) {
@@ -505,6 +504,8 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) not in (select * from t)")
 	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t A inner join t B on A.c = B.c and A.c > 100")
+	result.Check(testkit.Rows())
 	// = all empty set is true
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t where d > 1000)")
 	result.Check(testkit.Rows("1", "2", "3"))
@@ -555,8 +556,9 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
 	c.Check(err, IsNil)
-	_, err = tidb.GetRows(rs)
+	_, err = tidb.GetRows4Test(goctx.Background(), rs)
 	c.Check(err, NotNil)
+	c.Check(rs.Close(), IsNil)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists s")
@@ -617,6 +619,13 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("INSERT INTO t1 values(1)")
 	result = tk.MustQuery("SELECT 1 FROM test.t1, test.t2 WHERE 1 = (SELECT test.t2.d FROM test.t2 WHERE test.t1.a >= 1) and test.t2.d = 1;")
 	result.Check(testkit.Rows())
+
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1(a int, b int default 0)")
+	tk.MustExec("create index k1 on t1(a)")
+	tk.MustExec("INSERT INTO t1 (a) values(1), (2), (3), (4), (5)")
+	result = tk.MustQuery("select (select /*+ TIDB_INLJ(x1) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
+	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
@@ -631,7 +640,7 @@ func (s *testSuite) TestInSubquery(c *C) {
 	result := tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b from t as m2)")
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select m1.a from t as m1 where (3, m1.b) not in (select * from t as m2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)", 1)
 	result.Check(testkit.Rows("2"))
 	tk.MustExec(`prepare stmt1 from 'select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)'`)
@@ -665,18 +674,18 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("insert into t2 values (1),(2)")
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
 	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
-	result.Check(testkit.Rows("1", "2"))
+	result.Sort().Check(testkit.Rows("1", "2"))
 
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int, key b (a))")
@@ -704,10 +713,9 @@ func (s *testSuite) TestJoinLeak(c *C) {
 		tk.MustExec("insert t values (1)")
 	}
 	tk.MustExec("commit")
-	rs, err := tk.Se.Execute("select * from t t1 left join (select 1) t2 on 1")
+	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	result := rs[0]
-	result.Next()
+	result.Next(goctx.Background())
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
 }
@@ -723,4 +731,39 @@ func (s *testSuite) TestHashJoinExecEncodeDecodeRow(c *C) {
 	tk.MustExec("insert into t2 values (1, 'xxx', '2003-06-09 10:51:26')")
 	result := tk.MustQuery("select ts from t1 inner join t2 where t2.name = 'xxx'")
 	result.Check(testkit.Rows("2003-06-09 10:51:26"))
+}
+
+func (s *testSuite) TestSubqueryInJoinOn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+
+	_, err := tk.Exec("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
+	c.Check(err, NotNil)
+}
+
+func (s *testSuite) TestIssue5255(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b date, c float, primary key(a, b))")
+	tk.MustExec("create table t2(a int primary key)")
+	tk.MustExec("insert into t1 values(1, '2017-11-29', 2.2)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a=t2.a").Check(testkit.Rows("1 2017-11-29 2.2 1"))
+}
+
+func (s *testSuite) TestIssue5278(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tt(a varchar(10), b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustQuery("select * from t left join tt on t.a=tt.a left join t ttt on t.a=ttt.a").Check(testkit.Rows("1 1 <nil> <nil> 1 1"))
 }

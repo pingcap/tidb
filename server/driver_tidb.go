@@ -22,9 +22,12 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/chunk"
+	goctx "golang.org/x/net/context"
 )
 
 // TiDBDriver implements IDriver.
@@ -62,8 +65,8 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) {
-	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ts.id, args...)
+func (ts *TiDBStatement) Execute(goCtx goctx.Context, args ...interface{}) (rs ResultSet, err error) {
+	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(goCtx, ts.id, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -144,6 +147,11 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	return tc, nil
 }
 
+// EnableChunk enables TiDBContext to use chunk.
+func (tc *TiDBContext) EnableChunk() {
+	tc.session.GetSessionVars().EnableChunk = true
+}
+
 // Status implements QueryCtx Status method.
 func (tc *TiDBContext) Status() uint16 {
 	return tc.session.Status()
@@ -165,13 +173,13 @@ func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
 }
 
 // CommitTxn implements QueryCtx CommitTxn method.
-func (tc *TiDBContext) CommitTxn() error {
-	return tc.session.CommitTxn()
+func (tc *TiDBContext) CommitTxn(goCtx goctx.Context) error {
+	return tc.session.CommitTxn(goCtx)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.
 func (tc *TiDBContext) RollbackTxn() error {
-	return tc.session.RollbackTxn()
+	return tc.session.RollbackTxn(goctx.TODO())
 }
 
 // AffectedRows implements QueryCtx AffectedRows method.
@@ -190,8 +198,8 @@ func (tc *TiDBContext) WarningCount() uint16 {
 }
 
 // Execute implements QueryCtx Execute method.
-func (tc *TiDBContext) Execute(sql string) (rs []ResultSet, err error) {
-	rsList, err := tc.session.Execute(sql)
+func (tc *TiDBContext) Execute(goCtx goctx.Context, sql string) (rs []ResultSet, err error) {
+	rsList, err := tc.session.Execute(goCtx, sql)
 	if err != nil {
 		return
 	}
@@ -229,16 +237,16 @@ func (tc *TiDBContext) Auth(user *auth.UserIdentity, auth []byte, salt []byte) b
 }
 
 // FieldList implements QueryCtx FieldList method.
-func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error) {
-	rs, err := tc.Execute("SELECT * FROM `" + table + "` LIMIT 0")
+func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error) {
+	rs, err := tc.Execute(goctx.Background(), "SELECT * FROM `"+table+"` LIMIT 0")
+	if len(rs) > 0 {
+		defer terror.Call(rs[0].Close)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colums, err = rs[0].Columns()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return
+	columns = rs[0].Columns()
+	return columns, nil
 }
 
 // GetStatement implements QueryCtx GetStatement method.
@@ -282,40 +290,39 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
-// Cancel implements QueryCtx Cancel method.
-func (tc *TiDBContext) Cancel() {
-	tc.session.Cancel()
-}
-
 type tidbResultSet struct {
 	recordSet ast.RecordSet
+	columns   []*ColumnInfo
 }
 
-func (trs *tidbResultSet) Next() ([]types.Datum, error) {
-	row, err := trs.recordSet.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if row != nil {
-		return row.Data, nil
-	}
-	return nil, nil
+func (trs *tidbResultSet) Next(goCtx goctx.Context) (types.Row, error) {
+	return trs.recordSet.Next(goCtx)
+}
+
+func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
+	return trs.recordSet.NewChunk()
+}
+
+func (trs *tidbResultSet) NextChunk(ctx goctx.Context, chk *chunk.Chunk) error {
+	return trs.recordSet.NextChunk(ctx, chk)
+}
+
+func (trs *tidbResultSet) SupportChunk() bool {
+	return trs.recordSet.SupportChunk()
 }
 
 func (trs *tidbResultSet) Close() error {
 	return trs.recordSet.Close()
 }
 
-func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
-	fields, err := trs.recordSet.Fields()
-	if err != nil {
-		return nil, errors.Trace(err)
+func (trs *tidbResultSet) Columns() []*ColumnInfo {
+	if trs.columns == nil {
+		fields := trs.recordSet.Fields()
+		for _, v := range fields {
+			trs.columns = append(trs.columns, convertColumnInfo(v))
+		}
 	}
-	var columns []*ColumnInfo
-	for _, v := range fields {
-		columns = append(columns, convertColumnInfo(v))
-	}
-	return columns, nil
+	return trs.columns
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
@@ -334,18 +341,27 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	} else {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
-	// Fix issue #4540.
-	// The flen is a hint, not a precise value, so most client will not use the value.
-	// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
-	// the `show create table` result. To fix this case, we must use a large enough flen to prevent
-	// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
-	// For examples:
-	// * latin, the multiple is 1
-	// * gb2312, the multiple is 2
-	// * Utf-8, the multiple is 3
-	// * utf8mb4, the multiple is 4
-	// So the large enough multiple is 4 in here.
-	ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+	if fld.Column.Tp == mysql.TypeNewDecimal {
+		// Consider the negative sign.
+		ci.ColumnLength++
+		if fld.Column.Decimal > types.DefaultFsp {
+			// Consider the decimal point.
+			ci.ColumnLength++
+		}
+	} else if fld.Column.Tp != mysql.TypeBit {
+		// Fix issue #4540.
+		// The flen is a hint, not a precise value, so most client will not use the value.
+		// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
+		// the `show create table` result. To fix this case, we must use a large enough flen to prevent
+		// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
+		// For examples:
+		// * latin, the multiple is 1
+		// * gb2312, the multiple is 2
+		// * Utf-8, the multiple is 3
+		// * utf8mb4, the multiple is 4
+		// So the large enough multiple is 4 in here.
+		ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+	}
 
 	if fld.Column.Decimal == types.UnspecifiedLength {
 		ci.Decimal = mysql.NotFixedDec

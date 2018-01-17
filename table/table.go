@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // Type , the type of table, store data in different ways.
@@ -93,10 +93,10 @@ type Table interface {
 	// Indices returns the indices of the table.
 	Indices() []Index
 
-	// WritableIndices() returns write-only and public indices of the table.
+	// WritableIndices returns write-only and public indices of the table.
 	WritableIndices() []Index
 
-	// DeletableIndices() returns delete-only, write-only and public indices of the table.
+	// DeletableIndices returns delete-only, write-only and public indices of the table.
 	DeletableIndices() []Index
 
 	// RecordPrefix returns the record key prefix.
@@ -111,8 +111,9 @@ type Table interface {
 	// RecordKey returns the key in KV storage for the row.
 	RecordKey(h int64) kv.Key
 
-	// AddRecord inserts a row which should contain only public columns.
-	AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error)
+	// AddRecord inserts a row which should contain only public columns
+	// skipHandleCheck indicates that recordID in r has been checked as not duplicate already.
+	AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
 	UpdateRecord(ctx context.Context, h int64, currData, newData []types.Datum, touched []bool) error
@@ -121,15 +122,15 @@ type Table interface {
 	RemoveRecord(ctx context.Context, h int64, r []types.Datum) error
 
 	// AllocAutoID allocates an auto_increment ID for a new row.
-	AllocAutoID() (int64, error)
+	AllocAutoID(ctx context.Context) (int64, error)
 
 	// Allocator returns Allocator.
-	Allocator() autoid.Allocator
+	Allocator(ctx context.Context) autoid.Allocator
 
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(newBase int64, allocIDs bool) error
+	RebaseAutoID(ctx context.Context, newBase int64, allocIDs bool) error
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo

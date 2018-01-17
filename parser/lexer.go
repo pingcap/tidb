@@ -140,10 +140,18 @@ func (s *Scanner) Lex(v *yySymType) int {
 			tok = tok1
 		}
 	}
-	if (s.sqlMode&mysql.ModeANSIQuotes) > 0 &&
+	if s.sqlMode.HasANSIQuotesMode() &&
 		tok == stringLit &&
 		s.r.s[v.offset] == '"' {
 		tok = identifier
+	}
+
+	if tok == pipes && !(s.sqlMode.HasPipesAsConcatMode()) {
+		return pipesAsOr
+	}
+
+	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
+		return not2
 	}
 
 	switch tok {
@@ -174,6 +182,11 @@ func (s *Scanner) Lex(v *yySymType) int {
 // SetSQLMode sets the SQL mode for scanner.
 func (s *Scanner) SetSQLMode(mode mysql.SQLMode) {
 	s.sqlMode = mode
+}
+
+// GetSQLMode return the SQL mode of scanner.
+func (s *Scanner) GetSQLMode() mysql.SQLMode {
+	return s.sqlMode
 }
 
 // NewScanner returns a new scanner object.
@@ -509,7 +522,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 			}
 			str := mb.r.data(&pos)
 			mb.setUseBuf(str[1 : len(str)-1])
-		} else if ch0 == '\\' {
+		} else if ch0 == '\\' && !s.sqlMode.HasNoBackslashEscapesMode() {
 			mb.setUseBuf(mb.r.data(&pos)[1:])
 			ch0 = handleEscape(s)
 		}

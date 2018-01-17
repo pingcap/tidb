@@ -16,12 +16,12 @@ package tikv
 import (
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -46,6 +46,7 @@ type RegionRequestSender struct {
 	regionCache *RegionCache
 	client      Client
 	storeAddr   string
+	rpcError    error
 }
 
 // NewRegionRequestSender creates a new sender.
@@ -103,10 +104,15 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	context, cancel := goctx.WithTimeout(bo.ctx, timeout)
-	defer cancel()
-	resp, err = s.client.SendReq(context, ctx.Addr, req)
+	if timeout > 0 {
+		context, cancel := goctx.WithTimeout(bo, timeout)
+		defer cancel()
+		resp, err = s.client.SendReq(context, ctx.Addr, req)
+	} else {
+		resp, err = s.client.SendReq(bo, ctx.Addr, req)
+	}
 	if err != nil {
+		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}
@@ -122,7 +128,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	}
 	if grpc.Code(errors.Cause(err)) == codes.Canceled {
 		select {
-		case <-bo.ctx.Done():
+		case <-bo.Done():
 			return errors.Trace(err)
 		default:
 			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
@@ -149,7 +155,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		log.Debugf("tikv reports `NotLeader`: %s, ctx: %v, retry later", notLeader, ctx)
 		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
 		if notLeader.GetLeader() == nil {
-			err = bo.Backoff(boRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx))
+			err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx))
 			if err != nil {
 				return false, errors.Trace(err)
 			}

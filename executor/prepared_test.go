@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testSuite) TestPrepared(c *C) {
@@ -28,6 +29,7 @@ func (s *testSuite) TestPrepared(c *C) {
 	orgEnable := cfg.PreparedPlanCache.Enabled
 	orgCapacity := cfg.PreparedPlanCache.Capacity
 	flags := []bool{false, true}
+	goCtx := goctx.Background()
 	for _, flag := range flags {
 		cfg.PreparedPlanCache.Enabled = flag
 		cfg.PreparedPlanCache.Capacity = 100
@@ -44,13 +46,13 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(executor.ErrPrepareMulti.Equal(err), IsTrue)
 		// The variable count does not match.
 		_, err = tk.Exec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?'; set @a = 1; execute stmt_test_4 using @a;`)
-		c.Assert(executor.ErrWrongParamCount.Equal(err), IsTrue)
+		c.Assert(plan.ErrWrongParamCount.Equal(err), IsTrue)
 		// Prepare and deallocate prepared statement immediately.
 		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?'; deallocate prepare stmt_test_5;`)
 
 		// Statement not found.
 		_, err = tk.Exec("deallocate prepare stmt_test_5")
-		c.Assert(executor.ErrStmtNotFound.Equal(err), IsTrue)
+		c.Assert(plan.ErrStmtNotFound.Equal(err), IsTrue)
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
 		_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
@@ -58,7 +60,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// The `stmt_test5` should not be found.
 		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
-		c.Assert(executor.ErrStmtNotFound.Equal(err), IsTrue)
+		c.Assert(plan.ErrStmtNotFound.Equal(err), IsTrue)
 
 		// Use parameter marker with argument will run prepared statement.
 		result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
@@ -68,27 +70,41 @@ func (s *testSuite) TestPrepared(c *C) {
 		query := "select c1, c2 from prepare_test where c1 = ?"
 		stmtId, _, _, err := tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(err, IsNil)
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
+		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
+		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
+
+		// Check that rebuild plan works.
+		tk.Se.PrepareTxnCtx(goCtx)
+		err = stmt.RebuildPlan()
+		c.Assert(err, IsNil)
+		rs, err := stmt.Exec(goCtx)
+		c.Assert(err, IsNil)
+		_, err = rs.Next(goCtx)
+		c.Assert(err, IsNil)
+		c.Assert(rs.Close(), IsNil)
 
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")
 		tk.Exec("create table prepare2 (a int)")
 
 		// Should success as the changed schema do not affect the prepared statement.
-		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(err, IsNil)
 
 		// Drop a column so the prepared statement become invalid.
 		tk.MustExec("alter table prepare_test drop column c2")
 
-		// There should be schema changed error.
-		_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
-		c.Assert(executor.ErrSchemaChanged.Equal(err), IsTrue)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
+		c.Assert(plan.ErrUnknownColumn.Equal(err), IsTrue)
+
+		tk.MustExec("drop table prepare_test")
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
+		c.Assert(plan.ErrSchemaChanged.Equal(err), IsTrue)
 
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")
@@ -97,9 +113,40 @@ func (s *testSuite) TestPrepared(c *C) {
 		_, err = tk.Exec("execute stmt")
 		c.Assert(err, NotNil)
 
+		_, _, fields, err := tk.Se.PrepareStmt("select a from prepare3")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "test")
+		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+
+		_, _, fields, err = tk.Se.PrepareStmt("select a from prepare3 where ?")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "test")
+		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+
+		_, _, fields, err = tk.Se.PrepareStmt("select (1,1) in (select 1,1)")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "")
+		c.Assert(fields[0].TableAsName.L, Equals, "")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "(1,1) in (select 1,1)")
+
+		_, _, fields, err = tk.Se.PrepareStmt("select * from prepare3 as t1 join prepare3 as t2")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "test")
+		c.Assert(fields[0].TableAsName.L, Equals, "t1")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+		c.Assert(fields[1].DBName.L, Equals, "test")
+		c.Assert(fields[1].TableAsName.L, Equals, "t2")
+		c.Assert(fields[1].ColumnAsName.L, Equals, "a")
+
+		_, _, fields, err = tk.Se.PrepareStmt("update prepare3 set a = ?")
+		c.Assert(err, IsNil)
+		c.Assert(len(fields), Equals, 0)
+
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.Next()
+		exec.Next(goCtx)
 		exec.Close()
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
@@ -111,6 +158,7 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	orgEnable := cfg.PreparedPlanCache.Enabled
 	orgCapacity := cfg.PreparedPlanCache.Capacity
 	flags := []bool{false, true}
+	goCtx := goctx.Background()
 	for _, flag := range flags {
 		cfg.PreparedPlanCache.Enabled = flag
 		cfg.PreparedPlanCache.Capacity = 100
@@ -133,7 +181,7 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 
 		stmtID, _, _, err := tk.Se.PrepareStmt("select id from prepare_test limit ?")
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(stmtID, 1)
+		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtID, 1)
 		c.Assert(err, IsNil)
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
@@ -173,4 +221,14 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
 	cfg.PreparedPlanCache.Capacity = orgCapacity
+}
+
+func (s *testSuite) TestPreparedNameResolver(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, KEY id (id))")
+	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
+	_, err := tk.Exec("prepare stmt from 'select b from t'")
+	c.Assert(err.Error(), Equals, "[plan:1054]Unknown column 'b' in 'field list'")
 }

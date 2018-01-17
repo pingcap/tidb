@@ -73,7 +73,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var alloc autoid.Allocator
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
 		if diff.Type == model.ActionRenameTable {
@@ -162,10 +162,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	}
 	if alloc == nil {
 		schemaID := roDBInfo.ID
-		if tblInfo.OldSchemaID != 0 {
-			schemaID = tblInfo.OldSchemaID
-		}
-		alloc = autoid.NewAllocator(b.handle.store, schemaID)
+		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID))
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
@@ -267,10 +264,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
 		schemaID := di.ID
-		if t.OldSchemaID != 0 {
-			schemaID = t.OldSchemaID
-		}
-		alloc := autoid.NewAllocator(b.handle.store, schemaID)
+		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID))
 		var tbl table.Table
 		tbl, err := tables.TableFromMeta(alloc, t)
 		if err != nil {

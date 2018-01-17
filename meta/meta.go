@@ -122,7 +122,7 @@ func (m *Meta) parseDatabaseID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-func (m *Meta) autoTalbeIDKey(tableID int64) []byte {
+func (m *Meta) autoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
 }
 
@@ -140,26 +140,32 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-// GenAutoTableID adds step to the auto id of the table and returns the sum.
-func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
-	// Check if db exists.
+// GenAutoTableIDIDKeyValue generate meta key by dbID, tableID and coresponding value by autoID.
+func (m *Meta) GenAutoTableIDIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
+	dbKey := m.dbKey(dbID)
+	autoTableIDKey := m.autoTableIDKey(tableID)
+	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
+}
+
+// GenAutoTableID adds step to the auto ID of the table and returns the sum.
+func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
+	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	// Check if table exists.
 	tableKey := m.tableKey(tableID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	return m.txn.HInc(dbKey, m.autoTalbeIDKey(tableID), step)
+	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
 }
 
 // GetAutoTableID gets current auto id with table id.
 func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTalbeIDKey(tableID))
+	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -294,7 +300,7 @@ func (m *Meta) DropDatabase(dbID int64) error {
 // DropTable drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
+func (m *Meta) DropTable(dbID int64, tblID int64, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -302,7 +308,7 @@ func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	}
 
 	// Check if table exists.
-	tableKey := m.tableKey(tableID)
+	tableKey := m.tableKey(tblID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -310,9 +316,8 @@ func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
-
 	if delAutoID {
-		if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
+		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -440,8 +445,8 @@ var (
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -450,7 +455,7 @@ func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) err
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job) error {
-	return m.enQueueDDLJob(mDDLJobListKey, job, true)
+	return m.enQueueDDLJob(mDDLJobListKey, job)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
@@ -486,8 +491,10 @@ func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
-	b, err := job.Encode(true)
+// updateDDLJob updates the DDL job with index and key.
+// updateRawArgs is used to determine whether to update the raw args when encode the job.
+func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -495,8 +502,9 @@ func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
 }
 
 // UpdateDDLJob updates the DDL job with index.
-func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
-	return m.updateDDLJob(index, job, mDDLJobListKey)
+// updateRawArgs is used to determine whether to update the raw args when encode the job.
+func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool) error {
+	return m.updateDDLJob(index, job, mDDLJobListKey, updateRawArgs)
 }
 
 // DDLJobQueueLen returns the DDL job queue length.

@@ -21,7 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -67,9 +67,12 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 		}
 		return types.ETInt
 	}
-	evalTp4Ft := ft.EvalType()
-	if evalTp4Ft != types.ETDecimal && evalTp4Ft != types.ETInt {
-		evalTp4Ft = types.ETReal
+	evalTp4Ft := types.ETReal
+	if !ft.Hybrid() {
+		evalTp4Ft = ft.EvalType()
+		if evalTp4Ft != types.ETDecimal && evalTp4Ft != types.ETInt {
+			evalTp4Ft = types.ETReal
+		}
 	}
 	return evalTp4Ft
 }
@@ -86,6 +89,9 @@ func setFlenDecimal4Int(retTp, a, b *types.FieldType) {
 func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = a.Decimal + b.Decimal
+		if !isReal && retTp.Decimal > mysql.MaxDecimalScale {
+			retTp.Decimal = mysql.MaxDecimalScale
+		}
 		if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
 			retTp.Flen = types.UnspecifiedLength
 			return
@@ -99,8 +105,11 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
 		return
 	}
-	retTp.Decimal = types.UnspecifiedLength
-	retTp.Flen = types.UnspecifiedLength
+	if isReal {
+		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+	} else {
+		retTp.Flen, retTp.Decimal = mysql.MaxDecimalWidth, mysql.MaxDecimalScale
+	}
 }
 
 func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
@@ -116,7 +125,7 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 		retTp.Decimal = mysql.MaxDecimalScale
 	}
 	if a.Flen == types.UnspecifiedLength {
-		retTp.Flen = types.UnspecifiedLength
+		retTp.Flen = mysql.MaxDecimalWidth
 		return
 	}
 	retTp.Flen = a.Flen + decb + precIncrement
@@ -277,9 +286,10 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx context.Context, args []E
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig, nil
 	} else {
+
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
+		if (mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag)) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticMinusIntSig{baseBuiltinFunc: bf}
@@ -346,9 +356,20 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row types.Row) (val int64, isNull
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
+	forceToSigned := s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+	isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
+	isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	if forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag) {
+		if a < 0 || (a > math.MaxInt64) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
+	}
+	if forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag) {
+		if b < 0 || (b > math.MaxInt64) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
+	}
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
@@ -371,7 +392,6 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row types.Row) (val int64, isNull
 			return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	}
-
 	return a - b, false, nil
 }
 

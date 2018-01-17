@@ -18,9 +18,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -273,7 +273,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewFloat64Datum(1.1),
 		},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		expr, err := PBToExpr(tt.expr, fieldTps, sc)
 		c.Assert(err, IsNil)
@@ -327,7 +327,7 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
-		expr.Val = codec.EncodeDecimal(nil, d)
+		expr.Val = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
@@ -372,7 +372,7 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 			result: falseAns,
 		},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		expr, err := PBToExpr(tt.expr, nil, sc)
 		c.Assert(err, IsNil, Commentf("%v", tt))

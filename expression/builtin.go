@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -179,7 +179,7 @@ func (b *baseBuiltinFunc) evalDuration(row types.Row) (types.Duration, bool, err
 	panic("baseBuiltinFunc.evalDuration() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalJSON(row types.Row) (json.JSON, bool, error) {
+func (b *baseBuiltinFunc) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
 	panic("baseBuiltinFunc.evalJSON() should never be called.")
 }
 
@@ -230,7 +230,7 @@ type builtinFunc interface {
 	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row types.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(row types.Row) (val json.JSON, isNull bool, err error)
+	evalJSON(row types.Row) (val json.BinaryJSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.
@@ -495,6 +495,7 @@ var funcs = map[string]functionClass{
 	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
 	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
+	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 2, -1}},
 	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
 	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
