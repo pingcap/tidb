@@ -79,6 +79,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.DumpStatsDeltaToKV()
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
@@ -90,7 +91,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 		"TableScan_8 HashAgg_5  cop table:t, range:[-inf,+inf], keep order:false 8",
 		"HashAgg_5  TableScan_8 cop group by:test.t.a, funcs:count(1) 2",
 		"TableReader_10 HashAgg_9  root data:HashAgg_5 2",
-		"HashAgg_9  TableReader_10 root group by:, funcs:count(col_0) 2",
+		"HashAgg_9  TableReader_10 root group by:col_1, funcs:count(col_0) 2",
 	))
 }
 
@@ -377,6 +378,7 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.DumpStatsDeltaToKV()
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")

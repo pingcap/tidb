@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -32,16 +32,8 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	switch t.Tp {
 	case model.ActionCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
-	case model.ActionDropTable:
-		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
-	case model.ActionDropColumn:
-		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.ColumnInfo.ID, 0)
-	case model.ActionDropIndex:
-		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.IndexInfo.ID, 1)
-	default:
-		log.Warnf("Unsupported ddl event for statistic %s", t)
 	}
 	return nil
 }
@@ -79,30 +71,6 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
-// DeleteTableStatsFromKV deletes table statistics from kv.
-func (h *Handle) DeleteTableStatsFromKV(id int64) error {
-	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goctx.Background(), "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// First of all, we update the version.
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), id))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", id))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", id))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(goctx.Background(), "commit")
-	return errors.Trace(err)
-}
-
 // insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
 // This operation also updates version.
 func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) error {
@@ -123,6 +91,9 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs []ast.RecordSet
 		rs, err = exec.Execute(goCtx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		if len(rs) > 0 {
+			defer terror.Call(rs[0].Close)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -161,31 +132,5 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		}
 	}
 	_, err = exec.Execute(goCtx, "commit")
-	return errors.Trace(err)
-}
-
-// deleteHistStatsFromKV deletes all records about a column or an index and updates version.
-func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int) error {
-	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goctx.Background(), "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// delete histogram meta
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// delete all buckets
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(goctx.Background(), "commit")
 	return errors.Trace(err)
 }

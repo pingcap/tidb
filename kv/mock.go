@@ -99,6 +99,12 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
+func (t *mockTxn) GetSnapshot() Snapshot {
+	return &mockSnapshot{
+		store: NewMemDbBuffer(DefaultTxnMembufCap),
+	}
+}
+
 func (t *mockTxn) SetCap(cap int) {
 
 }

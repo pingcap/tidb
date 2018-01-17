@@ -325,12 +325,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Index Join + Order by.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t1.c",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->Projection",
+			best: "IndexJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->TableReader(Table(t))}(t1.a,t2.a)->Projection",
 		},
 		// Test Index Join + Order by.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t2.c",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->Projection",
+			best: "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(t2.a,t1.a)->Projection",
 		},
 		// Test Index Join + TableScan + Rotate.
 		{
