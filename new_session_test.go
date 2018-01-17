@@ -349,6 +349,24 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
 }
 
+func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1), (2), (3)")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustQuery("select * from history")
+	history := tidb.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+
+	tk.MustExec("insert history values (4)")
+	tk.MustExec("insert history values (5)")
+	c.Assert(history.Count(), Equals, 2)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from history")
+	history = tidb.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+}
+
 // TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
 func (s *testSessionSuite) TestTruncateAlloc(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
