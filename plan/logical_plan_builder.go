@@ -73,10 +73,11 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	// when we eliminate the max and min we may add `is not null` filter.
 	b.optFlag = b.optFlag | flagPredicatePushDown
 
-	agg := LogicalAggregation{AggFuncs: make([]aggregation.Aggregation, 0, len(aggFuncList))}.init(b.ctx)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
+	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.init(b.ctx)
+	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
+
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
 		for _, arg := range aggFunc.Args {
@@ -88,37 +89,40 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			p = np
 			newArgList = append(newArgList, newArg)
 		}
-		newFunc := aggregation.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
+		newFunc := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
 		combined := false
-		for j, oldFunc := range agg.AggFuncs {
-			if oldFunc.Equal(newFunc, b.ctx) {
+		for j, oldFunc := range plan4Agg.AggFuncs {
+			if oldFunc.Equal(b.ctx, newFunc) {
 				aggIndexMap[i] = j
 				combined = true
 				break
 			}
 		}
 		if !combined {
-			position := len(agg.AggFuncs)
+			position := len(plan4Agg.AggFuncs)
 			aggIndexMap[i] = position
-			agg.AggFuncs = append(agg.AggFuncs, newFunc)
-			schema.Append(&expression.Column{
-				FromID:      agg.id,
-				ColName:     model.NewCIStr(fmt.Sprintf("%d_col_%d", agg.id, position)),
+			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
+			schema4Agg.Append(&expression.Column{
+				FromID:      plan4Agg.id,
+				ColName:     model.NewCIStr(fmt.Sprintf("%d_col_%d", plan4Agg.id, position)),
 				Position:    position,
 				IsAggOrSubq: true,
-				RetType:     newFunc.GetType()})
+				RetType:     newFunc.RetTp})
 		}
 	}
 	for _, col := range p.Schema().Columns {
-		newFunc := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
-		agg.AggFuncs = append(agg.AggFuncs, newFunc)
-		schema.Append(col.Clone().(*expression.Column))
+		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
+		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
+		schema4Agg.Append(col.Clone().(*expression.Column))
 	}
-	agg.SetChildren(p)
-	agg.GroupByItems = gbyItems
-	agg.SetSchema(schema)
-	agg.collectGroupByColumns()
-	return agg, aggIndexMap
+	plan4Agg.SetChildren(p)
+	plan4Agg.GroupByItems = gbyItems
+	plan4Agg.SetSchema(schema4Agg)
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// plan4Agg.buildProjectionIfNecessary()
+	// b.optFlag = b.optFlag | flagEliminateProjection
+	plan4Agg.collectGroupByColumns()
+	return plan4Agg, aggIndexMap
 }
 
 func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
@@ -566,17 +570,21 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
-	agg := LogicalAggregation{
-		AggFuncs:     make([]aggregation.Aggregation, 0, child.Schema().Len()),
+	plan4Agg := LogicalAggregation{
+		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.init(b.ctx)
-	agg.collectGroupByColumns()
+	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
-		agg.AggFuncs = append(agg.AggFuncs, aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
+		aggDesc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggDesc)
 	}
-	agg.SetChildren(child)
-	agg.SetSchema(child.Schema().Clone())
-	return agg
+	plan4Agg.SetChildren(child)
+	plan4Agg.SetSchema(child.Schema().Clone())
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// plan4Agg.buildProjectionIfNecessary()
+	// b.optFlag = b.optFlag | flagEliminateProjection
+	return plan4Agg
 }
 
 // joinFieldType finds the type which can carry the given types.

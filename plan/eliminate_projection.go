@@ -163,7 +163,7 @@ func (p *LogicalProjection) replaceExprColumns(replace map[string]*expression.Co
 
 func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
-		for _, aggExpr := range agg.GetArgs() {
+		for _, aggExpr := range agg.Args {
 			resolveExprAndReplace(aggExpr, replace)
 		}
 	}

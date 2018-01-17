@@ -15,46 +15,12 @@ package aggregation
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
 type bitXorFunction struct {
 	aggFunction
-}
-
-// Clone implements Aggregation interface.
-func (bf *bitXorFunction) Clone() Aggregation {
-	nf := *bf
-	for i, arg := range bf.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// CalculateDefaultValue implements Aggregation interface.
-func (bf *bitXorFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
-	arg := bf.Args[0]
-	result := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if con, ok := result.(*expression.Constant); ok {
-		if con.Value.IsNull() {
-			return types.NewDatum(0), true
-		}
-		return con.Value, true
-	}
-	return types.NewDatum(0), true
-}
-
-// GetType implements Aggregation interface.
-func (bf *bitXorFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	ft.Flen = 21
-	types.SetBinChsClnFlag(ft)
-	ft.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
-	return ft
 }
 
 // Update implements Aggregation interface.

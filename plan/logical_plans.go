@@ -185,7 +185,7 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 type LogicalAggregation struct {
 	logicalSchemaProducer
 
-	AggFuncs     []aggregation.Aggregation
+	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
@@ -200,7 +200,7 @@ func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCo
 		corCols = append(corCols, extractCorColumns(expr)...)
 	}
 	for _, fun := range la.AggFuncs {
-		for _, arg := range fun.GetArgs() {
+		for _, arg := range fun.Args {
 			corCols = append(corCols, extractCorColumns(arg)...)
 		}
 	}
