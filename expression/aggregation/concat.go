@@ -60,7 +60,8 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		cf.sepInited = true
 	}
 
-	for i, length := 0, len(cg.Args)-1; i < length; i++ {
+	// The last parameter is the concat seperator, we only concat the first "len(cf.Args)-1" parameters.
+	for i, length := 0, len(cf.Args)-1; i < length; i++ {
 		value, err := cf.Args[i].Eval(row)
 		if err != nil {
 			return errors.Trace(err)
