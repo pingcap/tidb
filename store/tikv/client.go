@@ -36,6 +36,8 @@ import (
 // MaxConnectionCount is the max gRPC connections that will be established with
 // each tikv-server.
 var MaxConnectionCount = 16
+var MaxSendMsgSize = 1024 * 1024 * 4
+var MaxCallMsgSize = 1024 * 1024 * 4
 
 // Timeout durations.
 const (
@@ -100,6 +102,8 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
+			grpc.MaxCallSendMsgSize(MaxCallMsgSize),
+			grpc.MaxSendMsgSize(MaxSendMsgSize),
 		)
 
 		if err != nil {
