@@ -109,7 +109,7 @@ func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
 }
 
-// WriteStmtBufs is buffers used by insert statement.
+// WriteStmtBufs can be used by insert/replace/delete/update statement.
 // TODO: use a common memory pool to replace this.
 type WriteStmtBufs struct {
 	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
