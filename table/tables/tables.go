@@ -287,7 +287,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 			if !touched[ic.Offset] {
 				continue
 			}
-			oldVs, err := idx.FetchValues(oldData)
+			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -302,7 +302,7 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 			if !touched[ic.Offset] {
 				continue
 			}
-			newVs, err := idx.FetchValues(newData)
+			newVs, err := idx.FetchValues(newData, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -315,15 +315,15 @@ func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h in
 	return nil
 }
 
-// adjustRowValuesBuf adjust sessVars.AddRowValues length, sessVars.AddRowValues stores the inserting values that is used
+// adjustRowValuesBuf adjust writeBufs.AddRowValues length, AddRowValues stores the inserting values that is used
 // by tablecodec.EncodeRow, the encoded row format is `id1, colval, id2, colval`, so the correct length is rowLen * 2. If
 // the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
-func adjustRowValuesBuf(sessVars *variable.SessionVars, rowLen int) {
+func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 	adjustLen := rowLen * 2
-	if sessVars.AddRowValues == nil || cap(sessVars.AddRowValues) < adjustLen {
-		sessVars.AddRowValues = make([]types.Datum, adjustLen)
+	if writeBufs.AddRowValues == nil || cap(writeBufs.AddRowValues) < adjustLen {
+		writeBufs.AddRowValues = make([]types.Datum, adjustLen)
 	}
-	sessVars.AddRowValues = sessVars.AddRowValues[:adjustLen]
+	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
 }
 
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
@@ -333,7 +333,7 @@ func (t *Table) getRollbackableMemStore(ctx context.Context) kv.RetrieverMutator
 		return ctx.Txn()
 	}
 
-	bs := ctx.GetSessionVars().BufStore
+	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
 	if bs == nil {
 		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
 	} else {
@@ -361,8 +361,9 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 
 	txn := ctx.Txn()
 	sessVars := ctx.GetSessionVars()
-	// when ImportingData is true, no needs to check the key constrains, so we names the variable skipCheck.
-	skipCheck := sessVars.ImportingData
+	// when ImportingData or BatchCheck is true,
+	// no needs to check the key constrains, so we names the variable skipCheck.
+	skipCheck := sessVars.ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
@@ -395,14 +396,14 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 			row = append(row, value)
 		}
 	}
-	adjustRowValuesBuf(sessVars, len(row))
-
+	writeBufs := sessVars.GetWriteStmtBufs()
+	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
-	sessVars.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, sessVars.RowValBuf, sessVars.AddRowValues)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	value := sessVars.RowValBuf
+	value := writeBufs.RowValBuf
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -455,21 +456,24 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 		}
 	}
 
+	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
+	indexVals := writeBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
-		colVals, err2 := v.FetchValues(r)
+		var err2 error
+		indexVals, err2 = v.FetchValues(r, indexVals)
 		if err2 != nil {
 			return 0, errors.Trace(err2)
 		}
 		var dupKeyErr error
 		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
-			entryKey, err1 := t.genIndexKeyStr(colVals)
+			entryKey, err1 := t.genIndexKeyStr(indexVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, colVals, recordID); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, errors.Trace(dupKeyErr)
 			}
@@ -477,6 +481,8 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 		}
 		txn.DelOption(kv.PresumeKeyNotExistsError)
 	}
+	// save the buffer, multi rows insert can use it.
+	writeBufs.IndexValsBuf = indexVals
 	return 0, nil
 }
 
@@ -614,7 +620,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 // removeRowIndices removes all the indices of a row.
 func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.DeletableIndices() {
-		vals, err := v.FetchValues(rec)
+		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
 			return errors.Trace(err)
