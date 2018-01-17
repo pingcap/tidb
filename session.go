@@ -320,8 +320,13 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
+		h := domain.GetDomain(s).StatsHandle()
 		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count)
+			if item == nil {
+				continue
+			}
+			d := item.(*statistics.TableDelta)
+			s.statsCollector.Update(h, id, d)
 		}
 	}
 	return nil

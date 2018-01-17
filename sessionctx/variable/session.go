@@ -90,18 +90,18 @@ type TransactionContext struct {
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
-	TableDeltaMap map[int64]TableDelta
+	TableDeltaMap map[int64]interface{}
 }
 
-// UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
+// GetTableDelta gets the table delta.
+func (tc *TransactionContext) GetTableDelta(tableID int64) interface{} {
 	if tc.TableDeltaMap == nil {
-		tc.TableDeltaMap = make(map[int64]TableDelta)
+		tc.TableDeltaMap = make(map[int64]interface{})
 	}
-	item := tc.TableDeltaMap[tableID]
-	item.Delta += delta
-	item.Count += count
-	tc.TableDeltaMap[tableID] = item
+	if _, ok := tc.TableDeltaMap[tableID]; !ok {
+		tc.TableDeltaMap[tableID] = nil
+	}
+	return tc.TableDeltaMap[tableID]
 }
 
 // ClearDelta clears the delta map.
@@ -375,9 +375,3 @@ const (
 	TimeZone            = "time_zone"
 	TxnIsolation        = "tx_isolation"
 )
-
-// TableDelta stands for the changed count for one table.
-type TableDelta struct {
-	Delta int64
-	Count int64
-}

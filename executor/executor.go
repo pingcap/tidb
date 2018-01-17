@@ -438,7 +438,7 @@ func (e *SelectLockExec) Next(goCtx goctx.Context) (Row, error) {
 				return nil, errors.Trace(err)
 			}
 			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(id, 0, 0)
+			txnCtx.GetTableDelta(id)
 		}
 	}
 	return row, nil
@@ -470,7 +470,7 @@ func (e *SelectLockExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 				return errors.Trace(err)
 			}
 			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(id, 0, 0)
+			txnCtx.GetTableDelta(id)
 		}
 	}
 	return nil

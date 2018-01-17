@@ -69,6 +69,7 @@ func (h *Handle) Clear() {
 	h.ctx.GetSessionVars().MaxChunkSize = 1
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
+	h.feedback = h.feedback[:0]
 }
 
 // For now, we do not use the query feedback, so just set it to 1.
