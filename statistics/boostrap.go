@@ -51,6 +51,9 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, chk *chunk
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -115,6 +118,9 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, chk 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
 	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch from mysql.stats_histograms"
 	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -181,6 +187,9 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.C
 func (h *Handle) initStatsBuckets(tables statsCache) error {
 	sql := "select table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}

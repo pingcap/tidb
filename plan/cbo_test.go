@@ -79,6 +79,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.DumpStatsDeltaToKV()
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
@@ -377,6 +378,7 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.DumpStatsDeltaToKV()
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")

@@ -1292,7 +1292,7 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ign
 		} else if mysql.HasAutoIncrementFlag(c.Flag) {
 			row[i] = table.GetZeroValue(c.ToInfo())
 		} else {
-			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			row[i], err = e.getColDefaultValue(i, c)
 			hasValue[c.Offset] = true
 			if table.ErrNoDefaultValue.Equal(err) {
 				row[i] = table.GetZeroValue(c.ToInfo())
