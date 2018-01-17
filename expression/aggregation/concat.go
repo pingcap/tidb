@@ -60,15 +60,16 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		cf.sepInited = true
 	}
 
-	value, err := cf.Args[0].Eval(row)
-	if err != nil {
-		return errors.Trace(err)
+	for i, length := 0, len(cg.Args)-1; i < length; i++ {
+		value, err := cf.Args[0].Eval(row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if value.GetValue() == nil {
+			return nil
+		}
+		datumBuf = append(datumBuf, value)
 	}
-	if value.GetValue() == nil {
-		return nil
-	}
-
-	datumBuf = append(datumBuf, value)
 	if cf.HasDistinct {
 		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
 		if err != nil {
