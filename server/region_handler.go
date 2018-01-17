@@ -877,7 +877,7 @@ func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle)
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
