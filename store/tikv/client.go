@@ -37,6 +37,14 @@ import (
 // each tikv-server.
 var MaxConnectionCount = 16
 
+// MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
+// current value, an error will be reported from gRPC.
+var MaxSendMsgSize = 1<<31 - 1
+
+// MaxCallMsgSize set max gRPC receive message size received from server. If any message size is larger than
+// current value, an error will be reported from gRPC.
+var MaxCallMsgSize = 1<<31 - 1
+
 // Timeout durations.
 const (
 	dialTimeout       = 5 * time.Second
@@ -100,6 +108,8 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxCallMsgSize)),
+			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 		)
 
 		if err != nil {
