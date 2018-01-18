@@ -129,7 +129,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.PhysicalJoin.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildJoinSchema(p.PhysicalJoin.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.PhysicalJoin.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + lTask.count()*rTask.cost(),
@@ -146,7 +146,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(p.innerPlan, outerTask.plan())
 	}
-	p.schema = buildJoinSchema(p.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: outerTask.cost() + p.getCost(outerTask.count()),
@@ -159,14 +159,8 @@ func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 	}
 	cst := lCnt * netWorkFactor
 	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
-	if p.KeepOrder {
-		batchSize = 1
-	}
 	cst += lCnt * math.Log2(math.Min(float64(batchSize), lCnt)) * 2
 	cst += lCnt / float64(batchSize) * netWorkStartFactor
-	if p.KeepOrder {
-		return cst * 2
-	}
 	return cst
 }
 
@@ -188,7 +182,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildJoinSchema(p.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
@@ -206,7 +200,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildJoinSchema(p.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
@@ -399,7 +393,7 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	newTask := &rootTask{p: p}
-	newChildren := make([]Plan, 0, len(p.children))
+	newChildren := make([]PhysicalPlan, 0, len(p.children))
 	for _, task := range tasks {
 		if task.invalid() {
 			return invalidTask
@@ -422,7 +416,7 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg PhysicalPlan) {
+func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
@@ -436,64 +430,75 @@ func (p *basePhysicalAgg) newPartialAggregate() (partialAgg, finalAgg PhysicalPl
 	if len(remained) > 0 {
 		return nil, p.self
 	}
-	originalSchema := p.schema
+
+	finalSchema := p.schema
 	partialSchema := expression.NewSchema()
 	p.schema = partialSchema
-	partialAgg = p.self
+	partialAgg := p.self
+
 	// TODO: Refactor the way of constructing aggregation functions.
-	cursor := 0
-	finalAggFuncs := make([]aggregation.Aggregation, len(p.AggFuncs))
+	partialCursor := 0
+	finalAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
-		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
-		var args []expression.Expression
-		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
-		if needCount(fun) {
+		finalAggFunc := &aggregation.AggFuncDesc{Name: aggFun.Name, HasDistinct: false}
+		args := make([]expression.Expression, 0, len(aggFun.Args))
+		if needCount(finalAggFunc) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
-			ft.Flen = 21
-			ft.Charset = charset.CharsetBin
-			ft.Collate = charset.CollationBin
-			partialSchema.Append(&expression.Column{FromID: partialAgg.ID(), Position: cursor, ColName: colName, RetType: ft})
-			args = append(args, partialSchema.Columns[cursor].Clone())
-			cursor++
+			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+			partialSchema.Append(&expression.Column{
+				FromID:   p.ID(),
+				Position: partialCursor,
+				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				RetType:  ft,
+			})
+			args = append(args, partialSchema.Columns[partialCursor].Clone())
+			partialCursor++
 		}
-		if needValue(fun) {
-			ft := originalSchema.Columns[i].GetType()
-			partialSchema.Append(&expression.Column{FromID: partialAgg.ID(), Position: cursor, ColName: colName, RetType: ft})
-			args = append(args, partialSchema.Columns[cursor].Clone())
-			cursor++
+		if needValue(finalAggFunc) {
+			partialSchema.Append(&expression.Column{
+				FromID:   p.ID(),
+				Position: partialCursor,
+				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				RetType:  finalSchema.Columns[i].GetType(),
+			})
+			args = append(args, partialSchema.Columns[partialCursor].Clone())
+			partialCursor++
 		}
-		fun.SetArgs(args)
-		fun.SetMode(aggregation.FinalMode)
-		finalAggFuncs[i] = fun
+		finalAggFunc.Args = args
+		finalAggFunc.Mode = aggregation.FinalMode
+		finalAggFunc.RetTp = aggFun.RetTp
+		finalAggFuncs[i] = finalAggFunc
 	}
-	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
+
 	// add group by columns
+	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
 	for i, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
-			FromID:   partialAgg.ID(),
-			Position: cursor + i,
+			FromID:   p.ID(),
+			Position: partialCursor + i,
+			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
 		groupByItems = append(groupByItems, gbyCol.Clone())
 	}
 
+	// Create physical "final" aggregation.
 	if p.tp == TypeStreamAgg {
-		agg := basePhysicalAgg{
+		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
 			GroupByItems: groupByItems,
 		}.initForStream(p.ctx, p.stats)
-		agg.SetSchema(originalSchema)
-		finalAgg = agg
-	} else {
-		agg := basePhysicalAgg{
-			AggFuncs:     finalAggFuncs,
-			GroupByItems: groupByItems,
-		}.initForHash(p.ctx, p.stats)
-		agg.SetSchema(originalSchema)
-		finalAgg = agg
+		finalAgg.schema = finalSchema
+		return partialAgg, finalAgg
 	}
-	return
+
+	finalAgg := basePhysicalAgg{
+		AggFuncs:     finalAggFuncs,
+		GroupByItems: groupByItems,
+	}.initForHash(p.ctx, p.stats)
+	finalAgg.schema = finalSchema
+	return partialAgg, finalAgg
 }
 
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {

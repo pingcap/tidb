@@ -81,7 +81,6 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	if logic, ok := p.(LogicalPlan); ok {
 		return doOptimize(builder.optFlag, logic, ctx)
 	}
-	p.ResolveIndices()
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
 		return p, errors.Trace(err)
@@ -149,7 +148,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (Logic
 func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
 	logic.deriveStats()
-	t, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+	t, err := logic.convert2PhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

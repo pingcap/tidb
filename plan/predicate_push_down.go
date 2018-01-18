@@ -28,7 +28,7 @@ func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, er
 	return p, nil
 }
 
-func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, chIdx int) {
+func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, chIdx int) {
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
@@ -44,7 +44,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	if len(p.children) == 0 {
 		return predicates, p.self
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.children[0]
 	rest, newChild := child.PredicatePushDown(predicates)
 	addSelection(p.self, newChild, rest, 0)
 	return nil, p.self
@@ -52,7 +52,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	retConditions, child := p.children[0].(LogicalPlan).PredicatePushDown(append(p.Conditions, predicates...))
+	retConditions, child := p.children[0].PredicatePushDown(append(p.Conditions, predicates...))
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		return nil, p
@@ -62,7 +62,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	p.children[0].(LogicalPlan).PredicatePushDown(predicates)
+	p.children[0].PredicatePushDown(predicates)
 	p.conditions = predicates
 	return nil, p
 }
@@ -89,8 +89,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		return newJoin.PredicatePushDown(predicates)
 	}
 	var leftCond, rightCond []expression.Expression
-	leftPlan := p.children[0].(LogicalPlan)
-	rightPlan := p.children[1].(LogicalPlan)
+	leftPlan := p.children[0]
+	rightPlan := p.children[1]
 	var (
 		equalCond                              []*expression.ScalarFunction
 		leftPushCond, rightPushCond, otherCond []expression.Expression
@@ -216,8 +216,8 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 // outerJoinSimplify simplifies outer join.
 func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) {
 	var innerTable, outerTable LogicalPlan
-	child1 := p.children[0].(LogicalPlan)
-	child2 := p.children[1].(LogicalPlan)
+	child1 := p.children[0]
+	child2 := p.children[1]
 	var fullConditions []expression.Expression
 	if p.JoinType == LeftOuterJoin {
 		innerTable = child2
@@ -308,7 +308,7 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 		for _, cond := range predicates {
 			newExprs = append(newExprs, cond.Clone())
 		}
-		retCond, newChild := proj.(LogicalPlan).PredicatePushDown(newExprs)
+		retCond, newChild := proj.PredicatePushDown(newExprs)
 		addSelection(p, newChild, retCond, i)
 	}
 	return nil, p
@@ -324,7 +324,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	var condsToPush []expression.Expression
 	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
 	for _, fun := range la.AggFuncs {
-		exprsOriginal = append(exprsOriginal, fun.GetArgs()[0])
+		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	for _, cond := range predicates {
 		switch cond.(type) {

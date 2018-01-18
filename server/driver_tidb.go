@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -236,12 +237,16 @@ func (tc *TiDBContext) Auth(user *auth.UserIdentity, auth []byte, salt []byte) b
 }
 
 // FieldList implements QueryCtx FieldList method.
-func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error) {
+func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error) {
 	rs, err := tc.Execute(goctx.Background(), "SELECT * FROM `"+table+"` LIMIT 0")
+	if len(rs) > 0 {
+		defer terror.Call(rs[0].Close)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return rs[0].Columns(), nil
+	columns = rs[0].Columns()
+	return columns, nil
 }
 
 // GetStatement implements QueryCtx GetStatement method.

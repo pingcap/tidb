@@ -267,7 +267,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 
 	for _, t := range tables {
 		now := types.CurrentTime(mysql.TypeDatetime)
-		e.appendRow([]interface{}{t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
+		e.appendRow([]interface{}{t.Meta().Name.O, "InnoDB", 10, "Compact", 100, 100, 100, 100, 100, 100, 100,
 			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment})
 	}
 	return nil

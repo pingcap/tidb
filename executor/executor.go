@@ -68,6 +68,7 @@ var (
 	ErrBatchInsertFail      = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
 	ErrWrongValueCountOnRow = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
 	ErrPasswordFormat       = terror.ClassExecutor.New(codePasswordFormat, "The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.")
+	ErrMemExceedThreshold   = terror.ClassExecutor.New(codeMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
 )
 
 // Error codes.
@@ -82,6 +83,7 @@ const (
 	CodeCannotUser           terror.ErrCode = 1396 // MySQL error code
 	codeWrongValueCountOnRow terror.ErrCode = 1136 // MySQL error code
 	codePasswordFormat       terror.ErrCode = 1827 // MySQL error code
+	codeMemExceedThreshold   terror.ErrCode = 8001
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -102,6 +104,7 @@ type baseExecutor struct {
 	maxChunkSize    int
 	children        []Executor
 	childrenResults []*chunk.Chunk
+	retFieldTypes   []*types.FieldType
 }
 
 // Open implements the Executor Open interface.
@@ -140,7 +143,12 @@ func (e *baseExecutor) Schema() *expression.Schema {
 }
 
 func (e *baseExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunk(e.Schema().GetTypes())
+	return chunk.NewChunk(e.retTypes())
+}
+
+// retTypes implements the Executor retTypes interface.
+func (e *baseExecutor) retTypes() []*types.FieldType {
+	return e.retFieldTypes
 }
 
 func (e *baseExecutor) supportChunk() bool {
@@ -160,12 +168,20 @@ func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
-	return baseExecutor{
+	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
 		schema:       schema,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
+	if schema != nil {
+		cols := schema.Columns
+		e.retFieldTypes = make([]*types.FieldType, len(cols))
+		for i := range cols {
+			e.retFieldTypes[i] = cols[i].RetType
+		}
+	}
+	return e
 }
 
 // Executor executes a query.
@@ -174,6 +190,7 @@ type Executor interface {
 	Close() error
 	Open(goctx.Context) error
 	Schema() *expression.Schema
+	retTypes() []*types.FieldType
 	supportChunk() bool
 	newChunk() *chunk.Chunk
 	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
@@ -863,7 +880,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
+	mutableRow := chunk.MutRowFromTypes(e.retTypes())
 	for chk.NumRows() < e.maxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
@@ -879,12 +896,12 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(e.Schema().GetTypes(), e.maxChunkSize)
+		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
 		}
-		mutableRow := chunk.MutRowFromTypes(e.Schema().GetTypes())
+		mutableRow := chunk.MutRowFromTypes(e.retTypes())
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
@@ -1138,7 +1155,7 @@ type execResult struct {
 
 // unionWorkerResult stores the result for a union worker.
 // A "resultPuller" is started for every child to pull result from that child, unionWorkerResult is used to store that pulled result.
-// "src" is used for Chunk resuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
+// "src" is used for Chunk reuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
 // enable the corresponding "resultPuller" continue to work.
 type unionWorkerResult struct {
 	chk *chunk.Chunk
@@ -1300,6 +1317,10 @@ func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *UnionExec) Close() error {
 	e.rows = nil
 	close(e.finished)
+	if e.resultPool != nil {
+		for range e.resultPool {
+		}
+	}
 	e.resourcePools = nil
 	return errors.Trace(e.baseExecutor.Close())
 }

@@ -112,6 +112,11 @@ func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *stmtctx.Stat
 	h.history = append(h.history, s)
 }
 
+// Count returns the count of the history.
+func (h *StmtHistory) Count() int {
+	return len(h.history)
+}
+
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
@@ -678,7 +683,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 	} else {
 		s.ClearValue(context.LastExecuteDDL)
 	}
-
+	logStmt(stmtNode, s.sessionVars)
 	startTS := time.Now()
 	recordSet, err := runStmt(goCtx, s, stmt)
 	if err != nil {
@@ -692,7 +697,6 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
 	}
-	logCrucialStmt(stmtNode, s.sessionVars.User)
 	return recordSets, nil
 }
 
@@ -861,6 +865,7 @@ func (s *session) ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, args .
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logQuery(st.OriginText(), s.sessionVars)
 	r, err := runStmt(goCtx, s, st)
 	return r, errors.Trace(err)
 }
@@ -1130,10 +1135,12 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 16
+	currentBootstrapVersion = 17
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
@@ -1162,7 +1169,9 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 }
 
 func finishBootstrap(store kv.Storage) {
+	storeBootstrappedLock.Lock()
 	storeBootstrapped[store.UUID()] = true
+	storeBootstrappedLock.Unlock()
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -1337,16 +1346,26 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	return pi
 }
 
-// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc.
-func logCrucialStmt(node ast.StmtNode, user *auth.UserIdentity) {
+// logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL
+// if variable.ProcessGeneralLog is set.
+func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 	switch stmt := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
+		user := vars.User
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
 			log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
 		} else {
 			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
 		}
+	default:
+		logQuery(node.Text(), vars)
+	}
+}
+
+func logQuery(query string, vars *variable.SessionVars) {
+	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
+		log.Infof("[%d] %s", vars.ConnectionID, query)
 	}
 }

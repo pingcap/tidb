@@ -18,6 +18,7 @@ import (
 	"math"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -78,7 +79,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 		c.Assert(col2, check.DeepEquals, col1)
 	}
 
-	chk = newChunk(4, 8, -1, 16, 0, 0)
+	chk = newChunk(4, 8, 16, 16, 0, 0)
 	f32Val := float32(1.2)
 	chk.AppendFloat32(0, f32Val)
 	f64Val := 1.3
@@ -159,7 +160,6 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(len(dst.columns[0].offsets), check.Equals, 0)
 	c.Assert(len(dst.columns[0].data), check.Equals, 4*12)
 	c.Assert(len(dst.columns[0].elemBuf), check.Equals, 4)
-	c.Assert(len(dst.columns[0].ifaces), check.Equals, 0)
 
 	c.Assert(dst.columns[1].length, check.Equals, 12)
 	c.Assert(dst.columns[1].nullCount, check.Equals, 6)
@@ -167,7 +167,6 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(string(dst.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
 	c.Assert(string(dst.columns[1].data), check.Equals, "abcabcabcabcabcabc")
 	c.Assert(len(dst.columns[1].elemBuf), check.Equals, 0)
-	c.Assert(len(dst.columns[1].ifaces), check.Equals, 0)
 
 	c.Assert(dst.columns[2].length, check.Equals, 12)
 	c.Assert(dst.columns[2].nullCount, check.Equals, 6)
@@ -175,7 +174,6 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(len(dst.columns[2].offsets), check.Equals, 13)
 	c.Assert(len(dst.columns[2].data), check.Equals, 150)
 	c.Assert(len(dst.columns[2].elemBuf), check.Equals, 0)
-	c.Assert(len(dst.columns[2].ifaces), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
 		jsonElem := dst.GetRow(i).GetJSON(2)
 		cmpRes := json.CompareBinary(jsonElem, jsonObj)
@@ -215,7 +213,6 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(len(src.columns[0].offsets), check.Equals, 0)
 	c.Assert(len(src.columns[0].data), check.Equals, 4*12)
 	c.Assert(len(src.columns[0].elemBuf), check.Equals, 4)
-	c.Assert(len(src.columns[0].ifaces), check.Equals, 0)
 
 	c.Assert(src.columns[1].length, check.Equals, 12)
 	c.Assert(src.columns[1].nullCount, check.Equals, 6)
@@ -223,7 +220,6 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(string(src.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
 	c.Assert(string(src.columns[1].data), check.Equals, "abcabcabcabcabcabc")
 	c.Assert(len(src.columns[1].elemBuf), check.Equals, 0)
-	c.Assert(len(src.columns[1].ifaces), check.Equals, 0)
 
 	c.Assert(src.columns[2].length, check.Equals, 12)
 	c.Assert(src.columns[2].nullCount, check.Equals, 6)
@@ -231,7 +227,6 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(len(src.columns[2].offsets), check.Equals, 13)
 	c.Assert(len(src.columns[2].data), check.Equals, 150)
 	c.Assert(len(src.columns[2].elemBuf), check.Equals, 0)
-	c.Assert(len(src.columns[2].ifaces), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
 		row := src.GetRow(i)
 		jsonElem := row.GetJSON(2)
@@ -247,10 +242,8 @@ func newChunk(elemLen ...int) *Chunk {
 	for _, l := range elemLen {
 		if l > 0 {
 			chk.addFixedLenColumn(l, 0)
-		} else if l == 0 {
-			chk.addVarLenColumn(0)
 		} else {
-			chk.addInterfaceColumn(0)
+			chk.addVarLenColumn(0)
 		}
 	}
 	return chk
@@ -400,6 +393,61 @@ func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
 	decFromChk := chk.GetRow(0).GetDatum(0, decType)
 	c.Assert(decDatum.Length(), check.Equals, decFromChk.Length())
 	c.Assert(decDatum.Frac(), check.Equals, decFromChk.Frac())
+}
+
+func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+
+	initCap := 10
+	chk := NewChunkWithCapacity(fieldTypes, initCap)
+
+	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
+	colUsage := make([]int, len(fieldTypes))
+	colUsage[0] = initCap>>3 + 0 + initCap*4 + 4
+	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	colUsage[3] = initCap>>3 + 0 + initCap*16 + 16
+	colUsage[4] = initCap>>3 + 0 + initCap*16 + 16
+
+	expectedUsage := 0
+	for i := range colUsage {
+		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
+	}
+	memUsage := chk.MemoryUsage()
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+
+	jsonObj, err := json.ParseBinaryFromString("1")
+	c.Assert(err, check.IsNil)
+	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+
+	chk.AppendFloat32(0, 12.4)
+	chk.AppendString(1, "123")
+	chk.AppendJSON(2, jsonObj)
+	chk.AppendTime(3, timeObj)
+	chk.AppendDuration(4, durationObj)
+
+	memUsage = chk.MemoryUsage()
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+
+	chk.AppendFloat32(0, 12.4)
+	chk.AppendString(1, "123111111111111111111111111111111111111111111111")
+	chk.AppendJSON(2, jsonObj)
+	chk.AppendTime(3, timeObj)
+	chk.AppendDuration(4, durationObj)
+
+	memUsage = chk.MemoryUsage()
+	colUsage[1] = initCap>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	expectedUsage = 0
+	for i := range colUsage {
+		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
+	}
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
 }
 
 func BenchmarkAppendInt(b *testing.B) {

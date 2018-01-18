@@ -92,7 +92,8 @@ var (
 	}
 	stores = make(map[string]kv.Driver)
 	// store.UUID()-> IfBootstrapped
-	storeBootstrapped = make(map[string]bool)
+	storeBootstrapped     = make(map[string]bool)
+	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is the time for re-updating remote schema.
 	// In online DDL, we must wait 2 * SchemaLease time to guarantee
@@ -163,7 +164,9 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 	rs, err = s.Exec(goCtx)
 	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
-	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
+	if !s.IsReadOnly() {
+		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
+	}
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")

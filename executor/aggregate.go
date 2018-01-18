@@ -43,6 +43,8 @@ type HashAggExec struct {
 	mutableRow    chunk.MutRow
 	rowBuffer     []types.Datum
 	GroupByItems  []expression.Expression
+	groupKey      []byte
+	groupVals     [][]byte
 }
 
 // Close implements the Executor Close interface.
@@ -65,8 +67,10 @@ func (e *HashAggExec) Open(goCtx goctx.Context) error {
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
 	e.aggCtxsMap = make(aggCtxsMapper, 0)
-	e.mutableRow = chunk.MutRowFromTypes(e.Schema().GetTypes())
+	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
+	e.groupKey = make([]byte, 0, 8)
+	e.groupVals = make([][]byte, 0, 8)
 	return nil
 }
 
@@ -122,7 +126,7 @@ func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if e.groupMap.Get(groupKey) == nil {
+			if len(e.groupMap.Get(groupKey, e.groupVals[:0])) == 0 {
 				e.groupMap.Put(groupKey, []byte{})
 			}
 			aggCtxs := e.getContexts(groupKey)
@@ -183,11 +187,12 @@ func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
 		}
 		vals = append(vals, v)
 	}
-	bs, err := codec.EncodeValue(e.sc, []byte{}, vals...)
+	var err error
+	e.groupKey, err = codec.EncodeValue(e.sc, e.groupKey[:0], vals...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return bs, nil
+	return e.groupKey, nil
 }
 
 // innerNext fetches a single row from src and update each aggregate function.
@@ -205,7 +210,7 @@ func (e *HashAggExec) innerNext(goCtx goctx.Context) (ret bool, err error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if e.groupMap.Get(groupKey) == nil {
+	if len(e.groupMap.Get(groupKey, e.groupVals[:0])) == 0 {
 		e.groupMap.Put(groupKey, []byte{})
 	}
 	aggCtxs := e.getContexts(groupKey)
@@ -261,7 +266,7 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 	e.executed = false
 	e.hasData = false
 	e.inputRow = e.childrenResults[0].End()
-	e.mutableRow = chunk.MutRowFromTypes(e.Schema().GetTypes())
+	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
@@ -427,6 +432,9 @@ func (e *StreamAggExec) meetNewGroup(row types.Row) (bool, error) {
 	if matched {
 		return false, nil
 	}
-	e.curGroupKey = e.tmpGroupKey
+	e.curGroupKey = e.curGroupKey[:0]
+	for _, v := range e.tmpGroupKey {
+		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
+	}
 	return !firstGroup, nil
 }

@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -27,20 +26,6 @@ type concatFunction struct {
 	aggFunction
 	separator string
 	sepInited bool
-}
-
-// Clone implements Aggregation interface.
-func (cf *concatFunction) Clone() Aggregation {
-	nf := *cf
-	for i, arg := range cf.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// GetType implements Aggregation interface.
-func (cf *concatFunction) GetType() *types.FieldType {
-	return types.NewFieldType(mysql.TypeVarString)
 }
 
 func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
@@ -61,7 +46,6 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.
 		return errors.Errorf("Invalid separator argument.")
 	}
 	cf.separator = sep
-	cf.Args = cf.Args[:len(cf.Args)-1]
 	return nil
 }
 
@@ -75,8 +59,10 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		}
 		cf.sepInited = true
 	}
-	for _, a := range cf.Args {
-		value, err := a.Eval(row)
+
+	// The last parameter is the concat seperator, we only concat the first "len(cf.Args)-1" parameters.
+	for i, length := 0, len(cf.Args)-1; i < length; i++ {
+		value, err := cf.Args[i].Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -85,7 +71,7 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		}
 		datumBuf = append(datumBuf, value)
 	}
-	if cf.Distinct {
+	if cf.HasDistinct {
 		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
 		if err != nil {
 			return errors.Trace(err)

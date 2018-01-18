@@ -40,7 +40,7 @@ const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	CreateUserTable = `CREATE TABLE if not exists mysql.user (
 		Host				CHAR(64),
-		User				CHAR(16),
+		User				CHAR(32),
 		Password			CHAR(41),
 		Select_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -228,6 +228,7 @@ const (
 	version14 = 14
 	version15 = 15
 	version16 = 16
+	version17 = 17
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -346,6 +347,10 @@ func upgrade(s Session) {
 
 	if ver < version16 {
 		upgradeToVer16(s)
+	}
+
+	if ver < version17 {
+		upgradeToVer17(s)
 	}
 
 	updateBootstrapVer(s)
@@ -550,6 +555,10 @@ func upgradeToVer15(s Session) {
 
 func upgradeToVer16(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `cm_sketch` blob", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer17(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY User CHAR(32)")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

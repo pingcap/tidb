@@ -77,8 +77,13 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		},
 		// Test Null Range
 		{
+			sql:  "select * from t where t.e_str is null",
+			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[<nil>,<nil>]], Table(t))",
+		},
+		// Test Null Range but the column has not null flag.
+		{
 			sql:  "select * from t where t.c is null",
-			best: "IndexLookUp(Index(t.c_d_e)[[<nil>,<nil>]], Table(t))",
+			best: "IndexLookUp(Index(t.c_d_e)[], Table(t))",
 		},
 		// Test TopN to index branch in double read.
 		{
@@ -321,12 +326,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Index Join + Order by.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t1.c",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->Projection",
+			best: "IndexJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->TableReader(Table(t))}(t1.a,t2.a)->Projection",
 		},
 		// Test Index Join + Order by.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t2.c",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->Projection",
+			best: "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(t2.a,t1.a)->Projection",
 		},
 		// Test Index Join + TableScan + Rotate.
 		{

@@ -133,9 +133,6 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 			}
 		}
 		rec[c.Offset] = converted
-		if c.Tp == mysql.TypeString && !types.IsBinaryStr(&c.FieldType) {
-			truncateTrailingSpaces(&rec[c.Offset])
-		}
 	}
 	return nil
 }
@@ -149,6 +146,11 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 	if err != nil {
 		return casted, errors.Trace(err)
 	}
+
+	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
+		truncateTrailingSpaces(&casted)
+	}
+
 	if ctx.GetSessionVars().SkipUTF8Check {
 		return casted, nil
 	}
@@ -161,14 +163,15 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
 				continue
 			}
-			log.Errorf("[%d] incorrect utf8 value: %x for column %s",
-				ctx.GetSessionVars().ConnectionID, []byte(str), col.Name)
+			err = ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
+			log.Errorf("[%d] %v", ctx.GetSessionVars().ConnectionID, err)
 			// Truncate to valid utf8 string.
 			casted = types.NewStringDatum(str[:i])
-			err = sc.HandleTruncate(ErrTruncateWrongValue)
+			err = sc.HandleTruncate(err)
 			break
 		}
 	}
+
 	return casted, errors.Trace(err)
 }
 

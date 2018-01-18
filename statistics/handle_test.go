@@ -172,8 +172,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
 	sc := new(stmtctx.StatementContext)
-	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0].ID)
-	c.Assert(err, IsNil)
+	count := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, 0.0)
 }
 
@@ -191,8 +190,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
 	sc := new(stmtctx.StatementContext)
-	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
-	c.Assert(err, IsNil)
+	count := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, float64(1))
 
 	// Drop a column and the offset changed,
@@ -205,8 +203,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
 	// At that time, we should get c2's stats instead of c1's.
-	count, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
-	c.Assert(err, IsNil)
+	count = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, 0.0)
 }
 
