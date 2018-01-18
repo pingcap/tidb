@@ -342,7 +342,7 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 	conds = append(conds, innerPlan.pushedDownConds...)
 	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
 	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
-	// So DetachCNFIndexConditions won't miss the equal conditions we generate.
+	// So DetachIndexConditions won't miss the equal conditions we generate.
 	accesses, remained = ranger.DetachIndexConditions(conds, idxCols, colLengths)
 
 	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
