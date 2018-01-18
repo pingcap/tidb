@@ -138,6 +138,20 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 		return nil
 	}
 	delete(b.is.schemaMap, di.Name.L)
+
+	// Copy the sortedTables that contain the table we are going to drop.
+	bucketIdxMap := make(map[int]struct{})
+	for _, tbl := range di.Tables {
+		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
+	}
+	buckets := b.is.sortedTablesBuckets
+	for bucketIdx := range bucketIdxMap {
+		oldSortedTables := buckets[bucketIdx]
+		newSortedTables := make(sortedTables, len(oldSortedTables))
+		copy(newSortedTables, oldSortedTables)
+		buckets[bucketIdx] = newSortedTables
+	}
+
 	ids := make([]int64, 0, len(di.Tables))
 	for _, tbl := range di.Tables {
 		b.applyDropTable(di, tbl.ID)
