@@ -1866,7 +1866,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 		IgnoreErr:   update.IgnoreErr,
 	}.init(b.ctx)
 	updt.SetSchema(p.Schema())
-	updt.SelectPlan, b.err = doOptimize(b.optFlag, p, b.ctx)
+	updt.SelectPlan, b.err = doOptimize(b.optFlag, p)
 	updt.ResolveIndices()
 	return updt
 }
@@ -2017,7 +2017,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
 		Tables:       tables,
 		IsMultiTable: delete.IsMultiTable,
 	}.init(b.ctx)
-	del.SelectPlan, b.err = doOptimize(b.optFlag, p, b.ctx)
+	del.SelectPlan, b.err = doOptimize(b.optFlag, p)
 	if b.err != nil {
 		return nil
 	}
