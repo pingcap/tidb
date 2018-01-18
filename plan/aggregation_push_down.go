@@ -306,7 +306,7 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionS
 	// this will cause error during executor phase.
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			proj := a.convertAggToProj(newAgg, ctx)
+			proj := a.convertAggToProj(newAgg)
 			proj.SetChildren(unionChild)
 			return proj
 		}
@@ -326,7 +326,7 @@ func (a *aggregationOptimizer) optimize(p LogicalPlan) (LogicalPlan, error) {
 // aggPushDown tries to push down aggregate functions to join paths.
 func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 	if agg, ok := p.(*LogicalAggregation); ok {
-		proj := a.tryToEliminateAggregation(agg.ctx, agg)
+		proj := a.tryToEliminateAggregation(agg)
 		if proj != nil {
 			p = proj
 		} else {
@@ -351,7 +351,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 					join.buildKeyInfo()
-					proj := a.tryToEliminateAggregation(agg.ctx, agg)
+					proj := a.tryToEliminateAggregation(agg)
 					if proj != nil {
 						p = proj
 					}
