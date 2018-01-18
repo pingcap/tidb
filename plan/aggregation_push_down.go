@@ -398,7 +398,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationOptimizer) tryToEliminateAggregation(ctx context.Context, agg *LogicalAggregation) *LogicalProjection {
+func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
 	schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 	coveredByUniqueKey := false
 	for _, key := range agg.children[0].Schema().Keys {
@@ -409,17 +409,17 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(ctx context.Context, ag
 	}
 	if coveredByUniqueKey {
 		// GroupByCols has unique key, so this aggregation can be removed.
-		proj := a.convertAggToProj(agg, ctx)
+		proj := a.convertAggToProj(agg)
 		proj.SetChildren(agg.children[0])
 		return proj
 	}
 	return nil
 }
 
-func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation, ctx context.Context) *LogicalProjection {
+func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation) *LogicalProjection {
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.init(ctx)
+	}.init(agg.ctx)
 	for _, fun := range agg.AggFuncs {
 		expr := a.rewriteExpr(agg.ctx, fun)
 		proj.Exprs = append(proj.Exprs, expr)
