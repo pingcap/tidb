@@ -14,7 +14,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -26,13 +25,13 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
-	a.eliminateMaxMin(ctx, p)
+func (a *maxMinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
+	a.eliminateMaxMin(p)
 	return p, nil
 }
 
 // Try to convert max/min to Limit+Sort operators.
-func (a *maxMinEliminator) eliminateMaxMin(ctx context.Context, p LogicalPlan) {
+func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 	// We don't need to guarantee that the child of it is a data source. This transformation won't be worse than previous.
 	if agg, ok := p.(*LogicalAggregation); ok {
 		// We only consider case with single max/min function.
@@ -45,6 +44,7 @@ func (a *maxMinEliminator) eliminateMaxMin(ctx context.Context, p LogicalPlan) {
 		}
 
 		child := p.Children()[0]
+		ctx := p.context()
 
 		// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should NULL if the below is empty.
 		if len(expression.ExtractColumns(f.Args[0])) > 0 {
@@ -79,6 +79,6 @@ func (a *maxMinEliminator) eliminateMaxMin(ctx context.Context, p LogicalPlan) {
 	}
 
 	for _, child := range p.Children() {
-		a.eliminateMaxMin(ctx, child)
+		a.eliminateMaxMin(child)
 	}
 }
