@@ -24,17 +24,15 @@ import (
 // For SQL like `select max(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id desc limit 1 where id is not null) t;`.
 // For SQL like `select min(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id limit 1 where id is not null) t;`.
 type maxMinEliminator struct {
-	ctx context.Context
 }
 
 func (a *maxMinEliminator) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
-	a.ctx = ctx
-	a.eliminateMaxMin(p)
+	a.eliminateMaxMin(ctx, p)
 	return p, nil
 }
 
 // Try to convert max/min to Limit+Sort operators.
-func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
+func (a *maxMinEliminator) eliminateMaxMin(ctx context.Context, p LogicalPlan) {
 	// We don't need to guarantee that the child of it is a data source. This transformation won't be worse than previous.
 	if agg, ok := p.(*LogicalAggregation); ok {
 		// We only consider case with single max/min function.
@@ -52,9 +50,9 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 		if len(expression.ExtractColumns(f.Args[0])) > 0 {
 			// If it can be NULL, we need to filter NULL out first.
 			if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
-				sel := LogicalSelection{}.init(a.ctx)
-				isNullFunc := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
-				notNullFunc := expression.NewFunctionInternal(a.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+				sel := LogicalSelection{}.init(ctx)
+				isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+				notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 				sel.Conditions = []expression.Expression{notNullFunc}
 				sel.SetChildren(p.Children()[0])
 				child = sel
@@ -64,14 +62,14 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 			// For max function, the sort order should be desc.
 			desc := f.Name == ast.AggFuncMax
 			// Compose Sort operator.
-			sort := LogicalSort{}.init(a.ctx)
+			sort := LogicalSort{}.init(ctx)
 			sort.ByItems = append(sort.ByItems, &ByItems{f.Args[0], desc})
 			sort.SetChildren(child)
 			child = sort
 		}
 
 		// Compose Limit operator.
-		li := LogicalLimit{Count: 1}.init(a.ctx)
+		li := LogicalLimit{Count: 1}.init(ctx)
 		li.SetChildren(child)
 
 		// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
@@ -81,6 +79,6 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 	}
 
 	for _, child := range p.Children() {
-		a.eliminateMaxMin(child)
+		a.eliminateMaxMin(ctx, child)
 	}
 }
