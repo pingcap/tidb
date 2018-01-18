@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
@@ -657,6 +658,7 @@ func (s *session) ParseSQL(goCtx goctx.Context, sql, charset, collation string) 
 		defer span1.Finish()
 	}
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
+	hack.GrowStack()
 	return s.parser.Parse(sql, charset, collation)
 }
 
