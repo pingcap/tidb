@@ -535,7 +535,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx)
+		physicalPlan, err := doOptimize(er.b.optFlag, np)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
@@ -578,7 +578,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
 	// We will improve our CBO framework in future.
 	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
-		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx)
+		physicalPlan, err := doOptimize(er.b.optFlag, np)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
@@ -661,7 +661,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		}
 		return v, true
 	}
-	physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx)
+	physicalPlan, err := doOptimize(er.b.optFlag, np)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
