@@ -641,7 +641,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			break
 		}
 	}
-	rows, err := batchMarkDupRows(e, rows)
+	rows, err := batchMarkDupRows(e.Ctx, e.Table, rows)
 	if err != nil {
 		return nil, reachLimit, errors.Trace(err)
 	}
@@ -884,7 +884,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 	if e.IgnoreErr {
 		var err error
-		rows, err = batchMarkDupRows(e, rows)
+		rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1022,19 +1022,7 @@ func getKeysNeedCheck(ctx context.Context, t table.Table, rows [][]types.Datum) 
 // batchMarkDupRows marks rows with duplicate errors as nil.
 // All duplicate rows were marked and appended as duplicate warnings
 // to the statement context in batch.
-func batchMarkDupRows(i interface{}, rows [][]types.Datum) ([][]types.Datum, error) {
-	var ctx context.Context
-	var t table.Table
-	switch e := i.(type) {
-	case *InsertExec:
-		ctx = e.ctx
-		t = e.Table
-	case *LoadDataInfo:
-		ctx = e.Ctx
-		t = e.Table
-	default:
-		panic("can not batch checked type")
-	}
+func batchMarkDupRows(ctx context.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
 	// get keys need to be checked
 	rowWithKeys, err := getKeysNeedCheck(ctx, t, rows)
 
