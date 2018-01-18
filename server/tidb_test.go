@@ -471,8 +471,3 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 	// c_decimal decimal(6, 3)
 	c.Assert(colInfos[5].Decimal, Equals, uint8(3))
 }
-
-func (ts *TidbTestSuite) TestSumAvg(c *C) {
-	c.Parallel()
-	runTestSumAvg(c)
-}
