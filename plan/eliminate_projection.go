@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -100,7 +99,7 @@ type projectionEliminater struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (pe *projectionEliminater) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
 	return root.(LogicalPlan), nil
 }
