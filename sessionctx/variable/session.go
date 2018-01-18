@@ -109,6 +109,31 @@ func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
 }
 
+// WriteStmtBufs can be used by insert/replace/delete/update statement.
+// TODO: use a common memory pool to replace this.
+type WriteStmtBufs struct {
+	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
+	RowValBuf []byte
+	// BufStore stores temp KVs for a row when executing insert statement.
+	// We could reuse a BufStore for multiple rows of a session to reduce memory allocations.
+	BufStore *kv.BufferStore
+	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
+	AddRowValues []types.Datum
+
+	// IndexValsBuf is used by index.FetchValues
+	IndexValsBuf []types.Datum
+	// IndexKeyBuf is used by index.GenIndexKey
+	IndexKeyBuf []byte
+}
+
+func (ib *WriteStmtBufs) clean() {
+	ib.BufStore = nil
+	ib.RowValBuf = nil
+	ib.AddRowValues = nil
+	ib.IndexValsBuf = nil
+	ib.IndexKeyBuf = nil
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	// UsersLock is a lock for user defined variables.
@@ -247,17 +272,14 @@ type SessionVars struct {
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
 
+	// MemThreshold defines the memory usage warning threshold in Byte of a executor during query execution.
+	MemThreshold int64
+
 	// EnableChunk indicates whether the chunk execution model is enabled.
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
 
-	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
-	RowValBuf []byte
-	// BufStore stores temp KVs for a row when executing insert statement.
-	// We could reuse a BufStore for multiple rows of a session to reduce memory allocations.
-	BufStore *kv.BufferStore
-	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
-	AddRowValues []types.Datum
+	writeStmtBufs WriteStmtBufs
 }
 
 // NewSessionVars creates a session vars object.
@@ -282,14 +304,20 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
+		MemThreshold:               DefMemThreshold,
 	}
+}
+
+// GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
+func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
+	return &s.writeStmtBufs
 }
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	s.RowValBuf = nil
-	s.BufStore = nil
-	s.AddRowValues = nil
+	if !s.ImportingData {
+		s.GetWriteStmtBufs().clean()
+	}
 }
 
 // GetCharsetInfo gets charset and collation for current context.

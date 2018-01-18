@@ -125,3 +125,14 @@ func (l *List) Walk(walkFunc ListWalkFunc) error {
 	}
 	return nil
 }
+
+// MemoryUsage calculates the total memory usage of a list.
+func (l *List) MemoryUsage() (sum int64) {
+	for _, c := range l.chunks {
+		sum += c.MemoryUsage()
+	}
+	for _, f := range l.freelist {
+		sum += f.MemoryUsage()
+	}
+	return sum
+}
