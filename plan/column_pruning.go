@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -25,7 +24,7 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (s *columnPruner) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	lp.PruneColumns(lp.Schema().Columns)
 	return lp, nil
 }
