@@ -412,10 +412,9 @@ func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
 func (ts *TidbTestSuite) TestFieldList(c *C) {
 	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute(goctx.Background(), "use test;")
+	_, err = ctx.Execute("use test;")
 	c.Assert(err, IsNil)
 
-	goCtx := goctx.Background()
 	testSQL := `create table t (
 		c_bit bit(10),
 		c_int_d int,
@@ -437,7 +436,7 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 		c_json JSON,
 		c_year year
 	)`
-	_, err = ctx.Execute(goCtx, testSQL)
+	_, err = ctx.Execute(testSQL)
 	c.Assert(err, IsNil)
 	colInfos, err := ctx.FieldList("t")
 	c.Assert(err, IsNil)
