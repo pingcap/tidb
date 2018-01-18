@@ -75,6 +75,7 @@ type HashJoinExec struct {
 	outerResultChs     []chan *chunk.Chunk
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
+	hashTableValBufs   [][][]byte
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -104,10 +105,6 @@ type hashJoinBuffer struct {
 func (e *HashJoinExec) Close() error {
 	close(e.closeCh)
 	e.finished.Store(true)
-	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
-	}
-
 	if e.prepared {
 		if e.resultBufferCh != nil {
 			for range e.resultBufferCh {
@@ -135,9 +132,10 @@ func (e *HashJoinExec) Close() error {
 			e.joinChkResourceCh = nil
 		}
 	}
-
 	e.resultBuffer = nil
-	return nil
+
+	err := e.baseExecutor.Close()
+	return errors.Trace(err)
 }
 
 // Open implements the Executor Open interface.
@@ -148,6 +146,7 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 
 	e.prepared = false
 
+	e.hashTableValBufs = make([][][]byte, e.concurrency)
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		buffer := &hashJoinBuffer{
@@ -633,7 +632,8 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 		return true
 	}
 
-	values := e.hashTable.Get(joinKey)
+	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
+	values := e.hashTableValBufs[workerID]
 	if len(values) == 0 {
 		resultBuffer.rows, resultBuffer.err = e.resultGenerators[0].emit(outerRow, nil, resultBuffer.rows)
 		resultBuffer.err = errors.Trace(resultBuffer.err)
@@ -672,7 +672,8 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 		}
 		return nil
 	}
-	innerPtrs := e.hashTable.Get(joinKey)
+	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
+	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
 		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, chk)
 		if err != nil {

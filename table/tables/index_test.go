@@ -184,7 +184,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
-	_, err = index.FetchValues(make([]types.Datum, 0))
+	_, err = index.FetchValues(make([]types.Datum, 0), nil)
 	c.Assert(err, NotNil)
 }
 

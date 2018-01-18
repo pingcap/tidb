@@ -39,8 +39,8 @@
     "etcdserver/etcdserverpb",
     "mvcc/mvccpb"
   ]
-  revision = "9d43462d174c664f5edf313dec0de31e1ef4ed47"
-  version = "v3.2.6"
+  revision = "fb5cd6f1c72c2b98e0c4453444cdfba306da867b"
+  version = "v3.2.14"
 
 [[projects]]
   branch = "master"
@@ -89,7 +89,11 @@
   name = "github.com/golang/protobuf"
   packages = [
     "proto",
-    "ptypes/any"
+    "protoc-gen-go/descriptor",
+    "ptypes",
+    "ptypes/any",
+    "ptypes/duration",
+    "ptypes/timestamp"
   ]
   revision = "8ee79997227bf9b34611aee7946ae64735e6fd93"
 
@@ -346,28 +350,37 @@
 
 [[projects]]
   name = "google.golang.org/genproto"
-  packages = ["googleapis/rpc/status"]
+  packages = [
+    "googleapis/api/annotations",
+    "googleapis/rpc/status"
+  ]
   revision = "6b7d9516179cd47f4714cfeb0103ad1dede756c4"
 
 [[projects]]
   name = "google.golang.org/grpc"
   packages = [
     ".",
+    "balancer",
     "codes",
+    "connectivity",
     "credentials",
-    "grpclb/grpc_lb_v1",
+    "grpclb/grpc_lb_v1/messages",
     "grpclog",
+    "health/grpc_health_v1",
     "internal",
     "keepalive",
     "metadata",
     "naming",
     "peer",
+    "resolver",
     "stats",
     "status",
     "tap",
     "transport"
   ]
-  revision = "3419b42955675df23457629c75f58eb8dcd56954"
+  revision = "5b3c4e850e90a4cf6a20ebd46c8b32a0a3afcb9e"
+  source = "https://github.com/grpc/grpc-go.git"
+  version = "v1.7.5"
 
 [[projects]]
   name = "gopkg.in/natefinch/lumberjack.v2"
@@ -378,6 +391,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "d45e94de953ee3c1934bc4d883423b8875ae59aa44ddbfc5f764e844f2ec7334"
+  inputs-digest = "92c7c81ac2ac3df66a63416a81e48b40ad4812849569a9dcefb4a9aa2a6f4cbd"
   solver-name = "gps-cdcl"
   solver-version = 1
