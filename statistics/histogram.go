@@ -116,10 +116,10 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
 
 // DecodeTo decodes the histogram bucket values into `tp`.
 func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
-	old := hg.Bounds
-	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, old.NumRows())
+	oldIterator := chunk.NewChunkIterator(hg.Bounds)
+	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIterator.Len())
 	hg.tp = tp
-	for row := old.Begin(); row != old.End(); row = row.Next() {
+	for row := oldIterator.Begin(); row != oldIterator.End(); row = oldIterator.Next() {
 		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
 		if err != nil {
 			return errors.Trace(err)
@@ -132,7 +132,8 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 // ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len())
-	for row := hg.Bounds.Begin(); row != hg.Bounds.End(); row = row.Next() {
+	iterator := chunk.NewChunkIterator(hg.Bounds)
+	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
 		d := row.GetDatum(0, hg.tp)
 		d, err := d.ConvertTo(sc, tp)
 		if err != nil {

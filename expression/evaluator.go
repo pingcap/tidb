@@ -43,9 +43,10 @@ type defaultEvaluator struct {
 
 func (e *defaultEvaluator) run(ctx context.Context, input, output *chunk.Chunk) error {
 	sc := ctx.GetSessionVars().StmtCtx
+	iterator := chunk.NewChunkIterator(input)
 	if e.vectorizable {
 		for i := range e.outputIdxes {
-			err := evalOneColumn(sc, e.exprs[i], input, output, e.outputIdxes[i])
+			err := evalOneColumn(sc, e.exprs[i], iterator, output, e.outputIdxes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -53,7 +54,7 @@ func (e *defaultEvaluator) run(ctx context.Context, input, output *chunk.Chunk) 
 		return nil
 	}
 
-	for row := input.Begin(); row != input.End(); row = row.Next() {
+	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
 		for i := range e.outputIdxes {
 			err := evalOneCell(sc, e.exprs[i], row, output, e.outputIdxes[i])
 			if err != nil {

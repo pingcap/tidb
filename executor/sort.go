@@ -245,7 +245,8 @@ func (e *SortExec) buildKeyChunks() error {
 	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, e.rowChunks.GetChunk(chkIdx), keyChk)
+		childIter := chunk.NewChunkIterator(e.rowChunks.GetChunk(chkIdx))
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -557,7 +558,7 @@ func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
 func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error {
 	if childKeyChk != nil {
 		childKeyChk.Reset()
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childRowChk, childKeyChk)
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, chunk.NewChunkIterator(childRowChk), childKeyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}

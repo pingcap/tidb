@@ -155,7 +155,7 @@ func (outputer *baseJoinResultGenerator) filterResult(resultBuffer []Row, origin
 }
 
 func (outputer *baseJoinResultGenerator) filterChunk(input, output *chunk.Chunk) (matched bool, err error) {
-	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.filter, input, outputer.selected)
+	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.filter, chunk.NewChunkIterator(input), outputer.selected)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -222,7 +222,7 @@ func (outputer *semiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chu
 		} else {
 			outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		}
-		selected, err := expression.EvalBool(outputer.filter, outputer.chk.Begin(), outputer.ctx)
+		selected, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -288,7 +288,7 @@ func (outputer *antiSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners
 			outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		}
 
-		matched, err := expression.EvalBool(outputer.filter, outputer.chk.Begin(), outputer.ctx)
+		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -349,7 +349,7 @@ func (outputer *leftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, i
 	for inner := inners.Begin(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
-		matched, err := expression.EvalBool(outputer.filter, outputer.chk.Begin(), outputer.ctx)
+		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -423,7 +423,7 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Ro
 	for inner := inners.Begin(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
-		matched, err := expression.EvalBool(outputer.filter, outputer.chk.Begin(), outputer.ctx)
+		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}

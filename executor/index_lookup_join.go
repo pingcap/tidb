@@ -342,7 +342,7 @@ func (ow *outerWorker) buildTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
 	if ow.filter != nil {
 		outerMatch := make([]bool, 0, task.outerResult.NumRows())
 		var err error
-		task.outerMatch, err = expression.VectorizedFilter(ow.ctx, ow.filter, task.outerResult, outerMatch)
+		task.outerMatch, err = expression.VectorizedFilter(ow.ctx, ow.filter, chunk.NewChunkIterator(task.outerResult), outerMatch)
 		if err != nil {
 			return task, errors.Trace(err)
 		}
@@ -489,6 +489,8 @@ func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTa
 	}
 	defer terror.Call(innerExec.Close)
 	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
+	childIter := chunk.NewChunkIterator(iw.executorChk)
+	selected := make([]bool, 0, iw.ctx.GetSessionVars().MaxChunkSize)
 	for {
 		err := innerExec.NextChunk(goCtx, iw.executorChk)
 		if err != nil {
@@ -497,16 +499,17 @@ func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTa
 		if iw.executorChk.NumRows() == 0 {
 			break
 		}
-		for row := iw.executorChk.Begin(); row != iw.executorChk.End(); row = row.Next() {
-			if iw.filter != nil {
-				matched, err := expression.EvalBool(iw.filter, row, iw.ctx)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if matched {
-					innerResult.AppendRow(row)
-				}
-			} else {
+		if iw.filter == nil {
+			innerResult.Add(iw.executorChk)
+			iw.executorChk = chunk.NewChunk(iw.innerCtx.rowTypes)
+			continue
+		}
+		selected, err := expression.VectorizedFilter(iw.ctx, iw.filter, childIter, selected)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for row := childIter.Begin(); row != childIter.End(); row = childIter.Next() {
+			if selected[row.Idx()] {
 				innerResult.AppendRow(row)
 			}
 		}

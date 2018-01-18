@@ -27,8 +27,8 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, chk *chunk.Chunk) {
-	for row := chk.Begin(); row != chk.End(); row = row.Next() {
+func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iterator chunk.Iterator) {
+	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
 		tableID := row.GetInt64(1)
 		table, ok := is.TableByID(tableID)
 		if !ok {
@@ -67,13 +67,13 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsMeta4Chunk(is, tables, chk)
+		initStatsMeta4Chunk(is, tables, chunk.NewChunkIterator(chk))
 	}
 	return tables, nil
 }
 
-func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, chk *chunk.Chunk) {
-	for row := chk.Begin(); row != chk.End(); row = row.Next() {
+func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iterator chunk.Iterator) {
+	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
 			continue
@@ -133,13 +133,13 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsHistograms4Chunk(is, tables, chk)
+		initStatsHistograms4Chunk(is, tables, chunk.NewChunkIterator(chk))
 	}
 	return nil
 }
 
-func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.Chunk) {
-	for row := chk.Begin(); row != chk.End(); row = row.Next() {
+func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, iterator chunk.Iterator) {
+	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := tables[tableID]
 		if !ok {
@@ -202,7 +202,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4Chunk(h.ctx, tables, chk)
+		initStatsBuckets4Chunk(h.ctx, tables, chunk.NewChunkIterator(chk))
 	}
 	for _, table := range tables {
 		if h.LastVersion < table.Version {
