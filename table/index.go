@@ -40,11 +40,13 @@ type Index interface {
 	// Exist supports check index exists or not.
 	Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (bool, int64, error)
 	// GenIndexKey generates an index key.
-	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h int64) (key []byte, distinct bool, err error)
+	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h int64, buf []byte) (key []byte, distinct bool, err error)
 	// Seek supports where clause.
 	Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter IndexIterator, hit bool, err error)
 	// SeekFirst supports aggregate min and ascend order by.
 	SeekFirst(r kv.Retriever) (iter IndexIterator, err error)
 	// FetchValues fetched index column values in a row.
-	FetchValues(row []types.Datum) (columns []types.Datum, err error)
+	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
+	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
+	FetchValues(row []types.Datum, columns []types.Datum) ([]types.Datum, error)
 }
