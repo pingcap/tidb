@@ -100,19 +100,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 
 // copySortedTables copies sortedTables for old table and new table for later modification.
 func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
-	buckets := b.is.sortedTablesBuckets
 	if tableIDIsValid(oldTableID) {
-		bucketIdx := tableBucketIdx(oldTableID)
-		oldSortedTables := buckets[bucketIdx]
-		newSortedTables := make(sortedTables, len(oldSortedTables))
-		copy(newSortedTables, oldSortedTables)
-		buckets[bucketIdx] = newSortedTables
+		b.copySortedTablesBucket(tableBucketIdx(oldTableID))
 	}
 	if tableIDIsValid(newTableID) && newTableID != oldTableID {
-		oldSortedTables := buckets[tableBucketIdx(newTableID)]
-		newSortedTables := make(sortedTables, len(oldSortedTables), len(oldSortedTables)+1)
-		copy(newSortedTables, oldSortedTables)
-		buckets[tableBucketIdx(newTableID)] = newSortedTables
+		b.copySortedTablesBucket(tableBucketIdx(newTableID))
 	}
 }
 
@@ -144,12 +136,8 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	for _, tbl := range di.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 	}
-	buckets := b.is.sortedTablesBuckets
 	for bucketIdx := range bucketIdxMap {
-		oldSortedTables := buckets[bucketIdx]
-		newSortedTables := make(sortedTables, len(oldSortedTables))
-		copy(newSortedTables, oldSortedTables)
-		buckets[bucketIdx] = newSortedTables
+		b.copySortedTablesBucket(bucketIdx)
 	}
 
 	ids := make([]int64, 0, len(di.Tables))
@@ -159,6 +147,13 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 		ids = append(ids, tbl.ID)
 	}
 	return ids
+}
+
+func (b *Builder) copySortedTablesBucket(bucketIdx int) {
+	oldSortedTables := b.is.sortedTablesBuckets[bucketIdx]
+	newSortedTables := make(sortedTables, len(oldSortedTables))
+	copy(newSortedTables, oldSortedTables)
+	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
 func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID int64, alloc autoid.Allocator) error {
