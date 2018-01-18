@@ -16,7 +16,6 @@ package plan
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
@@ -83,7 +82,7 @@ func (la *LogicalAggregation) canPullUp() bool {
 type decorrelateSolver struct{}
 
 // optimize implements logicalOptRule interface.
-func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1].(LogicalPlan)
@@ -103,12 +102,12 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 			apply.attachOnConds(newConds)
 			innerPlan = sel.children[0].(LogicalPlan)
 			apply.SetChildren(outerPlan, innerPlan)
-			return s.optimize(p, nil)
+			return s.optimize(p)
 		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
 			if m.children[0].(LogicalPlan).MaxOneRow() {
 				innerPlan = m.children[0].(LogicalPlan)
 				apply.SetChildren(outerPlan, innerPlan)
-				return s.optimize(p, nil)
+				return s.optimize(p)
 			}
 		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
 			for i, expr := range proj.Exprs {
@@ -121,14 +120,14 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				np, err := s.optimize(p, nil)
+				np, err := s.optimize(p)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				proj.SetChildren(np)
 				return proj, nil
 			}
-			return s.optimize(p, nil)
+			return s.optimize(p)
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0].(LogicalPlan)
@@ -144,7 +143,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
 				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				np, err := s.optimize(p, nil)
+				np, err := s.optimize(p)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -158,7 +157,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context) (LogicalP
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, err := s.optimize(child, nil)
+		np, err := s.optimize(child)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
