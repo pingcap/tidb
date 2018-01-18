@@ -233,9 +233,6 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		Ranges:          ranges,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
-	if !prop.isEmpty() {
-		join.KeepOrder = true
-	}
 	return []PhysicalPlan{join}
 }
 
@@ -265,7 +262,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
-			innerPlan := x.forceToTableScan()
+			innerPlan := x.forceToTableScan(pkCol)
 			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
 		}
 	}
