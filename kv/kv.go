@@ -144,6 +144,9 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the snapshot of this transaction.
 	GetSnapshot() Snapshot
+	// FlushStatement provides statement level rollback, if the implemention support this
+	// feature, call FlushStatement(true) after each execution of a statement.
+	FlushStatement(bool) error
 }
 
 // Client is used to send request to KV layer.

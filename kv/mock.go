@@ -35,6 +35,10 @@ func (t *mockTxn) Rollback() error {
 	return nil
 }
 
+func (t *mockTxn) FlushStatement(bool) error {
+	return nil
+}
+
 func (t *mockTxn) String() string {
 	return ""
 }

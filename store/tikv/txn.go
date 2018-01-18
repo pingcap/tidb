@@ -94,6 +94,10 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	return ret, nil
 }
 
+func (txn *tikvTxn) FlushStatement(bool) error {
+	return nil
+}
+
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 	txn.setCnt++
 
