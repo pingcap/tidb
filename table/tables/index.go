@@ -100,19 +100,19 @@ type index struct {
 	idxInfo *model.IndexInfo
 	prefix  kv.Key
 
-	// buffer is used reduce the number of new slice when multiple index keys are created.
+	// ddlReorgBuffer is used reduce the number of new slice when multiple index keys are created.
 	// It is not thread-safe, is only used in ddl index reorganization stage, please don't use it in other case.
-	buffer []byte
+	ddlReorgBuffer []byte
 }
 
 // NewIndexWithBuffer builds a new Index object whit the buffer.
 func NewIndexWithBuffer(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
 	idxPrefix := tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID)
 	index := &index{
-		tblInfo: tableInfo,
-		idxInfo: indexInfo,
-		prefix:  idxPrefix,
-		buffer:  make([]byte, 0, len(idxPrefix)+len(indexInfo.Columns)*9+9),
+		tblInfo:        tableInfo,
+		idxInfo:        indexInfo,
+		prefix:         idxPrefix,
+		ddlReorgBuffer: make([]byte, 0, len(idxPrefix)+len(indexInfo.Columns)*9+9),
 	}
 	return index
 }
@@ -137,8 +137,8 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 		return buf[:0]
 	}
 
-	if c.buffer != nil {
-		return c.buffer[:0]
+	if c.ddlReorgBuffer != nil {
+		return c.ddlReorgBuffer[:0]
 	}
 
 	return make([]byte, 0, defaultCap)
