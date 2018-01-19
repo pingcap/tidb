@@ -370,6 +370,23 @@ func (s *session) CommitTxn(ctx goctx.Context) error {
 	return errors.Trace(err)
 }
 
+// rollbackTxnAndContinue rollbacks the current txn, and if it's in txn,
+// continue to execute the remain statements in a new txn.
+// TODO: This behavior is strange, we should support statement rollback as a real fix!
+func (s *session) rollbackTxnAndContinue(ctx goctx.Context) error {
+	inTrans := s.sessionVars.InTxn()
+	err := s.RollbackTxn(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if inTrans {
+		s.PrepareTxnCtx(ctx)
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	}
+	return nil
+}
+
 func (s *session) RollbackTxn(ctx goctx.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span = opentracing.StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
@@ -715,9 +732,13 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 	startTS := time.Now()
 	recordSet, err := runStmt(goCtx, s, stmt)
 	if err != nil {
+		// TODO: if we're in transaction, and runStmt returns error, there should be
+		// no side effect, i.e, tikv or union store should not be touched by runStmt.
+		// But we can't gurantee it for this moment.
 		if !kv.ErrKeyExists.Equal(err) {
 			log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
 		}
+		terror.Log(s.rollbackTxnAndContinue(goCtx))
 		return nil, errors.Trace(err)
 	}
 	sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
@@ -794,7 +815,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			stmt, err := compiler.Compile(goCtx, stmtNode)
 			if err != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
-				terror.Log(errors.Trace(s.RollbackTxn(goCtx)))
+				terror.Log(s.rollbackTxnAndContinue(goCtx))
 				return nil, errors.Trace(err)
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
