@@ -1808,7 +1808,6 @@ func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
  		  b int(11) DEFAULT NULL
  	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
 	tk.MustExec("insert into test values (1, 2), (1, 2), (1, 1), (1, 1);")
-	tk.MustExec("commit")
 
 	tk.MustExec("start transaction;")
 	// In the transaction, statement error should not rollback the transaction.

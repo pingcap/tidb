@@ -947,7 +947,7 @@ func (st *StmtTxn) Delete(k kv.Key) error {
 	return st.buf.Delete(k)
 }
 
-// Seek overrides the Transactioin interface.
+// Seek overrides the Transaction interface.
 func (st *StmtTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.Seek(k)
 	if err != nil {
@@ -960,7 +960,7 @@ func (st *StmtTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekReverse overrides the Transactioin interface.
+// SeekReverse overrides the Transaction interface.
 func (st *StmtTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.SeekReverse(k)
 	if err != nil {
