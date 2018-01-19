@@ -76,7 +76,7 @@ type readerIterator struct {
 	firstRow4Key   chunk.Row
 	curRow         chunk.Row
 	curResult      *chunk.Chunk
-	curIter        chunk.Iterator
+	curIter        *chunk.ChunkIterator
 	curResultInUse bool
 	curSelected    []bool
 	resultQueue    []*chunk.Chunk

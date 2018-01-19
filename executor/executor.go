@@ -461,11 +461,11 @@ func (e *SelectLockExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	txnCtx.ForUpdate = true
 	keys := make([]kv.Key, 0, chk.NumRows())
-	iterator := chunk.NewChunkIterator(chk)
+	iter := chunk.NewChunkIterator(chk)
 	for id, cols := range e.Schema().TblID2Handle {
 		for _, col := range cols {
 			keys = keys[:0]
-			for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 				keys = append(keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
 			}
 			err = txn.LockKeys(keys...)
@@ -706,7 +706,7 @@ type SelectionExec struct {
 	batched   bool
 	filters   []expression.Expression
 	selected  []bool
-	inputIter chunk.Iterator
+	inputIter *chunk.ChunkIterator
 	inputRow  chunk.Row
 }
 

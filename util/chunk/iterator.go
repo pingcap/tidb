@@ -68,16 +68,16 @@ func (it *sliceIterator) Len() int {
 }
 
 // NewChunkIterator returns a iterator for Chunk.
-func NewChunkIterator(chk *Chunk) Iterator {
-	return &chunkIterator{chk: chk}
+func NewChunkIterator(chk *Chunk) *ChunkIterator {
+	return &ChunkIterator{chk: chk}
 }
 
-type chunkIterator struct {
+type ChunkIterator struct {
 	chk    *Chunk
 	cursor int
 }
 
-func (it *chunkIterator) Begin() Row {
+func (it *ChunkIterator) Begin() Row {
 	if it.chk.NumRows() == 0 {
 		return it.End()
 	}
@@ -85,7 +85,7 @@ func (it *chunkIterator) Begin() Row {
 	return it.chk.GetRow(0)
 }
 
-func (it *chunkIterator) Next() Row {
+func (it *ChunkIterator) Next() Row {
 	if it.cursor == it.chk.NumRows() {
 		return it.End()
 	}
@@ -94,11 +94,11 @@ func (it *chunkIterator) Next() Row {
 	return row
 }
 
-func (it *chunkIterator) End() Row {
+func (it *ChunkIterator) End() Row {
 	return Row{}
 }
 
-func (it *chunkIterator) Len() int {
+func (it *ChunkIterator) Len() int {
 	return it.chk.NumRows()
 }
 

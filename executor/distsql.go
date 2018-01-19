@@ -808,8 +808,8 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		iterator := chunk.NewChunkIterator(chk)
-		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
+		iter := chunk.NewChunkIterator(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
 		}
 	}

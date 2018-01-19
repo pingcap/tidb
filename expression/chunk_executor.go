@@ -53,7 +53,7 @@ func hasUnVectorizableFunc(expr Expression) bool {
 }
 
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
-func VectorizedExecute(ctx context.Context, exprs []Expression, iterator chunk.Iterator, output *chunk.Chunk) error {
+func VectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.ChunkIterator, output *chunk.Chunk) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	for colID, expr := range exprs {
 		err := evalOneColumn(sc, expr, iterator, output, colID)
@@ -64,7 +64,7 @@ func VectorizedExecute(ctx context.Context, exprs []Expression, iterator chunk.I
 	return nil
 }
 
-func evalOneColumn(sc *stmtctx.StatementContext, expr Expression, iterator chunk.Iterator, output *chunk.Chunk, colID int) (err error) {
+func evalOneColumn(sc *stmtctx.StatementContext, expr Expression, iterator *chunk.ChunkIterator, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
@@ -99,7 +99,7 @@ func evalOneColumn(sc *stmtctx.StatementContext, expr Expression, iterator chunk
 }
 
 // UnVectorizedExecute evaluates a list of expressions row by row and append their results to "output" Chunk.
-func UnVectorizedExecute(ctx context.Context, exprs []Expression, iterator chunk.Iterator, output *chunk.Chunk) error {
+func UnVectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.ChunkIterator, output *chunk.Chunk) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
 		for colID, expr := range exprs {
@@ -238,7 +238,7 @@ func executeToString(sc *stmtctx.StatementContext, expr Expression, fieldType *t
 // VectorizedFilter applies a list of filters to a Chunk and
 // returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
-func VectorizedFilter(ctx context.Context, filters []Expression, iterator chunk.Iterator, selected []bool) ([]bool, error) {
+func VectorizedFilter(ctx context.Context, filters []Expression, iterator *chunk.ChunkIterator, selected []bool) ([]bool, error) {
 	selected = selected[:0]
 	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 		selected = append(selected, true)
