@@ -345,7 +345,7 @@ func (hg *Histogram) lessAndEqRowCount(value types.Datum) float64 {
 func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	lessCountA := hg.lessRowCount(a)
 	lessCountB := hg.lessRowCount(b)
-	// If lessCountA is not less than lessCountB, it may be that they fail into the same bucket and we cannot estimate
+	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than lessCountB.
 	if lessCountA >= lessCountB {
 		return math.Min(lessCountB, hg.totalRowCount()/float64(hg.NDV))
