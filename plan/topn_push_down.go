@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -22,7 +21,7 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
-func (s *pushDownTopNOptimizer) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
+func (s *pushDownTopNOptimizer) optimize(p LogicalPlan) (LogicalPlan, error) {
 	return p.pushDownTopN(nil), nil
 }
 
