@@ -448,7 +448,9 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(goCtx)
-			s.Txn().FlushStatement(err == nil)
+			if err1 := s.Txn().FlushStatement(err == nil); err1 != nil {
+				terror.Log(err)
+			}
 			if err != nil {
 				break
 			}
@@ -944,6 +946,7 @@ func (st *StmtTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
 
+// FlushStatement flush data changes by the statement to underlying txn.
 func (st *StmtTxn) FlushStatement(succ bool) error {
 	var err error
 	if succ {
