@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -76,6 +77,7 @@ type HashJoinExec struct {
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
+	totalMemoryUsage   int64
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -105,10 +107,6 @@ type hashJoinBuffer struct {
 func (e *HashJoinExec) Close() error {
 	close(e.closeCh)
 	e.finished.Store(true)
-	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
-	}
-
 	if e.prepared {
 		if e.resultBufferCh != nil {
 			for range e.resultBufferCh {
@@ -136,9 +134,10 @@ func (e *HashJoinExec) Close() error {
 			e.joinChkResourceCh = nil
 		}
 	}
-
 	e.resultBuffer = nil
-	return nil
+
+	err := e.baseExecutor.Close()
+	return errors.Trace(err)
 }
 
 // Open implements the Executor Open interface.
@@ -162,7 +161,6 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.workerWaitGroup = sync.WaitGroup{}
-
 	e.resultCursor = 0
 	return nil
 }
@@ -334,6 +332,7 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 	innerExecChk := e.childrenResults[e.innerIdx]
 	selected := make([]bool, 0, chunk.InitialCapacity)
 	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	memExceedThreshold, execMemThreshold := false, e.ctx.GetSessionVars().MemThreshold
 	for {
 		innerExecChk.Reset()
 		err = e.innerExec.NextChunk(goCtx, innerExecChk)
@@ -351,6 +350,11 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 			if selected[idx] {
 				innerResult.AppendRow(innerExecChk.GetRow(idx))
 			}
+		}
+		innerMemUsage := innerResult.MemoryUsage()
+		if !memExceedThreshold && innerMemUsage > execMemThreshold {
+			memExceedThreshold = true
+			log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoin", innerMemUsage, execMemThreshold).Error())
 		}
 	}
 	e.innerResult = innerResult
