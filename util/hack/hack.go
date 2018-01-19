@@ -49,6 +49,6 @@ func GrowStack() {
 	// Usually, the initial value is 2kb. By placing this 16kb array at beginning, we can force go allocate 32kb stack frame size for underlying goroutine.
 	var buf [16 << 10]byte
 	for i := range buf {
-		buf[i] = byte(i)
+		buf[i] = byte(0)
 	}
 }
