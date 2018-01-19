@@ -461,7 +461,7 @@ func (e *SelectLockExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	txnCtx.ForUpdate = true
 	keys := make([]kv.Key, 0, chk.NumRows())
-	iter := chunk.NewChunkIterator(chk)
+	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
 		for _, col := range cols {
 			keys = keys[:0]
@@ -706,7 +706,7 @@ type SelectionExec struct {
 	batched   bool
 	filters   []expression.Expression
 	selected  []bool
-	inputIter *chunk.ChunkIterator
+	inputIter *chunk.Iterator4Chunk
 	inputRow  chunk.Row
 }
 
@@ -719,7 +719,7 @@ func (e *SelectionExec) Open(goCtx goctx.Context) error {
 	if e.batched {
 		e.selected = make([]bool, 0, chunk.InitialCapacity)
 	}
-	e.inputIter = chunk.NewChunkIterator(e.childrenResults[0])
+	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
 	e.inputRow = e.inputIter.End()
 	return nil
 }

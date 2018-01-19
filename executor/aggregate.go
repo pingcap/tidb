@@ -112,7 +112,7 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 
 // innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
-	inputIter := chunk.NewChunkIterator(e.childrenResults[0])
+	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
 	for {
 		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
@@ -253,7 +253,7 @@ type StreamAggExec struct {
 	tmpGroupKey  []types.Datum
 
 	// for chunk execution.
-	inputIter  *chunk.ChunkIterator
+	inputIter  *chunk.Iterator4Chunk
 	inputRow   chunk.Row
 	mutableRow chunk.MutRow
 	rowBuffer  []types.Datum
@@ -267,7 +267,7 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 
 	e.executed = false
 	e.hasData = false
-	e.inputIter = chunk.NewChunkIterator(e.childrenResults[0])
+	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
 	e.inputRow = e.inputIter.End()
 	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())

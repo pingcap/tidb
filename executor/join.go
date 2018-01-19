@@ -330,7 +330,7 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 	innerExecChk := e.childrenResults[e.innerIdx]
-	innerIter := chunk.NewChunkIterator(innerExecChk)
+	innerIter := chunk.NewIterator4Chunk(innerExecChk)
 	selected := make([]bool, 0, chunk.InitialCapacity)
 	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
 	memExceedThreshold, execMemThreshold := false, e.ctx.GetSessionVars().MemThreshold
@@ -696,7 +696,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 		innerRows = append(innerRows, matchedInner)
 	}
 
-	err = e.resultGenerators[workerID].emitToChunk(outerRow, chunk.NewSliceIterator(innerRows), chk)
+	err = e.resultGenerators[workerID].emitToChunk(outerRow, chunk.NewIterator4Slice(innerRows), chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -718,7 +718,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID int) (bool, *hashjoinWorkerResu
 
 func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResultChkBuffer *chunk.Chunk, joinResult *hashjoinWorkerResult, selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
-	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewChunkIterator(outerChk), selected)
+	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
 		joinResult.err = errors.Trace(err)
 		return false, joinResult
@@ -880,7 +880,7 @@ func (e *NestedLoopApplyExec) fetchOuterRow(goCtx goctx.Context) (Row, bool, err
 }
 
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context) (*chunk.Row, error) {
-	outerIter := chunk.NewChunkIterator(e.outerChunk)
+	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
 			err := e.outerExec.NextChunk(goCtx, e.outerChunk)
@@ -945,7 +945,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(goCtx goctx.Context) error {
 		return errors.Trace(err)
 	}
 	e.innerList.Reset()
-	innerIter := chunk.NewChunkIterator(e.innerChunk)
+	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
 		err := e.innerExec.NextChunk(goCtx, e.innerChunk)
 		if err != nil {
@@ -1068,7 +1068,7 @@ func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 			return errors.Trace(err)
 		}
 		e.resultChunk.Reset()
-		iter := chunk.NewListIterator(e.innerList)
+		iter := chunk.NewIterator4List(e.innerList)
 		err = e.resultGenerator.emitToChunk(*outerRow, iter, e.resultChunk)
 		if err != nil {
 			return errors.Trace(err)

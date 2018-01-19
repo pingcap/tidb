@@ -43,7 +43,7 @@ type defaultEvaluator struct {
 
 func (e *defaultEvaluator) run(ctx context.Context, input, output *chunk.Chunk) error {
 	sc := ctx.GetSessionVars().StmtCtx
-	iter := chunk.NewChunkIterator(input)
+	iter := chunk.NewIterator4Chunk(input)
 	if e.vectorizable {
 		for i := range e.outputIdxes {
 			err := evalOneColumn(sc, e.exprs[i], iter, output, e.outputIdxes[i])

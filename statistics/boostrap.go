@@ -27,7 +27,7 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.ChunkIterator) {
+func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID := row.GetInt64(1)
 		table, ok := is.TableByID(tableID)
@@ -59,7 +59,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	}
 	tables := statsCache{}
 	chk := rc[0].NewChunk()
-	iter := chunk.NewChunkIterator(chk)
+	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
@@ -73,7 +73,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	return tables, nil
 }
 
-func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.ChunkIterator) {
+func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
@@ -126,7 +126,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		return errors.Trace(err)
 	}
 	chk := rc[0].NewChunk()
-	iter := chunk.NewChunkIterator(chk)
+	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
@@ -140,7 +140,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 	return nil
 }
 
-func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, iter *chunk.ChunkIterator) {
+func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := tables[tableID]
@@ -196,7 +196,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		return errors.Trace(err)
 	}
 	chk := rc[0].NewChunk()
-	iter := chunk.NewChunkIterator(chk)
+	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {

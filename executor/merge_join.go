@@ -76,7 +76,7 @@ type readerIterator struct {
 	firstRow4Key   chunk.Row
 	curRow         chunk.Row
 	curResult      *chunk.Chunk
-	curIter        *chunk.ChunkIterator
+	curIter        *chunk.Iterator4Chunk
 	curResultInUse bool
 	curSelected    []bool
 	resultQueue    []*chunk.Chunk
@@ -159,7 +159,7 @@ func (ri *readerIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
 	}
 	ri.stmtCtx = ri.ctx.GetSessionVars().StmtCtx
 	ri.curResult = chk4Reader
-	ri.curIter = chunk.NewChunkIterator(ri.curResult)
+	ri.curIter = chunk.NewIterator4Chunk(ri.curResult)
 	ri.curRow = ri.curIter.End()
 	ri.curSelected = make([]bool, 0, ri.ctx.GetSessionVars().MaxChunkSize)
 	ri.curResultInUse = false
@@ -248,7 +248,7 @@ func (ri *readerIterator) reallocReaderResult() {
 
 	// NOTE: "ri.curResult" is always the last element of "resultQueue".
 	ri.curResult = ri.resourceQueue[0]
-	ri.curIter = chunk.NewChunkIterator(ri.curResult)
+	ri.curIter = chunk.NewIterator4Chunk(ri.curResult)
 	ri.resourceQueue = ri.resourceQueue[1:]
 	ri.resultQueue = append(ri.resultQueue, ri.curResult)
 	ri.curResult.Reset()
@@ -528,7 +528,7 @@ func (e *MergeJoinExec) joinToResultChunk() (bool, error) {
 			}
 		} else {
 			for _, outer := range e.outerChunkRows {
-				err = e.resultGenerator.emitToChunk(outer, chunk.NewSliceIterator(e.innerChunkRows), e.resultChunk)
+				err = e.resultGenerator.emitToChunk(outer, chunk.NewIterator4Slice(e.innerChunkRows), e.resultChunk)
 				if err != nil {
 					return false, errors.Trace(err)
 				}

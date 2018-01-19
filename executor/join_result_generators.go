@@ -155,7 +155,7 @@ func (outputer *baseJoinResultGenerator) filterResult(resultBuffer []Row, origin
 }
 
 func (outputer *baseJoinResultGenerator) filterChunk(input, output *chunk.Chunk) (matched bool, err error) {
-	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.filter, chunk.NewChunkIterator(input), outputer.selected)
+	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.filter, chunk.NewIterator4Chunk(input), outputer.selected)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

@@ -334,7 +334,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
-		iter := chunk.NewChunkIterator(chk)
+		iter := chunk.NewIterator4Chunk(chk)
 
 		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
@@ -413,7 +413,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
-		iter := chunk.NewChunkIterator(chk)
+		iter := chunk.NewIterator4Chunk(chk)
 
 		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
@@ -1342,7 +1342,7 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 	fields := selectExec.retTypes()
 	for {
 		chk := selectExec.newChunk()
-		iter := chunk.NewChunkIterator(chk)
+		iter := chunk.NewIterator4Chunk(chk)
 
 		err := selectExec.NextChunk(goCtx, chk)
 		if err != nil {
