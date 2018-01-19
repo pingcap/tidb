@@ -167,8 +167,10 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 	if !s.IsReadOnly() {
 		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
 		if txn := ctx.Txn(); txn != nil {
-			if err1 := txn.FlushStatement(err == nil); err1 != nil {
-				terror.Log(err1)
+			if err != nil {
+				txn.StmtRollback()
+			} else {
+				terror.Log(txn.StmtCommit())
 			}
 		}
 	}

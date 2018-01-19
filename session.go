@@ -476,12 +476,11 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(goCtx)
-			if err1 := s.Txn().FlushStatement(err == nil); err1 != nil {
-				terror.Log(err)
-			}
 			if err != nil {
+				s.Txn().StmtRollback()
 				break
 			}
+			terror.Log(s.Txn().StmtCommit())
 		}
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
@@ -974,19 +973,22 @@ func (st *StmtTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
 
-// FlushStatement flush data changes by the statement to underlying txn.
-func (st *StmtTxn) FlushStatement(succ bool) error {
-	var err error
-	if succ {
-		err = kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
-			if len(v) == 0 {
-				return errors.Trace(st.Transaction.Delete(k))
-			}
-			return errors.Trace(st.Transaction.Set(k, v))
-		})
-	}
+// StmtCommit implements the Transaction interface.
+func (st *StmtTxn) StmtCommit() error {
+	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		if len(v) == 0 {
+			return errors.Trace(st.Transaction.Delete(k))
+		}
+		return errors.Trace(st.Transaction.Set(k, v))
+	})
 	st.buf.Reset()
 	return errors.Trace(err)
+}
+
+// StmtRollback implements the Transaction interface.
+func (st *StmtTxn) StmtRollback() {
+	st.buf.Reset()
+	return
 }
 
 func (s *session) Txn() kv.Transaction {

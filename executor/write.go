@@ -280,9 +280,7 @@ func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 	for {
 		if batchDelete && rowCount >= batchSize {
-			if err := e.ctx.Txn().FlushStatement(true); err != nil {
-				return errors.Trace(err)
-			}
+			terror.Log(e.ctx.Txn().StmtCommit())
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -349,9 +347,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 
 		for chunkRow := chk.Begin(); chunkRow != chk.End(); chunkRow = chunkRow.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				if err1 := e.ctx.Txn().FlushStatement(true); err1 != nil {
-					terror.Log(err1)
-				}
+				terror.Log(e.ctx.Txn().StmtCommit())
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -888,9 +884,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			continue
 		}
 		if batchInsert && rowCount >= batchSize {
-			if err1 := e.ctx.Txn().FlushStatement(true); err1 != nil {
-				terror.Log(err1)
-			}
+			terror.Log(e.ctx.Txn().StmtCommit())
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)

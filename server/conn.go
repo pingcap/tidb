@@ -785,9 +785,7 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 	}
 
 	txn := loadDataInfo.Ctx.Txn()
-	if err1 := txn.FlushStatement(err == nil); err1 != nil {
-		terror.Log(err1)
-	}
+	terror.Log(txn.StmtCommit())
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
