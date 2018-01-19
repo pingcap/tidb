@@ -179,7 +179,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "lock_cleanup_task_total",
 			Help:      "failure statistic of secondary lock cleanup task.",
-		}, []string{"type", "result"})
+		}, []string{"type"})
 )
 
 func reportRegionError(e *errorpb.Error) {
