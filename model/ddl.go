@@ -128,8 +128,8 @@ type Job struct {
 	Mu       sync.Mutex    `json:"-"`
 	Args     []interface{} `json:"-"`
 	// RawArgs : We must use json raw message to delay parsing special args.
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
+	RawArgs     *json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState      `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
 	// LastUpdateTS now uses unix nano seconds
@@ -164,7 +164,10 @@ func (job *Job) GetRowCount() int64 {
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		job.RawArgs, err = json.Marshal(job.Args)
+		if job.RawArgs == nil {
+			job.RawArgs = new(json.RawMessage)
+		}
+		*job.RawArgs, err = json.Marshal(job.Args)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -188,7 +191,10 @@ func (job *Job) Decode(b []byte) error {
 // DecodeArgs decodes job args.
 func (job *Job) DecodeArgs(args ...interface{}) error {
 	job.Args = args
-	err := json.Unmarshal(job.RawArgs, &job.Args)
+	if job.RawArgs == nil {
+		return nil
+	}
+	err := json.Unmarshal(*job.RawArgs, &job.Args)
 	return errors.Trace(err)
 }
 

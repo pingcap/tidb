@@ -155,6 +155,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 	info, err := GetDDLInfo(txn)
 	c.Assert(err, IsNil)
+	job.RawArgs = nil
 	c.Assert(info.Job, DeepEquals, job)
 	c.Assert(info.ReorgHandle, Equals, int64(0))
 	err = txn.Rollback()

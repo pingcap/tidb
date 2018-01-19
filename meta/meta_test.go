@@ -276,6 +276,7 @@ func (s *testSuite) TestDDL(c *C) {
 
 	v, err := t.GetDDLJob(0)
 	c.Assert(err, IsNil)
+	job.RawArgs = nil
 	c.Assert(v, DeepEquals, job)
 	v, err = t.GetDDLJob(1)
 	c.Assert(err, IsNil)
@@ -296,12 +297,14 @@ func (s *testSuite) TestDDL(c *C) {
 
 	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)
+	job.RawArgs = nil
 	c.Assert(v, DeepEquals, job)
 
 	err = t.AddHistoryDDLJob(job)
 	c.Assert(err, IsNil)
 	v, err = t.GetHistoryDDLJob(2)
 	c.Assert(err, IsNil)
+	job.RawArgs = nil
 	c.Assert(v, DeepEquals, job)
 
 	all, err := t.GetAllHistoryDDLJobs()

@@ -122,7 +122,6 @@ func (*testModelSuite) TestModelBasic(c *C) {
 }
 
 func (*testModelSuite) TestJobCodec(c *C) {
-	c.Skip("codec failed")
 	type A struct {
 		Name string
 	}
