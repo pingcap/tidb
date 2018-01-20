@@ -119,7 +119,7 @@ const (
 	DefIndexSerialScanConcurrency = 1
 	DefIndexJoinBatchSize         = 25000
 	DefIndexLookupSize            = 20000
-	DefDistSQLScanConcurrency     = 10
+	DefDistSQLScanConcurrency     = 15
 	DefBuildStatsConcurrency      = 4
 	DefSkipUTF8Check              = false
 	DefOptAggPushDown             = false

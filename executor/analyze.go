@@ -372,9 +372,9 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
-		err1 := pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
-		if err1 != nil {
-			return nil, nil, errors.Trace(err1)
+		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 		hists = append(hists, pkHist)
 		cms = append(cms, nil)
