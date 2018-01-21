@@ -78,6 +78,7 @@ func init() {
 	prometheus.MustRegister(queryCounter)
 	prometheus.MustRegister(connGauge)
 	prometheus.MustRegister(criticalErrorCounter)
+	prometheus.MustRegister(panicCounter)
 }
 
 func executeErrorToLabel(err error) string {
