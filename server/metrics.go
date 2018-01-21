@@ -62,6 +62,15 @@ var (
 			Name:      "critical_error",
 			Help:      "Counter of critical errors.",
 		})
+
+	// panicCounter measures the count of panics.
+	panicCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "panic",
+			Help:      "Counter of panic.",
+		})
 )
 
 func init() {
