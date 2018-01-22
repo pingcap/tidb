@@ -501,6 +501,20 @@ func appendRow(chk *Chunk, row Row) {
 	}
 }
 
+func BenchmarkAppendBytes(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 1, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs)
+	}
+}
+
+func appendBytes(chk *Chunk, bs []byte) {
+	for i := 0; i < 1000; i++ {
+		chk.AppendBytes(0, bs)
+	}
+}
+
 func BenchmarkAccess(b *testing.B) {
 	b.StopTimer()
 	rowChk := newChunk(8)

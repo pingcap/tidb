@@ -407,7 +407,17 @@ func (c *column) appendString(str string) {
 }
 
 func (c *column) appendBytes(b []byte) {
-	c.data = append(c.data, b...)
+	m := len(c.data)
+	n := m + len(b)
+	if n > cap(c.data) { // if necessary, reallocate
+		// allocate double what's needed, for futher growth
+		newData := make([]byte, (n+1)*128)
+		copy(newData, c.data)
+		c.data = newData
+	}
+	c.data = c.data[0:n]
+	copy(c.data[m:n], b)
+	// c.data = append(c.data, b...)
 	c.finishAppendVar()
 }
 
