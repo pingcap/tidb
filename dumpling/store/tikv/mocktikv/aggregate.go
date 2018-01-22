@@ -172,7 +172,7 @@ func (e *hashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
 		for _, agg := range e.aggExprs {
-			aggCtxs = append(aggCtxs, agg.CreateContext())
+			aggCtxs = append(aggCtxs, agg.CreateContext(e.evalCtx.sc))
 		}
 		e.aggCtxsMap[groupKeyString] = aggCtxs
 	}
@@ -221,7 +221,7 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 			value = append(value, data)
 		}
 		// Clear the aggregate context.
-		e.aggCtxs[i] = agg.CreateContext()
+		e.aggCtxs[i] = agg.CreateContext(e.evalCtx.sc)
 	}
 	e.currGroupByValues = e.currGroupByValues[:0]
 	for _, d := range e.currGroupByRow {
