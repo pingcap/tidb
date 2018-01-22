@@ -4520,7 +4520,6 @@ TransactionChar:
 		varAssigns := []*ast.VariableAssignment{}
 		expr := ast.NewValueExpr("0")
 		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_read_only", Value: expr, IsSystem: true})
-		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "transaction_read_only", Value: expr, IsSystem: true})
 		$$ = varAssigns
 	}
 |	"READ" "ONLY"
@@ -4528,7 +4527,6 @@ TransactionChar:
 		varAssigns := []*ast.VariableAssignment{}
 		expr := ast.NewValueExpr("1")
 		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_read_only", Value: expr, IsSystem: true})
-		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "transaction_read_only", Value: expr, IsSystem: true})
 		$$ = varAssigns
 	}
 
