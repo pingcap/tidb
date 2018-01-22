@@ -77,6 +77,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	p.sequence++
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
+
 	data := make([]byte, length)
 	if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
 		return nil, errors.Trace(err)
