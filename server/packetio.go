@@ -49,11 +49,13 @@ type packetIO struct {
 	bufReadConn *bufferedReadConn
 	bufWriter   *bufio.Writer
 	sequence    uint8
+	data        []byte
 }
 
 func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
 	p := &packetIO{sequence: 0}
 	p.setBufferedReadConn(bufReadConn)
+	p.data = make([]byte, mysql.MaxPayloadLen)
 	return p
 }
 
@@ -78,11 +80,10 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
-	data := make([]byte, length)
-	if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
+	if _, err := io.ReadFull(p.bufReadConn, p.data[:length]); err != nil {
 		return nil, errors.Trace(err)
 	}
-	return data, nil
+	return p.data[:length], nil
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
@@ -95,7 +96,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 		return data, nil
 	}
 
-	// handle muliti-packet
+	// handle multi-packet
 	for {
 		buf, err := p.readOnePacket()
 		if err != nil {

@@ -360,6 +360,14 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
+	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	level := log.GetLevel()
+	if costTime < threshold && level < log.DebugLevel {
+		return
+	}
+	if costTime >= threshold && level < log.WarnLevel {
+		return
+	}
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
@@ -374,7 +382,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		"sql":          sql,
 		"txnStartTS":   txnTS,
 	}
-	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
+	if costTime < threshold {
 		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
 	} else {
 		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")
