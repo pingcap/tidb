@@ -23,16 +23,16 @@ type sumFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (sf *sumFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	return sf.updateSum(ctx, sc, row)
+func (sf *sumFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+	return sf.updateSum(sc, evalCtx, row)
 }
 
 // GetResult implements Aggregation interface.
-func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	return ctx.Value
+func (sf *sumFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+	return evalCtx.Value
 }
 
 // GetPartialResult implements Aggregation interface.
-func (sf *sumFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{sf.GetResult(ctx)}
+func (sf *sumFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{sf.GetResult(evalCtx)}
 }
