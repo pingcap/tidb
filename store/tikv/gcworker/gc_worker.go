@@ -406,6 +406,10 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 
 func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
+
+	// for scan lock request, we must return all locks even if they are generated
+	// by the same transaction. because gc worker need to make sure all locks to be
+	// cleaned.
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdScanLock,
 		ScanLock: &kvrpcpb.ScanLockRequest{
