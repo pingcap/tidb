@@ -41,12 +41,20 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "gc_config",
 			Help:      "Gauge of GC configs.",
-		}, []string{"type"},
-	)
+		}, []string{"type"})
+
+	gcFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "gc_failure",
+			Help:      "Counter of gc job failure.",
+		}, []string{"type"})
 )
 
 func init() {
 	prometheus.MustRegister(gcWorkerCounter)
 	prometheus.MustRegister(gcConfigGauge)
 	prometheus.MustRegister(gcHistogram)
+	prometheus.MustRegister(gcFailureCounter)
 }
