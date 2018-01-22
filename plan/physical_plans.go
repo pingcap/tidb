@@ -101,10 +101,11 @@ type PhysicalIndexScan struct {
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
 
-	// accessInAndEqCount is counter of all conditions in AccessCondition[accessEqualCount:accessInAndEqCount].
-	accessInAndEqCount int
-	// accessEqualCount is counter of all conditions in AccessCondition[:accessEqualCount].
-	accessEqualCount int
+	// accessInAndEqCounts stores the numbers of equal or in function. It's a slice because
+	// if top layer the original expression is DNF. Then every item of it have an accessInAndEqCounts.
+	accessInAndEqCounts []int
+	// condTopLayerIsCNF indicates whether the top layer is DNF.
+	condTopLayerIsCNF bool
 
 	TableAsName *model.CIStr
 

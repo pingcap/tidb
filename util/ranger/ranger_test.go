@@ -525,11 +525,15 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		var filter []expression.Expression
-		conds, filter = ranger.DetachIndexConditions(conds, cols, lengths)
+		var (
+			filter        []expression.Expression
+			eqAndInCounts []int
+			isDNF         bool
+		)
+		conds, filter, eqAndInCounts, isDNF = ranger.DetachIndexConditions(conds, cols, lengths)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildIndexRange(new(stmtctx.StatementContext), cols, lengths, conds)
+		result, err := ranger.BuildIndexRange(new(stmtctx.StatementContext), cols, lengths, eqAndInCounts, isDNF, conds)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))

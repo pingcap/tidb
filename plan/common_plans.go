@@ -205,7 +205,7 @@ func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *Physi
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
 	newRanges := ranger.FullNewRange()
 	if len(idxCols) > 0 {
-		ranges, err := ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+		ranges, err := ranger.BuildIndexRange(sc, idxCols, colLengths, is.accessInAndEqCounts, is.condTopLayerIsCNF, is.AccessCondition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

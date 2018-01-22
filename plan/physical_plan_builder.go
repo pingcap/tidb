@@ -310,8 +310,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	is.Ranges = ranger.FullNewRange()
 	if len(ds.pushedDownConds) > 0 {
 		if len(idxCols) > 0 {
-			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(ds.pushedDownConds, idxCols, colLengths)
-			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+			is.AccessCondition, is.filterCondition, is.accessInAndEqCounts, is.condTopLayerIsCNF = ranger.DetachIndexConditions(ds.pushedDownConds, idxCols, colLengths)
+			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.accessInAndEqCounts, is.condTopLayerIsCNF, is.AccessCondition)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -341,12 +341,16 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	// Check if this plan matches the property.
 	matchProperty := false
 	if !prop.isEmpty() {
+		inAndEqCnt := 0
+		if is.condTopLayerIsCNF && len(is.accessInAndEqCounts) > 0 {
+			inAndEqCnt = is.accessInAndEqCounts[0]
+		}
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= len(is.AccessCondition) {
+			} else if i >= inAndEqCnt {
 				break
 			} else if sf, ok := is.AccessCondition[i].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
 				break
