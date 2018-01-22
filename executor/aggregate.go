@@ -112,6 +112,7 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 
 // innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
+	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
 	for {
 		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
 		if err != nil {
@@ -121,7 +122,7 @@ func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
 		}
-		for row := e.childrenResults[0].Begin(); row != e.childrenResults[0].End(); row = row.Next() {
+		for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
 			groupKey, err := e.getGroupKey(row)
 			if err != nil {
 				return errors.Trace(err)
@@ -252,6 +253,7 @@ type StreamAggExec struct {
 	tmpGroupKey  []types.Datum
 
 	// for chunk execution.
+	inputIter  *chunk.Iterator4Chunk
 	inputRow   chunk.Row
 	mutableRow chunk.MutRow
 	rowBuffer  []types.Datum
@@ -265,7 +267,8 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 
 	e.executed = false
 	e.hasData = false
-	e.inputRow = e.childrenResults[0].End()
+	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
+	e.inputRow = e.inputIter.End()
 	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
@@ -344,7 +347,7 @@ func (e *StreamAggExec) consumeOneGroup(goCtx goctx.Context, chk *chunk.Chunk) e
 		if err := e.fetchChildIfNecessary(goCtx, chk); err != nil {
 			return errors.Trace(err)
 		}
-		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
 			meetNewGroup, err := e.meetNewGroup(e.inputRow)
 			if err != nil {
 				return errors.Trace(err)
@@ -359,7 +362,7 @@ func (e *StreamAggExec) consumeOneGroup(goCtx goctx.Context, chk *chunk.Chunk) e
 				}
 			}
 			if meetNewGroup {
-				e.inputRow = e.inputRow.Next()
+				e.inputRow = e.inputIter.Next()
 				return nil
 			}
 		}
@@ -368,7 +371,7 @@ func (e *StreamAggExec) consumeOneGroup(goCtx goctx.Context, chk *chunk.Chunk) e
 }
 
 func (e *StreamAggExec) fetchChildIfNecessary(goCtx goctx.Context, chk *chunk.Chunk) error {
-	if e.inputRow != e.childrenResults[0].End() {
+	if e.inputRow != e.inputIter.End() {
 		return nil
 	}
 
@@ -376,9 +379,6 @@ func (e *StreamAggExec) fetchChildIfNecessary(goCtx goctx.Context, chk *chunk.Ch
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	e.inputRow = e.childrenResults[0].Begin()
-
 	// No more data.
 	if e.childrenResults[0].NumRows() == 0 {
 		if e.hasData || len(e.GroupByItems) == 0 {
@@ -389,6 +389,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(goCtx goctx.Context, chk *chunk.Ch
 	}
 
 	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
+	e.inputRow = e.inputIter.Begin()
 	e.hasData = true
 	return nil
 }
