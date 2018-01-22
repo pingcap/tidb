@@ -1073,7 +1073,7 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context
 	fields := &ast.FieldsClause{Terminated: "\t"}
 	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
 	ld = executor.NewLoadDataInfo(make([]types.Datum, column), ctx, tbl, columns)
-	ld.SetBatchCount(0)
+	ld.SetMaxRowsInBatch(0)
 	ld.FieldsInfo = fields
 	ld.LinesInfo = lines
 	return

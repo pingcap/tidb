@@ -23,7 +23,7 @@ import (
 
 type ppdSolver struct{}
 
-func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (s *ppdSolver) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil)
 	return p, nil
 }
