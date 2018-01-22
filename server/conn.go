@@ -408,6 +408,7 @@ func (cc *clientConn) Run() {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
+			panicCounter.Add(1)
 		}
 		if !closedOutside {
 			err := cc.Close()
