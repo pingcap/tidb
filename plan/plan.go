@@ -306,8 +306,7 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 	if len(p.children) == 0 {
 		return
 	}
-	child := p.children[0].(LogicalPlan)
-	child.PruneColumns(parentUsedCols)
+	p.children[0].PruneColumns(parentUsedCols)
 }
 
 // basePlan implements base Plan interface.
