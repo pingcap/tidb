@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
@@ -695,7 +696,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn().Set(nil, nil)
+		se.Txn().Set(kv.Key("AAA"), []byte("BBB"))
+		se.Txn().StmtCommit()
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
