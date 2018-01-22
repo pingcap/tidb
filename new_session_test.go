@@ -1332,6 +1332,22 @@ func (s *testSessionSuite) TestDeletePanic(c *C) {
 	tk.MustExec("delete from `t` where `c` = ?", 2)
 }
 
+func (s *testSessionSuite) TestInformationSchemaCreateTime(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (c int)")
+	ret := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	// Make sure t1 is greater than t.
+	time.Sleep(time.Second)
+	tk.MustExec("alter table t modify c int default 11")
+	ret1 := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	t, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	t1, err := types.ParseDatetime(nil, ret1.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	r := t1.Compare(t)
+	c.Assert(r, Equals, 1)
+}
+
 var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
