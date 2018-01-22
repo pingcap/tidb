@@ -229,7 +229,7 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 		for _, af := range e.AggFuncs {
-			aggCtxs = append(aggCtxs, af.CreateContext())
+			aggCtxs = append(aggCtxs, af.CreateContext(e.ctx.GetSessionVars().StmtCtx))
 		}
 		e.aggCtxsMap[groupKeyString] = aggCtxs
 	}
@@ -271,7 +271,7 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 	for _, agg := range e.AggFuncs {
-		e.aggCtxs = append(e.aggCtxs, agg.CreateContext())
+		e.aggCtxs = append(e.aggCtxs, agg.CreateContext(e.ctx.GetSessionVars().StmtCtx))
 	}
 
 	return nil
@@ -303,7 +303,7 @@ func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 			for i, af := range e.AggFuncs {
 				retRow = append(retRow, af.GetResult(e.aggCtxs[i]))
 				// Clear stream results after grabbing them.
-				e.aggCtxs[i] = af.CreateContext()
+				e.aggCtxs[i] = af.CreateContext(e.ctx.GetSessionVars().StmtCtx)
 			}
 		}
 		if e.executed {
@@ -399,7 +399,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 	e.rowBuffer = e.rowBuffer[:0]
 	for i, af := range e.AggFuncs {
 		e.rowBuffer = append(e.rowBuffer, af.GetResult(e.aggCtxs[i]))
-		e.aggCtxs[i] = af.CreateContext()
+		e.aggCtxs[i] = af.CreateContext(e.ctx.GetSessionVars().StmtCtx)
 	}
 	e.mutableRow.SetDatums(e.rowBuffer...)
 	chk.AppendRow(e.mutableRow.ToRow())

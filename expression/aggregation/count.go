@@ -24,7 +24,7 @@ type countFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	var datumBuf []types.Datum
 	if cf.HasDistinct {
 		datumBuf = make([]types.Datum, 0, len(cf.Args))
@@ -38,14 +38,14 @@ func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCo
 			return nil
 		}
 		if cf.Mode == FinalMode {
-			ctx.Count += value.GetInt64()
+			evalCtx.Count += value.GetInt64()
 		}
 		if cf.HasDistinct {
 			datumBuf = append(datumBuf, value)
 		}
 	}
 	if cf.HasDistinct {
-		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
+		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -54,18 +54,18 @@ func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCo
 		}
 	}
 	if cf.Mode == CompleteMode {
-		ctx.Count++
+		evalCtx.Count++
 	}
 	return nil
 }
 
 // GetResult implements Aggregation interface.
-func (cf *countFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	d.SetInt64(ctx.Count)
+func (cf *countFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+	d.SetInt64(evalCtx.Count)
 	return d
 }
 
 // GetPartialResult implements Aggregation interface.
-func (cf *countFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{cf.GetResult(ctx)}
+func (cf *countFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{cf.GetResult(evalCtx)}
 }
