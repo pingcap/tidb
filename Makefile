@@ -152,6 +152,8 @@ benchraw:
 
 benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
+importer:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
 
 update:
 	which dep 2>/dev/null || go get -u github.com/golang/dep/cmd/dep
