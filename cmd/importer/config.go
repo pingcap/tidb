@@ -85,7 +85,7 @@ type Config struct {
 
 	DBCfg DBConfig `toml:"db" json:"db"`
 
-	configFile   string
+	configFile string
 }
 
 // Parse parses flag definitions from the argument list.
