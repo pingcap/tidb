@@ -26,7 +26,7 @@ import (
 // only [t2.a] is treated as this apply's correlated column.
 func (la *LogicalApply) extractCorColumnsBySchema() {
 	schema := la.children[0].Schema()
-	corCols := la.children[1].(LogicalPlan).extractCorrelatedCols()
+	corCols := la.children[1].extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
 		idx := schema.ColumnIndex(&corCol.Column)
@@ -85,7 +85,7 @@ type decorrelateSolver struct{}
 func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
-		innerPlan := apply.children[1].(LogicalPlan)
+		innerPlan := apply.children[1]
 		apply.extractCorColumnsBySchema()
 		if len(apply.corCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
@@ -100,12 +100,12 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
 			}
 			apply.attachOnConds(newConds)
-			innerPlan = sel.children[0].(LogicalPlan)
+			innerPlan = sel.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			return s.optimize(p)
 		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
-			if m.children[0].(LogicalPlan).MaxOneRow() {
-				innerPlan = m.children[0].(LogicalPlan)
+			if m.children[0].MaxOneRow() {
+				innerPlan = m.children[0]
 				apply.SetChildren(outerPlan, innerPlan)
 				return s.optimize(p)
 			}
@@ -114,7 +114,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
 			apply.columnSubstitute(proj.Schema(), proj.Exprs)
-			innerPlan = proj.children[0].(LogicalPlan)
+			innerPlan = proj.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
 				proj.SetSchema(apply.Schema())
@@ -130,7 +130,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 			return s.optimize(p)
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
-				innerPlan = agg.children[0].(LogicalPlan)
+				innerPlan = agg.children[0]
 				apply.JoinType = LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
