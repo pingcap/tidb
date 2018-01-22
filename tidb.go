@@ -167,6 +167,13 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 	// All the history should be added here.
 	if !s.IsReadOnly() {
 		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
+		if txn := ctx.Txn(); txn != nil {
+			if err != nil {
+				txn.StmtRollback()
+			} else {
+				terror.Log(txn.StmtCommit())
+			}
+		}
 	}
 	if !se.sessionVars.InTxn() {
 		if err != nil {
