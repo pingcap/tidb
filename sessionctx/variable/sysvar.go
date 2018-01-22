@@ -625,6 +625,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 }
 
+// SynonymsSysVariables is synonyms of system variables.
+var SynonymsSysVariables = map[string]string{
+	"transaction_isolation": "tx_isolation",
+	"tx_isolation":          "transaction_isolation",
+	"transaction_read_only": "tx_read_only",
+	"tx_read_only":          "transaction_read_only",
+}
+
 // SetNamesVariables is the system variable names related to set names statements.
 var SetNamesVariables = []string{
 	"character_set_client",
