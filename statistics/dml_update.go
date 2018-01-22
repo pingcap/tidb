@@ -216,8 +216,7 @@ func (delta *HistDelta) updateHistogram(sc *stmtctx.StatementContext, oldHg *His
 	}
 	delta.update(sc, oldHg, nil, 0)
 	hg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.tp, oldHg.Len())
-	for i := 0; i < oldHg.Bounds.NumRows(); i += 2 {
-		bktID := i / 2
+	for bktID := 0; bktID < oldHg.Len(); bktID++ {
 		hg.Buckets = append(hg.Buckets, Bucket{})
 		if bktID == 0 {
 			hg.Buckets[0] = oldHg.Buckets[0]
