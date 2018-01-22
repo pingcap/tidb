@@ -181,10 +181,18 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("0"))
 
+	tk.MustExec("SET SESSION transaction_read_only = 1")
+	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("1"))
+
 	tk.MustExec("SET GLOBAL transaction_read_only = 1")
 	tk.MustExec("SET GLOBAL transaction_read_only = 0")
 	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET GLOBAL transaction_read_only = 1")
+	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("1"))
 
 	// Even the transaction fail, set session variable would success.
 	tk.MustExec("BEGIN")
