@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -54,9 +53,8 @@ func hasUnVectorizableFunc(expr Expression) bool {
 
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
 func VectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
-	sc := ctx.GetSessionVars().StmtCtx
 	for colID, expr := range exprs {
-		err := evalOneColumn(sc, expr, iterator, output, colID)
+		err := evalOneColumn(ctx, expr, iterator, output, colID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -64,35 +62,35 @@ func VectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.
 	return nil
 }
 
-func evalOneColumn(sc *stmtctx.StatementContext, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
+func evalOneColumn(ctx context.Context, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToInt(sc, expr, fieldType, row, output, colID)
+			err = executeToInt(ctx, expr, fieldType, row, output, colID)
 		}
 	case types.ETReal:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToReal(sc, expr, fieldType, row, output, colID)
+			err = executeToReal(ctx, expr, fieldType, row, output, colID)
 		}
 	case types.ETDecimal:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDecimal(sc, expr, fieldType, row, output, colID)
+			err = executeToDecimal(ctx, expr, fieldType, row, output, colID)
 		}
 	case types.ETDatetime, types.ETTimestamp:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDatetime(sc, expr, fieldType, row, output, colID)
+			err = executeToDatetime(ctx, expr, fieldType, row, output, colID)
 		}
 	case types.ETDuration:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDuration(sc, expr, fieldType, row, output, colID)
+			err = executeToDuration(ctx, expr, fieldType, row, output, colID)
 		}
 	case types.ETJson:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToJSON(sc, expr, fieldType, row, output, colID)
+			err = executeToJSON(ctx, expr, fieldType, row, output, colID)
 		}
 	case types.ETString:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToString(sc, expr, fieldType, row, output, colID)
+			err = executeToString(ctx, expr, fieldType, row, output, colID)
 		}
 	}
 	return errors.Trace(err)
@@ -100,10 +98,9 @@ func evalOneColumn(sc *stmtctx.StatementContext, expr Expression, iterator *chun
 
 // UnVectorizedExecute evaluates a list of expressions row by row and append their results to "output" Chunk.
 func UnVectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
-	sc := ctx.GetSessionVars().StmtCtx
 	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
 		for colID, expr := range exprs {
-			err := evalOneCell(sc, expr, row, output, colID)
+			err := evalOneCell(ctx, expr, row, output, colID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -112,28 +109,28 @@ func UnVectorizedExecute(ctx context.Context, exprs []Expression, iterator *chun
 	return nil
 }
 
-func evalOneCell(sc *stmtctx.StatementContext, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
+func evalOneCell(ctx context.Context, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
-		err = executeToInt(sc, expr, fieldType, row, output, colID)
+		err = executeToInt(ctx, expr, fieldType, row, output, colID)
 	case types.ETReal:
-		err = executeToReal(sc, expr, fieldType, row, output, colID)
+		err = executeToReal(ctx, expr, fieldType, row, output, colID)
 	case types.ETDecimal:
-		err = executeToDecimal(sc, expr, fieldType, row, output, colID)
+		err = executeToDecimal(ctx, expr, fieldType, row, output, colID)
 	case types.ETDatetime, types.ETTimestamp:
-		err = executeToDatetime(sc, expr, fieldType, row, output, colID)
+		err = executeToDatetime(ctx, expr, fieldType, row, output, colID)
 	case types.ETDuration:
-		err = executeToDuration(sc, expr, fieldType, row, output, colID)
+		err = executeToDuration(ctx, expr, fieldType, row, output, colID)
 	case types.ETJson:
-		err = executeToJSON(sc, expr, fieldType, row, output, colID)
+		err = executeToJSON(ctx, expr, fieldType, row, output, colID)
 	case types.ETString:
-		err = executeToString(sc, expr, fieldType, row, output, colID)
+		err = executeToString(ctx, expr, fieldType, row, output, colID)
 	}
 	return errors.Trace(err)
 }
 
-func executeToInt(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
-	res, isNull, err := expr.EvalInt(row, sc)
+func executeToInt(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalInt(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -149,8 +146,8 @@ func executeToInt(sc *stmtctx.StatementContext, expr Expression, fieldType *type
 	return nil
 }
 
-func executeToReal(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
-	res, isNull, err := expr.EvalReal(row, sc)
+func executeToReal(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalReal(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -164,8 +161,8 @@ func executeToReal(sc *stmtctx.StatementContext, expr Expression, fieldType *typ
 	return nil
 }
 
-func executeToDecimal(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
-	res, isNull, err := expr.EvalDecimal(row, sc)
+func executeToDecimal(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalDecimal(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -177,8 +174,8 @@ func executeToDecimal(sc *stmtctx.StatementContext, expr Expression, fieldType *
 	return nil
 }
 
-func executeToDatetime(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
-	res, isNull, err := expr.EvalTime(row, sc)
+func executeToDatetime(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalTime(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -190,8 +187,8 @@ func executeToDatetime(sc *stmtctx.StatementContext, expr Expression, fieldType 
 	return nil
 }
 
-func executeToDuration(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
-	res, isNull, err := expr.EvalDuration(row, sc)
+func executeToDuration(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalDuration(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -203,8 +200,8 @@ func executeToDuration(sc *stmtctx.StatementContext, expr Expression, fieldType 
 	return nil
 }
 
-func executeToJSON(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
-	res, isNull, err := expr.EvalJSON(row, sc)
+func executeToJSON(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalJSON(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -216,8 +213,8 @@ func executeToJSON(sc *stmtctx.StatementContext, expr Expression, fieldType *typ
 	return nil
 }
 
-func executeToString(sc *stmtctx.StatementContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
-	res, isNull, err := expr.EvalString(row, sc)
+func executeToString(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalString(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -253,7 +250,7 @@ func VectorizedFilter(ctx context.Context, filters []Expression, iterator *chunk
 				continue
 			}
 			if isIntType {
-				filterResult, isNull, err := filter.EvalInt(row, ctx.GetSessionVars().StmtCtx)
+				filterResult, isNull, err := filter.EvalInt(ctx, row)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
