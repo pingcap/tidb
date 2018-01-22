@@ -362,6 +362,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	costTime := time.Since(a.startTime)
 	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
 	level := log.GetLevel()
+	log.Infof("[YUSP] level: %d", level)
 	if costTime < threshold && level < log.DebugLevel {
 		return
 	}
