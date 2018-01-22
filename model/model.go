@@ -15,6 +15,7 @@ package model
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -106,6 +107,9 @@ type TableInfo struct {
 	AutoIncID   int64         `json:"auto_inc_id"`
 	MaxColumnID int64         `json:"max_col_id"`
 	MaxIndexID  int64         `json:"max_idx_id"`
+	// UpdateTS is used to record the timestamp of updating the table's schema information.
+	// These changing schema operations don't include 'truncate table' and 'rename table'.
+	UpdateTS uint64 `json:"update_timestamp"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
@@ -116,6 +120,11 @@ type TableInfo struct {
 
 	// ShardRowIDBits specify if the implicit row ID is sharded.
 	ShardRowIDBits uint64
+}
+
+// GetUpdateTime gets the table's updating time.
+func (t *TableInfo) GetUpdateTime() time.Time {
+	return tsConvert2Time(t.UpdateTS)
 }
 
 // GetDBID returns the schema ID that is used to create an allocator.

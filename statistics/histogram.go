@@ -16,6 +16,7 @@ package statistics
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -116,10 +117,10 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
 
 // DecodeTo decodes the histogram bucket values into `tp`.
 func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
-	old := hg.Bounds
-	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, old.NumRows())
+	oldIter := chunk.NewIterator4Chunk(hg.Bounds)
+	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIter.Len())
 	hg.tp = tp
-	for row := old.Begin(); row != old.End(); row = row.Next() {
+	for row := oldIter.Begin(); row != oldIter.End(); row = oldIter.Next() {
 		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
 		if err != nil {
 			return errors.Trace(err)
@@ -132,7 +133,8 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 // ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len())
-	for row := hg.Bounds.Begin(); row != hg.Bounds.End(); row = row.Next() {
+	iter := chunk.NewIterator4Chunk(hg.Bounds)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.tp)
 		d, err := d.ConvertTo(sc, tp)
 		if err != nil {
@@ -344,8 +346,10 @@ func (hg *Histogram) lessAndEqRowCount(value types.Datum) float64 {
 func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	lessCountA := hg.lessRowCount(a)
 	lessCountB := hg.lessRowCount(b)
+	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
+	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than lessCountB.
 	if lessCountA >= lessCountB {
-		return hg.totalRowCount() / float64(hg.NDV)
+		return math.Min(lessCountB, hg.totalRowCount()/float64(hg.NDV))
 	}
 	return lessCountB - lessCountA
 }
