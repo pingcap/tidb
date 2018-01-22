@@ -482,6 +482,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
 		{`SHOW GRANTS`, true},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
+		{`SHOW GRANTS FOR current_user()`, true},
+		{`SHOW GRANTS FOR current_user`, true},
 		{`SHOW COLUMNS FROM City;`, true},
 		{`SHOW COLUMNS FROM tv189.1_t_1_x;`, true},
 		{`SHOW FIELDS FROM City;`, true},

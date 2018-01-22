@@ -4747,6 +4747,10 @@ Username:
 	{
 		$$ = &auth.UserIdentity{Username: $1.(string), Hostname: strings.TrimPrefix($2, "@")}
 	}
+|	"CURRENT_USER" OptionalBraces
+	{
+		$$ = &auth.UserIdentity{CurrentUser: true}
+	}
 
 UsernameList:
 	Username
