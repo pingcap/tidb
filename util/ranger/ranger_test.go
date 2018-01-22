@@ -450,14 +450,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL, '1', '2', '3') and a > '2')",
-			accessConds: "[or(in(test.t.a, <nil>, 1, 2, 3), le(test.t.a, 2))]",
+			accessConds: "[in(test.t.a, <nil>, 1, 2, 3) le(test.t.a, 2)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,2] [3,3]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) and a > '2')",
-			accessConds: "[or(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[in(test.t.a, <nil>) le(test.t.a, 2)]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,2]]",
 		},
@@ -471,28 +471,28 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "(a > 'b' and a < 'bbb') or (a < 'cb' and a > 'a')",
-			accessConds: "[or(and(gt(test.t.a, b), lt(test.t.a, bbb)), and(lt(test.t.a, cb), gt(test.t.a, a)))]",
+			accessConds: "[and(gt(test.t.a, b), lt(test.t.a, bbb)) and(lt(test.t.a, cb), gt(test.t.a, a))]",
 			filterConds: "[]",
 			resultStr:   "[(a +inf,cb <nil>)]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "(a > 'a' and a < 'b') or (a >= 'b' and a < 'c')",
-			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			accessConds: "[and(gt(test.t.a, a), lt(test.t.a, b)) and(ge(test.t.a, b), lt(test.t.a, c))]",
 			filterConds: "[]",
 			resultStr:   "[(a +inf,c <nil>)]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "(a > 'a' and a < 'b' and b < 1) or (a >= 'b' and a < 'c')",
-			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			accessConds: "[and(gt(test.t.a, a), lt(test.t.a, b)) and(ge(test.t.a, b), lt(test.t.a, c))]",
 			filterConds: "[or(and(and(gt(test.t.a, a), lt(test.t.a, b)), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
 			resultStr:   "[(a +inf,c <nil>)]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "(a in ('a', 'b') and b < 1) or (a >= 'b' and a < 'c')",
-			accessConds: "[or(and(in(test.t.a, a, b), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			accessConds: "[and(in(test.t.a, a, b), lt(test.t.b, 1)) and(ge(test.t.a, b), lt(test.t.a, c))]",
 			filterConds: "[]",
 			resultStr:   "[[a -inf,a 1) [b <nil>,c <nil>)]",
 		},
@@ -801,7 +801,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
-		conds = ranger.ExtractAccessConditions(conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
+		conds, _ = ranger.ExtractAccessConditions(conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType)
 		c.Assert(err, IsNil)
