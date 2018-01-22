@@ -31,7 +31,8 @@ type UnionIter struct {
 	reverse    bool
 }
 
-func newUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIter, error) {
+// NewUnionIter returns a union iterator for BufferStore.
+func NewUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIter, error) {
 	it := &UnionIter{
 		dirtyIt:       dirtyIt,
 		snapshotIt:    snapshotIt,

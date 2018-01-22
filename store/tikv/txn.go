@@ -94,6 +94,13 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	return ret, nil
 }
 
+func (txn *tikvTxn) StmtCommit() error {
+	return nil
+}
+
+func (txn *tikvTxn) StmtRollback() {
+}
+
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 	txn.setCnt++
 
