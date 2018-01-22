@@ -504,7 +504,7 @@ func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTa
 			iw.executorChk = chunk.NewChunk(iw.innerCtx.rowTypes)
 			continue
 		}
-		selected, err := expression.VectorizedFilter(iw.ctx, iw.filter, innerIter, selected)
+		selected, err = expression.VectorizedFilter(iw.ctx, iw.filter, innerIter, selected)
 		if err != nil {
 			return errors.Trace(err)
 		}

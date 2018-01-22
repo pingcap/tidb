@@ -68,13 +68,12 @@ func (e *SetExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 func (e *SetExecutor) getSynonyms(varName string) []string {
-	synonyms := make([]string, 0, 2)
-	v, ok := variable.SynonymsSysVariables[varName]
+	synonyms, ok := variable.SynonymsSysVariables[varName]
 	if ok {
-		synonyms = append(synonyms, v)
+		return synonyms
 	}
 
-	synonyms = append(synonyms, varName)
+	synonyms = []string{varName}
 	return synonyms
 }
 
