@@ -1740,13 +1740,13 @@ out:
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *LogicalProjection, *LogicalSort:
-			p = p.Children()[0].(LogicalPlan)
+			p = p.Children()[0]
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
 				p = b.buildTableDual()
 				break out
 			}
-			p = p.Children()[0].(LogicalPlan)
+			p = p.Children()[0]
 		default:
 			break out
 		}
@@ -1957,7 +1957,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*model.CIStr) {
 	switch x := p.(type) {
 	case *DataSource:
-		alias := extractTableAlias(p.(LogicalPlan))
+		alias := extractTableAlias(p)
 		if alias != nil {
 			if _, ok := asNames[x.tableInfo]; !ok {
 				asNames[x.tableInfo] = make([]*model.CIStr, 0, 1)
