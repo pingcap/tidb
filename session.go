@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
@@ -83,6 +84,8 @@ type Session interface {
 	ShowProcess() util.ProcessInfo
 	// PrePareTxnCtx is exported for test.
 	PrepareTxnCtx(goctx.Context)
+	// FieldList returns fields list of a table.
+	FieldList(tableName string) (fields []*ast.ResultField, err error)
 }
 
 var (
@@ -218,6 +221,31 @@ func (s *session) GetSessionManager() util.SessionManager {
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
 	s.statsCollector.StoreQueryFeedback(feedback)
+}
+
+// FieldList returns fields list of a table.
+func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
+	is := executor.GetInfoSchema(s)
+	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
+	tName := model.NewCIStr(tableName)
+	table, err := is.TableByName(dbName, tName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	cols := table.Cols()
+	fields := make([]*ast.ResultField, 0, len(cols))
+	for _, col := range table.Cols() {
+		rf := &ast.ResultField{
+			ColumnAsName: col.Name,
+			TableAsName:  tName,
+			DBName:       dbName,
+			Table:        table.Meta(),
+			Column:       col.ColumnInfo,
+		}
+		fields = append(fields, rf)
+	}
+	return fields, nil
 }
 
 type schemaLeaseChecker struct {
