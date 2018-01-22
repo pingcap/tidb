@@ -235,8 +235,7 @@ type builtinLastInsertIDWithIDSig struct {
 // evalInt evals LAST_INSERT_ID(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDWithIDSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
-	sc := b.getCtx().GetSessionVars().StmtCtx
-	res, isNull, err = b.args[0].EvalInt(row, sc)
+	res, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
