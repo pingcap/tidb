@@ -477,10 +477,10 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(goCtx)
 			if err != nil {
-				s.Txn().StmtRollback()
+				s.StmtRollback()
 				break
 			}
-			terror.Log(s.Txn().StmtCommit())
+			terror.Log(s.StmtCommit())
 		}
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
@@ -917,8 +917,8 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 type StmtTxn struct {
 	kv.Transaction
 
-	buf kv.MemBuffer
-	// TODO: Add binlog related data here.
+	buf       kv.MemBuffer
+	mutations map[int64]*binlog.TableMutation
 	// TODO: DirtyDB need to be statement level too.
 }
 
@@ -973,22 +973,67 @@ func (st *StmtTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
 
-// StmtCommit implements the Transaction interface.
-func (st *StmtTxn) StmtCommit() error {
-	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+// StmtCommit implements the context.Context interface.
+func (s *session) StmtCommit() error {
+	st := &s.StmtTxn
+	err := kv.WalkMemBuffer(s.buf, func(k kv.Key, v []byte) error {
 		if len(v) == 0 {
 			return errors.Trace(st.Transaction.Delete(k))
 		}
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
 	st.buf.Reset()
+
+	// Need to flush binlog.
+	for key, value := range st.mutations {
+		mutation := getBinlogMutation(s, key)
+		mergeToMutation(mutation, value)
+		delete(st.mutations, key)
+	}
 	return errors.Trace(err)
 }
 
-// StmtRollback implements the Transaction interface.
-func (st *StmtTxn) StmtRollback() {
-	st.buf.Reset()
+// StmtRollback implements the context.Context interface.
+func (s *session) StmtRollback() {
+	s.StmtTxn.buf.Reset()
+	mutations := s.StmtTxn.mutations
+	for key := range mutations {
+		delete(mutations, key)
+	}
 	return
+}
+
+// GetMutation implements the context.Context interface.
+func (s *session) GetMutation(tableID int64) *binlog.TableMutation {
+	st := &s.StmtTxn
+	if _, ok := st.mutations[tableID]; !ok {
+		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
+	}
+	return st.mutations[tableID]
+}
+
+func getBinlogMutation(ctx context.Context, tableID int64) *binlog.TableMutation {
+	bin := binloginfo.GetPrewriteValue(ctx, true)
+	for i := range bin.Mutations {
+		if bin.Mutations[i].TableId == tableID {
+			return &bin.Mutations[i]
+		}
+	}
+	idx := len(bin.Mutations)
+	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: tableID})
+	return &bin.Mutations[idx]
+}
+
+func mergeToMutation(m1, m2 *binlog.TableMutation) {
+	if m1.TableId != m2.TableId {
+		log.Fatal("m1.TableId must equal to m2.TableId")
+	}
+	m1.InsertedRows = append(m1.InsertedRows, m2.InsertedRows...)
+	m1.UpdatedRows = append(m1.UpdatedRows, m2.UpdatedRows...)
+	m1.DeletedIds = append(m1.DeletedIds, m2.DeletedIds...)
+	m1.DeletedPks = append(m1.DeletedPks, m2.DeletedPks...)
+	m1.DeletedRows = append(m1.DeletedRows, m2.DeletedRows...)
+	m1.Sequence = append(m1.Sequence, m2.Sequence...)
 }
 
 func (s *session) Txn() kv.Transaction {
@@ -1226,6 +1271,7 @@ func createSession(store kv.Storage) (*session, error) {
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpClient()
 	s.StmtTxn.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	s.StmtTxn.mutations = make(map[int64]*binlog.TableMutation)
 	return s, nil
 }
 
@@ -1247,6 +1293,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.StmtTxn.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	s.StmtTxn.mutations = make(map[int64]*binlog.TableMutation)
 	return s, nil
 }
 

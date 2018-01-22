@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )
 
@@ -187,6 +188,20 @@ func (c *Context) GoCtx() goctx.Context {
 
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
+
+// StmtCommit implements the context.Context interface.
+func (c *Context) StmtCommit() error {
+	return nil
+}
+
+// StmtRollback implements the context.Context interface.
+func (c *Context) StmtRollback() {
+}
+
+// GetMutation implements the context.Context interface.
+func (c *Context) GetMutation(tableID int64) *binlog.TableMutation {
+	return nil
+}
 
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {

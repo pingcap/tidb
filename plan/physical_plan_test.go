@@ -698,7 +698,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		c.Assert(err, IsNil)
 		// Make txn not read only.
 		se.Txn().Set(kv.Key("AAA"), []byte("BBB"))
-		se.Txn().StmtCommit()
+		se.StmtCommit()
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
