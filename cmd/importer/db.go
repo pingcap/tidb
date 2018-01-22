@@ -47,7 +47,10 @@ func intRangeValue(column *column, min int64, max int64) (int64, int64) {
 func randInt64Value(column *column, min int64, max int64) int64 {
 	if len(column.set) > 0 {
 		idx := randInt(0, len(column.set)-1)
-		data, _ := strconv.ParseInt(column.set[idx], 10, 64)
+		data, err := strconv.ParseInt(column.set[idx], 10, 64)
+		if err != nil {
+			log.Warnf("rand int64 error: %s", err)
+		}
 		return data
 	}
 

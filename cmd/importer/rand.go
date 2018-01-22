@@ -15,8 +15,8 @@ package main
 
 import (
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"math/rand"
-	"strconv"
 	"time"
 )
 
@@ -43,13 +43,6 @@ func randInt(min int, max int) int {
 
 func randInt64(min int64, max int64) int64 {
 	return min + rand.Int63n(max-min+1)
-}
-
-func randFloat64(min int64, max int64, prec int) float64 {
-	value := float64(randInt64(min, max))
-	fvalue := strconv.FormatFloat(value, 'f', prec, 64)
-	value, _ = strconv.ParseFloat(fvalue, 64)
-	return value
 }
 
 func randBool() bool {
@@ -89,13 +82,19 @@ func randDate(min string, max string) string {
 		return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 	}
 
-	minTime, _ := time.Parse(dateFormat, min)
+	minTime, err := time.Parse(dateFormat, min)
+	if err != nil {
+		log.Warnf("randDate err %s", err)
+	}
 	if len(max) == 0 {
 		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
 		return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
 	}
 
-	maxTime, _ := time.Parse(dateFormat, max)
+	maxTime, err := time.Parse(dateFormat, max)
+	if err != nil {
+		log.Warnf("randDate err %s", err)
+	}
 	days := int(maxTime.Sub(minTime).Hours() / 24)
 	t := minTime.Add(time.Duration(randInt(0, days)) * 24 * time.Hour)
 	return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
@@ -109,8 +108,14 @@ func randTime(min string, max string) string {
 		return fmt.Sprintf("%02d:%02d:%02d", hour, min, sec)
 	}
 
-	minTime, _ := time.Parse(timeFormat, min)
-	maxTime, _ := time.Parse(timeFormat, max)
+	minTime, err := time.Parse(timeFormat, min)
+	if err != nil {
+		log.Warnf("randTime err %s", err)
+	}
+	maxTime, err := time.Parse(timeFormat, max)
+	if err != nil {
+		log.Warnf("randTime err %s", err)
+	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
 	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
@@ -127,13 +132,19 @@ func randTimestamp(min string, max string) string {
 		return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, min, sec)
 	}
 
-	minTime, _ := time.Parse(dateTimeFormat, min)
+	minTime, err := time.Parse(dateTimeFormat, min)
+	if err != nil {
+		log.Warnf("randTimestamp err %s", err)
+	}
 	if len(max) == 0 {
 		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
 		return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 
-	maxTime, _ := time.Parse(dateTimeFormat, max)
+	maxTime, err := time.Parse(dateTimeFormat, max)
+	if err != nil {
+		log.Warnf("randTimestamp err %s", err)
+	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
 	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
@@ -144,8 +155,14 @@ func randYear(min string, max string) string {
 		return fmt.Sprintf("%04d", time.Now().Year()-randInt(0, 10))
 	}
 
-	minTime, _ := time.Parse(yearFormat, min)
-	maxTime, _ := time.Parse(yearFormat, max)
+	minTime, err := time.Parse(yearFormat, min)
+	if err != nil {
+		log.Warnf("randYear err %s", err)
+	}
+	maxTime, err := time.Parse(yearFormat, max)
+	if err != nil {
+		log.Warnf("randYear err %s", err)
+	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
 	return fmt.Sprintf("%04d", t.Year())
