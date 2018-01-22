@@ -358,14 +358,14 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 }
 
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
+	level := log.GetLevel()
+	if level < log.WarnLevel {
+		return
+	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
 	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
-	level := log.GetLevel()
 	if costTime < threshold && level < log.DebugLevel {
-		return
-	}
-	if costTime >= threshold && level < log.WarnLevel {
 		return
 	}
 	sql := a.Text
