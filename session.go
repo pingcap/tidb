@@ -1383,9 +1383,17 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
+			if user == nil {
+				log.Infof("[CRUCIAL OPERATION] %s.", ss.SecureText())
+			} else {
+				log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
+			}
 		} else {
-			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
+			if user == nil {
+				log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+			} else {
+				log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
+			}
 		}
 	default:
 		logQuery(node.Text(), vars)
