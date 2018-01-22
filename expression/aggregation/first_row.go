@@ -24,8 +24,8 @@ type firstRowFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if ctx.GotFirstRow {
+func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+	if evalCtx.GotFirstRow {
 		return nil
 	}
 	if len(ff.Args) != 1 {
@@ -35,17 +35,17 @@ func (ff *firstRowFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.Statemen
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.Value = types.CopyDatum(value)
-	ctx.GotFirstRow = true
+	evalCtx.Value = types.CopyDatum(value)
+	evalCtx.GotFirstRow = true
 	return nil
 }
 
 // GetResult implements Aggregation interface.
-func (ff *firstRowFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
-	return ctx.Value
+func (ff *firstRowFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
+	return evalCtx.Value
 }
 
 // GetPartialResult implements Aggregation interface.
-func (ff *firstRowFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{ff.GetResult(ctx)}
+func (ff *firstRowFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{ff.GetResult(evalCtx)}
 }

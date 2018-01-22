@@ -24,27 +24,27 @@ type bitXorFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (bf *bitXorFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (bf *bitXorFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ctx.Value.IsNull() {
-		ctx.Value.SetUint64(0)
+	if evalCtx.Value.IsNull() {
+		evalCtx.Value.SetUint64(0)
 	}
 	if !value.IsNull() {
-		ctx.Value.SetUint64(ctx.Value.GetUint64() ^ value.GetUint64())
+		evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() ^ value.GetUint64())
 	}
 	return nil
 }
 
 // GetResult implements Aggregation interface.
-func (bf *bitXorFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
-	return ctx.Value
+func (bf *bitXorFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
+	return evalCtx.Value
 }
 
 // GetPartialResult implements Aggregation interface.
-func (bf *bitXorFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{bf.GetResult(ctx)}
+func (bf *bitXorFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{bf.GetResult(evalCtx)}
 }
