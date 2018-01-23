@@ -133,10 +133,66 @@ func (s *testSuite) TestSetVar(c *C) {
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("SERIALIZABLE"))
+
+	// test synonyms variables
+	tk.MustExec("SET SESSION tx_isolation = 'READ-COMMITTED'")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	tk.MustExec("SET SESSION tx_isolation = 'READ-UNCOMMITTED'")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+
+	tk.MustExec("SET SESSION transaction_isolation = 'SERIALIZABLE'")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("SERIALIZABLE"))
+
+	tk.MustExec("SET GLOBAL transaction_isolation = 'SERIALIZABLE'")
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("SERIALIZABLE"))
+
+	tk.MustExec("SET GLOBAL transaction_isolation = 'READ-UNCOMMITTED'")
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+
+	tk.MustExec("SET GLOBAL tx_isolation = 'SERIALIZABLE'")
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("SERIALIZABLE"))
+
+	tk.MustExec("SET SESSION tx_read_only = 1")
+	tk.MustExec("SET SESSION tx_read_only = 0")
+	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET GLOBAL tx_read_only = 1")
+	tk.MustExec("SET GLOBAL tx_read_only = 0")
+	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET SESSION transaction_read_only = 1")
+	tk.MustExec("SET SESSION transaction_read_only = 0")
+	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET SESSION transaction_read_only = 1")
+	tk.MustQuery("select @@session.tx_read_only").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.transaction_read_only").Check(testkit.Rows("1"))
+
+	tk.MustExec("SET GLOBAL transaction_read_only = 1")
+	tk.MustExec("SET GLOBAL transaction_read_only = 0")
+	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET GLOBAL transaction_read_only = 1")
+	tk.MustQuery("select @@global.tx_read_only").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.transaction_read_only").Check(testkit.Rows("1"))
 
 	// Even the transaction fail, set session variable would success.
 	tk.MustExec("BEGIN")
