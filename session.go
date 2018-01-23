@@ -973,8 +973,16 @@ func (st *StmtTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
 
+func (st *StmtTxn) cleanup() {
+	st.buf.Reset()
+	for key := range st.mutations {
+		delete(st.mutations, key)
+	}
+}
+
 // StmtCommit implements the context.Context interface.
 func (s *session) StmtCommit() error {
+	defer s.StmtTxn.cleanup()
 	st := &s.StmtTxn
 	err := kv.WalkMemBuffer(s.buf, func(k kv.Key, v []byte) error {
 		if len(v) == 0 {
@@ -982,7 +990,6 @@ func (s *session) StmtCommit() error {
 		}
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
-	st.buf.Reset()
 
 	// Need to flush binlog.
 	for key, value := range st.mutations {
@@ -990,18 +997,13 @@ func (s *session) StmtCommit() error {
 		if err == nil {
 			mergeToMutation(mutation, value)
 		}
-		delete(st.mutations, key)
 	}
 	return errors.Trace(err)
 }
 
 // StmtRollback implements the context.Context interface.
 func (s *session) StmtRollback() {
-	s.StmtTxn.buf.Reset()
-	mutations := s.StmtTxn.mutations
-	for key := range mutations {
-		delete(mutations, key)
-	}
+	s.StmtTxn.cleanup()
 	return
 }
 
