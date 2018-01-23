@@ -198,7 +198,7 @@ func (a *aggregationOptimizer) allFirstRow(aggFuncs []*aggregation.AggFuncDesc) 
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int) LogicalPlan {
-	child := join.children[childIdx].(LogicalPlan)
+	child := join.children[childIdx]
 	if a.allFirstRow(aggFuncs) {
 		return child
 	}
@@ -339,12 +339,12 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 					rightInvalid := a.checkAnyCountAndSum(leftAggFuncs)
 					leftInvalid := a.checkAnyCountAndSum(rightAggFuncs)
 					if rightInvalid {
-						rChild = join.children[1].(LogicalPlan)
+						rChild = join.children[1]
 					} else {
 						rChild = a.tryToPushDownAgg(rightAggFuncs, rightGbyCols, join, 1)
 					}
 					if leftInvalid {
-						lChild = join.children[0].(LogicalPlan)
+						lChild = join.children[0]
 					} else {
 						lChild = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0)
 					}
@@ -378,7 +378,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				pushedAgg := a.makeNewAgg(agg.ctx, agg.AggFuncs, gbyCols)
 				newChildren := make([]LogicalPlan, 0, len(union.children))
 				for _, child := range union.children {
-					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child.(LogicalPlan))
+					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
 					newChildren = append(newChildren, newChild)
 				}
 				union.SetChildren(newChildren...)
@@ -387,7 +387,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild := a.aggPushDown(child.(LogicalPlan))
+		newChild := a.aggPushDown(child)
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
