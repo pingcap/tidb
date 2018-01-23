@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -135,7 +136,7 @@ type mockResponse struct {
 	count int
 }
 
-func (resp *mockResponse) Next() ([]byte, error) {
+func (resp *mockResponse) Next(ctx goctx.Context) ([]byte, error) {
 	resp.count++
 	if resp.count == 100 {
 		return nil, errors.New("error happened")
