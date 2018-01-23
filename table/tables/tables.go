@@ -811,7 +811,7 @@ func shouldWriteBinlog(ctx context.Context) bool {
 }
 
 func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {
-	return ctx.GetMutation(t.ID)
+	return ctx.StmtGetMutation(t.ID)
 }
 
 // canSkip is for these cases, we can skip the columns in encoded row:

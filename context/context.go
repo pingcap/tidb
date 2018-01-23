@@ -76,8 +76,8 @@ type Context interface {
 	StmtCommit() error
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
-	// GetMutation gets the binlog mutation for current statement.
-	GetMutation(int64) *binlog.TableMutation
+	// StmtGetMutation gets the binlog mutation for current statement.
+	StmtGetMutation(int64) *binlog.TableMutation
 }
 
 type basicCtxType int

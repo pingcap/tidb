@@ -198,8 +198,8 @@ func (c *Context) StmtCommit() error {
 func (c *Context) StmtRollback() {
 }
 
-// GetMutation implements the context.Context interface.
-func (c *Context) GetMutation(tableID int64) *binlog.TableMutation {
+// StmtGetMutation implements the context.Context interface.
+func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
 }
 

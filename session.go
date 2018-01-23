@@ -1005,8 +1005,8 @@ func (s *session) StmtRollback() {
 	return
 }
 
-// GetMutation implements the context.Context interface.
-func (s *session) GetMutation(tableID int64) *binlog.TableMutation {
+// StmtGetMutation implements the context.Context interface.
+func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	st := &s.StmtTxn
 	if _, ok := st.mutations[tableID]; !ok {
 		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
