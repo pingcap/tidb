@@ -2920,7 +2920,7 @@ type timestampFunctionClass struct {
 
 func (c *timestampFunctionClass) getDefaultFsp(tp *types.FieldType) int {
 	if tp.Tp == mysql.TypeDatetime || tp.Tp == mysql.TypeDate || tp.Tp == mysql.TypeDuration ||
-		tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeNewDate {
+		tp.Tp == mysql.TypeTimestamp {
 		return tp.Decimal
 	}
 	switch cls := tp.EvalType(); cls {
