@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -279,6 +280,7 @@ func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 	for {
 		if batchDelete && rowCount >= batchSize {
+			terror.Log(e.ctx.Txn().StmtCommit())
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -334,17 +336,19 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
+		iter := chunk.NewIterator4Chunk(chk)
+
 		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if chk.NumRows() == 0 {
 			break
 		}
 
-		for chunkRow := chk.Begin(); chunkRow != chk.End(); chunkRow = chunkRow.Next() {
+		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
+				terror.Log(e.ctx.Txn().StmtCommit())
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -412,16 +416,17 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
+		iter := chunk.NewIterator4Chunk(chk)
+
 		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if chk.NumRows() == 0 {
 			break
 		}
 
-		for joinedChunkRow := chk.Begin(); joinedChunkRow != chk.End(); joinedChunkRow = joinedChunkRow.Next() {
+		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}
@@ -896,6 +901,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			continue
 		}
 		if batchInsert && rowCount >= batchSize {
+			terror.Log(e.ctx.Txn().StmtCommit())
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
@@ -1355,6 +1361,8 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 	fields := selectExec.retTypes()
 	for {
 		chk := selectExec.newChunk()
+		iter := chunk.NewIterator4Chunk(chk)
+
 		err := selectExec.NextChunk(goCtx, chk)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1363,7 +1371,7 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 			break
 		}
 
-		for innerChunkRow := chk.Begin(); innerChunkRow != chk.End(); innerChunkRow = innerChunkRow.Next() {
+		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount = uint64(len(rows))
 			row, err := e.fillRowData(cols, innerRow, ignoreErr)

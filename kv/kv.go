@@ -144,6 +144,11 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the snapshot of this transaction.
 	GetSnapshot() Snapshot
+
+	// StmtCommit flush all changes by the statement to the underlying transaction.
+	StmtCommit() error
+	// StmtRollback provides statement level rollback.
+	StmtRollback()
 }
 
 // Client is used to send request to KV layer.
