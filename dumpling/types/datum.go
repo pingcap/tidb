@@ -671,7 +671,7 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 		return d.convertToString(sc, target)
 	case mysql.TypeTimestamp:
 		return d.convertToMysqlTimestamp(sc, target)
-	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate:
+	case mysql.TypeDatetime, mysql.TypeDate:
 		return d.convertToMysqlTime(sc, target)
 	case mysql.TypeDuration:
 		return d.convertToMysqlDuration(sc, target)
