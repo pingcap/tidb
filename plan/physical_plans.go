@@ -104,7 +104,7 @@ type PhysicalIndexScan struct {
 	// accessInAndEqCounts stores the numbers of equal or in function. It's a slice because
 	// if top layer the original expression is DNF. Then every item of it have an accessInAndEqCounts.
 	accessInAndEqCounts []int
-	// condTopLayerIsCNF indicates whether the top layer is DNF.
+	// condTopLayerIsCNF indicates whether the top layer is CNF.
 	condTopLayerIsCNF bool
 
 	TableAsName *model.CIStr

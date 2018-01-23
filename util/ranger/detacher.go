@@ -239,7 +239,8 @@ func detachDNFIndexConditions(condition *expression.ScalarFunction, cols []*expr
 }
 
 // DetachIndexConditions will detach the index filters from table filters.
-// If the top layer is CNF, then we will return the eqAndInCount, otherwise we just return -1.
+// If the top layer is DNF, we return a int slice which is eqAndInCount of every DNF item.
+// Otherwise just one number is returned.
 func DetachIndexConditions(conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accessConds, filterConds []expression.Expression, eqAndInCounts []int, isCNF bool) {
 	if len(conditions) == 1 {
