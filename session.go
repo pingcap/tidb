@@ -984,11 +984,13 @@ func (s *session) StmtCommit() error {
 	})
 	st.buf.Reset()
 
-	// Need to flush binlog.
-	for key, value := range st.mutations {
-		mutation := getBinlogMutation(s, key)
-		mergeToMutation(mutation, value)
-		delete(st.mutations, key)
+	if err == nil {
+		// Need to flush binlog.
+		for key, value := range st.mutations {
+			mutation := getBinlogMutation(s, key)
+			mergeToMutation(mutation, value)
+			delete(st.mutations, key)
+		}
 	}
 	return errors.Trace(err)
 }
