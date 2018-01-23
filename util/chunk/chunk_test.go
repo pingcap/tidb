@@ -158,21 +158,21 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(dst.columns[0].nullCount, check.Equals, 6)
 	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
 	c.Assert(len(dst.columns[0].offsets), check.Equals, 0)
-	c.Assert(len(dst.columns[0].data), check.Equals, 4*12)
+	c.Assert(dst.columns[0].data.Len(), check.Equals, 4*12)
 	c.Assert(len(dst.columns[0].elemBuf), check.Equals, 4)
 
 	c.Assert(dst.columns[1].length, check.Equals, 12)
 	c.Assert(dst.columns[1].nullCount, check.Equals, 6)
 	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
 	c.Assert(string(dst.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
-	c.Assert(string(dst.columns[1].data), check.Equals, "abcabcabcabcabcabc")
+	c.Assert(string(dst.columns[1].data.Bytes()), check.Equals, "abcabcabcabcabcabc")
 	c.Assert(len(dst.columns[1].elemBuf), check.Equals, 0)
 
 	c.Assert(dst.columns[2].length, check.Equals, 12)
 	c.Assert(dst.columns[2].nullCount, check.Equals, 6)
 	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
 	c.Assert(len(dst.columns[2].offsets), check.Equals, 13)
-	c.Assert(len(dst.columns[2].data), check.Equals, 150)
+	c.Assert(dst.columns[2].data.Len(), check.Equals, 150)
 	c.Assert(len(dst.columns[2].elemBuf), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
 		jsonElem := dst.GetRow(i).GetJSON(2)
@@ -211,21 +211,21 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(src.columns[0].nullCount, check.Equals, 6)
 	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
 	c.Assert(len(src.columns[0].offsets), check.Equals, 0)
-	c.Assert(len(src.columns[0].data), check.Equals, 4*12)
+	c.Assert(src.columns[0].data.Len(), check.Equals, 4*12)
 	c.Assert(len(src.columns[0].elemBuf), check.Equals, 4)
 
 	c.Assert(src.columns[1].length, check.Equals, 12)
 	c.Assert(src.columns[1].nullCount, check.Equals, 6)
 	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
 	c.Assert(string(src.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
-	c.Assert(string(src.columns[1].data), check.Equals, "abcabcabcabcabcabc")
+	c.Assert(string(src.columns[1].data.Bytes()), check.Equals, "abcabcabcabcabcabc")
 	c.Assert(len(src.columns[1].elemBuf), check.Equals, 0)
 
 	c.Assert(src.columns[2].length, check.Equals, 12)
 	c.Assert(src.columns[2].nullCount, check.Equals, 6)
 	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
 	c.Assert(len(src.columns[2].offsets), check.Equals, 13)
-	c.Assert(len(src.columns[2].data), check.Equals, 150)
+	c.Assert(src.columns[2].data.Len(), check.Equals, 150)
 	c.Assert(len(src.columns[2].elemBuf), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
 		row := src.GetRow(i)
@@ -442,7 +442,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	chk.AppendDuration(4, durationObj)
 
 	memUsage = chk.MemoryUsage()
-	colUsage[1] = initCap>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	colUsage[1] = initCap>>3 + (initCap+1)*4 + chk.columns[1].data.Cap() + 0
 	expectedUsage = 0
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
@@ -501,16 +501,97 @@ func appendRow(chk *Chunk, row Row) {
 	}
 }
 
-func BenchmarkAppendBytes(b *testing.B) {
+func BenchmarkAppendBytes1024(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 1, 1000)
+	var bs = make([]byte, 10, 1000)
 	for i := 0; i < b.N; i++ {
-		appendBytes(chk, bs)
+		appendBytes(chk, bs, 1024)
 	}
 }
 
-func appendBytes(chk *Chunk, bs []byte) {
-	for i := 0; i < 1000; i++ {
+func BenchmarkAppendBytes512(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 512)
+	}
+}
+
+func BenchmarkAppendBytes256(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 256)
+	}
+}
+
+func BenchmarkAppendBytes128(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 128)
+	}
+}
+
+func BenchmarkAppendBytes64(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 64)
+	}
+}
+
+func BenchmarkAppendBytes32(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 32)
+	}
+}
+
+func BenchmarkAppendBytes16(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 16)
+	}
+}
+
+func BenchmarkAppendBytes8(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 8)
+	}
+}
+
+func BenchmarkAppendBytes4(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 4)
+	}
+}
+
+func BenchmarkAppendBytes2(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 10, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 2)
+	}
+}
+
+func BenchmarkAppendBytes1(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 1000, 1000)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 1)
+	}
+}
+
+func appendBytes(chk *Chunk, bs []byte, times int) {
+	chk.Reset()
+	for i := 0; i < times; i++ {
 		chk.AppendBytes(0, bs)
 	}
 }

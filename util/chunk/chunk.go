@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"bytes"
 	"encoding/binary"
 	"unsafe"
 
@@ -62,7 +63,7 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*4) + int64(cap(col.data)) + int64(cap(col.elemBuf))
+		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*4) + int64(col.data.Cap()) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
 	}
 	return
@@ -72,7 +73,7 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
 	c.columns = append(c.columns, &column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, initCap*elemLen),
+		data:       bytes.NewBuffer(make([]byte, 0, initCap*elemLen)),
 		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
@@ -81,7 +82,7 @@ func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
 func (c *Chunk) addVarLenColumn(initCap int) {
 	c.columns = append(c.columns, &column{
 		offsets:    make([]int32, 1, initCap+1),
-		data:       make([]byte, 0, initCap*4),
+		data:       bytes.NewBuffer(make([]byte, 0, initCap*4)),
 		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
@@ -168,11 +169,11 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
 			offset := row.idx * elemLen
-			chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
+			chkCol.data.Write(rowCol.data.Bytes()[offset : offset+elemLen])
 		} else {
 			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-			chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-			chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+			chkCol.data.Write(rowCol.data.Bytes()[start:end])
+			chkCol.offsets = append(chkCol.offsets, int32(chkCol.data.Len()))
 		}
 		chkCol.length++
 	}
@@ -184,10 +185,11 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 		dst := c.columns[colID]
 		if src.isFixed() {
 			elemLen := len(src.elemBuf)
-			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
+			buf := src.data.Bytes()[begin*elemLen : end*elemLen]
+			dst.data.Write(buf)
 		} else {
 			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
-			dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
+			dst.data.Write(src.data.Bytes()[beginOffset:endOffset])
 			for i := begin; i < end; i++ {
 				dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
 			}
@@ -205,9 +207,9 @@ func (c *Chunk) TruncateTo(numRows int) {
 	for _, col := range c.columns {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)
-			col.data = col.data[:numRows*elemLen]
+			col.data.Truncate(numRows * elemLen)
 		} else {
-			col.data = col.data[:col.offsets[numRows]]
+			col.data.Truncate(int(col.offsets[numRows]))
 			col.offsets = col.offsets[:numRows+1]
 		}
 		for i := numRows; i < col.length; i++ {
@@ -322,7 +324,7 @@ type column struct {
 	nullCount  int
 	nullBitmap []byte
 	offsets    []int32
-	data       []byte
+	data       *bytes.Buffer
 	elemBuf    []byte
 }
 
@@ -338,7 +340,7 @@ func (c *column) reset() {
 		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
 		c.offsets = c.offsets[:1]
 	}
-	c.data = c.data[:0]
+	c.data.Reset()
 }
 
 func (c *column) isNull(rowIdx int) bool {
@@ -362,7 +364,7 @@ func (c *column) appendNullBitmap(on bool) {
 func (c *column) appendNull() {
 	c.appendNullBitmap(false)
 	if c.isFixed() {
-		c.data = append(c.data, c.elemBuf...)
+		c.data.Write(c.elemBuf)
 	} else {
 		c.offsets = append(c.offsets, c.offsets[c.length])
 	}
@@ -370,62 +372,57 @@ func (c *column) appendNull() {
 }
 
 func (c *column) finishAppendFixed() {
-	c.data = append(c.data, c.elemBuf...)
 	c.appendNullBitmap(true)
 	c.length++
 }
 
 func (c *column) appendInt64(i int64) {
 	*(*int64)(unsafe.Pointer(&c.elemBuf[0])) = i
+	c.data.Write(c.elemBuf)
 	c.finishAppendFixed()
 }
 
 func (c *column) appendUint64(u uint64) {
 	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
+	c.data.Write(c.elemBuf)
 	c.finishAppendFixed()
 }
 
 func (c *column) appendFloat32(f float32) {
 	*(*float32)(unsafe.Pointer(&c.elemBuf[0])) = f
+	c.data.Write(c.elemBuf)
 	c.finishAppendFixed()
 }
 
 func (c *column) appendFloat64(f float64) {
 	*(*float64)(unsafe.Pointer(&c.elemBuf[0])) = f
+	c.data.Write(c.elemBuf)
 	c.finishAppendFixed()
 }
 
 func (c *column) finishAppendVar() {
 	c.appendNullBitmap(true)
-	c.offsets = append(c.offsets, int32(len(c.data)))
+	c.offsets = append(c.offsets, int32(c.data.Len()))
 	c.length++
 }
 
 func (c *column) appendString(str string) {
-	c.data = append(c.data, str...)
+	c.data.WriteString(str)
 	c.finishAppendVar()
 }
 
 func (c *column) appendBytes(b []byte) {
-	m := len(c.data)
-	n := m + len(b)
-	if n > cap(c.data) { // if necessary, reallocate
-		// allocate 128 times larger than what's needed, for futher growth
-		newData := make([]byte, (n+1)*128)
-		copy(newData, c.data)
-		c.data = newData
-	}
-	c.data = c.data[0:n]
-	copy(c.data[m:n], b)
+	c.data.Write(b)
 	c.finishAppendVar()
 }
 
 func (c *column) appendTime(t types.Time) {
-	writeTime(c.elemBuf, t)
+	c.data.Write(timeToBytes(t))
 	c.finishAppendFixed()
 }
 
-func writeTime(buf []byte, t types.Time) {
+func timeToBytes(t types.Time) []byte {
+	buf := make([]byte, 16)
 	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
 	buf[2] = uint8(t.Time.Month())
 	buf[3] = uint8(t.Time.Day())
@@ -435,29 +432,34 @@ func writeTime(buf []byte, t types.Time) {
 	binary.BigEndian.PutUint32(buf[8:], uint32(t.Time.Microsecond()))
 	buf[12] = t.Type
 	buf[13] = uint8(t.Fsp)
+	return buf
 }
 
 func (c *column) appendDuration(dur types.Duration) {
 	*(*types.Duration)(unsafe.Pointer(&c.elemBuf[0])) = dur
+	c.data.Write(c.elemBuf)
 	c.finishAppendFixed()
 }
 
 func (c *column) appendMyDecimal(dec *types.MyDecimal) {
 	*(*types.MyDecimal)(unsafe.Pointer(&c.elemBuf[0])) = *dec
+	c.data.Write(c.elemBuf)
 	c.finishAppendFixed()
 }
 
 func (c *column) appendNameValue(name string, val uint64) {
 	var buf [8]byte
 	*(*uint64)(unsafe.Pointer(&buf[0])) = val
-	c.data = append(c.data, buf[:]...)
-	c.data = append(c.data, name...)
+	for i := 0; i < 8; i++ {
+		c.data.WriteByte(buf[i])
+	}
+	c.data.WriteString(name)
 	c.finishAppendVar()
 }
 
 func (c *column) appendJSON(j json.BinaryJSON) {
-	c.data = append(c.data, j.TypeCode)
-	c.data = append(c.data, j.Value...)
+	c.data.WriteByte(j.TypeCode)
+	c.data.Write(j.Value)
 	c.finishAppendVar()
 }
 
@@ -480,46 +482,46 @@ func (r Row) Len() int {
 // GetInt64 returns the int64 value with the colIdx.
 func (r Row) GetInt64(colIdx int) int64 {
 	col := r.c.columns[colIdx]
-	return *(*int64)(unsafe.Pointer(&col.data[r.idx*8]))
+	return *(*int64)(unsafe.Pointer(&col.data.Bytes()[r.idx*8]))
 }
 
 // GetUint64 returns the uint64 value with the colIdx.
 func (r Row) GetUint64(colIdx int) uint64 {
 	col := r.c.columns[colIdx]
-	return *(*uint64)(unsafe.Pointer(&col.data[r.idx*8]))
+	return *(*uint64)(unsafe.Pointer(&col.data.Bytes()[r.idx*8]))
 }
 
 // GetFloat32 returns the float64 value with the colIdx.
 func (r Row) GetFloat32(colIdx int) float32 {
 	col := r.c.columns[colIdx]
-	return *(*float32)(unsafe.Pointer(&col.data[r.idx*4]))
+	return *(*float32)(unsafe.Pointer(&col.data.Bytes()[r.idx*4]))
 }
 
 // GetFloat64 returns the float64 value with the colIdx.
 func (r Row) GetFloat64(colIdx int) float64 {
 	col := r.c.columns[colIdx]
-	return *(*float64)(unsafe.Pointer(&col.data[r.idx*8]))
+	return *(*float64)(unsafe.Pointer(&col.data.Bytes()[r.idx*8]))
 }
 
 // GetString returns the string value with the colIdx.
 func (r Row) GetString(colIdx int) string {
 	col := r.c.columns[colIdx]
 	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return hack.String(col.data[start:end])
+	return hack.String(col.data.Bytes()[start:end])
 }
 
 // GetBytes returns the bytes value with the colIdx.
 func (r Row) GetBytes(colIdx int) []byte {
 	col := r.c.columns[colIdx]
 	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return col.data[start:end]
+	return col.data.Bytes()[start:end]
 }
 
 // GetTime returns the Time value with the colIdx.
 // TODO: use Time structure directly.
 func (r Row) GetTime(colIdx int) types.Time {
 	col := r.c.columns[colIdx]
-	return readTime(col.data[r.idx*16:])
+	return readTime(col.data.Bytes()[r.idx*16:])
 }
 
 func readTime(buf []byte) types.Time {
@@ -542,7 +544,7 @@ func readTime(buf []byte) types.Time {
 // GetDuration returns the Duration value with the colIdx.
 func (r Row) GetDuration(colIdx int) types.Duration {
 	col := r.c.columns[colIdx]
-	return *(*types.Duration)(unsafe.Pointer(&col.data[r.idx*16]))
+	return *(*types.Duration)(unsafe.Pointer(&col.data.Bytes()[r.idx*16]))
 }
 
 func (r Row) getNameValue(colIdx int) (string, uint64) {
@@ -551,8 +553,8 @@ func (r Row) getNameValue(colIdx int) (string, uint64) {
 	if start == end {
 		return "", 0
 	}
-	val := *(*uint64)(unsafe.Pointer(&col.data[start]))
-	name := hack.String(col.data[start+8 : end])
+	val := *(*uint64)(unsafe.Pointer(&col.data.Bytes()[start]))
+	name := hack.String(col.data.Bytes()[start+8 : end])
 	return name, val
 }
 
@@ -571,14 +573,14 @@ func (r Row) GetSet(colIdx int) types.Set {
 // GetMyDecimal returns the MyDecimal value with the colIdx.
 func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
 	col := r.c.columns[colIdx]
-	return (*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize]))
+	return (*types.MyDecimal)(unsafe.Pointer(&col.data.Bytes()[r.idx*types.MyDecimalStructSize]))
 }
 
 // GetJSON returns the JSON value with the colIdx.
 func (r Row) GetJSON(colIdx int) json.BinaryJSON {
 	col := r.c.columns[colIdx]
 	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return json.BinaryJSON{TypeCode: col.data[start], Value: col.data[start+1 : end]}
+	return json.BinaryJSON{TypeCode: col.data.Bytes()[start], Value: col.data.Bytes()[start+1 : end]}
 }
 
 // GetDatumRow converts chunk.Row to types.DatumRow.

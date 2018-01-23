@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"unsafe"
@@ -105,8 +106,14 @@ func zeroValForType(tp *types.FieldType) interface{} {
 		return nil
 	}
 }
+func writeFixBuf(buf *bytes.Buffer, b []byte) {
+	for i := 0; i < len(b); i++ {
+		buf.WriteByte(b[i])
+	}
+}
 
 func makeMutRowColumn(in interface{}) *column {
+	buf := make([]byte, 8)
 	switch x := in.(type) {
 	case nil:
 		col := makeMutRowUint64Column(uint64(0))
@@ -122,7 +129,8 @@ func makeMutRowColumn(in interface{}) *column {
 		return makeMutRowUint64Column(math.Float64bits(x))
 	case float32:
 		col := newMutRowFixedLenColumn(4)
-		*(*uint32)(unsafe.Pointer(&col.data[0])) = math.Float32bits(x)
+		*(*uint32)(unsafe.Pointer(&buf[0])) = math.Float32bits(x)
+		writeFixBuf(col.data, buf)
 		return col
 	case string:
 		return makeMutRowBytesColumn(hack.Slice(x))
@@ -132,30 +140,34 @@ func makeMutRowColumn(in interface{}) *column {
 		return makeMutRowBytesColumn(x)
 	case *types.MyDecimal:
 		col := newMutRowFixedLenColumn(types.MyDecimalStructSize)
-		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *x
+		*(*types.MyDecimal)(unsafe.Pointer(&buf[0])) = *x
+		writeFixBuf(col.data, buf)
 		return col
 	case types.Time:
 		col := newMutRowFixedLenColumn(16)
-		writeTime(col.data, x)
+		col.data.Write(timeToBytes(x))
 		return col
 	case json.BinaryJSON:
 		col := newMutRowVarLenColumn(len(x.Value) + 1)
-		col.data[0] = x.TypeCode
-		copy(col.data[1:], x.Value)
+		col.data.WriteByte(x.TypeCode)
+		col.data.Write(x.Value)
 		return col
 	case types.Duration:
 		col := newMutRowFixedLenColumn(16)
-		*(*types.Duration)(unsafe.Pointer(&col.data[0])) = x
+		*(*types.Duration)(unsafe.Pointer(&buf[0])) = x
+		writeFixBuf(col.data, buf)
 		return col
 	case types.Enum:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
-		copy(col.data[8:], x.Name)
+		*(*uint64)(unsafe.Pointer(&buf[0])) = x.Value
+		writeFixBuf(col.data, buf)
+		col.data.WriteString(x.Name)
 		return col
 	case types.Set:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
-		copy(col.data[8:], x.Name)
+		*(*uint64)(unsafe.Pointer(&buf[0])) = x.Value
+		writeFixBuf(col.data, buf)
+		col.data.WriteString(x.Name)
 		return col
 	default:
 		return nil
@@ -167,10 +179,20 @@ func newMutRowFixedLenColumn(elemSize int) *column {
 	col := &column{
 		length:     1,
 		elemBuf:    buf[:elemSize],
-		data:       buf[:elemSize],
+		data:       new(bytes.Buffer),
 		nullBitmap: buf[elemSize:],
 	}
 	col.nullBitmap[0] = 1
+	col.data.Write(buf)
+	return col
+}
+
+func makeMutRowUint64Column(val uint64) *column {
+	col := newMutRowFixedLenColumn(8)
+	buf := make([]byte, 8)
+	*(*uint64)(unsafe.Pointer(&buf[0])) = val
+	col.data = new(bytes.Buffer)
+	writeFixBuf(col.data, buf)
 	return col
 }
 
@@ -179,22 +201,16 @@ func newMutRowVarLenColumn(valSize int) *column {
 	col := &column{
 		length:     1,
 		offsets:    []int32{0, int32(valSize)},
-		data:       buf[:valSize],
+		data:       bytes.NewBuffer(buf[:valSize]),
 		nullBitmap: buf[valSize:],
 	}
 	col.nullBitmap[0] = 1
 	return col
 }
 
-func makeMutRowUint64Column(val uint64) *column {
-	col := newMutRowFixedLenColumn(8)
-	*(*uint64)(unsafe.Pointer(&col.data[0])) = val
-	return col
-}
-
 func makeMutRowBytesColumn(bin []byte) *column {
 	col := newMutRowVarLenColumn(len(bin))
-	copy(col.data, bin)
+	col.data.Write(bin)
 	col.nullBitmap[0] = 1
 	return col
 }
@@ -209,9 +225,10 @@ func (mr MutRow) SetRow(row Row) {
 		}
 		elemLen := len(rCol.elemBuf)
 		if elemLen > 0 {
-			copy(mrCol.data, rCol.data[row.idx*elemLen:(row.idx+1)*elemLen])
+			// copy(mrCol.data, rCol.data[row.idx*elemLen:(row.idx+1)*elemLen])
+			mrCol.data.Write(rCol.data.Bytes()[row.idx*elemLen : (row.idx+1)*elemLen])
 		} else {
-			setMutRowBytes(mrCol, rCol.data[rCol.offsets[row.idx]:rCol.offsets[row.idx+1]])
+			setMutRowBytes(mrCol, rCol.data.Bytes()[rCol.offsets[row.idx]:rCol.offsets[row.idx+1]])
 		}
 		mrCol.nullBitmap[0] = 1
 	}
@@ -231,17 +248,23 @@ func (mr MutRow) SetValue(colIdx int, val interface{}) {
 		col.nullBitmap[0] = 0
 		return
 	}
+	fixBuf := make([]byte, 0, 8)
 	switch x := val.(type) {
 	case int:
-		binary.LittleEndian.PutUint64(col.data, uint64(x))
+		binary.LittleEndian.PutUint64(fixBuf, uint64(x))
+		col.data.Write(fixBuf)
 	case int64:
-		binary.LittleEndian.PutUint64(col.data, uint64(x))
+		binary.LittleEndian.PutUint64(fixBuf, uint64(x))
+		col.data.Write(fixBuf)
 	case uint64:
-		binary.LittleEndian.PutUint64(col.data, x)
+		binary.LittleEndian.PutUint64(fixBuf, x)
+		col.data.Write(fixBuf)
 	case float64:
-		binary.LittleEndian.PutUint64(col.data, math.Float64bits(x))
+		binary.LittleEndian.PutUint64(fixBuf, math.Float64bits(x))
+		col.data.Write(fixBuf)
 	case float32:
-		binary.LittleEndian.PutUint32(col.data, math.Float32bits(x))
+		binary.LittleEndian.PutUint32(fixBuf, math.Float32bits(x))
+		col.data.Write(fixBuf)
 	case string:
 		setMutRowBytes(col, hack.Slice(x))
 	case []byte:
@@ -249,11 +272,13 @@ func (mr MutRow) SetValue(colIdx int, val interface{}) {
 	case types.BinaryLiteral:
 		setMutRowBytes(col, x)
 	case types.Duration:
-		*(*types.Duration)(unsafe.Pointer(&col.data[0])) = x
+		*(*types.Duration)(unsafe.Pointer(&fixBuf)) = x
+		col.data.Write(fixBuf)
 	case *types.MyDecimal:
-		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *x
+		*(*types.MyDecimal)(unsafe.Pointer(&fixBuf)) = *x
+		col.data.Write(fixBuf)
 	case types.Time:
-		writeTime(col.data, x)
+		col.data.Write(timeToBytes(x))
 	case types.Enum:
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.Set:
@@ -278,19 +303,22 @@ func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 		col.nullBitmap[0] = 0
 		return
 	}
+	fixBuf := make([]byte, 0, 8)
 	switch d.Kind() {
 	case types.KindInt64, types.KindUint64, types.KindFloat64:
-		binary.LittleEndian.PutUint64(mr.c.columns[colIdx].data, d.GetUint64())
+		binary.LittleEndian.PutUint64(fixBuf, d.GetUint64())
+		mr.c.columns[colIdx].data.Write(fixBuf)
 	case types.KindFloat32:
-		binary.LittleEndian.PutUint32(mr.c.columns[colIdx].data, math.Float32bits(d.GetFloat32()))
+		binary.LittleEndian.PutUint32(fixBuf, math.Float32bits(d.GetFloat32()))
+		mr.c.columns[colIdx].data.Write(fixBuf)
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 		setMutRowBytes(col, d.GetBytes())
 	case types.KindMysqlTime:
-		writeTime(col.data, d.GetMysqlTime())
+		col.data.Write(timeToBytes(d.GetMysqlTime()))
 	case types.KindMysqlDuration:
-		*(*types.Duration)(unsafe.Pointer(&col.data[0])) = d.GetMysqlDuration()
+		*(*types.Duration)(unsafe.Pointer(&col.data.Bytes()[0])) = d.GetMysqlDuration()
 	case types.KindMysqlDecimal:
-		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *d.GetMysqlDecimal()
+		*(*types.MyDecimal)(unsafe.Pointer(&col.data.Bytes()[0])) = *d.GetMysqlDecimal()
 	case types.KindMysqlJSON:
 		setMutRowJSON(col, d.GetMysqlJSON())
 	case types.KindMysqlEnum:
@@ -306,43 +334,55 @@ func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 }
 
 func setMutRowBytes(col *column, bin []byte) {
-	if len(col.data) >= len(bin) {
-		col.data = col.data[:len(bin)]
+	if col.data.Len() >= len(bin) {
+		col.data.Truncate(len(bin))
+		// col.data = col.data.Bytes()[:len(bin)]
 	} else {
 		buf := make([]byte, len(bin)+1)
-		col.data = buf[:len(bin)]
+		col.data.Reset()
+		col.data.Write(bin)
+		// col.data = buf[:len(bin)]
 		col.nullBitmap = buf[len(bin):]
 	}
-	copy(col.data, bin)
+	// copy(col.data, bin)
+	col.data.Reset()
+	col.data.Write(bin)
 	col.offsets[1] = int32(len(bin))
 }
 
 func setMutRowNameValue(col *column, name string, val uint64) {
 	dataLen := len(name) + 8
-	if len(col.data) >= dataLen {
-		col.data = col.data[:dataLen]
+	if col.data.Len() >= dataLen {
+		col.data.Truncate(dataLen)
+		// col.data = col.data.Bytes()[:dataLen]
 	} else {
 		buf := make([]byte, dataLen+1)
-		col.data = buf[:dataLen]
+		col.data.Truncate(dataLen)
+		// col.data = buf[:dataLen]
 		col.nullBitmap = buf[dataLen:]
 	}
-	binary.LittleEndian.PutUint64(col.data, val)
-	copy(col.data[8:], name)
+	fixBuf := make([]byte, 0, 8)
+	binary.LittleEndian.PutUint64(fixBuf, val)
+	col.data.Write(fixBuf)
+	col.data.WriteString(name)
 	col.offsets[1] = int32(dataLen)
 }
 
 func setMutRowJSON(col *column, j json.BinaryJSON) {
 	dataLen := len(j.Value) + 1
-	if len(col.data) >= dataLen {
-		col.data = col.data[:dataLen]
+	if col.data.Len() >= dataLen {
+		// col.data = col.data.Bytes()[:dataLen]
+		col.data.Truncate(dataLen)
 	} else {
 		// In MutRow, there always exists 1 data in every column,
 		// we should allocate one more byte for null bitmap.
-		buf := make([]byte, dataLen+1)
-		col.data = buf[:dataLen]
-		col.nullBitmap = buf[dataLen:]
+		// buf := make([]byte, dataLen+1)
+		col.data.Truncate(dataLen)
+		// col.data = buf[:dataLen]
+		col.nullBitmap = col.data.Bytes()[dataLen:]
 	}
-	col.data[0] = j.TypeCode
-	copy(col.data[1:], j.Value)
+	col.data.Bytes()[0] = j.TypeCode
+	col.data.Write(j.Value)
+	// copy(col.data.Bytes()[1:], j.Value)
 	col.offsets[1] = int32(dataLen)
 }
