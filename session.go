@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
@@ -204,9 +203,9 @@ func (s *session) SetCollation(coID int) error {
 		return errors.Trace(err)
 	}
 	for _, v := range variable.SetNamesVariables {
-		s.sessionVars.Systems[v] = cs
+		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	s.sessionVars.Systems[variable.CollationConnection] = co
+	terror.Log(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
 	return nil
 }
 
@@ -571,7 +570,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -587,7 +586,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1335,8 +1334,8 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
-		if _, ok := vars.Systems[varName]; !ok {
-			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, varVal)
+		if _, ok := vars.GetSystemVar(varName); !ok {
+			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1419,7 +1418,8 @@ func (s *session) ActivePendingTxn() error {
 	txn.SetCap(s.getMembufCap())
 	s.Transaction = txn
 	s.sessionVars.TxnCtx.StartTS = s.Transaction.StartTS()
-	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
+	if isoLevel == ast.ReadCommitted {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
 	return nil

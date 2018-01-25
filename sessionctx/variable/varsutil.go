@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package varsutil
+package variable
 
 import (
 	"fmt"
@@ -22,14 +22,13 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
 
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
-func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
+func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetSessionOnlySysVars(s, key)
 	if err != nil || ok {
@@ -39,29 +38,29 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	s.Systems[key] = gVal
+	s.systems[key] = gVal
 	return gVal, nil
 }
 
 // GetSessionOnlySysVars get the default value defined in code for session only variable.
 // The return bool value indicates whether it's a session only variable.
-func GetSessionOnlySysVars(s *variable.SessionVars, key string) (string, bool, error) {
-	sysVar := variable.SysVars[key]
+func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
+	sysVar := SysVars[key]
 	if sysVar == nil {
-		return "", false, variable.UnknownSystemVar.GenByArgs(key)
+		return "", false, UnknownSystemVar.GenByArgs(key)
 	}
 	// For virtual system variables:
 	switch sysVar.Name {
-	case variable.TiDBCurrentTS:
+	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
-	case variable.TiDBGeneralLog:
-		return fmt.Sprintf("%d", atomic.LoadUint32(&variable.ProcessGeneralLog)), true, nil
+	case TiDBGeneralLog:
+		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	}
-	sVal, ok := s.Systems[key]
+	sVal, ok := s.systems[key]
 	if ok {
 		return sVal, true, nil
 	}
-	if sysVar.Scope&variable.ScopeGlobal == 0 {
+	if sysVar.Scope&ScopeGlobal == 0 {
 		// None-Global variable can use pre-defined default value.
 		return sysVar.Value, true, nil
 	}
@@ -69,7 +68,7 @@ func GetSessionOnlySysVars(s *variable.SessionVars, key string) (string, bool, e
 }
 
 // GetGlobalSystemVar gets a global system variable.
-func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
+func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetScopeNoneSystemVar(key)
 	if err != nil || ok {
@@ -85,11 +84,11 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 // GetScopeNoneSystemVar checks the validation of `key`,
 // and return the default value if its scope is `ScopeNone`.
 func GetScopeNoneSystemVar(key string) (string, bool, error) {
-	sysVar := variable.SysVars[key]
+	sysVar := SysVars[key]
 	if sysVar == nil {
-		return "", false, variable.UnknownSystemVar.GenByArgs(key)
+		return "", false, UnknownSystemVar.GenByArgs(key)
 	}
-	if sysVar.Scope == variable.ScopeNone {
+	if sysVar.Scope == ScopeNone {
 		return sysVar.Value, true, nil
 	}
 	return "", false, nil
@@ -99,17 +98,17 @@ func GetScopeNoneSystemVar(key string) (string, bool, error) {
 const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Datum) error {
+func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
 	name = strings.ToLower(name)
-	sysVar := variable.SysVars[name]
+	sysVar := SysVars[name]
 	if sysVar == nil {
-		return variable.UnknownSystemVar
+		return UnknownSystemVar
 	}
 	if value.IsNull() {
-		if name != variable.CharacterSetResults {
-			return variable.ErrCantSetToNull
+		if name != CharacterSetResults {
+			return ErrCantSetToNull
 		}
-		delete(vars.Systems, name)
+		delete(vars.systems, name)
 		return nil
 	}
 	sVal, err := value.ToString()
@@ -117,12 +116,12 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		return errors.Trace(err)
 	}
 	switch name {
-	case variable.TimeZone:
+	case TimeZone:
 		vars.TimeZone, err = parseTimeZone(sVal)
 		if err != nil {
 			return errors.Trace(err)
 		}
-	case variable.SQLModeVar:
+	case SQLModeVar:
 		sVal = mysql.FormatSQLModeStr(sVal)
 		// Modes is a list of different modes separated by commas.
 		sqlMode, err2 := mysql.GetSQLMode(sVal)
@@ -132,51 +131,51 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.StrictSQLMode = sqlMode.HasStrictMode()
 		vars.SQLMode = sqlMode
 		vars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
-	case variable.TiDBSnapshot:
+	case TiDBSnapshot:
 		err = setSnapshotTS(vars, sVal)
 		if err != nil {
 			return errors.Trace(err)
 		}
-	case variable.AutocommitVar:
+	case AutocommitVar:
 		isAutocommit := tidbOptOn(sVal)
 		vars.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
 			vars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
-	case variable.TiDBImportingData:
+	case TiDBImportingData:
 		vars.ImportingData = tidbOptOn(sVal)
-	case variable.TiDBSkipUTF8Check:
+	case TiDBSkipUTF8Check:
 		vars.SkipUTF8Check = tidbOptOn(sVal)
-	case variable.TiDBOptAggPushDown:
+	case TiDBOptAggPushDown:
 		vars.AllowAggPushDown = tidbOptOn(sVal)
-	case variable.TiDBOptInSubqUnFolding:
+	case TiDBOptInSubqUnFolding:
 		vars.AllowInSubqueryUnFolding = tidbOptOn(sVal)
-	case variable.TiDBIndexLookupConcurrency:
-		vars.IndexLookupConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexLookupConcurrency)
-	case variable.TiDBIndexJoinBatchSize:
-		vars.IndexJoinBatchSize = tidbOptPositiveInt(sVal, variable.DefIndexJoinBatchSize)
-	case variable.TiDBIndexLookupSize:
-		vars.IndexLookupSize = tidbOptPositiveInt(sVal, variable.DefIndexLookupSize)
-	case variable.TiDBDistSQLScanConcurrency:
-		vars.DistSQLScanConcurrency = tidbOptPositiveInt(sVal, variable.DefDistSQLScanConcurrency)
-	case variable.TiDBIndexSerialScanConcurrency:
-		vars.IndexSerialScanConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexSerialScanConcurrency)
-	case variable.TiDBBatchInsert:
+	case TiDBIndexLookupConcurrency:
+		vars.IndexLookupConcurrency = tidbOptPositiveInt(sVal, DefIndexLookupConcurrency)
+	case TiDBIndexJoinBatchSize:
+		vars.IndexJoinBatchSize = tidbOptPositiveInt(sVal, DefIndexJoinBatchSize)
+	case TiDBIndexLookupSize:
+		vars.IndexLookupSize = tidbOptPositiveInt(sVal, DefIndexLookupSize)
+	case TiDBDistSQLScanConcurrency:
+		vars.DistSQLScanConcurrency = tidbOptPositiveInt(sVal, DefDistSQLScanConcurrency)
+	case TiDBIndexSerialScanConcurrency:
+		vars.IndexSerialScanConcurrency = tidbOptPositiveInt(sVal, DefIndexSerialScanConcurrency)
+	case TiDBBatchInsert:
 		vars.BatchInsert = tidbOptOn(sVal)
-	case variable.TiDBBatchDelete:
+	case TiDBBatchDelete:
 		vars.BatchDelete = tidbOptOn(sVal)
-	case variable.TiDBDMLBatchSize:
-		vars.DMLBatchSize = tidbOptPositiveInt(sVal, variable.DefDMLBatchSize)
-	case variable.TiDBCurrentTS:
-		return variable.ErrReadOnly
-	case variable.TiDBMaxChunkSize:
-		vars.MaxChunkSize = tidbOptPositiveInt(sVal, variable.DefMaxChunkSize)
-	case variable.TiDBMemThreshold:
-		vars.MemThreshold = int64(tidbOptPositiveInt(sVal, variable.DefMemThreshold))
-	case variable.TiDBGeneralLog:
-		atomic.StoreUint32(&variable.ProcessGeneralLog, uint32(tidbOptPositiveInt(sVal, variable.DefTiDBGeneralLog)))
+	case TiDBDMLBatchSize:
+		vars.DMLBatchSize = tidbOptPositiveInt(sVal, DefDMLBatchSize)
+	case TiDBCurrentTS:
+		return ErrReadOnly
+	case TiDBMaxChunkSize:
+		vars.MaxChunkSize = tidbOptPositiveInt(sVal, DefMaxChunkSize)
+	case TiDBMemThreshold:
+		vars.MemThreshold = int64(tidbOptPositiveInt(sVal, DefMemThreshold))
+	case TiDBGeneralLog:
+		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(sVal, DefTiDBGeneralLog)))
 	}
-	vars.Systems[name] = sVal
+	vars.systems[name] = sVal
 	return nil
 }
 
@@ -216,10 +215,10 @@ func parseTimeZone(s string) (*time.Location, error) {
 		}
 	}
 
-	return nil, variable.ErrUnknownTimeZone.GenByArgs(s)
+	return nil, ErrUnknownTimeZone.GenByArgs(s)
 }
 
-func setSnapshotTS(s *variable.SessionVars, sVal string) error {
+func setSnapshotTS(s *SessionVars, sVal string) error {
 	if sVal == "" {
 		s.SnapshotTS = 0
 		return nil
