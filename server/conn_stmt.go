@@ -283,7 +283,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			mysql.TypeBit, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry,
-			mysql.TypeDate, mysql.TypeNewDate,
+			mysql.TypeDate,
 			mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
 			if len(paramValues) < (pos + 1) {
 				err = mysql.ErrMalformPacket

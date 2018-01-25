@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -166,6 +167,13 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 	// All the history should be added here.
 	if !s.IsReadOnly() {
 		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
+		if txn := ctx.Txn(); txn != nil {
+			if err != nil {
+				txn.StmtRollback()
+			} else {
+				terror.Log(txn.StmtCommit())
+			}
+		}
 	}
 	if !se.sessionVars.InTxn() {
 		if err != nil {
@@ -174,6 +182,16 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 			terror.Log(errors.Trace(err1))
 		} else {
 			err = se.CommitTxn(ctx1)
+		}
+	} else {
+		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
+		// So we limit the statement count in a transaction here.
+		history := GetHistory(ctx)
+		if history.Count() > config.GetGlobalConfig().Performance.StmtCountLimit {
+			err1 := se.RollbackTxn(ctx1)
+			terror.Log(errors.Trace(err1))
+			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+				history.Count(), ctx.GetSessionVars().IsAutocommit())
 		}
 	}
 	return rs, errors.Trace(err)
@@ -200,6 +218,8 @@ func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()
+			iter := chunk.NewIterator4Chunk(chk)
+
 			err := rs.NextChunk(goCtx, chk)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -207,7 +227,8 @@ func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 			if chk.NumRows() == 0 {
 				break
 			}
-			for row := chk.Begin(); row != chk.End(); row = row.Next() {
+
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 				rows = append(rows, row)
 			}
 		}

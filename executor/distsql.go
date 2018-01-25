@@ -822,7 +822,8 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for row := chk.Begin(); row != chk.End(); row = row.Next() {
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
 		}
 	}
@@ -1066,9 +1067,9 @@ func (tr *tableResultHandler) nextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 	return tr.result.NextChunk(goCtx, chk)
 }
 
-func (tr *tableResultHandler) nextRaw() (data []byte, err error) {
+func (tr *tableResultHandler) nextRaw(goCtx goctx.Context) (data []byte, err error) {
 	if !tr.optionalFinished {
-		data, err = tr.optionalResult.NextRaw()
+		data, err = tr.optionalResult.NextRaw(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1077,7 +1078,7 @@ func (tr *tableResultHandler) nextRaw() (data []byte, err error) {
 		}
 		tr.optionalFinished = true
 	}
-	data, err = tr.result.NextRaw()
+	data, err = tr.result.NextRaw(goCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

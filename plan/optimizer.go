@@ -162,7 +162,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
 	for _, child := range p.Children() {
-		if existsCartesianProduct(child.(LogicalPlan)) {
+		if existsCartesianProduct(child) {
 			return true
 		}
 	}

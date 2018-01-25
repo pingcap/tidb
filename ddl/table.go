@@ -52,6 +52,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateNone:
 		// none -> public
 		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
 		err = t.CreateTable(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -367,5 +368,8 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 		}
 	}
 
+	if tblInfo.State == model.StatePublic {
+		tblInfo.UpdateTS = t.StartTS
+	}
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
