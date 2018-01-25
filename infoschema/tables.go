@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -546,7 +545,7 @@ func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error)
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
 		var value string
-		value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
