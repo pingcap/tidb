@@ -216,6 +216,19 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_Update,
 	})
 
+	// Test statement rollback.
+	tk.MustExec("create table local_binlog5 (c1 int primary key")
+	tk.MustExec("begin")
+	tk.MustExec("insert into local_binlog5 value (1)")
+	// This statement execute fail and should not write binlog.
+	_, err := tk.Exec("insert into local_binlog5 value (4),(3),(1),(2)")
+	c.Assert(err, NotNil)
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	c.Assert(prewriteVal.Mutations[0].Sequence, DeepEquals, []binlog.MutationType{
+		binlog.MutationType_Insert,
+	})
+
 	checkBinlogCount(c, pump)
 
 	pump.mu.Lock()
