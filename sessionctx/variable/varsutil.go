@@ -105,11 +105,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 		return UnknownSystemVar
 	}
 	if value.IsNull() {
-		if name != CharacterSetResults {
-			return ErrCantSetToNull
-		}
-		delete(vars.systems, name)
-		return nil
+		return vars.deleteSystemVar(name)
 	}
 	sVal, err := value.ToString()
 	if err != nil {

@@ -142,7 +142,7 @@ type SessionVars struct {
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]string
-	// system variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
+	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
@@ -402,8 +402,8 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	return val, ok
 }
 
-// DeleteSystemVar deletes a system variable.
-func (s *SessionVars) DeleteSystemVar(name string) error {
+// deleteSystemVar deletes a system variable.
+func (s *SessionVars) deleteSystemVar(name string) error {
 	if name != CharacterSetResults {
 		return ErrCantSetToNull
 	}
