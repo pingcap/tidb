@@ -486,7 +486,6 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 				break
 			}
 		} else {
-			// if len(locks) is '0', we should get into the branch above, not here.
 			key = locks[len(locks)-1].Key
 		}
 	}
