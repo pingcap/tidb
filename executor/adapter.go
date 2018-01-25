@@ -201,15 +201,15 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := ctx.GetSessionVars().IndexSerialScanConcurrency
 		oriIso, _ := ctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		terror.Log(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
+		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
 		ctx.GetSessionVars().DistSQLScanConcurrency = 1
 		ctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		terror.Log(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
+		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
 		defer func() {
-			terror.Log(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
+			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
 			ctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			ctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			terror.Log(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
+			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
 		}()
 	}
 

@@ -239,9 +239,9 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 	}
 	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
-		terror.Log(sessionVars.SetSystemVar(v, cs))
+		terror.Log(errors.Trace(sessionVars.SetSystemVar(v, cs)))
 	}
-	terror.Log(sessionVars.SetSystemVar(variable.CollationConnection, co))
+	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co)))
 	return nil
 }
 
