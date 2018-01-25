@@ -177,6 +177,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
 			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[e d [97 98 99 100 101 102 103 104 105 106],e d [97 98 99 100 101 102 103 104 105 106]]], Table(t)->Sel([eq(test.t.c_str, abcdefghijk)]))",
 		},
+		{
+			sql:  "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
+			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[p,p]], Table(t))",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
