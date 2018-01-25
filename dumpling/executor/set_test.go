@@ -17,7 +17,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/testkit"
 	goctx "golang.org/x/net/context"
 )
@@ -221,17 +220,17 @@ func (s *testSuite) TestSetCharset(c *C) {
 	ctx := tk.Se.(context.Context)
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
-		sVar, err := varsutil.GetSessionSystemVar(sessionVars, v)
+		sVar, err := variable.GetSessionSystemVar(sessionVars, v)
 		c.Assert(err, IsNil)
 		c.Assert(sVar != "utf8", IsTrue)
 	}
 	tk.MustExec(`SET NAMES utf8`)
 	for _, v := range variable.SetNamesVariables {
-		sVar, err := varsutil.GetSessionSystemVar(sessionVars, v)
+		sVar, err := variable.GetSessionSystemVar(sessionVars, v)
 		c.Assert(err, IsNil)
 		c.Assert(sVar, Equals, "utf8")
 	}
-	sVar, err := varsutil.GetSessionSystemVar(sessionVars, variable.CollationConnection)
+	sVar, err := variable.GetSessionSystemVar(sessionVars, variable.CollationConnection)
 	c.Assert(err, IsNil)
 	c.Assert(sVar, Equals, "utf8_bin")
 
