@@ -115,68 +115,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	switch name {
-	case TimeZone:
-		vars.TimeZone, err = parseTimeZone(sVal)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	case SQLModeVar:
-		sVal = mysql.FormatSQLModeStr(sVal)
-		// Modes is a list of different modes separated by commas.
-		sqlMode, err2 := mysql.GetSQLMode(sVal)
-		if err2 != nil {
-			return errors.Trace(err2)
-		}
-		vars.StrictSQLMode = sqlMode.HasStrictMode()
-		vars.SQLMode = sqlMode
-		vars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
-	case TiDBSnapshot:
-		err = setSnapshotTS(vars, sVal)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	case AutocommitVar:
-		isAutocommit := tidbOptOn(sVal)
-		vars.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
-		if isAutocommit {
-			vars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-		}
-	case TiDBImportingData:
-		vars.ImportingData = tidbOptOn(sVal)
-	case TiDBSkipUTF8Check:
-		vars.SkipUTF8Check = tidbOptOn(sVal)
-	case TiDBOptAggPushDown:
-		vars.AllowAggPushDown = tidbOptOn(sVal)
-	case TiDBOptInSubqUnFolding:
-		vars.AllowInSubqueryUnFolding = tidbOptOn(sVal)
-	case TiDBIndexLookupConcurrency:
-		vars.IndexLookupConcurrency = tidbOptPositiveInt(sVal, DefIndexLookupConcurrency)
-	case TiDBIndexJoinBatchSize:
-		vars.IndexJoinBatchSize = tidbOptPositiveInt(sVal, DefIndexJoinBatchSize)
-	case TiDBIndexLookupSize:
-		vars.IndexLookupSize = tidbOptPositiveInt(sVal, DefIndexLookupSize)
-	case TiDBDistSQLScanConcurrency:
-		vars.DistSQLScanConcurrency = tidbOptPositiveInt(sVal, DefDistSQLScanConcurrency)
-	case TiDBIndexSerialScanConcurrency:
-		vars.IndexSerialScanConcurrency = tidbOptPositiveInt(sVal, DefIndexSerialScanConcurrency)
-	case TiDBBatchInsert:
-		vars.BatchInsert = tidbOptOn(sVal)
-	case TiDBBatchDelete:
-		vars.BatchDelete = tidbOptOn(sVal)
-	case TiDBDMLBatchSize:
-		vars.DMLBatchSize = tidbOptPositiveInt(sVal, DefDMLBatchSize)
-	case TiDBCurrentTS:
-		return ErrReadOnly
-	case TiDBMaxChunkSize:
-		vars.MaxChunkSize = tidbOptPositiveInt(sVal, DefMaxChunkSize)
-	case TiDBMemThreshold:
-		vars.MemThreshold = int64(tidbOptPositiveInt(sVal, DefMemThreshold))
-	case TiDBGeneralLog:
-		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(sVal, DefTiDBGeneralLog)))
-	}
-	vars.systems[name] = sVal
-	return nil
+	return vars.SetSystemVar(name, sVal)
 }
 
 // tidbOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
