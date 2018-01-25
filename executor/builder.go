@@ -497,6 +497,14 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 // TODO: Refactor against different join strategies by extracting common code base
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	joinBuilder := &joinBuilder{}
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		if v.JoinType == plan.LeftOuterJoin {
+			defaultValues = make([]types.Datum, v.Children()[1].Schema().Len())
+		} else if v.JoinType == plan.RightOuterJoin {
+			defaultValues = make([]types.Datum, v.Children()[0].Schema().Len())
+		}
+	}
 	exec, err := joinBuilder.Context(b.ctx).
 		LeftChild(b.build(v.Children()[0])).
 		RightChild(b.build(v.Children()[1])).
@@ -506,7 +514,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		OtherFilter(v.OtherConditions).
 		Schema(v.Schema()).
 		JoinType(v.JoinType).
-		DefaultVals(v.DefaultValues).
+		DefaultVals(defaultValues).
 		BuildMergeJoin(v.Desc)
 
 	if err != nil {
@@ -530,12 +538,15 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		rightHashKey = append(rightHashKey, rn)
 	}
 	e := &HashJoinExec{
-		schema:        v.Schema(),
-		otherFilter:   v.OtherConditions,
-		prepared:      false,
-		ctx:           b.ctx,
-		concurrency:   v.Concurrency,
-		defaultValues: v.DefaultValues,
+		schema:      v.Schema(),
+		otherFilter: v.OtherConditions,
+		prepared:    false,
+		ctx:         b.ctx,
+		concurrency: v.Concurrency,
+	}
+	e.defaultValues = v.DefaultValues
+	if v.JoinType == plan.LeftOuterJoin || v.JoinType == plan.RightOuterJoin {
+		e.outer = true
 	}
 	if v.SmallTable == 1 {
 		e.smallFilter = v.RightConditions
@@ -543,15 +554,18 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 		e.leftSmall = false
+		if e.defaultValues == nil && e.outer {
+			e.defaultValues = make([]types.Datum, v.Children()[1].Schema().Len())
+		}
 	} else {
 		e.leftSmall = true
 		e.smallFilter = v.LeftConditions
 		e.bigFilter = v.RightConditions
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
-	}
-	if v.JoinType == plan.LeftOuterJoin || v.JoinType == plan.RightOuterJoin {
-		e.outer = true
+		if e.defaultValues == nil && e.outer {
+			e.defaultValues = make([]types.Datum, v.Children()[0].Schema().Len())
+		}
 	}
 	if e.leftSmall {
 		e.smallExec = b.build(v.Children()[0])
@@ -1129,8 +1143,16 @@ func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 	}
 	outerConditions := v.LeftConditions
 	innerConditions := v.RightConditions
+	defaultValues := v.DefaultValues
 	if v.OuterIndex == 1 {
 		outerConditions, innerConditions = innerConditions, outerConditions
+	}
+	if defaultValues == nil && v.Outer {
+		if v.OuterIndex == 0 {
+			defaultValues = make([]types.Datum, v.Children()[1].Schema().Len())
+		} else {
+			defaultValues = make([]types.Datum, v.Children()[0].Schema().Len())
+		}
 	}
 	return &IndexLookUpJoin{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[v.OuterIndex])),
@@ -1142,7 +1164,7 @@ func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 		outerConditions: outerConditions,
 		innerConditions: innerConditions,
 		otherConditions: v.OtherConditions,
-		defaultValues:   v.DefaultValues,
+		defaultValues:   defaultValues,
 		batchSize:       batchSize,
 	}
 }
