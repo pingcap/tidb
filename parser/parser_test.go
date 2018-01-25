@@ -1754,6 +1754,25 @@ func (s *testParserSuite) TestCommentErrMsg(c *C) {
 	s.RunErrMsgTest(c, table)
 }
 
+type subqueryChecker struct {
+	text string
+	c    *C
+}
+
+// Enter implements ast.Visitor interface.
+func (sc *subqueryChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+	if expr, ok := inNode.(*ast.SubqueryExpr); ok {
+		sc.c.Assert(expr.Query.Text(), Equals, sc.text)
+		return inNode, true
+	}
+	return inNode, false
+}
+
+// Leave implements ast.Visitor interface.
+func (sc *subqueryChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	return inNode, true
+}
+
 func (s *testParserSuite) TestSubquery(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
@@ -1773,6 +1792,23 @@ func (s *testParserSuite) TestSubquery(c *C) {
 		{"SELECT - NOT EXISTS (select 1)", false},
 	}
 	s.RunTest(c, table)
+
+	tests := []struct {
+		input string
+		text  string
+	}{
+		{"SELECT 1 > (select 1)", "select 1"},
+		{"SELECT 1 > (select 1 union select 2)", "select 1 union select 2"},
+	}
+	parser := New()
+	for _, t := range tests {
+		stmt, err := parser.ParseOneStmt(t.input, "", "")
+		c.Assert(err, IsNil)
+		stmt.Accept(&subqueryChecker{
+			text: t.text,
+			c:    c,
+		})
+	}
 }
 func (s *testParserSuite) TestUnion(c *C) {
 	defer testleak.AfterTest(c)()
