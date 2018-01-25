@@ -592,6 +592,23 @@ func init() {
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
+		if ctx.GetSessionVars().EnableChunk {
+			for {
+				chk := exec.newChunk()
+				err = exec.NextChunk(goCtx, chk)
+				if err != nil {
+					return rows, errors.Trace(err)
+				}
+				if chk.NumRows() == 0 {
+					return rows, errors.Trace(exec.Close())
+				}
+				iter := chunk.NewIterator4Chunk(chk)
+				for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+					row := r.GetDatumRow(exec.retTypes())
+					rows = append(rows, row)
+				}
+			}
+		}
 		for {
 			row, err := exec.Next(goCtx)
 			if err != nil {
